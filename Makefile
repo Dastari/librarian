@@ -2,7 +2,8 @@
 # Common commands for development and deployment
 
 .PHONY: help dev dev-backend dev-frontend supabase-start supabase-stop \
-        build docker-up docker-down docker-logs clean test lint
+        build docker-up docker-down docker-logs clean test lint \
+        db-migrate db-migrate-info db-migrate-revert db-migrate-add
 
 # Default target
 help:
@@ -18,6 +19,12 @@ help:
 	@echo "  make supabase-stop  - Stop Supabase local stack"
 	@echo "  make supabase-reset - Reset Supabase database"
 	@echo "  make supabase-status - Show Supabase status and keys"
+	@echo ""
+	@echo "Database:"
+	@echo "  make db-migrate     - Run all pending migrations"
+	@echo "  make db-migrate-info - Show migration status"
+	@echo "  make db-migrate-revert - Revert the last migration"
+	@echo "  make db-migrate-add NAME=<name> - Create a new migration"
 	@echo ""
 	@echo "Docker:"
 	@echo "  make docker-up      - Start all Docker services"
@@ -63,6 +70,32 @@ supabase-reset:
 
 supabase-status:
 	supabase status
+
+# =============================================================================
+# Database Migrations
+# =============================================================================
+
+# Default database URL for local Supabase
+DATABASE_URL ?= postgresql://postgres:postgres@127.0.0.1:54322/postgres
+
+db-migrate:
+	@echo "Running database migrations..."
+	cd backend && DATABASE_URL="$(DATABASE_URL)" sqlx migrate run
+
+db-migrate-info:
+	@echo "Migration status:"
+	cd backend && DATABASE_URL="$(DATABASE_URL)" sqlx migrate info
+
+db-migrate-revert:
+	@echo "Reverting last migration..."
+	cd backend && DATABASE_URL="$(DATABASE_URL)" sqlx migrate revert
+
+db-migrate-add:
+ifndef NAME
+	$(error NAME is required. Usage: make db-migrate-add NAME=my_migration)
+endif
+	@echo "Creating new migration: $(NAME)"
+	cd backend && sqlx migrate add $(NAME)
 
 # =============================================================================
 # Docker
