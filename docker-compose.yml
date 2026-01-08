@@ -1,0 +1,97 @@
+# Librarian Docker Compose
+# This orchestrates the application services. Supabase is managed separately.
+# See infra/supabase/README.md for Supabase setup instructions.
+
+services:
+  # Rust Backend API (includes native torrent client)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: librarian-backend
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+      - "6881:6881"      # Torrent incoming connections
+      - "6881:6881/udp"  # Torrent DHT
+    environment:
+      - PORT=3001
+      - DATABASE_URL=${DATABASE_URL}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - TVDB_API_KEY=${TVDB_API_KEY:-}
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
+      - MEDIA_PATH=/data/media
+      - DOWNLOADS_PATH=/data/downloads
+      - CACHE_PATH=/data/cache
+      - SESSION_PATH=/data/session
+      - TORRENT_ENABLE_DHT=${TORRENT_ENABLE_DHT:-true}
+      - TORRENT_LISTEN_PORT=${TORRENT_LISTEN_PORT:-6881}
+      - TORRENT_MAX_CONCURRENT=${TORRENT_MAX_CONCURRENT:-5}
+    volumes:
+      - media_data:/data/media
+      - downloads_data:/data/downloads
+      - cache_data:/data/cache
+      - session_data:/data/session
+    networks:
+      - librarian-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # TanStack Start Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: librarian-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:3001
+      - VITE_SUPABASE_URL=${SUPABASE_URL}
+      - VITE_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+    depends_on:
+      - backend
+    networks:
+      - librarian-network
+
+  # Prowlarr (optional - indexer manager)
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: librarian-prowlarr
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+    volumes:
+      - prowlarr_config:/config
+    ports:
+      - "9696:9696"
+    networks:
+      - librarian-network
+    profiles:
+      - indexers
+
+volumes:
+  media_data:
+    driver: local
+  downloads_data:
+    driver: local
+  cache_data:
+    driver: local
+  session_data:
+    driver: local
+  prowlarr_config:
+    driver: local
+
+networks:
+  librarian-network:
+    driver: bridge

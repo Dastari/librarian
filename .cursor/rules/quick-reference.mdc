@@ -1,0 +1,106 @@
+---
+description: Quick reference for do's and don'ts
+globs:
+  - "backend/**/*"
+  - "frontend/**/*"
+alwaysApply: true
+---
+
+# Quick Reference
+
+## ✅ DO
+
+### API
+- ✅ Use GraphQL for all API endpoints
+- ✅ Use subscriptions for real-time data
+- ✅ Authenticate all operations (except health checks)
+- ✅ Return `{ success, error }` from mutations
+
+### Frontend
+- ✅ Use HeroUI components (Button, Card, Input, Modal, etc.)
+- ✅ Use TanStack Router for routing
+- ✅ Use urql + graphql-ws for GraphQL
+- ✅ Define GraphQL operations in `lib/graphql.ts`
+- ✅ Use Tailwind CSS for custom styling
+
+### Backend
+- ✅ Use async-graphql for the API
+- ✅ Use sqlx with compile-time query checking
+- ✅ Use anyhow for error handling
+- ✅ Use tracing for logging
+- ✅ Put business logic in services
+- ✅ Put database queries in repositories
+
+### Database
+- ✅ Create numbered migrations (001_, 002_, etc.)
+- ✅ Use UUIDs for primary keys
+- ✅ Use TIMESTAMPTZ for timestamps
+- ✅ Enable RLS for user-scoped tables
+- ✅ Store settings in app_settings table
+
+### Torrents
+- ✅ Use librqbit (native Rust client)
+- ✅ Persist torrent state to database
+- ✅ Broadcast events via channels
+- ✅ Load settings from database
+
+## ❌ DON'T
+
+### API
+- ❌ Create REST endpoints (except file uploads, filesystem, health)
+- ❌ Use WebSockets directly (use GraphQL subscriptions)
+- ❌ Expose internal errors to users
+- ❌ Skip authentication checks
+
+### Frontend
+- ❌ Use raw HTML elements when HeroUI has a component
+- ❌ Use Redux or other state managers (use React hooks + urql cache)
+- ❌ Create custom form components (use HeroUI Input, Select, etc.)
+- ❌ Hard-code API URLs (use VITE_API_URL env var)
+
+### Backend
+- ❌ Use println! for logging (use tracing)
+- ❌ Panic on recoverable errors (return Result)
+- ❌ Put business logic in route handlers
+- ❌ Use external torrent clients (qBittorrent, etc.)
+
+### Database
+- ❌ Use raw SQL in GraphQL resolvers (use repositories)
+- ❌ Store user-specific data without RLS
+- ❌ Use TIMESTAMP without timezone
+- ❌ Create tables without updated_at triggers
+
+## Key Files
+
+| Purpose | Location |
+|---------|----------|
+| GraphQL Schema | `backend/src/graphql/schema.rs` |
+| GraphQL Types | `backend/src/graphql/types.rs` |
+| GraphQL Subscriptions | `backend/src/graphql/subscriptions.rs` |
+| Torrent Service | `backend/src/services/torrent.rs` |
+| Database Connection | `backend/src/db/mod.rs` |
+| Settings Repository | `backend/src/db/settings.rs` |
+| Frontend GraphQL | `frontend/src/lib/graphql.ts` |
+| Frontend Routes | `frontend/src/routes/` |
+
+## Naming Conventions
+
+### Rust
+- `snake_case` for functions, variables, modules
+- `PascalCase` for types, traits, enums
+- `SCREAMING_SNAKE_CASE` for constants
+
+### TypeScript
+- `camelCase` for functions, variables
+- `PascalCase` for components, types, interfaces
+- `SCREAMING_SNAKE_CASE` for constants
+
+### Database
+- `snake_case` for tables, columns
+- Plural table names (`torrents`, `libraries`)
+- Foreign keys: `{table}_id` (e.g., `user_id`)
+
+### GraphQL
+- `camelCase` for fields (auto-converted from Rust snake_case)
+- `PascalCase` for types
+- `SCREAMING_SNAKE_CASE` for enum values

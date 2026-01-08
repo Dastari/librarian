@@ -1,0 +1,332 @@
+---
+description: Frontend UI patterns and component usage
+globs:
+  - "frontend/src/**/*.tsx"
+  - "frontend/src/**/*.ts"
+alwaysApply: false
+---
+
+# Frontend UI Rules
+
+## HeroUI Component Installation
+
+### Current Setup
+This project uses the **HeroUI bundle package** (`@heroui/react`) which includes all components.
+All components are already available - no individual installation needed.
+
+### Installing Individual Components (Alternative Method)
+If switching to individual packages for smaller bundle size, use the HeroUI CLI:
+
+```bash
+# Add a specific component
+cd frontend
+npx heroui add modal
+npx heroui add button
+npx heroui add input
+
+# Add multiple components
+npx heroui add modal button input card
+
+# List installed components
+npx heroui list
+
+# Upgrade components
+npx heroui upgrade
+
+# Check for issues
+npx heroui doctor
+```
+
+### Available HeroUI Components
+
+**Layout & Structure:**
+- `Card`, `CardHeader`, `CardBody`, `CardFooter` - Content containers
+- `Divider` - Horizontal/vertical separators
+- `Spacer` - Flexible spacing
+
+**Forms & Inputs:**
+- `Input` - Text input fields
+- `Textarea` - Multi-line text input
+- `Select`, `SelectItem` - Dropdown selection
+- `Checkbox`, `CheckboxGroup` - Checkboxes
+- `Radio`, `RadioGroup` - Radio buttons
+- `Switch` - Toggle switches
+- `Slider` - Range sliders
+- `DatePicker`, `DateRangePicker` - Date selection
+- `TimeInput` - Time input
+- `Autocomplete`, `AutocompleteItem` - Search/autocomplete
+
+**Buttons & Actions:**
+- `Button`, `ButtonGroup` - Clickable buttons
+- `Link` - Styled anchor links
+- `Dropdown`, `DropdownTrigger`, `DropdownMenu`, `DropdownItem` - Dropdown menus
+
+**Feedback & Status:**
+- `Spinner` - Loading indicators
+- `Progress` - Progress bars
+- `Chip` - Status badges/tags
+- `Badge` - Count badges
+- `Tooltip` - Hover tooltips
+- `Popover`, `PopoverTrigger`, `PopoverContent` - Click popovers
+
+**Overlays & Modals:**
+- `Modal`, `ModalContent`, `ModalHeader`, `ModalBody`, `ModalFooter` - Modal dialogs
+- `Drawer` - Slide-out panels
+- `useDisclosure` - Hook for open/close state
+
+**Navigation:**
+- `Tabs`, `Tab` - Tab navigation
+- `Navbar`, `NavbarBrand`, `NavbarContent`, `NavbarItem` - Navigation bar
+- `Breadcrumbs`, `BreadcrumbItem` - Breadcrumb navigation
+- `Pagination` - Page navigation
+- `Listbox`, `ListboxItem` - List selection
+
+**Data Display:**
+- `Table`, `TableHeader`, `TableColumn`, `TableBody`, `TableRow`, `TableCell` - Data tables
+- `Avatar`, `AvatarGroup` - User avatars
+- `Image` - Optimized images
+- `Accordion`, `AccordionItem` - Collapsible sections
+- `Skeleton` - Loading placeholders
+- `Snippet` - Code snippets
+- `Code` - Inline code
+
+**Other:**
+- `ScrollShadow` - Scroll containers with shadows
+- `Calendar` - Calendar display
+- `User` - User display component
+
+## Component Library
+
+### Use HeroUI Components
+- **ALWAYS use HeroUI components** instead of custom HTML elements
+- Import from `@heroui/react`
+- Common components to use:
+
+```tsx
+// Preferred imports
+import {
+  Button,
+  Card, CardBody, CardHeader, CardFooter,
+  Input,
+  Switch,
+  Select, SelectItem,
+  Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
+  useDisclosure,
+  Tabs, Tab,
+  Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
+  Chip,
+  Progress,
+  Spinner,
+  Tooltip,
+  Divider,
+  Avatar,
+  Badge,
+  Dropdown, DropdownTrigger, DropdownMenu, DropdownItem,
+} from '@heroui/react'
+```
+
+### Button Patterns
+```tsx
+// Primary action
+<Button color="primary">Save</Button>
+
+// Destructive action
+<Button color="danger">Delete</Button>
+
+// Loading state
+<Button isLoading={isSaving}>Save</Button>
+
+// Icon button
+<Button isIconOnly size="sm" variant="light">🗑️</Button>
+
+// With tooltip
+<Tooltip content="Delete item">
+  <Button isIconOnly color="danger" variant="light">🗑️</Button>
+</Tooltip>
+```
+
+### Form Patterns
+```tsx
+// Text input
+<Input
+  label="Name"
+  placeholder="Enter name"
+  value={name}
+  onChange={(e) => setName(e.target.value)}
+/>
+
+// With validation
+<Input
+  label="Email"
+  type="email"
+  isInvalid={!!emailError}
+  errorMessage={emailError}
+/>
+
+// Toggle switch
+<Switch isSelected={enabled} onValueChange={setEnabled}>
+  Enable feature
+</Switch>
+```
+
+### Card Patterns
+```tsx
+<Card>
+  <CardHeader className="flex gap-3">
+    <div className="flex flex-col">
+      <p className="text-lg font-semibold">Title</p>
+      <p className="text-small text-default-500">Subtitle</p>
+    </div>
+  </CardHeader>
+  <Divider />
+  <CardBody>
+    {/* Content */}
+  </CardBody>
+</Card>
+```
+
+### Modal Patterns
+```tsx
+const { isOpen, onOpen, onClose } = useDisclosure()
+
+<Button onPress={onOpen}>Open Modal</Button>
+
+<Modal isOpen={isOpen} onClose={onClose}>
+  <ModalContent>
+    <ModalHeader>Title</ModalHeader>
+    <ModalBody>{/* Content */}</ModalBody>
+    <ModalFooter>
+      <Button variant="flat" onPress={onClose}>Cancel</Button>
+      <Button color="primary" onPress={handleSave}>Save</Button>
+    </ModalFooter>
+  </ModalContent>
+</Modal>
+```
+
+## Styling
+
+### Tailwind CSS v4
+- Use Tailwind utility classes for custom styling
+- HeroUI components accept `className` for additional styling
+- Use `classNames` prop for styling internal parts of HeroUI components
+
+```tsx
+<Input
+  className="max-w-xs"
+  classNames={{
+    input: "font-mono text-sm",
+    label: "text-default-600",
+  }}
+/>
+```
+
+### Dark Theme
+- The app uses a dark theme by default
+- Use `text-default-*` for text colors (400, 500, 600, etc.)
+- Use `bg-default-*` for backgrounds
+- HeroUI handles dark mode automatically
+
+### Status Colors
+```tsx
+// Use semantic colors
+color="primary"   // Blue - main actions
+color="success"   // Green - completed, seeding
+color="warning"   // Yellow - paused, attention needed
+color="danger"    // Red - errors, delete actions
+color="default"   // Gray - neutral states
+```
+
+## GraphQL Integration
+
+### Query Pattern
+```tsx
+import { graphqlClient, SOME_QUERY } from '../../lib/graphql'
+
+const [data, setData] = useState(null)
+const [isLoading, setIsLoading] = useState(true)
+
+useEffect(() => {
+  graphqlClient.query(SOME_QUERY, { variables }).toPromise()
+    .then(result => {
+      if (result.data) setData(result.data)
+    })
+    .finally(() => setIsLoading(false))
+}, [])
+```
+
+### Mutation Pattern
+```tsx
+const handleSave = async () => {
+  setIsSaving(true)
+  const result = await graphqlClient
+    .mutation(SAVE_MUTATION, { input })
+    .toPromise()
+  
+  if (result.data?.saveThing.success) {
+    // Handle success
+  } else {
+    setError(result.data?.saveThing.error || 'Failed')
+  }
+  setIsSaving(false)
+}
+```
+
+### Subscription Pattern
+```tsx
+import { pipe, subscribe } from 'wonka'
+
+useEffect(() => {
+  const sub = pipe(
+    graphqlClient.subscription(PROGRESS_SUBSCRIPTION, {}),
+    subscribe((result) => {
+      if (result.data?.progress) {
+        // Handle real-time update
+      }
+    })
+  )
+  return () => sub.unsubscribe()
+}, [])
+```
+
+## File Organization
+
+### Route Files
+- Routes are file-based in `src/routes/`
+- Use `createFileRoute` from TanStack Router
+- Each route folder has an `index.tsx`
+
+```tsx
+import { createFileRoute } from '@tanstack/react-router'
+
+export const Route = createFileRoute('/my-route/')({
+  component: MyRoutePage,
+})
+
+function MyRoutePage() {
+  // Component implementation
+}
+```
+
+### GraphQL Operations
+- Define all GraphQL operations in `src/lib/graphql.ts`
+- Export query/mutation strings and TypeScript types
+- Keep operations organized by feature
+
+```ts
+// Types
+export interface MyType { ... }
+
+// Query
+export const MY_QUERY = `
+  query MyQuery($id: ID!) {
+    myThing(id: $id) { ... }
+  }
+`
+
+// Mutation
+export const MY_MUTATION = `
+  mutation MyMutation($input: MyInput!) {
+    myMutation(input: $input) { success error }
+  }
+`
+```

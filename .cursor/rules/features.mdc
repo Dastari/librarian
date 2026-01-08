@@ -1,0 +1,172 @@
+---
+description: Feature-specific implementation guidelines
+globs:
+  - "backend/src/**/*.rs"
+  - "frontend/src/**/*.ts"
+  - "frontend/src/**/*.tsx"
+alwaysApply: false
+---
+
+# Feature Implementation Rules
+
+## Torrent Client
+
+### Native librqbit Integration
+- The torrent client is `librqbit`, a native Rust BitTorrent library
+- Do NOT use external torrent clients (qBittorrent, Transmission, etc.)
+- The `TorrentService` wraps librqbit and provides:
+  - Adding torrents (magnet, URL, file upload)
+  - Progress tracking via broadcast channels
+  - Database persistence for resume on restart
+  - Settings loaded from database
+
+### Torrent State Flow
+```
+QUEUED → CHECKING → DOWNLOADING → SEEDING
+                 ↓
+              PAUSED ← (user action)
+                 ↓
+              ERROR
+```
+
+### Events
+Torrent events are broadcast to subscribers:
+- `TorrentEvent::Added` - New torrent added
+- `TorrentEvent::Progress` - Progress update (every second)
+- `TorrentEvent::Completed` - Download finished
+- `TorrentEvent::Removed` - Torrent removed
+
+### Settings
+Torrent settings are stored in `app_settings` table:
+- `torrent.download_dir` - Where files are saved
+- `torrent.session_dir` - Session/resume data
+- `torrent.enable_dht` - DHT for peer discovery
+- `torrent.listen_port` - Incoming connections port
+- `torrent.max_concurrent` - Max simultaneous downloads
+- `torrent.upload_limit` - Upload speed limit (0 = unlimited)
+- `torrent.download_limit` - Download speed limit (0 = unlimited)
+
+## Media Library
+
+### Library Types
+```rust
+pub enum LibraryType {
+    Movies,    // Single files per item
+    Tv,        // Shows with seasons/episodes
+    Music,     // Albums/tracks
+    Audiobooks,// Similar to music
+    Other,     // Generic files
+}
+```
+
+### Media Scanning
+- Libraries are scanned to discover media files
+- Metadata is fetched from TVDB/TMDB
+- Files are stored in `media_files` table
+- Artwork is cached in Supabase Storage
+
+### Streaming
+- HLS (HTTP Live Streaming) for video playback
+- On-the-fly transcoding for incompatible formats
+- Direct play when browser supports the format
+
+## Subscriptions (TV Show Monitoring)
+
+### Subscription Flow
+1. User subscribes to a TV show (by TVDB ID)
+2. System monitors for new episodes
+3. When new episode airs, search for torrents via Prowlarr/Torznab
+4. Auto-download matching quality profile
+5. Move to library after completion
+
+### Quality Profiles
+Quality profiles define preferred formats:
+- Resolution preferences (4K > 1080p > 720p)
+- Codec preferences (x265 > x264)
+- Source preferences (BluRay > WEB-DL > HDTV)
+- Size limits
+
+## Settings System
+
+### Adding New Settings
+1. Add migration with default value:
+```sql
+INSERT INTO app_settings (key, value, description, category) VALUES
+    ('feature.setting_name', '"default_value"', 'Description', 'category');
+```
+
+2. Access in code:
+```rust
+let settings = db.settings();
+let value: String = settings
+    .get_or_default("feature.setting_name", "fallback".to_string())
+    .await?;
+```
+
+3. Add GraphQL query/mutation if user-configurable
+
+### Setting Categories
+- `general` - App-wide settings
+- `torrent` - Torrent client settings
+- `media` - Media library settings
+- `notifications` - Notification preferences
+
+## File Browser
+
+### Usage
+The file browser API is for server-side directory selection:
+- `GET /api/filesystem/browse?path=/some/path&dirs_only=true`
+- `POST /api/filesystem/mkdir` - Create directories
+
+### Security
+- Filesystem browsing requires authentication
+- No path restrictions currently (admin feature)
+- Shows readable/writable status
+
+## Background Jobs
+
+### Job Types
+Jobs are stored in the `jobs` table:
+- `scan_library` - Scan a library for new media
+- `fetch_metadata` - Fetch metadata for media item
+- `download_artwork` - Download and cache artwork
+- `check_subscriptions` - Check for new episodes
+
+### Job States
+```
+pending → running → completed
+              ↓
+           failed (retries up to max_attempts)
+```
+
+## Planned Features
+
+### Prowlarr Integration
+- Connect to Prowlarr for torrent indexer management
+- Search across multiple indexers
+- Auto-grab releases based on quality profiles
+
+### Notifications
+- Push notifications for:
+  - Download complete
+  - New episode available
+  - Error alerts
+
+### Multi-user Support
+- Row-level security in PostgreSQL
+- Per-user libraries and preferences
+- Admin role for system settings
+
+### Mobile App
+- React Native or Flutter
+- Same GraphQL API
+- Push notifications
+
+## Implementation Priorities
+
+When adding features, prioritize:
+1. **Database schema first** - Migrations before code
+2. **Backend service** - Business logic in services
+3. **GraphQL API** - Expose via queries/mutations
+4. **Frontend UI** - React components with HeroUI
+5. **Real-time updates** - Add subscriptions if needed
