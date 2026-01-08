@@ -6,18 +6,24 @@ pub mod rss_poller;
 pub mod scanner;
 pub mod transcode_gc;
 
+use std::sync::Arc;
+
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::info;
 
+use crate::services::ScannerService;
+
 /// Initialize and start the job scheduler
-pub async fn start_scheduler() -> anyhow::Result<JobScheduler> {
+pub async fn start_scheduler(scanner_service: Arc<ScannerService>) -> anyhow::Result<JobScheduler> {
     let scheduler = JobScheduler::new().await?;
 
     // Library scanner - run every hour
-    let scanner_job = Job::new_async("0 0 * * * *", |_uuid, _l| {
+    let scanner = scanner_service.clone();
+    let scanner_job = Job::new_async("0 0 * * * *", move |_uuid, _l| {
+        let scanner = scanner.clone();
         Box::pin(async move {
             info!("Running library scanner");
-            if let Err(e) = scanner::run_scan().await {
+            if let Err(e) = scanner::run_scan(scanner).await {
                 tracing::error!("Scanner error: {}", e);
             }
         })

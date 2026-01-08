@@ -2,7 +2,7 @@ import { createFileRoute, Link, redirect } from '@tanstack/react-router'
 import { Button, Card, CardBody, Spinner } from '@heroui/react'
 import { useAuth } from '../hooks/useAuth'
 import { MediaCard } from '../components/MediaCard'
-import { LIBRARY_TYPES, type MediaItem, type Library } from '../lib/api'
+import { LIBRARY_TYPES, type MediaItem, type Library } from '../lib/graphql'
 
 export const Route = createFileRoute('/')({
   beforeLoad: ({ context }) => {
@@ -21,27 +21,41 @@ const mockLibraries: Library[] = [
     id: '1',
     name: 'Movies',
     path: '/data/media/Movies',
-    library_type: 'movies',
+    libraryType: 'MOVIES',
     icon: 'film',
     color: 'purple',
-    auto_scan: true,
-    scan_interval_hours: 24,
-    last_scanned_at: null,
-    file_count: 142,
-    total_size_bytes: 856000000000,
+    autoScan: true,
+    scanIntervalMinutes: 60,
+    watchForChanges: false,
+    postDownloadAction: 'COPY',
+    autoRename: true,
+    namingPattern: null,
+    defaultQualityProfileId: null,
+    autoAddDiscovered: true,
+    itemCount: 142,
+    totalSizeBytes: 856000000000,
+    showCount: 0,
+    lastScannedAt: null,
   },
   {
     id: '2',
     name: 'TV Shows',
     path: '/data/media/TV',
-    library_type: 'tv',
+    libraryType: 'TV',
     icon: 'tv',
     color: 'blue',
-    auto_scan: true,
-    scan_interval_hours: 6,
-    last_scanned_at: '2026-01-08T12:00:00Z',
-    file_count: 1247,
-    total_size_bytes: 2340000000000,
+    autoScan: true,
+    scanIntervalMinutes: 60,
+    watchForChanges: false,
+    postDownloadAction: 'COPY',
+    autoRename: true,
+    namingPattern: null,
+    defaultQualityProfileId: null,
+    autoAddDiscovered: true,
+    itemCount: 1247,
+    totalSizeBytes: 2340000000000,
+    showCount: 45,
+    lastScannedAt: '2026-01-08T12:00:00Z',
   },
 ]
 
@@ -130,7 +144,7 @@ function HomePage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {mockLibraries.map((library) => {
               const typeInfo =
-                LIBRARY_TYPES.find((t) => t.value === library.library_type) ||
+                LIBRARY_TYPES.find((t) => t.value === library.libraryType) ||
                 LIBRARY_TYPES[4]
               return (
                 <Link key={library.id} to="/libraries">
@@ -149,8 +163,8 @@ function HomePage() {
                         </div>
                       </div>
                       <div className="flex justify-between text-sm text-default-500">
-                        <span>{library.file_count ?? 0} files</span>
-                        <span>{formatBytes(library.total_size_bytes)}</span>
+                        <span>{library.itemCount ?? 0} files</span>
+                        <span>{formatBytes(library.totalSizeBytes)}</span>
                       </div>
                     </CardBody>
                   </Card>

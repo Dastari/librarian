@@ -1,15 +1,19 @@
-//! Torrent management REST endpoints
+//! Torrent file upload endpoint
 //!
-//! These provide a REST API alternative to GraphQL for torrent operations.
-//! For real-time updates, use the GraphQL subscriptions at /graphql/ws.
+//! This provides a REST endpoint for uploading .torrent files.
+//! File uploads don't work well with GraphQL (multipart form data),
+//! so this is the one torrent operation that remains as REST.
+//!
+//! All other torrent operations (add magnet, pause, resume, remove, list)
+//! are handled via GraphQL at /graphql.
 
 use axum::{
-    extract::{Multipart, Path, Query, State},
+    extract::{Multipart, State},
     http::{header::AUTHORIZATION, HeaderMap, StatusCode},
-    routing::{get, post},
+    routing::post,
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::graphql::verify_token;
@@ -51,14 +55,6 @@ impl From<ServiceTorrentInfo> for TorrentResponse {
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AddTorrentRequest {
-    /// Magnet link
-    pub magnet: Option<String>,
-    /// URL to .torrent file
-    pub url: Option<String>,
-}
-
 #[derive(Debug, Serialize)]
 pub struct AddTorrentResponse {
     pub success: bool,
@@ -68,148 +64,10 @@ pub struct AddTorrentResponse {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct ActionResponse {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RemoveTorrentQuery {
-    #[serde(default)]
-    pub delete_files: bool,
-}
-
-/// List all torrents
-async fn list_torrents(State(state): State<AppState>) -> Json<Vec<TorrentResponse>> {
-    let torrents = state.torrent_service.list_torrents().await;
-    Json(torrents.into_iter().map(|t| t.into()).collect())
-}
-
-/// Get a specific torrent by ID
-async fn get_torrent(
-    State(state): State<AppState>,
-    Path(id): Path<usize>,
-) -> Result<Json<TorrentResponse>, StatusCode> {
-    match state.torrent_service.get_torrent_info(id).await {
-        Ok(info) => Ok(Json(info.into())),
-        Err(_) => Err(StatusCode::NOT_FOUND),
-    }
-}
-
-/// Add a new torrent (deprecated - use GraphQL instead)
-async fn add_torrent(
-    State(state): State<AppState>,
-    Json(body): Json<AddTorrentRequest>,
-) -> (StatusCode, Json<AddTorrentResponse>) {
-    // Note: No user_id available in REST API - use GraphQL for full functionality
-    let result = if let Some(magnet) = body.magnet {
-        state.torrent_service.add_magnet(&magnet, None).await
-    } else if let Some(url) = body.url {
-        state.torrent_service.add_magnet(&url, None).await
-    } else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(AddTorrentResponse {
-                success: false,
-                torrent: None,
-                error: Some("Either 'magnet' or 'url' must be provided".to_string()),
-            }),
-        );
-    };
-
-    match result {
-        Ok(info) => (
-            StatusCode::CREATED,
-            Json(AddTorrentResponse {
-                success: true,
-                torrent: Some(info.into()),
-                error: None,
-            }),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(AddTorrentResponse {
-                success: false,
-                torrent: None,
-                error: Some(e.to_string()),
-            }),
-        ),
-    }
-}
-
-/// Pause a torrent
-async fn pause_torrent(
-    State(state): State<AppState>,
-    Path(id): Path<usize>,
-) -> (StatusCode, Json<ActionResponse>) {
-    match state.torrent_service.pause(id).await {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(ActionResponse {
-                success: true,
-                error: None,
-            }),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ActionResponse {
-                success: false,
-                error: Some(e.to_string()),
-            }),
-        ),
-    }
-}
-
-/// Resume a torrent
-async fn resume_torrent(
-    State(state): State<AppState>,
-    Path(id): Path<usize>,
-) -> (StatusCode, Json<ActionResponse>) {
-    match state.torrent_service.resume(id).await {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(ActionResponse {
-                success: true,
-                error: None,
-            }),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ActionResponse {
-                success: false,
-                error: Some(e.to_string()),
-            }),
-        ),
-    }
-}
-
-/// Remove a torrent
-async fn remove_torrent(
-    State(state): State<AppState>,
-    Path(id): Path<usize>,
-    Query(query): Query<RemoveTorrentQuery>,
-) -> (StatusCode, Json<ActionResponse>) {
-    match state.torrent_service.remove(id, query.delete_files).await {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(ActionResponse {
-                success: true,
-                error: None,
-            }),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ActionResponse {
-                success: false,
-                error: Some(e.to_string()),
-            }),
-        ),
-    }
-}
-
 /// Upload a .torrent file
+///
+/// This is the only REST endpoint for torrents - file uploads don't work well with GraphQL.
+/// Use GraphQL mutations for all other torrent operations (add magnet, pause, resume, remove).
 async fn upload_torrent_file(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -263,7 +121,9 @@ async fn upload_torrent_file(
                 Json(AddTorrentResponse {
                     success: false,
                     torrent: None,
-                    error: Some("No torrent file provided. Use field name 'file' or 'torrent'.".to_string()),
+                    error: Some(
+                        "No torrent file provided. Use field name 'file' or 'torrent'.".to_string(),
+                    ),
                 }),
             );
         }
@@ -291,10 +151,5 @@ async fn upload_torrent_file(
 }
 
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/torrents", get(list_torrents).post(add_torrent))
-        .route("/torrents/upload", post(upload_torrent_file))
-        .route("/torrents/{id}", get(get_torrent).delete(remove_torrent))
-        .route("/torrents/{id}/pause", post(pause_torrent))
-        .route("/torrents/{id}/resume", post(resume_torrent))
+    Router::new().route("/torrents/upload", post(upload_torrent_file))
 }

@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router'
-import { Card, CardBody } from '@heroui/react'
-import type { MediaItem } from '../lib/api'
+import { Card } from '@heroui/react'
+import type { MediaItem } from '../lib/graphql'
 
 interface MediaCardProps {
   media: MediaItem
@@ -15,16 +15,16 @@ export function MediaCard({ media }: MediaCardProps) {
       >
         {/* Poster */}
         <div className="aspect-[2/3] bg-content2 relative">
-          {media.poster_url ? (
+          {media.posterUrl ? (
             <img
-              src={media.poster_url}
+              src={media.posterUrl}
               alt={media.title}
               className="w-full h-full object-cover"
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center">
               <span className="text-default-500 text-4xl">
-                {media.media_type === 'movie' ? '🎬' : '📺'}
+                {media.mediaType === 'movie' ? '🎬' : '📺'}
               </span>
             </div>
           )}

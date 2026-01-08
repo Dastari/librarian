@@ -673,6 +673,396 @@ pub struct SettingsResult {
     pub error: Option<String>,
 }
 
+// ============================================================================
+// TV Show Types
+// ============================================================================
+
+/// TV Show status
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum TvShowStatus {
+    Continuing,
+    Ended,
+    Upcoming,
+    Cancelled,
+    Unknown,
+}
+
+/// Monitor type for shows
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum MonitorType {
+    /// Monitor all episodes (past and future)
+    All,
+    /// Only monitor future episodes
+    Future,
+    /// Don't monitor (track but don't download)
+    None,
+}
+
+/// A TV show in a library
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct TvShow {
+    pub id: String,
+    pub library_id: String,
+    pub name: String,
+    pub sort_name: Option<String>,
+    pub year: Option<i32>,
+    pub status: TvShowStatus,
+    pub tvmaze_id: Option<i32>,
+    pub tmdb_id: Option<i32>,
+    pub tvdb_id: Option<i32>,
+    pub imdb_id: Option<String>,
+    pub overview: Option<String>,
+    pub network: Option<String>,
+    pub runtime: Option<i32>,
+    pub genres: Vec<String>,
+    pub poster_url: Option<String>,
+    pub backdrop_url: Option<String>,
+    pub monitored: bool,
+    pub monitor_type: MonitorType,
+    pub quality_profile_id: Option<String>,
+    pub path: Option<String>,
+    pub episode_count: i32,
+    pub episode_file_count: i32,
+    pub size_bytes: i64,
+}
+
+/// TV show search result from metadata providers
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct TvShowSearchResult {
+    pub provider: String,
+    pub provider_id: i32,
+    pub name: String,
+    pub year: Option<i32>,
+    pub status: Option<String>,
+    pub network: Option<String>,
+    pub overview: Option<String>,
+    pub poster_url: Option<String>,
+    pub tvdb_id: Option<i32>,
+    pub imdb_id: Option<String>,
+    pub score: f64,
+}
+
+/// Input for adding a TV show to a library
+#[derive(Debug, InputObject)]
+pub struct AddTvShowInput {
+    /// Metadata provider to use
+    pub provider: String,
+    /// Provider-specific ID (e.g., TVMaze ID)
+    pub provider_id: i32,
+    /// Monitor type
+    pub monitor_type: Option<MonitorType>,
+    /// Quality profile to use (null = library default)
+    pub quality_profile_id: Option<String>,
+    /// Custom path within the library
+    pub path: Option<String>,
+}
+
+/// Input for updating a TV show
+#[derive(Debug, InputObject)]
+pub struct UpdateTvShowInput {
+    pub monitored: Option<bool>,
+    pub monitor_type: Option<MonitorType>,
+    pub quality_profile_id: Option<String>,
+    pub path: Option<String>,
+}
+
+/// Result of TV show mutation
+#[derive(Debug, SimpleObject)]
+pub struct TvShowResult {
+    pub success: bool,
+    pub tv_show: Option<TvShow>,
+    pub error: Option<String>,
+}
+
+// ============================================================================
+// Episode Types
+// ============================================================================
+
+/// Episode status
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum EpisodeStatus {
+    /// Episode hasn't aired yet
+    Missing,
+    /// Episode should be downloaded
+    Wanted,
+    /// Currently downloading
+    Downloading,
+    /// Episode is downloaded
+    Downloaded,
+    /// Manually ignored
+    Ignored,
+}
+
+/// An episode of a TV show
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct Episode {
+    pub id: String,
+    pub tv_show_id: String,
+    pub season: i32,
+    pub episode: i32,
+    pub absolute_number: Option<i32>,
+    pub title: Option<String>,
+    pub overview: Option<String>,
+    pub air_date: Option<String>,
+    pub runtime: Option<i32>,
+    pub status: EpisodeStatus,
+    pub tvmaze_id: Option<i32>,
+    pub tmdb_id: Option<i32>,
+    pub tvdb_id: Option<i32>,
+}
+
+/// Episode with show information (for wanted list)
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct WantedEpisode {
+    pub episode: Episode,
+    pub show_name: String,
+    pub show_year: Option<i32>,
+}
+
+// ============================================================================
+// Quality Profile Types
+// ============================================================================
+
+/// A quality profile for downloads
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct QualityProfile {
+    pub id: String,
+    pub name: String,
+    pub preferred_resolution: Option<String>,
+    pub min_resolution: Option<String>,
+    pub preferred_codec: Option<String>,
+    pub preferred_audio: Option<String>,
+    pub require_hdr: bool,
+    pub hdr_types: Vec<String>,
+    pub preferred_language: Option<String>,
+    pub max_size_gb: Option<f64>,
+    pub min_seeders: Option<i32>,
+    pub release_group_whitelist: Vec<String>,
+    pub release_group_blacklist: Vec<String>,
+    pub upgrade_until: Option<String>,
+}
+
+/// Input for creating a quality profile
+#[derive(Debug, InputObject)]
+pub struct CreateQualityProfileInput {
+    pub name: String,
+    pub preferred_resolution: Option<String>,
+    pub min_resolution: Option<String>,
+    pub preferred_codec: Option<String>,
+    pub preferred_audio: Option<String>,
+    pub require_hdr: Option<bool>,
+    pub hdr_types: Option<Vec<String>>,
+    pub preferred_language: Option<String>,
+    pub max_size_gb: Option<f64>,
+    pub min_seeders: Option<i32>,
+    pub release_group_whitelist: Option<Vec<String>>,
+    pub release_group_blacklist: Option<Vec<String>>,
+    pub upgrade_until: Option<String>,
+}
+
+/// Input for updating a quality profile
+#[derive(Debug, InputObject)]
+pub struct UpdateQualityProfileInput {
+    pub name: Option<String>,
+    pub preferred_resolution: Option<String>,
+    pub min_resolution: Option<String>,
+    pub preferred_codec: Option<String>,
+    pub preferred_audio: Option<String>,
+    pub require_hdr: Option<bool>,
+    pub hdr_types: Option<Vec<String>>,
+    pub preferred_language: Option<String>,
+    pub max_size_gb: Option<f64>,
+    pub min_seeders: Option<i32>,
+    pub release_group_whitelist: Option<Vec<String>>,
+    pub release_group_blacklist: Option<Vec<String>>,
+    pub upgrade_until: Option<String>,
+}
+
+/// Result of quality profile mutation
+#[derive(Debug, SimpleObject)]
+pub struct QualityProfileResult {
+    pub success: bool,
+    pub quality_profile: Option<QualityProfile>,
+    pub error: Option<String>,
+}
+
+// ============================================================================
+// RSS Feed Types
+// ============================================================================
+
+/// An RSS feed for torrent releases
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct RssFeed {
+    pub id: String,
+    pub library_id: Option<String>,
+    pub name: String,
+    pub url: String,
+    pub enabled: bool,
+    pub poll_interval_minutes: i32,
+    pub last_polled_at: Option<String>,
+    pub last_successful_at: Option<String>,
+    pub last_error: Option<String>,
+    pub consecutive_failures: i32,
+}
+
+/// Input for creating an RSS feed
+#[derive(Debug, InputObject)]
+pub struct CreateRssFeedInput {
+    pub library_id: Option<String>,
+    pub name: String,
+    pub url: String,
+    pub enabled: Option<bool>,
+    pub poll_interval_minutes: Option<i32>,
+}
+
+/// Input for updating an RSS feed
+#[derive(Debug, InputObject)]
+pub struct UpdateRssFeedInput {
+    pub library_id: Option<String>,
+    pub name: Option<String>,
+    pub url: Option<String>,
+    pub enabled: Option<bool>,
+    pub poll_interval_minutes: Option<i32>,
+}
+
+/// Result of RSS feed mutation
+#[derive(Debug, SimpleObject)]
+pub struct RssFeedResult {
+    pub success: bool,
+    pub rss_feed: Option<RssFeed>,
+    pub error: Option<String>,
+}
+
+/// Result of testing an RSS feed
+#[derive(Debug, SimpleObject)]
+pub struct RssFeedTestResult {
+    pub success: bool,
+    pub item_count: i32,
+    pub sample_items: Vec<RssItem>,
+    pub error: Option<String>,
+}
+
+/// An RSS feed item
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct RssItem {
+    pub title: String,
+    pub link: String,
+    pub pub_date: Option<String>,
+    pub description: Option<String>,
+    pub parsed_show_name: Option<String>,
+    pub parsed_season: Option<i32>,
+    pub parsed_episode: Option<i32>,
+    pub parsed_resolution: Option<String>,
+    pub parsed_codec: Option<String>,
+}
+
+// ============================================================================
+// Parse and Identify Types
+// ============================================================================
+
+/// Parsed episode information from a filename
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct ParsedEpisodeInfo {
+    pub original_title: String,
+    pub show_name: Option<String>,
+    pub season: Option<i32>,
+    pub episode: Option<i32>,
+    pub year: Option<i32>,
+    pub date: Option<String>,
+    pub resolution: Option<String>,
+    pub source: Option<String>,
+    pub codec: Option<String>,
+    pub hdr: Option<String>,
+    pub audio: Option<String>,
+    pub release_group: Option<String>,
+    pub is_proper: bool,
+    pub is_repack: bool,
+}
+
+/// Result of parsing and identifying media
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct ParseAndIdentifyMediaResult {
+    pub parsed: ParsedEpisodeInfo,
+    pub matches: Vec<TvShowSearchResult>,
+}
+
+// ============================================================================
+// Enhanced Library Types
+// ============================================================================
+
+/// Post-download action
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum PostDownloadAction {
+    /// Copy files (preserves seeding)
+    Copy,
+    /// Move files (stops seeding)
+    Move,
+    /// Hardlink files (same disk only)
+    Hardlink,
+}
+
+/// Enhanced library with additional fields
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct LibraryFull {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub library_type: LibraryType,
+    pub icon: String,
+    pub color: String,
+    pub auto_scan: bool,
+    pub scan_interval_minutes: i32,
+    pub watch_for_changes: bool,
+    pub post_download_action: PostDownloadAction,
+    pub auto_rename: bool,
+    pub naming_pattern: Option<String>,
+    pub default_quality_profile_id: Option<String>,
+    pub auto_add_discovered: bool,
+    pub item_count: i32,
+    pub total_size_bytes: i64,
+    pub show_count: i32,
+    pub last_scanned_at: Option<String>,
+}
+
+/// Enhanced input for creating a library
+#[derive(Debug, InputObject)]
+pub struct CreateLibraryFullInput {
+    pub name: String,
+    pub path: String,
+    pub library_type: LibraryType,
+    pub icon: Option<String>,
+    pub color: Option<String>,
+    pub auto_scan: Option<bool>,
+    pub scan_interval_minutes: Option<i32>,
+    pub watch_for_changes: Option<bool>,
+    pub post_download_action: Option<PostDownloadAction>,
+    pub auto_rename: Option<bool>,
+    pub naming_pattern: Option<String>,
+    pub default_quality_profile_id: Option<String>,
+    pub auto_add_discovered: Option<bool>,
+}
+
+/// Enhanced input for updating a library
+#[derive(Debug, InputObject)]
+pub struct UpdateLibraryFullInput {
+    pub name: Option<String>,
+    pub path: Option<String>,
+    pub icon: Option<String>,
+    pub color: Option<String>,
+    pub auto_scan: Option<bool>,
+    pub scan_interval_minutes: Option<i32>,
+    pub watch_for_changes: Option<bool>,
+    pub post_download_action: Option<PostDownloadAction>,
+    pub auto_rename: Option<bool>,
+    pub naming_pattern: Option<String>,
+    pub default_quality_profile_id: Option<String>,
+    pub auto_add_discovered: Option<bool>,
+}
+
 /// Format bytes as human-readable string
 fn format_bytes(bytes: u64) -> String {
     const KB: u64 = 1024;

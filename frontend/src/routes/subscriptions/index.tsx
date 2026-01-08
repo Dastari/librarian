@@ -9,7 +9,7 @@ import {
   Chip,
   Divider,
 } from '@heroui/react'
-import type { Subscription } from '../../lib/api'
+import type { Subscription } from '../../lib/graphql'
 
 export const Route = createFileRoute('/subscriptions/')({
   beforeLoad: ({ context }) => {
@@ -24,10 +24,13 @@ export const Route = createFileRoute('/subscriptions/')({
 const mockSubscriptions: Subscription[] = [
   {
     id: '1',
-    show_name: 'Example Show',
-    tvdb_id: 12345,
-    quality_profile_id: 'default',
+    name: 'Example Show',
+    tvdbId: 12345,
+    tmdbId: null,
+    qualityProfileId: 'default',
     monitored: true,
+    lastCheckedAt: null,
+    episodeCount: 0,
   },
 ]
 
@@ -37,8 +40,8 @@ function SubscriptionCard({ subscription }: { subscription: Subscription }) {
       <CardBody>
         <div className="flex items-start justify-between mb-3">
           <div>
-            <h3 className="font-semibold text-foreground">{subscription.show_name}</h3>
-            <p className="text-default-500 text-sm">TVDB: {subscription.tvdb_id}</p>
+            <h3 className="font-semibold text-foreground">{subscription.name}</h3>
+            <p className="text-default-500 text-sm">TVDB: {subscription.tvdbId}</p>
           </div>
           <Chip
             size="sm"
@@ -66,7 +69,7 @@ function SubscriptionsPage() {
   const [searchQuery, setSearchQuery] = useState('')
 
   const filteredSubscriptions = mockSubscriptions.filter((sub) =>
-    sub.show_name.toLowerCase().includes(searchQuery.toLowerCase())
+    sub.name.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
   return (

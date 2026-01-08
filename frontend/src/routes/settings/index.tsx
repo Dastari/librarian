@@ -7,7 +7,6 @@ import {
   CardHeader,
   Input,
   Switch,
-  Spinner,
   Divider,
 } from '@heroui/react'
 import {
@@ -19,6 +18,7 @@ import {
 } from '../../lib/graphql'
 import { useAuth } from '../../hooks/useAuth'
 import { FolderBrowserInput } from '../../components/FolderBrowserInput'
+import { SettingsLayout } from '../../components/SettingsLayout'
 
 export const Route = createFileRoute('/settings/')({
   beforeLoad: ({ context }) => {
@@ -63,7 +63,7 @@ function SettingsPage() {
 
   const fetchSettings = useCallback(async () => {
     try {
-      const result = await graphqlClient.query(TORRENT_SETTINGS_QUERY, {}).toPromise()
+      const result = await graphqlClient.query<{ torrentSettings: TorrentSettings }>(TORRENT_SETTINGS_QUERY, {}).toPromise()
       if (result.data?.torrentSettings) {
         const s = result.data.torrentSettings
         setSettings(s)
@@ -139,20 +139,8 @@ function SettingsPage() {
     return `${bytesPerSec} B/s`
   }
 
-  if (isLoading) {
-    return (
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex justify-center items-center py-20">
-          <Spinner size="lg" />
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <h1 className="text-2xl font-bold mb-6">Settings</h1>
-
+    <SettingsLayout isLoading={isLoading}>
       {error && (
         <Card className="bg-danger-50 border-danger mb-6">
           <CardBody>
@@ -287,7 +275,6 @@ function SettingsPage() {
           Save Settings
         </Button>
       </div>
-
-    </div>
+    </SettingsLayout>
   )
 }

@@ -1,9 +1,26 @@
 import { createFileRoute, Link, redirect } from '@tanstack/react-router'
-import { useState } from 'react'
-import { Button, Card, CardBody, CardHeader, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Input, Select, SelectItem, Switch, useDisclosure, Chip, Spinner, Divider } from '@heroui/react'
+import { useState, useEffect, useCallback } from 'react'
+import {
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  useDisclosure,
+  Spinner,
+  Divider,
+  addToast,
+} from '@heroui/react'
 import { useAuth } from '../../hooks/useAuth'
-import { LIBRARY_TYPES, type Library, type LibraryType, type CreateLibraryRequest } from '../../lib/api'
-import { FolderBrowserInput } from '../../components/FolderBrowserInput'
+import { LibraryCard, AddLibraryModal } from '../../components/library'
+import {
+  graphqlClient,
+  LIBRARIES_QUERY,
+  CREATE_LIBRARY_MUTATION,
+  SCAN_LIBRARY_MUTATION,
+  DELETE_LIBRARY_MUTATION,
+  type Library,
+  type CreateLibraryInput,
+} from '../../lib/graphql'
 
 export const Route = createFileRoute('/libraries/')({
   beforeLoad: ({ context }) => {
@@ -14,233 +31,47 @@ export const Route = createFileRoute('/libraries/')({
   component: LibrariesPage,
 })
 
-// Mock data for display
-const mockLibraries: Library[] = [
-  {
-    id: '1',
-    name: 'Movies',
-    path: '/data/media/Movies',
-    library_type: 'movies',
-    icon: 'film',
-    color: 'purple',
-    auto_scan: true,
-    scan_interval_hours: 24,
-    last_scanned_at: null,
-    file_count: 142,
-    total_size_bytes: 856000000000,
-  },
-  {
-    id: '2',
-    name: 'TV Shows',
-    path: '/data/media/TV',
-    library_type: 'tv',
-    icon: 'tv',
-    color: 'blue',
-    auto_scan: true,
-    scan_interval_hours: 6,
-    last_scanned_at: '2026-01-08T12:00:00Z',
-    file_count: 1247,
-    total_size_bytes: 2340000000000,
-  },
-]
-
-function formatBytes(bytes: number | null): string {
-  if (!bytes) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let unitIndex = 0
-  let size = bytes
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024
-    unitIndex++
-  }
-  return `${size.toFixed(1)} ${units[unitIndex]}`
-}
-
-function LibraryCard({ library, onScan, onEdit }: { library: Library; onScan: () => void; onEdit: () => void }) {
-  const typeInfo = LIBRARY_TYPES.find(t => t.value === library.library_type) || LIBRARY_TYPES[4]
-  
-  return (
-    <Card className="bg-content1">
-      <CardHeader className="flex justify-between items-start">
-        <div className="flex items-center gap-3">
-          <span className="text-3xl">{typeInfo.icon}</span>
-          <div>
-            <h3 className="text-lg font-semibold">{library.name}</h3>
-            <p className="text-default-500 text-sm">{typeInfo.label}</p>
-          </div>
-        </div>
-        <Chip size="sm" color={library.auto_scan ? 'success' : 'default'} variant="flat">
-          {library.auto_scan ? 'Auto-scan' : 'Manual'}
-        </Chip>
-      </CardHeader>
-      <CardBody className="pt-0">
-        <div className="space-y-3">
-          <div className="text-sm">
-            <span className="text-default-500">Path:</span>
-            <span className="ml-2 text-default-400 font-mono text-xs">{library.path}</span>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <span className="text-default-500">Files:</span>
-              <span className="ml-2">{library.file_count ?? 0}</span>
-            </div>
-            <div>
-              <span className="text-default-500">Size:</span>
-              <span className="ml-2">{formatBytes(library.total_size_bytes)}</span>
-            </div>
-          </div>
-
-          {library.last_scanned_at && (
-            <div className="text-sm">
-              <span className="text-default-500">Last scan:</span>
-              <span className="ml-2 text-default-400">
-                {new Date(library.last_scanned_at).toLocaleString()}
-              </span>
-            </div>
-          )}
-
-          <div className="flex gap-2 pt-2">
-            <Button 
-              size="sm" 
-              color="primary" 
-              variant="flat"
-              onPress={onScan}
-            >
-              Scan Now
-            </Button>
-            <Button 
-              size="sm" 
-              variant="flat"
-              onPress={onEdit}
-            >
-              Settings
-            </Button>
-            <Link
-              to="/"
-              className="flex-1"
-            >
-              <Button 
-                size="sm" 
-                variant="flat"
-                className="w-full"
-              >
-                Browse
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </CardBody>
-    </Card>
-  )
-}
-
-function AddLibraryModal({ isOpen, onClose, onAdd }: { 
-  isOpen: boolean
-  onClose: () => void
-  onAdd: (library: CreateLibraryRequest) => void 
-}) {
-  const [name, setName] = useState('')
-  const [path, setPath] = useState('')
-  const [libraryType, setLibraryType] = useState<LibraryType>('movies')
-  const [autoScan, setAutoScan] = useState(true)
-  const [scanInterval, setScanInterval] = useState(24)
-
-  const handleSubmit = () => {
-    if (!name || !path) return
-    onAdd({
-      name,
-      path,
-      library_type: libraryType,
-      auto_scan: autoScan,
-      scan_interval_hours: scanInterval,
-    })
-    // Reset form
-    setName('')
-    setPath('')
-    setLibraryType('movies')
-    setAutoScan(true)
-    setScanInterval(24)
-    onClose()
-  }
-
-  return (
-    <Modal isOpen={isOpen} onClose={onClose} className="dark">
-      <ModalContent>
-        <ModalHeader>Add Library</ModalHeader>
-        <ModalBody>
-          <div className="space-y-4">
-            <Input
-              label="Library Name"
-              placeholder="e.g., Movies, TV Shows"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-            
-            <FolderBrowserInput
-              label="Path"
-              value={path}
-              onChange={setPath}
-              placeholder="/data/media/Movies"
-              description="Full path to the media folder"
-              modalTitle="Select Library Folder"
-            />
-
-            <Select
-              label="Library Type"
-              selectedKeys={[libraryType]}
-              onChange={(e) => setLibraryType(e.target.value as LibraryType)}
-            >
-              {LIBRARY_TYPES.map((type) => (
-                <SelectItem key={type.value} textValue={type.label}>
-                  <span className="mr-2">{type.icon}</span>
-                  {type.label}
-                </SelectItem>
-              ))}
-            </Select>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium">Auto-scan</p>
-                <p className="text-xs text-default-500">Automatically scan for new files</p>
-              </div>
-              <Switch 
-                isSelected={autoScan} 
-                onValueChange={setAutoScan}
-              />
-            </div>
-
-            {autoScan && (
-              <Input
-                type="number"
-                label="Scan Interval (hours)"
-                value={scanInterval.toString()}
-                onChange={(e) => setScanInterval(parseInt(e.target.value) || 24)}
-                min={1}
-                max={168}
-              />
-            )}
-          </div>
-        </ModalBody>
-        <ModalFooter>
-          <Button variant="flat" onPress={onClose}>
-            Cancel
-          </Button>
-          <Button color="primary" onPress={handleSubmit} isDisabled={!name || !path}>
-            Add Library
-          </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
-  )
-}
-
 function LibrariesPage() {
-  const { user, loading } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const { isOpen, onOpen, onClose } = useDisclosure()
-  const [libraries, setLibraries] = useState<Library[]>(mockLibraries)
+  const [libraries, setLibraries] = useState<Library[]>([])
+  const [loading, setLoading] = useState(true)
+  const [actionLoading, setActionLoading] = useState(false)
 
-  if (loading) {
+  const fetchLibraries = useCallback(async () => {
+    try {
+      setLoading(true)
+      const { data, error } = await graphqlClient
+        .query<{ libraries: Library[] }>(LIBRARIES_QUERY)
+        .toPromise()
+
+      if (error) {
+        console.error('Failed to fetch libraries:', error)
+        addToast({
+          title: 'Error',
+          description: 'Failed to load libraries',
+          color: 'danger',
+        })
+        return
+      }
+
+      if (data?.libraries) {
+        setLibraries(data.libraries)
+      }
+    } catch (err) {
+      console.error('Failed to fetch libraries:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (user) {
+      fetchLibraries()
+    }
+  }, [user, fetchLibraries])
+
+  if (authLoading || loading) {
     return (
       <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
         <Spinner size="lg" color="primary" />
@@ -259,32 +90,118 @@ function LibrariesPage() {
     )
   }
 
-  const handleAddLibrary = (data: CreateLibraryRequest) => {
-    // TODO: Call API
-    const newLibrary: Library = {
-      id: crypto.randomUUID(),
-      ...data,
-      icon: LIBRARY_TYPES.find(t => t.value === data.library_type)?.icon || '📁',
-      color: LIBRARY_TYPES.find(t => t.value === data.library_type)?.color || 'slate',
-      auto_scan: data.auto_scan ?? true,
-      scan_interval_hours: data.scan_interval_hours ?? 24,
-      last_scanned_at: null,
-      file_count: 0,
-      total_size_bytes: 0,
+  const handleAddLibrary = async (input: CreateLibraryInput) => {
+    try {
+      setActionLoading(true)
+      const { data, error } = await graphqlClient
+        .mutation<{
+          createLibrary: {
+            success: boolean
+            library: Library | null
+            error: string | null
+          }
+        }>(CREATE_LIBRARY_MUTATION, { input })
+        .toPromise()
+
+      if (error || !data?.createLibrary.success) {
+        const errorMsg = data?.createLibrary.error || error?.message || 'Unknown error'
+        addToast({
+          title: 'Error',
+          description: `Failed to create library: ${errorMsg}`,
+          color: 'danger',
+        })
+        return
+      }
+
+      addToast({
+        title: 'Success',
+        description: `Library "${input.name}" created`,
+        color: 'success',
+      })
+
+      // Refresh libraries
+      await fetchLibraries()
+    } catch (err) {
+      console.error('Failed to create library:', err)
+      addToast({
+        title: 'Error',
+        description: 'Failed to create library',
+        color: 'danger',
+      })
+    } finally {
+      setActionLoading(false)
     }
-    setLibraries([...libraries, newLibrary])
   }
 
-  const handleScan = (libraryId: string) => {
-    // TODO: Call API
-    console.log('Scanning library:', libraryId)
-    alert(`Scan started for library ${libraryId}`)
+  const handleScan = async (libraryId: string, libraryName: string) => {
+    try {
+      const { data, error } = await graphqlClient
+        .mutation<{
+          scanLibrary: { status: string; message: string | null }
+        }>(SCAN_LIBRARY_MUTATION, { id: libraryId })
+        .toPromise()
+
+      if (error) {
+        addToast({
+          title: 'Error',
+          description: `Failed to start scan: ${error.message}`,
+          color: 'danger',
+        })
+        return
+      }
+
+      addToast({
+        title: 'Scan Started',
+        description: data?.scanLibrary.message || `Scanning ${libraryName}...`,
+        color: 'primary',
+      })
+    } catch (err) {
+      console.error('Failed to scan library:', err)
+    }
+  }
+
+  const handleDelete = async (libraryId: string, libraryName: string) => {
+    if (!confirm(`Are you sure you want to delete "${libraryName}"? This cannot be undone.`)) {
+      return
+    }
+
+    try {
+      const { data, error } = await graphqlClient
+        .mutation<{
+          deleteLibrary: { success: boolean; error: string | null }
+        }>(DELETE_LIBRARY_MUTATION, { id: libraryId })
+        .toPromise()
+
+      if (error || !data?.deleteLibrary.success) {
+        addToast({
+          title: 'Error',
+          description: data?.deleteLibrary.error || 'Failed to delete library',
+          color: 'danger',
+        })
+        return
+      }
+
+      addToast({
+        title: 'Deleted',
+        description: `Library "${libraryName}" deleted`,
+        color: 'success',
+      })
+
+      // Refresh libraries
+      await fetchLibraries()
+    } catch (err) {
+      console.error('Failed to delete library:', err)
+    }
   }
 
   const handleEdit = (libraryId: string) => {
     // TODO: Open edit modal
     console.log('Editing library:', libraryId)
-    alert(`Edit library ${libraryId} - coming soon!`)
+    addToast({
+      title: 'Coming Soon',
+      description: 'Library settings editor coming soon!',
+      color: 'warning',
+    })
   }
 
   return (
@@ -318,8 +235,9 @@ function LibrariesPage() {
             <LibraryCard
               key={library.id}
               library={library}
-              onScan={() => handleScan(library.id)}
+              onScan={() => handleScan(library.id, library.name)}
               onEdit={() => handleEdit(library.id)}
+              onDelete={() => handleDelete(library.id, library.name)}
             />
           ))}
         </div>
@@ -329,6 +247,7 @@ function LibrariesPage() {
         isOpen={isOpen}
         onClose={onClose}
         onAdd={handleAddLibrary}
+        isLoading={actionLoading}
       />
 
       {/* Info section */}
@@ -339,11 +258,26 @@ function LibrariesPage() {
         <Divider />
         <CardBody>
           <ul className="text-default-500 text-sm space-y-1">
-            <li>• <strong>Movies</strong> - Feature films, organized by title and year</li>
-            <li>• <strong>TV Shows</strong> - Series organized by show, season, and episode</li>
-            <li>• <strong>Music</strong> - Albums and tracks (coming soon)</li>
-            <li>• <strong>Audiobooks</strong> - Audio books organized by author and title (coming soon)</li>
+            <li>
+              • <strong>TV Shows</strong> - Series organized by show, season, and
+              episode with automatic episode tracking
+            </li>
+            <li>
+              • <strong>Movies</strong> - Feature films, organized by title and
+              year
+            </li>
+            <li>
+              • <strong>Music</strong> - Albums and tracks (coming soon)
+            </li>
+            <li>
+              • <strong>Audiobooks</strong> - Audio books organized by author and
+              title (coming soon)
+            </li>
             <li>• Each library can have its own scan schedule and settings</li>
+            <li>
+              • TV libraries support automatic episode tracking via metadata
+              providers
+            </li>
           </ul>
         </CardBody>
       </Card>
