@@ -28,7 +28,7 @@ Librarian is a local-first, privacy-preserving media library that runs on a sing
 |-----------|------------|
 | **Frontend** | TanStack Start, TypeScript, HeroUI + Tailwind CSS, pnpm |
 | **Backend** | Rust (Axum + Tokio), `sqlx` (Postgres), job scheduling |
-| **API** | REST + GraphQL with subscriptions (async-graphql) |
+| **API** | GraphQL with subscriptions (async-graphql) |
 | **Identity & DB** | Supabase (Auth, Postgres with RLS, Storage) - local Docker |
 | **Torrent Engine** | librqbit (native Rust, embedded) with DHT, PEX, magnet support |
 | **Indexers** | Prowlarr (recommended) or Jackett as Torznab aggregator |
@@ -49,7 +49,7 @@ librarian/
 │   └── supabase-docker/       # Cloned Supabase Docker setup
 ├── backend/                   # Rust Axum API service
 │   ├── src/
-│   │   ├── api/               # REST HTTP handlers
+│   │   ├── api/               # REST endpoints (file upload, filesystem only)
 │   │   ├── auth/              # JWT verification
 │   │   ├── config/            # Configuration
 │   │   ├── db/                # Database connection
@@ -171,6 +171,9 @@ The backend exposes a single **GraphQL API** for all operations, with WebSocket 
 | `/readyz` | Readiness check with DB (REST) |
 | `/graphql` | GraphQL API (GET for playground, POST for operations) |
 | `/graphql/ws` | WebSocket endpoint for GraphQL subscriptions |
+| `/api/torrents/upload` | Torrent file upload (REST - multipart form) |
+| `/api/filesystem/browse` | Filesystem browser (REST) |
+| `/api/filesystem/mkdir` | Create directory (REST) |
 
 #### Authentication
 

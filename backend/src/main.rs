@@ -31,7 +31,10 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use crate::config::Config;
 use crate::db::Database;
 use crate::graphql::{verify_token, AuthUser, LibrarianSchema};
-use crate::services::{TorrentService, TorrentServiceConfig};
+use crate::services::{
+    create_metadata_service_with_artwork, create_scanner_service, ArtworkService,
+    MetadataServiceConfig, ScannerService, StorageClient, TorrentService, TorrentServiceConfig,
+};
 
 /// Application state shared across all handlers
 #[derive(Clone)]
@@ -40,6 +43,7 @@ pub struct AppState {
     pub db: Database,
     pub schema: LibrarianSchema,
     pub torrent_service: Arc<TorrentService>,
+    pub scanner_service: Arc<ScannerService>,
 }
 
 #[tokio::main]
@@ -77,9 +81,43 @@ async fn main() -> anyhow::Result<()> {
     let torrent_service = Arc::new(TorrentService::new(torrent_config, db.clone()).await?);
     tracing::info!("Torrent service initialized with database persistence");
 
+    // Initialize Supabase storage client for artwork caching
+    let storage_client = StorageClient::new(
+        config.supabase_url.clone(),
+        config.supabase_service_key.clone(),
+    );
+    let artwork_service = Arc::new(ArtworkService::new(storage_client));
+    tracing::info!("Artwork service initialized");
+
+    // Initialize metadata service with artwork caching
+    let metadata_config = MetadataServiceConfig {
+        tmdb_api_key: std::env::var("TMDB_API_KEY").ok(),
+        tvdb_api_key: std::env::var("TVDB_API_KEY").ok(),
+        openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
+    };
+    let metadata_service = create_metadata_service_with_artwork(
+        db.clone(),
+        metadata_config,
+        artwork_service,
+    );
+    tracing::info!("Metadata service initialized with artwork caching");
+
+    // Initialize scanner service (needs metadata service for auto-discovery)
+    let scanner_service = create_scanner_service(db.clone(), metadata_service.clone());
+    tracing::info!("Scanner service initialized");
+
     // Build GraphQL schema
-    let schema = graphql::build_schema(torrent_service.clone(), db.clone());
+    let schema = graphql::build_schema(
+        torrent_service.clone(),
+        metadata_service,
+        scanner_service.clone(),
+        db.clone(),
+    );
     tracing::info!("GraphQL schema built");
+
+    // Start job scheduler
+    let _scheduler = jobs::start_scheduler(scanner_service.clone()).await?;
+    tracing::info!("Job scheduler started");
 
     // Build application state
     let state = AppState {
@@ -87,6 +125,7 @@ async fn main() -> anyhow::Result<()> {
         db,
         schema,
         torrent_service,
+        scanner_service,
     };
 
     // Build router - GraphQL is the primary API

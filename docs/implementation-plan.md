@@ -31,11 +31,11 @@
    - `/graphql` → GraphQL API (single API surface)
    - Supabase accessed directly from frontend for auth
 6. **Torrent Client**: Changed from qBittorrent to **librqbit** (native Rust, embedded)
-7. **API Architecture**: **GraphQL-only API** with subscriptions (async-graphql)
+7. **API Architecture**: **GraphQL-first API** with subscriptions (async-graphql)
    - Single endpoint for all operations: `/graphql`
    - WebSocket subscriptions: `/graphql/ws`
    - Centralized auth via JWT verification in GraphQL context
-   - No REST API (except health endpoints)
+   - REST only for: health checks, torrent file uploads (multipart), filesystem browsing
 8. **Metadata Providers**: TVMaze (primary, free) → TMDB → TheTVDB
 9. **Indexers**: RSS feeds first, Prowlarr/search engines later
 10. **Post-Download**: Copy by default (preserves seeding), Move optional

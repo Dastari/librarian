@@ -14,7 +14,10 @@ import { Route as SubscriptionsIndexRouteImport } from './routes/subscriptions/i
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as LibrariesIndexRouteImport } from './routes/libraries/index'
 import { Route as DownloadsIndexRouteImport } from './routes/downloads/index'
+import { Route as ShowsShowIdRouteImport } from './routes/shows/$showId'
+import { Route as SettingsMetadataRouteImport } from './routes/settings/metadata'
 import { Route as LibraryMediaIdRouteImport } from './routes/library/$mediaId'
+import { Route as LibrariesLibraryIdRouteImport } from './routes/libraries/$libraryId'
 import { Route as AuthLoginRouteImport } from './routes/auth/login'
 
 const IndexRoute = IndexRouteImport.update({
@@ -42,9 +45,24 @@ const DownloadsIndexRoute = DownloadsIndexRouteImport.update({
   path: '/downloads/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ShowsShowIdRoute = ShowsShowIdRouteImport.update({
+  id: '/shows/$showId',
+  path: '/shows/$showId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsMetadataRoute = SettingsMetadataRouteImport.update({
+  id: '/settings/metadata',
+  path: '/settings/metadata',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LibraryMediaIdRoute = LibraryMediaIdRouteImport.update({
   id: '/library/$mediaId',
   path: '/library/$mediaId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LibrariesLibraryIdRoute = LibrariesLibraryIdRouteImport.update({
+  id: '/libraries/$libraryId',
+  path: '/libraries/$libraryId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthLoginRoute = AuthLoginRouteImport.update({
@@ -56,7 +74,10 @@ const AuthLoginRoute = AuthLoginRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth/login': typeof AuthLoginRoute
+  '/libraries/$libraryId': typeof LibrariesLibraryIdRoute
   '/library/$mediaId': typeof LibraryMediaIdRoute
+  '/settings/metadata': typeof SettingsMetadataRoute
+  '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads': typeof DownloadsIndexRoute
   '/libraries': typeof LibrariesIndexRoute
   '/settings': typeof SettingsIndexRoute
@@ -65,7 +86,10 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth/login': typeof AuthLoginRoute
+  '/libraries/$libraryId': typeof LibrariesLibraryIdRoute
   '/library/$mediaId': typeof LibraryMediaIdRoute
+  '/settings/metadata': typeof SettingsMetadataRoute
+  '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads': typeof DownloadsIndexRoute
   '/libraries': typeof LibrariesIndexRoute
   '/settings': typeof SettingsIndexRoute
@@ -75,7 +99,10 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/auth/login': typeof AuthLoginRoute
+  '/libraries/$libraryId': typeof LibrariesLibraryIdRoute
   '/library/$mediaId': typeof LibraryMediaIdRoute
+  '/settings/metadata': typeof SettingsMetadataRoute
+  '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads/': typeof DownloadsIndexRoute
   '/libraries/': typeof LibrariesIndexRoute
   '/settings/': typeof SettingsIndexRoute
@@ -86,7 +113,10 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth/login'
+    | '/libraries/$libraryId'
     | '/library/$mediaId'
+    | '/settings/metadata'
+    | '/shows/$showId'
     | '/downloads'
     | '/libraries'
     | '/settings'
@@ -95,7 +125,10 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/auth/login'
+    | '/libraries/$libraryId'
     | '/library/$mediaId'
+    | '/settings/metadata'
+    | '/shows/$showId'
     | '/downloads'
     | '/libraries'
     | '/settings'
@@ -104,7 +137,10 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/auth/login'
+    | '/libraries/$libraryId'
     | '/library/$mediaId'
+    | '/settings/metadata'
+    | '/shows/$showId'
     | '/downloads/'
     | '/libraries/'
     | '/settings/'
@@ -114,7 +150,10 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthLoginRoute: typeof AuthLoginRoute
+  LibrariesLibraryIdRoute: typeof LibrariesLibraryIdRoute
   LibraryMediaIdRoute: typeof LibraryMediaIdRoute
+  SettingsMetadataRoute: typeof SettingsMetadataRoute
+  ShowsShowIdRoute: typeof ShowsShowIdRoute
   DownloadsIndexRoute: typeof DownloadsIndexRoute
   LibrariesIndexRoute: typeof LibrariesIndexRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
@@ -158,11 +197,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DownloadsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/shows/$showId': {
+      id: '/shows/$showId'
+      path: '/shows/$showId'
+      fullPath: '/shows/$showId'
+      preLoaderRoute: typeof ShowsShowIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/metadata': {
+      id: '/settings/metadata'
+      path: '/settings/metadata'
+      fullPath: '/settings/metadata'
+      preLoaderRoute: typeof SettingsMetadataRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/library/$mediaId': {
       id: '/library/$mediaId'
       path: '/library/$mediaId'
       fullPath: '/library/$mediaId'
       preLoaderRoute: typeof LibraryMediaIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/libraries/$libraryId': {
+      id: '/libraries/$libraryId'
+      path: '/libraries/$libraryId'
+      fullPath: '/libraries/$libraryId'
+      preLoaderRoute: typeof LibrariesLibraryIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth/login': {
@@ -178,7 +238,10 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthLoginRoute: AuthLoginRoute,
+  LibrariesLibraryIdRoute: LibrariesLibraryIdRoute,
   LibraryMediaIdRoute: LibraryMediaIdRoute,
+  SettingsMetadataRoute: SettingsMetadataRoute,
+  ShowsShowIdRoute: ShowsShowIdRoute,
   DownloadsIndexRoute: DownloadsIndexRoute,
   LibrariesIndexRoute: LibrariesIndexRoute,
   SettingsIndexRoute: SettingsIndexRoute,

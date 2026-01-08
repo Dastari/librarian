@@ -123,7 +123,7 @@ export function Navbar() {
                   <p className="font-semibold">Signed in as</p>
                   <p className="text-default-500">{user.email}</p>
                 </DropdownItem>
-                <DropdownItem key="settings" as={Link} to="/settings">
+                <DropdownItem key="settings" href="/settings">
                   Settings
                 </DropdownItem>
                 <DropdownItem

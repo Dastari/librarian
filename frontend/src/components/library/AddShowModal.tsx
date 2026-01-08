@@ -1,0 +1,305 @@
+import { useState } from 'react'
+import {
+  Button,
+  Card,
+  CardBody,
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+  Input,
+  Select,
+  SelectItem,
+  Chip,
+  Spinner,
+  addToast,
+  Image,
+} from '@heroui/react'
+import {
+  graphqlClient,
+  SEARCH_TV_SHOWS_QUERY,
+  ADD_TV_SHOW_MUTATION,
+  type TvShow,
+  type TvShowSearchResult,
+  type QualityProfile,
+  type MonitorType,
+} from '../../lib/graphql'
+
+export interface AddShowModalProps {
+  isOpen: boolean
+  onClose: () => void
+  libraryId: string
+  qualityProfiles: QualityProfile[]
+  onAdded: () => void
+}
+
+export function AddShowModal({
+  isOpen,
+  onClose,
+  libraryId,
+  qualityProfiles,
+  onAdded,
+}: AddShowModalProps) {
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<TvShowSearchResult[]>([])
+  const [searching, setSearching] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [selectedShow, setSelectedShow] = useState<TvShowSearchResult | null>(null)
+  const [monitorType, setMonitorType] = useState<MonitorType>('ALL')
+  const [qualityProfileId, setQualityProfileId] = useState<string>('')
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return
+
+    try {
+      setSearching(true)
+      const { data, error } = await graphqlClient
+        .query<{ searchTvShows: TvShowSearchResult[] }>(SEARCH_TV_SHOWS_QUERY, {
+          query: searchQuery,
+        })
+        .toPromise()
+
+      if (error) {
+        addToast({
+          title: 'Error',
+          description: `Search failed: ${error.message}`,
+          color: 'danger',
+        })
+        return
+      }
+
+      setSearchResults(data?.searchTvShows || [])
+    } catch (err) {
+      console.error('Search failed:', err)
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  const handleAdd = async () => {
+    if (!selectedShow) return
+
+    try {
+      setAdding(true)
+      const { data, error } = await graphqlClient
+        .mutation<{
+          addTvShow: {
+            success: boolean
+            tvShow: TvShow | null
+            error: string | null
+          }
+        }>(ADD_TV_SHOW_MUTATION, {
+          libraryId,
+          input: {
+            provider: selectedShow.provider,
+            providerId: selectedShow.providerId,
+            monitorType,
+            qualityProfileId: qualityProfileId || undefined,
+          },
+        })
+        .toPromise()
+
+      if (error || !data?.addTvShow.success) {
+        addToast({
+          title: 'Error',
+          description: data?.addTvShow.error || 'Failed to add show',
+          color: 'danger',
+        })
+        return
+      }
+
+      addToast({
+        title: 'Success',
+        description: `Added "${selectedShow.name}" to library`,
+        color: 'success',
+      })
+
+      // Reset and close
+      setSearchQuery('')
+      setSearchResults([])
+      setSelectedShow(null)
+      onClose()
+      onAdded()
+    } catch (err) {
+      console.error('Failed to add show:', err)
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} className="dark" size="2xl">
+      <ModalContent>
+        <ModalHeader>Add TV Show</ModalHeader>
+        <ModalBody>
+          {!selectedShow ? (
+            <div className="space-y-4">
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Search for a TV show..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                  className="flex-1"
+                />
+                <Button
+                  color="primary"
+                  onPress={handleSearch}
+                  isLoading={searching}
+                >
+                  Search
+                </Button>
+              </div>
+
+              {searching ? (
+                <div className="flex justify-center py-8">
+                  <Spinner size="lg" />
+                </div>
+              ) : searchResults.length > 0 ? (
+                <div className="space-y-2 max-h-96 overflow-auto">
+                  {searchResults.map((result) => (
+                    <Card
+                      key={`${result.provider}-${result.providerId}`}
+                      isPressable
+                      className="bg-content2"
+                      onPress={() => setSelectedShow(result)}
+                    >
+                      <CardBody className="flex flex-row gap-3 p-2">
+                        {result.posterUrl ? (
+                          <Image
+                            src={result.posterUrl}
+                            alt={result.name}
+                            className="w-12 h-16 object-cover"
+                            radius="sm"
+                          />
+                        ) : (
+                          <div className="w-12 h-16 bg-default-200 flex items-center justify-center rounded-sm">
+                            📺
+                          </div>
+                        )}
+                        <div className="flex-1">
+                          <h4 className="font-medium">
+                            {result.name}
+                            {result.year && (
+                              <span className="text-default-500 ml-1">
+                                ({result.year})
+                              </span>
+                            )}
+                          </h4>
+                          <p className="text-xs text-default-500 line-clamp-2">
+                            {result.network && `${result.network} • `}
+                            {result.status}
+                          </p>
+                        </div>
+                        <div className="flex items-center">
+                          <Chip size="sm" variant="flat">
+                            {result.provider}
+                          </Chip>
+                        </div>
+                      </CardBody>
+                    </Card>
+                  ))}
+                </div>
+              ) : searchQuery && !searching ? (
+                <p className="text-center text-default-500 py-8">
+                  No results found
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <Card className="bg-content2">
+                <CardBody className="flex flex-row gap-4">
+                  {selectedShow.posterUrl ? (
+                    <Image
+                      src={selectedShow.posterUrl}
+                      alt={selectedShow.name}
+                      className="w-20 h-28 object-cover"
+                      radius="sm"
+                    />
+                  ) : (
+                    <div className="w-20 h-28 bg-default-200 flex items-center justify-center rounded-sm">
+                      📺
+                    </div>
+                  )}
+                  <div>
+                    <h4 className="font-semibold text-lg">
+                      {selectedShow.name}
+                      {selectedShow.year && (
+                        <span className="text-default-500 ml-1">
+                          ({selectedShow.year})
+                        </span>
+                      )}
+                    </h4>
+                    <p className="text-sm text-default-500">
+                      {selectedShow.network && `${selectedShow.network} • `}
+                      {selectedShow.status}
+                    </p>
+                    {selectedShow.overview && (
+                      <p className="text-sm text-default-400 mt-2 line-clamp-3">
+                        {selectedShow.overview}
+                      </p>
+                    )}
+                  </div>
+                </CardBody>
+              </Card>
+
+              <Select
+                label="Monitor Type"
+                selectedKeys={[monitorType]}
+                onChange={(e) => setMonitorType(e.target.value as MonitorType)}
+                description="Which episodes to track for download"
+              >
+                <SelectItem key="ALL" textValue="All Episodes">
+                  All Episodes - Track all missing episodes
+                </SelectItem>
+                <SelectItem key="FUTURE" textValue="Future Episodes">
+                  Future Only - Only track new episodes going forward
+                </SelectItem>
+                <SelectItem key="NONE" textValue="Don't Monitor">
+                  Don't Monitor - Track but don't download
+                </SelectItem>
+              </Select>
+
+              {qualityProfiles.length > 0 && (
+                <Select
+                  label="Quality Profile"
+                  selectedKeys={qualityProfileId ? [qualityProfileId] : []}
+                  onChange={(e) => setQualityProfileId(e.target.value)}
+                  description="Leave empty to use library default"
+                >
+                  {qualityProfiles.map((profile) => (
+                    <SelectItem key={profile.id} textValue={profile.name}>
+                      {profile.name}
+                    </SelectItem>
+                  ))}
+                </Select>
+              )}
+
+              <Button
+                variant="flat"
+                onPress={() => {
+                  setSelectedShow(null)
+                  setSearchResults([])
+                }}
+              >
+                ← Back to Search
+              </Button>
+            </div>
+          )}
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="flat" onPress={onClose}>
+            Cancel
+          </Button>
+          {selectedShow && (
+            <Button color="primary" onPress={handleAdd} isLoading={adding}>
+              Add Show
+            </Button>
+          )}
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
+  )
+}

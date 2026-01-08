@@ -1,17 +1,18 @@
 //! Library scanner job
+//!
+//! This module provides the scheduled scan functionality.
+//! The actual scanning logic is in services::scanner.
+
+use std::sync::Arc;
 
 use anyhow::Result;
 
-/// Run a full library scan
-pub async fn run_scan() -> Result<()> {
-    // TODO: Implement library scanning
-    // 1. Walk library paths
-    // 2. Detect new/missing files
-    // 3. Run ffprobe for media properties
-    // 4. Identify content (parse filename)
-    // 5. Fetch metadata from TheTVDB/TMDB
-    // 6. Update database
+use crate::services::ScannerService;
 
-    tracing::info!("Library scan completed");
+/// Run a full library scan for all libraries with auto_scan enabled
+pub async fn run_scan(scanner: Arc<ScannerService>) -> Result<()> {
+    tracing::info!("Starting scheduled library scan");
+    scanner.scan_all_libraries().await?;
+    tracing::info!("Scheduled library scan completed");
     Ok(())
 }

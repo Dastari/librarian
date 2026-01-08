@@ -1,6 +1,6 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { VideoPlayer } from '../../components/VideoPlayer'
-import type { MediaItem } from '../../lib/api'
+import type { MediaItem } from '../../lib/graphql'
 
 export const Route = createFileRoute('/library/$mediaId')({
   beforeLoad: ({ context }) => {
@@ -15,12 +15,12 @@ export const Route = createFileRoute('/library/$mediaId')({
 const mockMedia: MediaItem = {
   id: '1',
   title: 'Example Movie',
-  media_type: 'movie',
+  mediaType: 'movie',
   year: 2024,
   overview: 'This is a sample movie description. Once you add real media to your library, you\'ll see actual metadata, posters, and streaming options here.',
   runtime: 120,
-  poster_url: null,
-  backdrop_url: null,
+  posterUrl: null,
+  backdropUrl: null,
 }
 
 function MediaDetailPage() {
@@ -33,9 +33,9 @@ function MediaDetailPage() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Backdrop */}
       <div className="relative rounded-xl overflow-hidden mb-8 bg-gradient-to-r from-slate-800 to-slate-900 aspect-video max-h-96">
-        {media.backdrop_url ? (
+        {media.backdropUrl ? (
           <img
-            src={media.backdrop_url}
+            src={media.backdropUrl}
             alt={media.title}
             className="w-full h-full object-cover"
           />
@@ -43,7 +43,7 @@ function MediaDetailPage() {
           <div className="w-full h-full flex items-center justify-center">
             <VideoPlayer 
               src="" 
-              poster={media.poster_url || undefined}
+              poster={media.posterUrl || undefined}
             />
           </div>
         )}
@@ -54,16 +54,16 @@ function MediaDetailPage() {
         {/* Poster */}
         <div className="hidden md:block">
           <div className="aspect-[2/3] bg-slate-800 rounded-lg overflow-hidden">
-            {media.poster_url ? (
+            {media.posterUrl ? (
               <img
-                src={media.poster_url}
+                src={media.posterUrl}
                 alt={media.title}
                 className="w-full h-full object-cover"
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center">
                 <span className="text-slate-500 text-6xl">
-                  {media.media_type === 'movie' ? '🎬' : '📺'}
+                  {media.mediaType === 'movie' ? '🎬' : '📺'}
                 </span>
               </div>
             )}
@@ -77,7 +77,7 @@ function MediaDetailPage() {
           <div className="flex items-center gap-4 text-slate-400 mb-4">
             {media.year && <span>{media.year}</span>}
             {media.runtime && <span>{media.runtime} min</span>}
-            <span className="capitalize">{media.media_type}</span>
+            <span className="capitalize">{media.mediaType}</span>
           </div>
 
           <p className="text-slate-300 mb-6 max-w-2xl">
@@ -104,7 +104,7 @@ function MediaDetailPage() {
               <dt className="text-slate-400">Media ID</dt>
               <dd>{mediaId}</dd>
               <dt className="text-slate-400">Type</dt>
-              <dd className="capitalize">{media.media_type}</dd>
+              <dd className="capitalize">{media.mediaType}</dd>
               <dt className="text-slate-400">Resolution</dt>
               <dd>1080p</dd>
               <dt className="text-slate-400">Video Codec</dt>

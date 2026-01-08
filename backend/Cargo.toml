@@ -25,7 +25,7 @@ futures = "0.3"
 librqbit = "8"
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "time", "json"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "time", "json", "chrono", "rust_decimal"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -63,6 +63,9 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 # Config
 dotenvy = "0.15"
 dirs = "6.0.0"
+chrono = { version = "0.4.42", features = ["serde"] }
+sha2 = "0.10.9"
+rust_decimal = { version = "1.39.0", features = ["serde"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
