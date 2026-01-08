@@ -1,0 +1,59 @@
+@import "tailwindcss";
+@plugin "./hero.ts";
+@source "../node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx}";
+@custom-variant dark (&:is(.dark *));
+
+/* Fix HeroUI Input styling in dark mode */
+.dark [data-slot="input-wrapper"] {
+  @apply !bg-default-100 !border-default-200;
+}
+
+.dark [data-slot="input-wrapper"][data-hover="true"] {
+  @apply !bg-default-200;
+}
+
+.dark [data-slot="inner-wrapper"] {
+  @apply !bg-transparent;
+}
+
+/* Fix bordered variant inner wrapper */
+.dark [data-slot="input-wrapper"].border-medium {
+  @apply !bg-transparent;
+}
+
+body {
+  @apply m-0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
+    "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New",
+    monospace;
+}
+
+/* Custom scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-content1;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-content3 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-content4;
+}
+
+/* Video player overrides */
+video::-webkit-media-controls-panel {
+  @apply bg-content1/90;
+}

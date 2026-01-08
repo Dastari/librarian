@@ -1,0 +1,50 @@
+{
+  "name": "librarian-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 3000",
+    "build": "vite build && tsc",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@apollo/client": "^4.0.11",
+    "@heroui/react": "^2.8.7",
+    "@heroui/system": "^2.4.25",
+    "@heroui/theme": "^2.4.25",
+    "@supabase/ssr": "^0.8.0",
+    "@supabase/supabase-js": "^2.90.0",
+    "@tailwindcss/postcss": "^4.1.18",
+    "@tailwindcss/vite": "^4.1.11",
+    "@tanstack/history": "^1.145.7",
+    "@tanstack/react-devtools": "^0.7.0",
+    "@tanstack/react-router": "^1.132.0",
+    "@tanstack/react-router-devtools": "^1.132.0",
+    "@tanstack/router-core": "^1.145.11",
+    "@tanstack/router-plugin": "^1.132.0",
+    "framer-motion": "^12.24.10",
+    "graphql": "^16.12.0",
+    "graphql-ws": "^6.0.6",
+    "hls.js": "^1.6.15",
+    "lucide-react": "^0.545.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tailwind-variants": "^3.2.2",
+    "tailwindcss": "^4.1.11"
+  },
+  "devDependencies": {
+    "@tanstack/devtools-vite": "^0.3.11",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.2.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.4",
+    "jsdom": "^27.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^7.1.7",
+    "vitest": "^3.0.5",
+    "web-vitals": "^5.1.0"
+  }
+}
