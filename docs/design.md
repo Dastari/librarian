@@ -5,28 +5,155 @@
 - **Local‑first, privacy‑preserving media library**
 - **Offline‑first** on a single machine/NAS, with optional remote access
 - **Features**:
-  - **Torrents**: download via qBittorrent
+  - **Torrents**: download via native Rust torrent client (librqbit)
   - **Streaming**: in-browser HLS, plus casting (Chromecast, AirPlay)
   - **Playback**: integrated web UI
-  - **Metadata**: TV shows, movies, cover art from TheTVDB and TMDB
-  - **Subscriptions**: monitor shows; auto-fill gaps via indexers/feeds
-  - **Organization**: auto-rename and file layout
+  - **Metadata**: TV shows, movies, cover art from TVMaze, TMDB, and TheTVDB
+  - **Subscriptions**: monitor shows; auto-fill gaps via RSS feeds and torrent search
+  - **Organization**: auto-rename and file layout with configurable patterns
+  - **Post-Processing**: extract archives, filter files, organize automatically
 
 ### High‑Level Architecture
 
 - **Frontend**: TanStack Start (React with TanStack Router)
 - **Backend**: Rust (Axum + Tokio), background workers, job queue
 - **Identity & DB**: Supabase (Postgres + Auth + Storage) running locally via Docker
-- **Torrent Engine**: `qbittorrent-nox` (headless) via its Web API
-- **Indexer Management**: Prowlarr (recommended) or Jackett
+- **Torrent Engine**: `librqbit` (native Rust, embedded)
+- **Indexer Management**: RSS feeds (direct URLs) + future Prowlarr/Jackett support
 - **Transcoding/Packaging**: FFmpeg/FFprobe → HLS (m3u8 + TS/MP4 segments)
 - **Casting**:
   - **Chromecast**: Google Cast Web Sender SDK in frontend (cast HLS URL)
   - **AirPlay**: native Safari AirPlay support on the `<video>` element
-- **File Watching / Library Scanner**: Rust watcher + periodic full scan
+- **File Watching / Library Scanner**: Rust watcher (inotify) + periodic full scan
 - **Object Storage**: Supabase Storage for posters/backdrops/fanart
 
-## Key Technology Choices (recommended)
+---
+
+## TV Library Architecture
+
+### Core Workflow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           TV LIBRARY LIFECYCLE                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+1. CREATE LIBRARY
+   ┌──────────────┐
+   │ User creates │──→ Name: "TV Shows"
+   │   library    │──→ Path: /mnt/nas/tv
+   │              │──→ Type: TV
+   │              │──→ Quality Profile (default)
+   │              │──→ Scan interval / Watch toggle
+   └──────┬───────┘
+          │
+          ▼
+2. INITIAL SCAN (if pointing to existing folder)
+   ┌──────────────┐
+   │ Scan folder  │──→ Walk directory tree
+   │              │──→ Parse filenames (S01E01, 1x01, etc.)
+   │              │──→ Group by show name
+   │              │──→ Match to TVMaze/TMDB/TVDB
+   │              │──→ If no match: try OpenAI (if configured)
+   │              │──→ Present discovered shows to user
+   └──────┬───────┘
+          │
+          ▼
+3. ADD SHOWS TO LIBRARY
+   ┌──────────────┐
+   │ User picks   │──→ "Auto-add all discovered" OR
+   │   shows      │──→ Manual selection
+   │              │──→ For each show:
+   │              │    - Set monitoring: "All" or "Future only"
+   │              │    - Inherit or override quality profile
+   └──────┬───────┘
+          │
+          ▼
+4. FETCH EPISODE LIST
+   ┌──────────────┐
+   │ For each     │──→ Query TVMaze/TMDB for full episode list
+   │   show       │──→ Store all seasons/episodes in DB
+   │              │──→ Mark existing files as "downloaded"
+   │              │──→ Mark missing as "wanted" (based on monitoring)
+   └──────┬───────┘
+          │
+          ▼
+5. ONGOING MONITORING
+   ┌──────────────────────────────────────────────────────┐
+   │                                                      │
+   │  ┌─────────────┐    ┌─────────────┐                 │
+   │  │ RSS Poller  │    │ Torrent     │                 │
+   │  │ (periodic)  │    │ Search      │                 │
+   │  └──────┬──────┘    └──────┬──────┘                 │
+   │         │                  │                         │
+   │         └────────┬─────────┘                         │
+   │                  ▼                                   │
+   │         ┌──────────────┐                            │
+   │         │ Match wanted │──→ Quality filter          │
+   │         │  episodes    │──→ Add to download queue   │
+   │         └──────────────┘                            │
+   │                                                      │
+   └──────────────────────────────────────────────────────┘
+```
+
+### Post-Download Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         POST-DOWNLOAD PROCESSING                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Torrent Completes
+       │
+       ▼
+┌──────────────┐
+│ 1. EXTRACT   │──→ Is archive? (zip/tar/rar/7z)
+│              │    YES → Extract to temp folder
+│              │    NO  → Continue with files
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ 2. FILTER    │──→ Keep: video files (.mkv, .mp4, .avi, etc.)
+│              │──→ Keep: subtitles (.srt, .sub, .ass, .idx)
+│              │──→ Keep: NFO if desired
+│              │──→ Discard: samples, screenshots, txt, exe
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ 3. IDENTIFY  │──→ Parse filename for show/season/episode
+│              │──→ Match to known show in library
+│              │──→ If unmatched: queue for manual review
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ 4. ANALYZE   │──→ Run ffprobe for media info
+│              │──→ Resolution, codec, bitrate, HDR, audio
+│              │──→ Compare to quality requirements
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ 5. ORGANIZE  │──→ Apply naming pattern:
+│              │    {Show Name}/Season {S}/{Show} - S{SS}E{EE} - {Title}.{ext}
+│              │──→ Copy or Move (user preference)
+│              │──→ Set correct permissions
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ 6. UPDATE DB │──→ Mark episode as downloaded
+│              │──→ Link media_file to episode
+│              │──→ Store quality metadata
+│              │──→ Trigger artwork fetch if needed
+└──────────────┘
+```
+
+---
+
+## Key Technology Choices
 
 ### Frontend (TanStack Start)
 
@@ -38,7 +165,7 @@
 - **Video Playback**: `hls.js` for HLS where needed
 - **Casting**:
   - Google Cast Web Sender SDK (loaded where casting is available)
-  - Safari’s native AirPlay button on `<video>` provides AirPlay
+  - Safari's native AirPlay button on `<video>` provides AirPlay
 
 ### Backend (Rust)
 
@@ -46,315 +173,510 @@
 - **Async runtime**: `tokio`
 - **DB**: `sqlx` (Postgres) with compile‑time checked queries
 - **Auth/JWT**: verify Supabase JWTs via JWKS using `jsonwebtoken` or `josekit`; cache keys
-- **HTTP client**: `reqwest` for external APIs (TheTVDB/TMDB/qBittorrent/Prowlarr)
-- **Torrent control**: qBittorrent Web API (avoid FFI to libtorrent)
-- **Scheduler / Jobs**: `apalis` (Redis-backed) or `tokio-cron-scheduler` (no external deps)
-- **Filesystem**: `notify` (watcher), `walkdir`, `tokio::fs`
+- **HTTP client**: `reqwest` for external APIs (TVMaze/TMDB/TVDB)
+- **Torrent control**: librqbit (native Rust, embedded)
+- **Scheduler / Jobs**: `tokio-cron-scheduler` for periodic tasks
+- **Filesystem**: `notify` (inotify watcher), `walkdir`, `tokio::fs`
+- **Archives**: `unrar` crate + `sevenz-rust` or shell out to `7z`/`unrar`
 - **Renaming**: `regex`, `sanitize-filename`
 - **Transcoding**: spawn `ffmpeg`; parse streams via `ffprobe` JSON
-- **Image processing (optional)**: `image` crate for thumbnails
+- **AI Matching** (optional): `async-openai` crate for filename identification
 - **Observability**: `tracing`, `tracing-subscriber`, optional OpenTelemetry exporter
 
-### Metadata & Indexers
+### Metadata Providers
 
-- **TheTVDB API v4**: series/episodes metadata, art
-- **TMDB API**: complementary source (movies, images; often richer art)
-- **Prowlarr (recommended)**: centrally manage indexers and expose a single Torznab endpoint; or Jackett
+| Provider | Auth Required | Free Tier | Best For |
+|----------|---------------|-----------|----------|
+| **TVMaze** | No | Unlimited | TV shows (primary, default) |
+| **TMDB** | API key (free) | High limits | Movies + TV, artwork |
+| **TheTVDB** | API key + subscription | Limited | Legacy support, comprehensive |
 
-### Supabase (local)
+Priority order: TVMaze → TMDB → TheTVDB
 
-- **Postgres** with RLS (row-level security)
-- **Auth (GoTrue)** for email/password + optional OAuth
-- **PostgREST** present; primarily use Rust API + direct SQL via `sqlx`
-- **Storage** for posters/backdrops and generated thumbnails
-- **Service role key** only on the backend (never in the browser)
+### RSS Feed Parsing
 
-### Media Packaging/Streaming
+Standard RSS format (like IPTorrents example):
+```xml
+<item>
+  <title>Chicago Fire S14E08 1080p WEB h264-ETHEL</title>
+  <link>https://example.com/download.php/12345/file.torrent</link>
+  <pubDate>Thu, 08 Jan 2026 10:01:59 +0000</pubDate>
+  <description>1.48 GB; TV/Web-DL</description>
+</item>
+```
 
-- **HLS** with on‑the‑fly or just‑in‑time transcoding:
-  - Direct play: serve original file if codec/container supported
-  - Transcode: `ffmpeg` → HLS segments in per‑session cache directory
-  - Serve playlists/segments via Axum static routes with tokenized URLs
+The RSS poller will:
+1. Parse title using scene naming patterns
+2. Extract show name, season, episode, quality info
+3. Match against wanted episodes in monitored shows
+4. Apply quality filters before downloading
 
-## Integration Overview
+---
 
-### Auth flow
+## Data Model
 
-1. Frontend uses Supabase Auth for sign-in (email/password).
-2. Frontend includes the Supabase access token in requests to the Rust API.
-3. Rust API verifies JWTs against Supabase JWKS, extracts `user_id`, applies authorization.
-
-**Supported auth methods:**
-- Email/password (primary)
-- Future: OAuth providers (Google, GitHub, etc.) via Supabase
-
-### Database
-
-- Rust backend uses `sqlx` to Postgres.
-- RLS stays enabled. The backend uses:
-  - a standard (non‑service) role for user‑scoped reads/writes, and
-  - a service‑role pool only for worker/system tasks that must bypass RLS (e.g., scheduled RSS pulls).
-
-### Torrents
-
-- `qbittorrent-nox` runs in Docker.
-- Rust backend controls it via Web API:
-  - Add magnet/Torznab URLs
-  - Monitor state/progress
-  - Set download categories and save paths
-- Prowlarr exposes Torznab feeds the backend queries to find releases for subscriptions.
-
-### Subscriptions & “fill‑the‑gaps”
-
-- Users subscribe to shows and select quality profiles.
-- Scheduler checks per‑show missing episodes (based on metadata + local files).
-- Queries Prowlarr Torznab for candidates; applies filtering (quality, codec, size, release group), then sends selected torrents to qBittorrent.
-- Post‑download, a worker triggers rename/move, then library refresh.
-
-### Metadata
-
-- On scan or new file detection: identify media by filename heuristics + optional hash; call TheTVDB/TMDB to fetch canonical title, season/episode, art, and overviews.
-- Store normalized records in Postgres; cache images in Supabase Storage with signed URLs.
-
-### Transcoding/Streaming
-
-- For playback requests, backend checks if direct play is possible. If not, spawn `ffmpeg` to generate HLS on‑the‑fly into a temp cache dir keyed by user/session.
-- Axum serves `/_stream/{media_id}/{session_id}/index.m3u8` and segment files.
-- Frontend uses `hls.js` to play.
-- Casting:
-  - **Chromecast**: page registers a Cast session and passes the HLS URL.
-  - **AirPlay**: Safari user clicks the native AirPlay button on the `<video>` element.
-
-### Organization & Rename
-
-- After torrent completion:
-  - Extract file(s)
-  - Identify media
-  - Rename using a consistent scheme:
-    - Movies: `Movies/{Title} ({Year})/{Title} ({Year}).{ext}`
-    - TV: `TV/{Show Name}/Season {S}/{Show Name} - S{xx}E{xx} - {Episode Title}.{ext}`
-  - Update DB, create symlinks if desired (optional), refresh library.
-
-### Web UI
-
-- Browse library (grid), details pages, search, play, cast
-- Manage subscriptions (show, quality profile, monitored seasons/episodes)
-- View downloads and control the client (pause/resume/remove, speed limits)
-- Admin settings: paths, transcoding presets, indexers, auth providers
-
-## Data Model (core tables)
-
-### Libraries (Multiple Library Support)
+### Libraries
 
 Each user can have multiple libraries of different types:
 
-- **Library Types**: `movies`, `tv`, `music`, `audiobooks`, `other`
-- **Per-Library Settings**: 
-  - Custom name and path
-  - Auto-scan toggle and interval
-  - Display icon and color
-  - Independent scan schedules
-
-```
+```sql
 libraries
 ├── id (UUID)
 ├── user_id (UUID, FK → auth.users)
-├── name (VARCHAR) - e.g., "Movies", "Kids TV", "Documentaries"
-├── path (TEXT) - e.g., "/data/media/Movies"
+├── name (VARCHAR) - e.g., "TV Shows", "Kids TV", "Documentaries"
+├── path (TEXT) - e.g., "/mnt/nas/tv"
 ├── library_type (ENUM) - movies|tv|music|audiobooks|other
 ├── icon (VARCHAR) - display icon
 ├── color (VARCHAR) - theme color
 ├── auto_scan (BOOLEAN)
-├── scan_interval_hours (INTEGER)
+├── scan_interval_minutes (INTEGER) - how often to scan
+├── watch_for_changes (BOOLEAN) - use inotify where supported
+├── post_download_action (ENUM) - copy|move|hardlink
+├── auto_rename (BOOLEAN) - automatically rename files
+├── naming_pattern (TEXT) - e.g., "{show}/Season {season}/{show} - S{season}E{episode} - {title}.{ext}"
+├── default_quality_profile_id (UUID, FK → quality_profiles)
 ├── last_scanned_at (TIMESTAMPTZ)
 ├── created_at, updated_at
 ```
 
-### Other Core Tables
+### TV Shows
 
-- `users` (from Supabase auth.users)
-- `media_items` (id, type: movie|episode|show, title, year, show_id, season, episode, tvdb_id, tmdb_id, overview, runtime, rating)
-- `media_files` (id, media_item_id, library_id, path, size, container, video_codec, audio_codec, width, height, duration, hash, added_at)
-- `artwork` (media_item_id, kind: poster|backdrop|thumb, storage_key, width, height)
-- `subscriptions` (id, user_id, show_tvdb_id, quality_profile_id, monitored: bool, latest_wanted, created_at)
-- `quality_profiles` (id, name, rules JSON)
-- `downloads` (id, user_id, qbittorrent_hash, state, progress, added_at, media_linked_item_id)
-- `jobs` (id, kind, payload JSON, state, next_run_at, last_error)
-- `events` (audit log)
+```sql
+tv_shows
+├── id (UUID)
+├── library_id (UUID, FK → libraries)
+├── user_id (UUID, FK → auth.users)
+├── name (VARCHAR) - canonical show name
+├── year (INTEGER) - premiere year
+├── status (VARCHAR) - continuing|ended|upcoming|cancelled
+├── tvmaze_id (INTEGER)
+├── tmdb_id (INTEGER)
+├── tvdb_id (INTEGER)
+├── imdb_id (VARCHAR)
+├── overview (TEXT)
+├── network (VARCHAR)
+├── runtime (INTEGER) - typical episode runtime in minutes
+├── poster_url (TEXT)
+├── backdrop_url (TEXT)
+├── monitored (BOOLEAN) - is this show being tracked
+├── monitor_type (VARCHAR) - all|future|none
+├── quality_profile_id (UUID, FK → quality_profiles) - NULL = use library default
+├── path (TEXT) - show-specific folder within library
+├── created_at, updated_at
+```
 
-### Row-Level Security
+### Episodes
 
-- `libraries` - Users can only access their own libraries
-- `subscriptions`, `downloads` - Restricted to `user_id`
-- `media_files` - Access via library ownership
-- Library content can be shared with roles (future feature)
+```sql
+episodes
+├── id (UUID)
+├── tv_show_id (UUID, FK → tv_shows)
+├── season (INTEGER)
+├── episode (INTEGER)
+├── absolute_number (INTEGER) - for anime
+├── title (VARCHAR)
+├── overview (TEXT)
+├── air_date (DATE)
+├── runtime (INTEGER)
+├── tvmaze_id (INTEGER)
+├── tmdb_id (INTEGER)
+├── tvdb_id (INTEGER)
+├── status (VARCHAR) - missing|wanted|downloading|downloaded|ignored
+├── file_id (UUID, FK → media_files) - NULL if not downloaded
+├── created_at, updated_at
+├── UNIQUE(tv_show_id, season, episode)
+```
 
-## API Surface (Rust / Axum)
+### Quality Profiles
 
-### Authentication
-- `GET /api/me` → user profile
+```sql
+quality_profiles
+├── id (UUID)
+├── user_id (UUID)
+├── name (VARCHAR) - e.g., "4K HDR", "1080p", "Any"
+├── preferred_resolution (VARCHAR) - 2160p|1080p|720p|480p|any
+├── min_resolution (VARCHAR) - minimum acceptable
+├── preferred_codec (VARCHAR) - hevc|h264|av1|any
+├── preferred_audio (VARCHAR) - atmos|truehd|dts|ac3|aac|any
+├── require_hdr (BOOLEAN)
+├── hdr_types (VARCHAR[]) - hdr10|hdr10plus|dolbyvision
+├── preferred_language (VARCHAR) - en|de|fr|etc
+├── max_size_gb (DECIMAL) - per episode
+├── min_seeders (INTEGER) - for downloads
+├── release_group_whitelist (TEXT[]) - preferred groups
+├── release_group_blacklist (TEXT[]) - avoid these
+├── upgrade_until (VARCHAR) - stop upgrading at this quality
+├── created_at, updated_at
+```
 
-### Libraries (Multiple Library Support)
-- `GET /api/libraries` → list all user libraries
-- `POST /api/libraries` → create new library
-- `GET /api/libraries/{id}` → get library details
-- `PATCH /api/libraries/{id}` → update library settings
-- `DELETE /api/libraries/{id}` → delete library
-- `POST /api/libraries/{id}/scan` → trigger library scan
-- `GET /api/libraries/{id}/stats` → get library statistics
+### Media Files
 
-### Media
-- `GET /api/media/{id}` → media item details + sources
-- `GET /api/media/{id}/stream/hls` → tokenized HLS playlist URL
-- `GET /api/media/{id}/cast/session` → pre-authorize cast playback
+```sql
+media_files
+├── id (UUID)
+├── library_id (UUID, FK → libraries)
+├── episode_id (UUID, FK → episodes) - NULL for unmatched
+├── path (TEXT) - full filesystem path
+├── relative_path (TEXT) - path within library
+├── original_name (TEXT) - original filename before rename
+├── size_bytes (BIGINT)
+├── container (VARCHAR) - mkv|mp4|avi
+├── video_codec (VARCHAR) - hevc|h264|av1|mpeg2
+├── video_bitrate (INTEGER) - kbps
+├── audio_codec (VARCHAR)
+├── audio_channels (VARCHAR) - 2.0|5.1|7.1|atmos
+├── audio_language (VARCHAR)
+├── resolution (VARCHAR) - 2160p|1080p|720p|480p
+├── width (INTEGER)
+├── height (INTEGER)
+├── duration_seconds (INTEGER)
+├── is_hdr (BOOLEAN)
+├── hdr_type (VARCHAR) - hdr10|hdr10plus|dolbyvision|hlg
+├── file_hash (VARCHAR) - for deduplication
+├── added_at (TIMESTAMPTZ)
+├── modified_at (TIMESTAMPTZ)
+```
 
-### Torrents
-- `GET /api/torrents` → list active torrents
-- `POST /api/torrents` → add by magnet/URL
+### RSS Feeds
 
-### Subscriptions
-- `GET /api/subscriptions` → list subscriptions
-- `POST /api/subscriptions` → create subscription
-- `POST /api/subscriptions/{id}/search` → manual search
+```sql
+rss_feeds
+├── id (UUID)
+├── user_id (UUID)
+├── library_id (UUID, FK → libraries) - optional, can be global
+├── name (VARCHAR) - display name
+├── url (TEXT) - feed URL
+├── enabled (BOOLEAN)
+├── poll_interval_minutes (INTEGER) - default 15
+├── last_polled_at (TIMESTAMPTZ)
+├── last_error (TEXT)
+├── created_at, updated_at
+```
 
-### Admin
-- `POST /api/admin/reindexers/test` → verify Prowlarr/Jackett
-- `POST /api/admin/settings` → save paths, ffmpeg preset, etc.
+### Downloads (enhanced)
 
-Auth: Bearer Supabase JWT. Middleware verifies, injects `UserContext`.
+```sql
+downloads
+├── id (UUID)
+├── user_id (UUID)
+├── library_id (UUID, FK → libraries)
+├── episode_id (UUID, FK → episodes) - what we're downloading for
+├── info_hash (VARCHAR) - torrent hash
+├── name (VARCHAR)
+├── state (VARCHAR) - queued|downloading|seeding|completed|processing|failed
+├── progress (DECIMAL)
+├── size_bytes (BIGINT)
+├── download_path (TEXT) - where files are downloading to
+├── source_url (TEXT) - RSS item link or magnet
+├── source_feed_id (UUID, FK → rss_feeds)
+├── post_process_status (VARCHAR) - pending|processing|completed|failed
+├── post_process_error (TEXT)
+├── added_at (TIMESTAMPTZ)
+├── completed_at (TIMESTAMPTZ)
+├── processed_at (TIMESTAMPTZ)
+```
+
+### Jobs (enhanced)
+
+```sql
+jobs
+├── id (UUID)
+├── kind (VARCHAR) - library_scan|rss_poll|post_process|metadata_fetch|episode_search
+├── library_id (UUID, FK → libraries) - if library-specific
+├── payload (JSONB) - job-specific data
+├── state (VARCHAR) - pending|running|completed|failed|cancelled
+├── priority (INTEGER) - higher = sooner
+├── scheduled_at (TIMESTAMPTZ) - when to run next
+├── started_at (TIMESTAMPTZ)
+├── completed_at (TIMESTAMPTZ)
+├── recurring_cron (VARCHAR) - for periodic jobs, e.g., "*/15 * * * *"
+├── attempts (INTEGER)
+├── max_attempts (INTEGER)
+├── last_error (TEXT)
+├── created_at (TIMESTAMPTZ)
+```
+
+### Unmatched Files (for manual review)
+
+```sql
+unmatched_files
+├── id (UUID)
+├── library_id (UUID, FK → libraries)
+├── path (TEXT)
+├── parsed_show_name (VARCHAR) - our best guess
+├── parsed_season (INTEGER)
+├── parsed_episode (INTEGER)
+├── suggested_show_id (UUID, FK → tv_shows) - AI/pattern suggestion
+├── confidence (DECIMAL) - 0-1 confidence score
+├── status (VARCHAR) - pending|matched|ignored
+├── created_at (TIMESTAMPTZ)
+```
+
+---
+
+## API Surface (GraphQL)
+
+### Libraries
+```graphql
+type Query {
+  libraries: [Library!]!
+  library(id: ID!): Library
+}
+
+type Mutation {
+  createLibrary(input: CreateLibraryInput!): LibraryResult!
+  updateLibrary(id: ID!, input: UpdateLibraryInput!): LibraryResult!
+  deleteLibrary(id: ID!): MutationResult!
+  scanLibrary(id: ID!): ScanStatus!
+}
+
+type Subscription {
+  libraryScanProgress(libraryId: ID!): LibraryScanProgress!
+}
+```
+
+### TV Shows
+```graphql
+type Query {
+  tvShows(libraryId: ID): [TvShow!]!
+  tvShow(id: ID!): TvShow
+  searchTvShows(query: String!): [TvShowSearchResult!]!
+}
+
+type Mutation {
+  addTvShow(libraryId: ID!, input: AddTvShowInput!): TvShowResult!
+  updateTvShow(id: ID!, input: UpdateTvShowInput!): TvShowResult!
+  removeTvShow(id: ID!): MutationResult!
+  refreshTvShowMetadata(id: ID!): TvShowResult!
+}
+```
+
+### Episodes
+```graphql
+type Query {
+  episodes(showId: ID!, season: Int): [Episode!]!
+  episode(id: ID!): Episode
+  wantedEpisodes(libraryId: ID): [Episode!]!
+}
+
+type Mutation {
+  setEpisodeStatus(id: ID!, status: EpisodeStatus!): Episode!
+  searchEpisode(id: ID!): [SearchResult!]!
+}
+```
+
+### RSS Feeds
+```graphql
+type Query {
+  rssFeeds(libraryId: ID): [RssFeed!]!
+  rssFeed(id: ID!): RssFeed
+}
+
+type Mutation {
+  createRssFeed(input: CreateRssFeedInput!): RssFeedResult!
+  updateRssFeed(id: ID!, input: UpdateRssFeedInput!): RssFeedResult!
+  deleteRssFeed(id: ID!): MutationResult!
+  testRssFeed(id: ID!): RssFeedTestResult!
+  pollRssFeed(id: ID!): [RssItem!]!
+}
+```
+
+### Unmatched Files
+```graphql
+type Query {
+  unmatchedFiles(libraryId: ID): [UnmatchedFile!]!
+}
+
+type Mutation {
+  matchFile(id: ID!, showId: ID!, season: Int!, episode: Int!): MediaFile!
+  ignoreUnmatchedFile(id: ID!): MutationResult!
+  autoMatchFiles(libraryId: ID!): AutoMatchResult!
+}
+```
+
+---
 
 ## Background Workers
 
-- **Scanner**: Walk library paths, detect new/missing files, run ffprobe, identify content, fetch metadata, upsert DB, queue artwork jobs.
-- **RSS/Indexer Poller**: Periodically query Torznab feeds for monitored shows; enqueue download jobs.
-- **Download Monitor**: Poll qBittorrent for added torrents; update states; on complete, trigger rename/move + rescan.
-- **Transcode Session GC**: Clean old HLS caches.
-- **Artwork Fetcher**: Download/store art in Supabase Storage; update artwork table.
+| Worker | Schedule | Purpose |
+|--------|----------|---------|
+| **Library Scanner** | Per-library (configurable) | Walk paths, detect new/changed files |
+| **Filesystem Watcher** | Real-time (inotify) | Immediate detection of new files |
+| **RSS Poller** | Every 15 min (configurable) | Check RSS feeds for new releases |
+| **Download Monitor** | Real-time (events) | Track torrent progress, trigger post-processing |
+| **Post-Processor** | On completion | Extract, filter, identify, rename, organize |
+| **Metadata Fetcher** | On demand + batch | Fetch show/episode info from APIs |
+| **Quality Upgrader** | Daily | Find better quality versions of existing files |
+| **Transcode GC** | Daily at 3 AM | Clean old HLS caches |
 
-Use `apalis` + Redis or an in‑process `tokio-cron-scheduler` for simpler setups. For resilience, prefer a queue (`apalis`).
+---
 
-## File Layout & Paths
+## Filename Parsing Patterns
 
-- **Config**: `~/.config/librarian/config.toml` or mounted volume
-- **Libraries**: e.g., `/data/media/Movies`, `/data/media/TV`
-- **Temp**: `/data/cache/transcode/{session_id}/...`
-- **Downloads**: `/data/downloads/{category}`
-- **Completed**: moved into library structure after rename
+The system will use multiple regex patterns to parse scene-style filenames:
 
-## Transcoding Strategy
+```rust
+// Pattern examples (in priority order)
+"(?P<show>.+?)\\s*[Ss](?P<season>\\d{1,2})[Ee](?P<episode>\\d{1,2})"  // S01E01
+"(?P<show>.+?)\\s*(?P<season>\\d{1,2})x(?P<episode>\\d{2})"           // 1x01
+"(?P<show>.+?)\\s*Season\\s*(?P<season>\\d+).*?Episode\\s*(?P<episode>\\d+)"
+"(?P<show>.+?)\\s*(?P<season>\\d{1,2})(?P<episode>\\d{2})"            // 101, 102
 
-- **Direct Play**: serve file with `Content-Range` when codec/container supported by client.
-- **Transcode to HLS** (when needed):
-  - Video: H.264 baseline/main/high
-  - Audio: AAC stereo (downmix optional)
-  - Ladder presets: 1080p/720p/480p variants via `-var_stream_map` or single rung based on client bandwidth
-  - Subtitles: burn‑in or extract to WebVTT (preferred)
-- **Security**: tokenize HLS URLs and expire quickly to prevent stale links.
+// Quality patterns
+"(?P<resolution>2160p|1080p|720p|480p)"
+"(?P<source>HDTV|WEB-DL|WEBRip|BluRay|BDRip)"
+"(?P<codec>x264|x265|H\\.?264|H\\.?265|HEVC|AV1|XviD)"
+"(?P<hdr>HDR10\\+?|HDR|DV|DoVi|Dolby\\.?Vision)"
+"(?P<audio>Atmos|TrueHD|DTS-HD|DTS|AC3|AAC|DD5\\.?1|DDP5\\.?1)"
+```
 
-## Casting Strategy
+---
 
-- **Chromecast**: Frontend loads Google Cast Sender SDK; cast a signed HLS URL from the backend. No device‑discovery code in Rust required.
-- **AirPlay**: `<video>` with `x-webkit-airplay="allow"`; Safari exposes the AirPlay picker automatically.
-- **DLNA (optional)**: Add a lightweight UPnP/DLNA media server later; not required for MVP.
+## Naming Patterns
+
+Configurable patterns with tokens:
+
+| Token | Description | Example |
+|-------|-------------|---------|
+| `{show}` | Show name | "Chicago Fire" |
+| `{show_clean}` | Show name (filesystem safe) | "Chicago Fire" |
+| `{season}` | Season number | "14" |
+| `{season:02}` | Season zero-padded | "14" |
+| `{episode}` | Episode number | "8" |
+| `{episode:02}` | Episode zero-padded | "08" |
+| `{title}` | Episode title | "The One That Got Away" |
+| `{year}` | Show premiere year | "2012" |
+| `{air_date}` | Episode air date | "2026-01-08" |
+| `{quality}` | Quality string | "1080p WEB h264" |
+| `{ext}` | File extension | "mkv" |
+
+Default TV pattern:
+```
+{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}
+```
+
+Example output:
+```
+Chicago Fire/Season 14/Chicago Fire - S14E08 - The One That Got Away.mkv
+```
+
+---
+
+## Settings
+
+### Global Settings
+- **OpenAI API Key**: For AI-based filename matching (optional)
+- **TMDB API Key**: For enhanced metadata
+- **TVDB API Key**: For legacy support
+- **Download directory**: Where torrents download to
+- **Temp directory**: For extraction/processing
+
+### Per-Library Settings
+- Path
+- Default quality profile
+- Scan interval
+- Watch for changes (inotify)
+- Auto-add discovered shows
+- Post-download action (copy/move)
+- Auto-rename
+- Naming pattern
+
+### Per-Show Settings (inherit from library)
+- Monitor type (all/future/none)
+- Quality profile (override)
+- Custom path
+
+---
 
 ## Security
 
-- Verify Supabase JWTs via JWKS and cache keys.
-- Use short‑lived, signed URLs for HLS playlists/segments and artwork.
-- Keep the Supabase service key only on the backend.
-- RLS for user‑owned tables; policies like `user_id = auth.uid()`.
+- Verify Supabase JWTs via JWKS and cache keys
+- Use short‑lived, signed URLs for HLS playlists/segments and artwork
+- Keep the Supabase service key only on the backend
+- RLS for user‑owned tables; policies like `user_id = auth.uid()`
+- Sanitize all filenames before writing to filesystem
+- Validate paths don't escape library boundaries
+
+---
 
 ## Local Development & Deployment
 
 ### Docker Compose (services to run together)
 
 - `supabase/*` stack (Auth, Postgres, Storage, PostgREST, Kong)
-- `qbittorrent-nox`
-- Prowlarr or Jackett (optional but recommended)
-- Redis (if using `apalis`)
 - `librarian-backend` (Rust)
 - `librarian-frontend` (TanStack Start)
+- Prowlarr (optional, for advanced indexer management)
 
 ### Shared volumes
 
-- `/data/media`
-- `/data/downloads`
-- `/data/cache`
-- Supabase volumes
+- `/data/media` - library storage
+- `/data/downloads` - torrent downloads
+- `/data/cache` - transcode cache
+- `/data/session` - torrent session data
 
 ### Environment (.env)
 
-- Supabase URL, anon key, service key
-- qBittorrent credentials
-- Prowlarr/Jackett API key
-- TheTVDB/TMDB keys
-- Transcode presets
+```bash
+# Supabase
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_KEY=
+JWT_SECRET=
 
-## Recommended Libraries (summary)
+# Database
+DATABASE_URL=
 
-### Rust
+# Torrent
+DOWNLOADS_PATH=/data/downloads
+SESSION_PATH=/data/session
 
-- `axum`, `tokio`, `tower`, `tower-http`
-- `sqlx` (features: `postgres`, `runtime-tokio-rustls`, `offline`)
-- `serde`, `serde_json`, `thiserror`, `anyhow`
-- `jsonwebtoken` or `josekit` (JWKS), `reqwest`
-- `apalis` (+ `apalis-redis`) or `tokio-cron-scheduler`
-- `notify`, `walkdir`, `regex`, `sanitize-filename`
-- `tracing`, `tracing-subscriber`
-- `uuid`, `time`, `once_cell`
+# Metadata APIs (optional)
+TVMAZE_ENABLED=true
+TMDB_API_KEY=
+TVDB_API_KEY=
 
-### Frontend
+# AI (optional)
+OPENAI_API_KEY=
+```
 
-- TanStack Start, TanStack Router, React, TypeScript
-- `@supabase/supabase-js`
-- HeroUI (formerly NextUI) + Tailwind CSS
-- `hls.js`
-- Google Cast Web Sender SDK (script include)
-- Package manager: pnpm
-
-## External Services
-
-- `qbittorrent-nox` (Web API)
-- Prowlarr (Torznab aggregation) or Jackett
-- FFmpeg/FFprobe
-- Supabase local stack
-
-## Metadata APIs
-
-- TheTVDB v4
-- TMDB v3/v4
+---
 
 ## MVP vs. Later
 
-### MVP
-
-- Local auth + library browsing
-- Add/download torrents from a URL/magnet
-- Play in browser with direct play + single‑rung HLS transcode fallback
-- Basic metadata fetch + poster/backdrop
-- Manual subscriptions + simple RSS polling
-- Rename & organize
+### MVP (Current Focus)
+- ✅ Native torrent client (librqbit)
+- ✅ GraphQL subscriptions for real-time updates
+- ⏳ TV library management (create, scan, browse)
+- ⏳ Show management (add, search, monitor)
+- ⏳ Episode tracking (wanted list)
+- ⏳ RSS feed polling
+- ⏳ Basic post-download processing
+- ⏳ Auto-rename and organization
+- ⏳ Quality profiles (basic)
 
 ### Later
-
 - Multi‑quality HLS ladder + dynamic ABR
+- Torrent search engines (beyond RSS)
+- Advanced quality upgrading
 - DLNA server
-- Advanced quality profiles (release groups, codecs)
 - Subtitles management (embedded, external, OCR for PGS)
-- Hardware transcoding (NVENC/VAAPI/QSV) with selectable presets
+- Hardware transcoding (NVENC/VAAPI/QSV)
 - Multi‑user sharing with roles
 - Mobile‑friendly PWA, offline posters, push notifications
+- Movie library support (similar workflow)
+- Music/audiobook libraries
 
-## Testing & Observability
+---
 
-- Unit tests for parsers (filename → S/E), renamer, API handlers
-- Integration tests with ephemeral Postgres and a mocked qBittorrent
-- Golden tests for metadata normalization
-- `tracing` with JSON logs; health and readiness endpoints
-- Optional OpenTelemetry exporter to a Grafana stack
+## Why These Choices?
 
-## Why these choices?
+**librqbit** provides a native Rust torrent client that's embedded in our process—no external dependencies, no network API calls, direct control and real-time events.
 
-qBittorrent’s Web API is stable, well‑documented, and easy to control from Rust. It avoids brittle FFI to libtorrent and keeps updates independent. HLS via FFmpeg is the most interoperable for browsers and casting. Supabase local gives Postgres + Auth + Storage with minimal ops and a clean JWT/RLS story. Google Cast SDK in the browser reduces backend complexity and works reliably for local networks. Prowlarr centralizes indexers and offers powerful Torznab querying—ideal for subscriptions and “fill the gaps.”
+**TVMaze** as the default metadata source because it's completely free with no API key required, has excellent data quality for TV shows, and is fast.
 
+**RSS feeds** as the initial indexer approach because they're universal—every private tracker supports them, they're simple to parse, and they give us everything we need (torrent links, release info, timestamps).
 
+**inotify** for filesystem watching gives us instant detection of new files on supported filesystems, with graceful fallback to periodic scanning for network mounts where inotify doesn't work.
+
+**Copy by default** for post-download because it preserves seeding capability—users who want to maintain ratio on private trackers can keep seeding while their files appear organized in the library.
