@@ -2,24 +2,13 @@
 @plugin "./hero.ts";
 @source "../node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx}";
 @custom-variant dark (&:is(.dark *));
+@custom-variant light (&:is(.light *));
 
-/* Fix HeroUI Input styling in dark mode */
-.dark [data-slot="input-wrapper"] {
-  @apply !bg-default-100 !border-default-200;
-}
-
-.dark [data-slot="input-wrapper"][data-hover="true"] {
-  @apply !bg-default-200;
-}
-
-.dark [data-slot="inner-wrapper"] {
-  @apply !bg-transparent;
-}
-
-/* Fix bordered variant inner wrapper */
-.dark [data-slot="input-wrapper"].border-medium {
-  @apply !bg-transparent;
-}
+/* 
+ * Note: Removed manual input styling overrides.
+ * HeroUI handles theming automatically via the theme config in hero.ts.
+ * Only add overrides here if there's a specific bug that can't be fixed in hero.ts.
+ */
 
 body {
   @apply m-0;
@@ -35,25 +24,207 @@ code {
     monospace;
 }
 
-/* Custom scrollbar for dark theme */
+/* ============================================================================
+   Modern Scrollbar Styling
+   ============================================================================ */
+
+/* Base scrollbar - both themes */
 ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+/* Hide scrollbar arrows/buttons */
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Dark theme scrollbar - for document (html element has .dark class) */
+html.dark::-webkit-scrollbar-thumb,
+html.dark body::-webkit-scrollbar-thumb,
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(71, 85, 105, 0.6);
+  /* slate-600 with opacity */
+  border-radius: 9999px;
+}
+
+html.dark::-webkit-scrollbar-thumb:hover,
+html.dark body::-webkit-scrollbar-thumb:hover,
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.8);
+  /* slate-500 with opacity */
+}
+
+html.dark::-webkit-scrollbar-thumb:active,
+html.dark body::-webkit-scrollbar-thumb:active,
+.dark ::-webkit-scrollbar-thumb:active {
+  background: rgba(148, 163, 184, 0.9);
+  /* slate-400 with opacity */
+}
+
+/* Light theme scrollbar - for document (html element has .light class) */
+html.light::-webkit-scrollbar-thumb,
+html.light body::-webkit-scrollbar-thumb,
+.light ::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
+  /* slate-400 with opacity */
+  border-radius: 9999px;
+}
+
+html.light::-webkit-scrollbar-thumb:hover,
+html.light body::-webkit-scrollbar-thumb:hover,
+.light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.7);
+  /* slate-500 with opacity */
+}
+
+html.light::-webkit-scrollbar-thumb:active,
+html.light body::-webkit-scrollbar-thumb:active,
+.light ::-webkit-scrollbar-thumb:active {
+  background: rgba(71, 85, 105, 0.8);
+  /* slate-600 with opacity */
+}
+
+/* Firefox scrollbar styling */
+* {
+  scrollbar-width: thin;
+}
+
+html.dark,
+html.dark body,
+.dark * {
+  scrollbar-color: rgba(71, 85, 105, 0.6) transparent;
+}
+
+html.light,
+html.light body,
+.light * {
+  scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
+}
+
+/* Larger scrollbar for main content areas */
+.scroll-lg::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
-::-webkit-scrollbar-track {
-  @apply bg-content1;
+/* Hide scrollbar but keep functionality */
+.scroll-hidden::-webkit-scrollbar {
+  display: none;
 }
 
-::-webkit-scrollbar-thumb {
-  @apply bg-content3 rounded-full;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  @apply bg-content4;
+.scroll-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* Video player overrides */
-video::-webkit-media-controls-panel {
-  @apply bg-content1/90;
+.dark video::-webkit-media-controls-panel {
+  background: rgba(15, 23, 42, 0.9);
 }
+
+.light video::-webkit-media-controls-panel {
+  background: rgba(248, 250, 252, 0.9);
+}
+
+/* Smooth theme transition */
+html {
+  transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
+}
+
+/* 
+ * Inset/overlay scrollbar - doesn't shift layout
+ * Uses a 0-width scrollbar that expands on hover
+ */
+html {
+  overflow-y: auto;
+}
+
+/* Zero-width scrollbar by default - appears on hover */
+html::-webkit-scrollbar {
+  width: 0;
+  background: transparent;
+  transition: width 0.2s ease;
+}
+
+html:hover::-webkit-scrollbar {
+  width: 6px;
+}
+
+html::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html.dark::-webkit-scrollbar-thumb {
+  background: rgba(71, 85, 105, 0.5);
+  border-radius: 9999px;
+}
+
+html.dark::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.7);
+}
+
+html.light::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
+  border-radius: 9999px;
+}
+
+html.light::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.7);
+}
+
+/* Firefox: hide scrollbar completely (still scrollable) */
+html {
+  scrollbar-width: none;
+}
+
+/* Show thin scrollbar on hover for Firefox - unfortunately can't be done with CSS only */
+/* Firefox users can still scroll with mouse wheel/trackpad */
+
+/* ============================================================================
+   DataTable Checkbox-Only Selection Mode
+   ============================================================================
+   When this class is applied, clicking on table rows won't trigger selection.
+   Only clicking the checkbox (first cell) will select the row.
+   Buttons and interactive elements inside cells remain clickable.
+*/
+
+.checkbox-selection-only tr {
+  cursor: default;
+}
+
+/* Allow clicking on the checkbox cell (first cell) and limit its width */
+.checkbox-selection-only tr td:first-child,
+.checkbox-selection-only tr th:first-child {
+  pointer-events: auto;
+  cursor: pointer;
+  width: 50px;
+  min-width: 50px;
+  max-width: 50px;
+}
+
+/* Disable row selection clicks on other cells */
+.checkbox-selection-only tr td:not(:first-child) {
+  pointer-events: none;
+}
+
+/* But allow buttons, links, and interactive elements inside cells to be clickable */
+.checkbox-selection-only tr td:not(:first-child) button,
+.checkbox-selection-only tr td:not(:first-child) a,
+.checkbox-selection-only tr td:not(:first-child) [role="button"],
+.checkbox-selection-only tr td:not(:first-child) input,
+.checkbox-selection-only tr td:not(:first-child) select {
+  pointer-events: auto;
+  cursor: pointer;
+}
+

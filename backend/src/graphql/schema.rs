@@ -3,20 +3,34 @@
 //! This is the single API surface for the Librarian backend.
 //! All operations require authentication unless explicitly noted.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_graphql::{Context, Object, Result, Schema};
 use uuid::Uuid;
 
 use crate::db::{
-    CreateLibrary, CreateQualityProfile, CreateRssFeed, Database, LibraryStats, UpdateLibrary,
-    UpdateQualityProfile, UpdateRssFeed, UpdateTvShow,
+    CreateLibrary, CreateQualityProfile, CreateRssFeed, Database, LibraryStats, LogFilter,
+    UpdateLibrary, UpdateQualityProfile, UpdateRssFeed, UpdateTvShow,
 };
-use crate::services::{MetadataService, ScannerService, TorrentService};
+use crate::services::{LogEvent, MetadataService, ScannerService, TorrentService};
 
 use super::auth::AuthExt;
 use super::subscriptions::SubscriptionRoot;
-use super::types::*;
+use super::types::{
+    AddTorrentInput, AddTorrentResult, AddTvShowInput, AppSetting, ClearLogsResult,
+    CreateLibraryFullInput, CreateQualityProfileInput, CreateRssFeedInput, CreateSubscriptionInput,
+    DownloadEpisodeResult, Episode, EpisodeStatus, LibraryFull, LibraryResult, LibraryType,
+    LibraryUpcomingEpisode, LibraryUpcomingShow, LogEntry, LogFilterInput, LogLevel, LogStats, MonitorType,
+    MutationResult, OrganizeTorrentResult, PaginatedLogResult, ParseAndIdentifyMediaResult,
+    ParsedEpisodeInfo, PostDownloadAction, QualityProfile, QualityProfileResult, RssFeed,
+    RssFeedResult, RssFeedTestResult, RssItem, ScanStatus, SearchResult, SettingsResult,
+    Subscription, SubscriptionResult, Torrent, TorrentActionResult, TorrentDetails,
+    TorrentSettings, TvShow, TvShowResult, TvShowSearchResult, TvShowStatus, UpdateLibraryFullInput,
+    UpdatePreferencesInput, UpdateQualityProfileInput, UpdateRssFeedInput, UpdateSubscriptionInput,
+    UpdateTorrentSettingsInput, UpdateTvShowInput, UpcomingEpisode, UpcomingEpisodeShow, User,
+    UserPreferences, Library, CastSession, MediaItem, StreamInfo,
+};
 
 /// The GraphQL schema type
 pub type LibrarianSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
@@ -27,13 +41,20 @@ pub fn build_schema(
     metadata_service: Arc<MetadataService>,
     scanner_service: Arc<ScannerService>,
     db: Database,
+    log_broadcast: Option<tokio::sync::broadcast::Sender<LogEvent>>,
 ) -> LibrarianSchema {
-    Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
+    let mut schema = Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
         .data(torrent_service)
         .data(metadata_service)
         .data(scanner_service)
-        .data(db)
-        .finish()
+        .data(db);
+
+    // Add log broadcast sender if provided
+    if let Some(sender) = log_broadcast {
+        schema = schema.data(sender);
+    }
+
+    schema.finish()
 }
 
 // ============================================================================
@@ -90,13 +111,7 @@ impl QueryRoot {
         for r in records {
             let stats = match db.libraries().get_stats(r.id).await {
                 Ok(s) => {
-                    tracing::info!(
-                        library_id = %r.id,
-                        file_count = ?s.file_count,
-                        total_size = ?s.total_size_bytes,
-                        show_count = ?s.show_count,
-                        "Library stats retrieved"
-                    );
+
                     s
                 }
                 Err(e) => {
@@ -126,10 +141,14 @@ impl QueryRoot {
                     "hardlink" => PostDownloadAction::Hardlink,
                     _ => PostDownloadAction::Copy,
                 },
-                auto_rename: r.auto_rename,
+                organize_files: r.organize_files,
+                rename_style: r.rename_style.clone(),
                 naming_pattern: r.naming_pattern,
                 default_quality_profile_id: r.default_quality_profile_id.map(|id| id.to_string()),
                 auto_add_discovered: r.auto_add_discovered,
+                auto_download: r.auto_download,
+                auto_hunt: r.auto_hunt,
+                scanning: r.scanning,
                 item_count: stats.file_count.unwrap_or(0) as i32,
                 total_size_bytes: stats.total_size_bytes.unwrap_or(0),
                 show_count: stats.show_count.unwrap_or(0) as i32,
@@ -179,10 +198,14 @@ impl QueryRoot {
                     "hardlink" => PostDownloadAction::Hardlink,
                     _ => PostDownloadAction::Copy,
                 },
-                auto_rename: r.auto_rename,
+                organize_files: r.organize_files,
+                rename_style: r.rename_style.clone(),
                 naming_pattern: r.naming_pattern,
                 default_quality_profile_id: r.default_quality_profile_id.map(|id| id.to_string()),
                 auto_add_discovered: r.auto_add_discovered,
+                auto_download: r.auto_download,
+                auto_hunt: r.auto_hunt,
+                scanning: r.scanning,
                 item_count: stats.file_count.unwrap_or(0) as i32,
                 total_size_bytes: stats.total_size_bytes.unwrap_or(0),
                 show_count: stats.show_count.unwrap_or(0) as i32,
@@ -243,6 +266,11 @@ impl QueryRoot {
                 },
                 quality_profile_id: r.quality_profile_id.map(|id| id.to_string()),
                 path: r.path,
+                auto_download_override: r.auto_download_override,
+                backfill_existing: r.backfill_existing,
+                organize_files_override: r.organize_files_override,
+                rename_style_override: r.rename_style_override,
+                auto_hunt_override: r.auto_hunt_override,
                 episode_count: r.episode_count.unwrap_or(0),
                 episode_file_count: r.episode_file_count.unwrap_or(0),
                 size_bytes: r.size_bytes.unwrap_or(0),
@@ -294,6 +322,11 @@ impl QueryRoot {
             },
             quality_profile_id: r.quality_profile_id.map(|id| id.to_string()),
             path: r.path,
+            auto_download_override: r.auto_download_override,
+            backfill_existing: r.backfill_existing,
+            organize_files_override: r.organize_files_override,
+            rename_style_override: r.rename_style_override,
+            auto_hunt_override: r.auto_hunt_override,
             episode_count: r.episode_count.unwrap_or(0),
             episode_file_count: r.episode_file_count.unwrap_or(0),
             size_bytes: r.size_bytes.unwrap_or(0),
@@ -360,6 +393,7 @@ impl QueryRoot {
                 status: match r.status.as_str() {
                     "missing" => EpisodeStatus::Missing,
                     "wanted" => EpisodeStatus::Wanted,
+                    "available" => EpisodeStatus::Available,
                     "downloading" => EpisodeStatus::Downloading,
                     "downloaded" => EpisodeStatus::Downloaded,
                     "ignored" => EpisodeStatus::Ignored,
@@ -368,6 +402,8 @@ impl QueryRoot {
                 tvmaze_id: r.tvmaze_id,
                 tmdb_id: r.tmdb_id,
                 tvdb_id: r.tvdb_id,
+                torrent_link: r.torrent_link,
+                torrent_link_added_at: r.torrent_link_added_at.map(|t| t.to_rfc3339()),
             })
             .collect())
     }
@@ -400,10 +436,20 @@ impl QueryRoot {
                 overview: r.overview,
                 air_date: r.air_date.map(|d| d.to_string()),
                 runtime: r.runtime,
-                status: EpisodeStatus::Wanted,
+                status: match r.status.as_str() {
+                    "missing" => EpisodeStatus::Missing,
+                    "wanted" => EpisodeStatus::Wanted,
+                    "available" => EpisodeStatus::Available,
+                    "downloading" => EpisodeStatus::Downloading,
+                    "downloaded" => EpisodeStatus::Downloaded,
+                    "ignored" => EpisodeStatus::Ignored,
+                    _ => EpisodeStatus::Wanted,
+                },
                 tvmaze_id: r.tvmaze_id,
                 tmdb_id: r.tmdb_id,
                 tvdb_id: r.tvdb_id,
+                torrent_link: r.torrent_link,
+                torrent_link_added_at: r.torrent_link_added_at.map(|t| t.to_rfc3339()),
             })
             .collect())
     }
@@ -636,10 +682,36 @@ impl QueryRoot {
 
     /// Get all torrents
     async fn torrents(&self, ctx: &Context<'_>) -> Result<Vec<Torrent>> {
-        let _user = ctx.auth_user()?;
+        let user = ctx.auth_user()?;
         let service = ctx.data_unchecked::<Arc<TorrentService>>();
+        let db = ctx.data_unchecked::<Database>();
+        
+        // Get live torrents from the service
         let torrents = service.list_torrents().await;
-        Ok(torrents.into_iter().map(|t| t.into()).collect())
+        let mut result: Vec<Torrent> = torrents.into_iter().map(|t| t.into()).collect();
+        
+        // Try to get added_at timestamps from database
+        let user_uuid = Uuid::parse_str(&user.user_id).unwrap_or_default();
+        if let Ok(records) = db.torrents().list_by_user(user_uuid).await {
+            // Create a map of info_hash -> added_at
+            let added_at_map: HashMap<String, String> = records
+                .into_iter()
+                .filter_map(|r| {
+                    r.added_at.format(&time::format_description::well_known::Rfc3339)
+                        .ok()
+                        .map(|ts| (r.info_hash, ts))
+                })
+                .collect();
+            
+            // Merge added_at into the result
+            for torrent in &mut result {
+                if let Some(added_at) = added_at_map.get(&torrent.info_hash) {
+                    torrent.added_at = Some(added_at.clone());
+                }
+            }
+        }
+        
+        Ok(result)
     }
 
     /// Get a specific torrent by ID
@@ -648,6 +720,16 @@ impl QueryRoot {
         let service = ctx.data_unchecked::<Arc<TorrentService>>();
         match service.get_torrent_info(id as usize).await {
             Ok(info) => Ok(Some(info.into())),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// Get detailed information about a torrent (for info modal)
+    async fn torrent_details(&self, ctx: &Context<'_>, id: i32) -> Result<Option<TorrentDetails>> {
+        let _user = ctx.auth_user()?;
+        let service = ctx.data_unchecked::<Arc<TorrentService>>();
+        match service.get_torrent_details(id as usize).await {
+            Ok(details) => Ok(Some(details.into())),
             Err(_) => Ok(None),
         }
     }
@@ -761,6 +843,233 @@ impl QueryRoot {
             })
             .collect())
     }
+
+    // ------------------------------------------------------------------------
+    // Logs
+    // ------------------------------------------------------------------------
+
+    /// Get logs with optional filtering and pagination
+    async fn logs(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(desc = "Filter options")] filter: Option<LogFilterInput>,
+        #[graphql(default = 50, desc = "Number of logs to return")] limit: i32,
+        #[graphql(default = 0, desc = "Offset for pagination")] offset: i32,
+    ) -> Result<PaginatedLogResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let log_filter = filter.map(|f| {
+            let levels = f.levels.map(|ls| {
+                ls.into_iter()
+                    .map(|l| match l {
+                        LogLevel::Trace => "TRACE".to_string(),
+                        LogLevel::Debug => "DEBUG".to_string(),
+                        LogLevel::Info => "INFO".to_string(),
+                        LogLevel::Warn => "WARN".to_string(),
+                        LogLevel::Error => "ERROR".to_string(),
+                    })
+                    .collect()
+            });
+
+            let from_timestamp = f.from_timestamp.and_then(|s| {
+                time::OffsetDateTime::parse(&s, &time::format_description::well_known::Rfc3339).ok()
+            });
+
+            let to_timestamp = f.to_timestamp.and_then(|s| {
+                time::OffsetDateTime::parse(&s, &time::format_description::well_known::Rfc3339).ok()
+            });
+
+            LogFilter {
+                levels,
+                target: f.target,
+                keyword: f.keyword,
+                from_timestamp,
+                to_timestamp,
+            }
+        }).unwrap_or_default();
+
+        let result = db
+            .logs()
+            .list(log_filter, limit as i64, offset as i64)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let next_cursor = result.logs.last().map(|l| l.timestamp.format(&time::format_description::well_known::Rfc3339).unwrap_or_default());
+
+        Ok(PaginatedLogResult {
+            logs: result
+                .logs
+                .into_iter()
+                .map(|r| LogEntry {
+                    id: r.id.to_string(),
+                    timestamp: r.timestamp.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
+                    level: LogLevel::from(r.level.as_str()),
+                    target: r.target,
+                    message: r.message,
+                    fields: r.fields,
+                    span_name: r.span_name,
+                })
+                .collect(),
+            total_count: result.total_count,
+            has_more: result.has_more,
+            next_cursor,
+        })
+    }
+
+    /// Get distinct log targets for filtering
+    async fn log_targets(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(default = 50, desc = "Maximum number of targets to return")] limit: i32,
+    ) -> Result<Vec<String>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let targets = db
+            .logs()
+            .get_distinct_targets(limit as i64)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(targets)
+    }
+
+    /// Get log statistics by level
+    async fn log_stats(&self, ctx: &Context<'_>) -> Result<LogStats> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let counts = db
+            .logs()
+            .get_counts_by_level()
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let mut stats = LogStats {
+            trace_count: 0,
+            debug_count: 0,
+            info_count: 0,
+            warn_count: 0,
+            error_count: 0,
+            total_count: 0,
+        };
+
+        for (level, count) in counts {
+            match level.to_uppercase().as_str() {
+                "TRACE" => stats.trace_count = count,
+                "DEBUG" => stats.debug_count = count,
+                "INFO" => stats.info_count = count,
+                "WARN" => stats.warn_count = count,
+                "ERROR" => stats.error_count = count,
+                _ => {}
+            }
+            stats.total_count += count;
+        }
+
+        Ok(stats)
+    }
+
+    // ------------------------------------------------------------------------
+    // Upcoming Episodes
+    // ------------------------------------------------------------------------
+
+    /// Get upcoming TV episodes from TVMaze for the next N days
+    /// 
+    /// This fetches the global TV schedule from TVMaze, showing what's airing
+    /// on broadcast/cable networks. Use country filter to narrow results.
+    async fn upcoming_episodes(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(default = 7, desc = "Number of days to look ahead")] days: i32,
+        #[graphql(desc = "Country code filter (e.g., 'US', 'GB')")] country: Option<String>,
+    ) -> Result<Vec<UpcomingEpisode>> {
+        let _user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        let schedule = metadata
+            .get_upcoming_schedule(days as u32, country.as_deref())
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(schedule
+            .into_iter()
+            .map(|entry| UpcomingEpisode {
+                tvmaze_id: entry.id as i32,
+                name: entry.name,
+                season: entry.season as i32,
+                episode: entry.number as i32,
+                air_date: entry.airdate.unwrap_or_default(),
+                air_time: entry.airtime,
+                air_stamp: entry.air_stamp,
+                runtime: entry.runtime.map(|r| r as i32),
+                summary: entry.summary.map(|s| {
+                    // Strip HTML tags from summary
+                    let re = regex::Regex::new(r"<[^>]+>").unwrap();
+                    re.replace_all(&s, "").trim().to_string()
+                }),
+                episode_image_url: entry.image.as_ref().and_then(|i| i.medium.clone()),
+                show: UpcomingEpisodeShow {
+                    tvmaze_id: entry.show.id as i32,
+                    name: entry.show.name,
+                    network: entry.show.network.as_ref().map(|n| n.name.clone())
+                        .or_else(|| entry.show.web_channel.as_ref().map(|w| w.name.clone())),
+                    poster_url: entry.show.image.as_ref().and_then(|i| i.medium.clone()),
+                    genres: entry.show.genres,
+                },
+            })
+            .collect())
+    }
+
+    /// Get upcoming episodes from the user's libraries
+    /// 
+    /// Returns episodes from shows in the user's TV libraries that are
+    /// airing in the next N days. Only includes monitored shows.
+    async fn library_upcoming_episodes(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(default = 7, desc = "Number of days to look ahead")] days: i32,
+    ) -> Result<Vec<LibraryUpcomingEpisode>> {
+        let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let user_id = Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        let records = db
+            .episodes()
+            .list_upcoming_by_user(user_id, days)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(records
+            .into_iter()
+            .map(|r| LibraryUpcomingEpisode {
+                id: r.id.to_string(),
+                tvmaze_id: r.episode_tvmaze_id,
+                name: r.episode_title,
+                season: r.season,
+                episode: r.episode,
+                air_date: r.air_date.map(|d| d.to_string()).unwrap_or_default(),
+                status: match r.status.as_str() {
+                    "missing" => EpisodeStatus::Missing,
+                    "wanted" => EpisodeStatus::Wanted,
+                    "available" => EpisodeStatus::Available,
+                    "downloading" => EpisodeStatus::Downloading,
+                    "downloaded" => EpisodeStatus::Downloaded,
+                    "ignored" => EpisodeStatus::Ignored,
+                    _ => EpisodeStatus::Missing,
+                },
+                show: LibraryUpcomingShow {
+                    id: r.show_id.to_string(),
+                    name: r.show_name,
+                    year: r.show_year,
+                    network: r.show_network,
+                    poster_url: r.show_poster_url,
+                    library_id: r.library_id.to_string(),
+                },
+            })
+            .collect())
+    }
 }
 
 // ============================================================================
@@ -834,16 +1143,27 @@ impl MutationRoot {
                 scan_interval_minutes: input.scan_interval_minutes.unwrap_or(60),
                 watch_for_changes: input.watch_for_changes.unwrap_or(false),
                 post_download_action,
-                auto_rename: input.auto_rename.unwrap_or(true),
+                organize_files: input.organize_files.unwrap_or(true),
+                rename_style: input.rename_style.unwrap_or_else(|| "none".to_string()),
                 naming_pattern: input.naming_pattern,
                 default_quality_profile_id: input
                     .default_quality_profile_id
-                    .map(|id| Uuid::parse_str(&id).ok())
-                    .flatten(),
+                    .and_then(|id| Uuid::parse_str(&id).ok()),
                 auto_add_discovered: input.auto_add_discovered.unwrap_or(true),
+                auto_download: input.auto_download.unwrap_or(true),
+                auto_hunt: input.auto_hunt.unwrap_or(false),
             })
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        tracing::info!(
+            user_id = %user.user_id,
+            library_id = %record.id,
+            library_name = %record.name,
+            library_type = %record.library_type,
+            "User created library: {}",
+            record.name
+        );
 
         Ok(LibraryResult {
             success: true,
@@ -898,13 +1218,15 @@ impl MutationRoot {
                     scan_interval_minutes: input.scan_interval_minutes,
                     watch_for_changes: input.watch_for_changes,
                     post_download_action,
-                    auto_rename: input.auto_rename,
+                    organize_files: input.organize_files,
+                    rename_style: input.rename_style,
                     naming_pattern: input.naming_pattern,
                     default_quality_profile_id: input
                         .default_quality_profile_id
-                        .map(|id| Uuid::parse_str(&id).ok())
-                        .flatten(),
+                        .and_then(|id| Uuid::parse_str(&id).ok()),
                     auto_add_discovered: input.auto_add_discovered,
+                    auto_download: input.auto_download,
+                    auto_hunt: input.auto_hunt,
                 },
             )
             .await
@@ -970,6 +1292,7 @@ impl MutationRoot {
     async fn scan_library(&self, ctx: &Context<'_>, id: String) -> Result<ScanStatus> {
         let _user = ctx.auth_user()?;
         let scanner = ctx.data_unchecked::<Arc<ScannerService>>();
+        let db = ctx.data_unchecked::<Database>().clone();
 
         let library_id = Uuid::parse_str(&id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
@@ -981,6 +1304,10 @@ impl MutationRoot {
         tokio::spawn(async move {
             if let Err(e) = scanner.scan_library(library_id).await {
                 tracing::error!(library_id = %library_id, error = %e, "Library scan failed");
+                // Ensure scanning state is reset on error
+                if let Err(reset_err) = db.libraries().set_scanning(library_id, false).await {
+                    tracing::error!(library_id = %library_id, error = %reset_err, "Failed to reset scanning state");
+                }
             }
         });
 
@@ -1051,6 +1378,58 @@ impl MutationRoot {
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
+        tracing::info!(
+            user_id = %user.user_id,
+            show_name = %record.name,
+            show_id = %record.id,
+            library_id = %lib_id,
+            "User added TV show: {}",
+            record.name
+        );
+
+        // Trigger immediate downloads for available episodes if backfill is enabled
+        if record.backfill_existing {
+            let torrent_service = ctx.data_unchecked::<Arc<TorrentService>>();
+            let db = ctx.data_unchecked::<Database>();
+
+            // Run async download in background (don't block the response)
+            let show_id = record.id;
+            let show_name = record.name.clone();
+            let db_clone = db.clone();
+            let torrent_clone = torrent_service.clone();
+            
+            tokio::spawn(async move {
+                match crate::jobs::auto_download::download_available_for_show(
+                    &db_clone,
+                    torrent_clone,
+                    show_id,
+                )
+                .await
+                {
+                    Ok(count) => {
+                        if count > 0 {
+                            tracing::info!(
+                                show_id = %show_id,
+                                show_name = %show_name,
+                                count = count,
+                                "Started downloading available episodes for new show: {}",
+                                show_name
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            show_id = %show_id,
+                            show_name = %show_name,
+                            error = %e,
+                            "Failed to start downloads for new show: {}",
+                            show_name
+                        );
+                    }
+                }
+            });
+        }
+
         Ok(TvShowResult {
             success: true,
             tv_show: Some(TvShow {
@@ -1082,6 +1461,11 @@ impl MutationRoot {
                 },
                 quality_profile_id: record.quality_profile_id.map(|id| id.to_string()),
                 path: record.path,
+                auto_download_override: record.auto_download_override,
+                backfill_existing: record.backfill_existing,
+                organize_files_override: record.organize_files_override,
+                rename_style_override: record.rename_style_override,
+                auto_hunt_override: record.auto_hunt_override,
                 episode_count: record.episode_count.unwrap_or(0),
                 episode_file_count: record.episode_file_count.unwrap_or(0),
                 size_bytes: record.size_bytes.unwrap_or(0),
@@ -1120,9 +1504,13 @@ impl MutationRoot {
                     monitor_type,
                     quality_profile_id: input
                         .quality_profile_id
-                        .map(|id| Uuid::parse_str(&id).ok())
-                        .flatten(),
+                        .and_then(|id| Uuid::parse_str(&id).ok()),
                     path: input.path,
+                    auto_download_override: input.auto_download_override,
+                    backfill_existing: input.backfill_existing,
+                    organize_files_override: input.organize_files_override,
+                    rename_style_override: input.rename_style_override,
+                    auto_hunt_override: input.auto_hunt_override,
                     ..Default::default()
                 },
             )
@@ -1161,6 +1549,11 @@ impl MutationRoot {
                     },
                     quality_profile_id: record.quality_profile_id.map(|id| id.to_string()),
                     path: record.path,
+                    auto_download_override: record.auto_download_override,
+                    backfill_existing: record.backfill_existing,
+                    organize_files_override: record.organize_files_override,
+                    rename_style_override: record.rename_style_override,
+                    auto_hunt_override: record.auto_hunt_override,
                     episode_count: record.episode_count.unwrap_or(0),
                     episode_file_count: record.episode_file_count.unwrap_or(0),
                     size_bytes: record.size_bytes.unwrap_or(0),
@@ -1229,6 +1622,61 @@ impl MutationRoot {
                 error: Some("No provider ID found for show".to_string()),
             });
         };
+
+        // Fetch fresh show details (including updated artwork)
+        let show_details = metadata
+            .get_show(provider, provider_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        // Cache artwork if artwork service is available
+        let (cached_poster_url, cached_backdrop_url) = if let Some(artwork_service) = metadata.artwork_service() {
+            let entity_id = format!("{}_{}", provider_id, show.library_id);
+            
+            let poster_url = artwork_service
+                .cache_image_optional(
+                    show_details.poster_url.as_deref(),
+                    crate::services::artwork::ArtworkType::Poster,
+                    "show",
+                    &entity_id,
+                )
+                .await;
+            
+            let backdrop_url = artwork_service
+                .cache_image_optional(
+                    show_details.backdrop_url.as_deref(),
+                    crate::services::artwork::ArtworkType::Backdrop,
+                    "show",
+                    &entity_id,
+                )
+                .await;
+
+            tracing::info!(
+                poster_cached = poster_url.is_some(),
+                backdrop_cached = backdrop_url.is_some(),
+                "Refreshed artwork caching"
+            );
+
+            (poster_url, backdrop_url)
+        } else {
+            (show_details.poster_url.clone(), show_details.backdrop_url.clone())
+        };
+
+        // Update show metadata including artwork
+        let _ = db.tv_shows().update(
+            show_id,
+            crate::db::UpdateTvShow {
+                name: Some(show_details.name),
+                overview: show_details.overview,
+                status: Some(show_details.status.unwrap_or_else(|| "unknown".to_string())),
+                network: show_details.network,
+                runtime: show_details.runtime,
+                genres: Some(show_details.genres),
+                poster_url: cached_poster_url,
+                backdrop_url: cached_backdrop_url,
+                ..Default::default()
+            },
+        ).await;
 
         // Fetch fresh episodes
         let episodes = metadata
@@ -1299,6 +1747,11 @@ impl MutationRoot {
                 },
                 quality_profile_id: record.quality_profile_id.map(|id| id.to_string()),
                 path: record.path,
+                auto_download_override: record.auto_download_override,
+                backfill_existing: record.backfill_existing,
+                organize_files_override: record.organize_files_override,
+                rename_style_override: record.rename_style_override,
+                auto_hunt_override: record.auto_hunt_override,
                 episode_count: record.episode_count.unwrap_or(0),
                 episode_file_count: record.episode_file_count.unwrap_or(0),
                 size_bytes: record.size_bytes.unwrap_or(0),
@@ -1336,8 +1789,7 @@ impl MutationRoot {
                 preferred_language: input.preferred_language,
                 max_size_gb: input
                     .max_size_gb
-                    .map(|f| rust_decimal::Decimal::try_from(f).ok())
-                    .flatten(),
+                    .and_then(|f| rust_decimal::Decimal::try_from(f).ok()),
                 min_seeders: input.min_seeders,
                 release_group_whitelist: input.release_group_whitelist.unwrap_or_default(),
                 release_group_blacklist: input.release_group_blacklist.unwrap_or_default(),
@@ -1397,8 +1849,7 @@ impl MutationRoot {
                     preferred_language: input.preferred_language,
                     max_size_gb: input
                         .max_size_gb
-                        .map(|f| rust_decimal::Decimal::try_from(f).ok())
-                        .flatten(),
+                        .and_then(|f| rust_decimal::Decimal::try_from(f).ok()),
                     min_seeders: input.min_seeders,
                     release_group_whitelist: input.release_group_whitelist,
                     release_group_blacklist: input.release_group_blacklist,
@@ -1484,8 +1935,7 @@ impl MutationRoot {
                 user_id,
                 library_id: input
                     .library_id
-                    .map(|id| Uuid::parse_str(&id).ok())
-                    .flatten(),
+                    .and_then(|id| Uuid::parse_str(&id).ok()),
                 name: input.name,
                 url: input.url,
                 enabled: input.enabled.unwrap_or(true),
@@ -1531,8 +1981,7 @@ impl MutationRoot {
                 UpdateRssFeed {
                     library_id: input
                         .library_id
-                        .map(|id| Uuid::parse_str(&id).ok())
-                        .flatten(),
+                        .and_then(|id| Uuid::parse_str(&id).ok()),
                     name: input.name,
                     url: input.url,
                     enabled: input.enabled,
@@ -1591,6 +2040,199 @@ impl MutationRoot {
         })
     }
 
+    /// Test an RSS feed by fetching and parsing its items (without storing)
+    async fn test_rss_feed(&self, ctx: &Context<'_>, url: String) -> Result<RssFeedTestResult> {
+        let _user = ctx.auth_user()?;
+
+        let rss_service = crate::services::RssService::new();
+        match rss_service.fetch_feed(&url).await {
+            Ok(items) => {
+                let sample_items: Vec<RssItem> = items
+                    .into_iter()
+                    .take(10)
+                    .map(|item| RssItem {
+                        title: item.title,
+                        link: item.link,
+                        pub_date: item.pub_date.map(|d| d.to_rfc3339()),
+                        description: item.description,
+                        parsed_show_name: item.parsed_show_name,
+                        parsed_season: item.parsed_season,
+                        parsed_episode: item.parsed_episode,
+                        parsed_resolution: item.parsed_resolution,
+                        parsed_codec: item.parsed_codec,
+                    })
+                    .collect();
+
+                Ok(RssFeedTestResult {
+                    success: true,
+                    item_count: sample_items.len() as i32,
+                    sample_items,
+                    error: None,
+                })
+            }
+            Err(e) => Ok(RssFeedTestResult {
+                success: false,
+                item_count: 0,
+                sample_items: vec![],
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    /// Manually poll an RSS feed
+    async fn poll_rss_feed(&self, ctx: &Context<'_>, id: String) -> Result<RssFeedResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let feed_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid feed ID: {}", e)))?;
+
+        // Poll the feed using the same logic as the background job
+        // This ensures items are stored AND matched to episodes
+        match crate::jobs::rss_poller::poll_single_feed_by_id(db, feed_id).await {
+            Ok((new_items, matched_episodes)) => {
+                tracing::info!(
+                    user_id = %_user.user_id,
+                    feed_id = %feed_id,
+                    new_items = new_items,
+                    matched_episodes = matched_episodes,
+                    "User manually polled RSS feed: {} new items, {} matched episodes",
+                    new_items, matched_episodes
+                );
+                // Get updated feed
+                let updated_feed = db
+                    .rss_feeds()
+                    .get_by_id(feed_id)
+                    .await
+                    .map_err(|e| async_graphql::Error::new(e.to_string()))?
+                    .ok_or_else(|| async_graphql::Error::new("RSS feed not found"))?;
+
+                Ok(RssFeedResult {
+                    success: true,
+                    rss_feed: Some(RssFeed {
+                        id: updated_feed.id.to_string(),
+                        library_id: updated_feed.library_id.map(|id| id.to_string()),
+                        name: updated_feed.name,
+                        url: updated_feed.url,
+                        enabled: updated_feed.enabled,
+                        poll_interval_minutes: updated_feed.poll_interval_minutes,
+                        last_polled_at: updated_feed.last_polled_at.map(|t| t.to_rfc3339()),
+                        last_successful_at: updated_feed.last_successful_at.map(|t| t.to_rfc3339()),
+                        last_error: updated_feed.last_error,
+                        consecutive_failures: updated_feed.consecutive_failures.unwrap_or(0),
+                    }),
+                    error: None,
+                })
+            }
+            Err(e) => {
+                // Mark poll failure
+                let _ = db
+                    .rss_feeds()
+                    .mark_poll_failure(feed_id, &e.to_string())
+                    .await;
+
+                Ok(RssFeedResult {
+                    success: false,
+                    rss_feed: None,
+                    error: Some(e.to_string()),
+                })
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Episodes
+    // ------------------------------------------------------------------------
+
+    /// Manually trigger download for an available episode
+    async fn download_episode(&self, ctx: &Context<'_>, episode_id: String) -> Result<DownloadEpisodeResult> {
+        let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let torrent_service = ctx.data_unchecked::<Arc<TorrentService>>();
+
+        let ep_id = Uuid::parse_str(&episode_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid episode ID: {}", e)))?;
+
+        // Get the episode
+        let episode = db
+            .episodes()
+            .get_by_id(ep_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            .ok_or_else(|| async_graphql::Error::new("Episode not found"))?;
+
+        // Check if it has a torrent link
+        let torrent_link = episode
+            .torrent_link
+            .ok_or_else(|| async_graphql::Error::new("Episode has no torrent link - not available for download"))?;
+
+        // Get show info for logging
+        let show = db
+            .tv_shows()
+            .get_by_id(episode.tv_show_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            .ok_or_else(|| async_graphql::Error::new("Show not found"))?;
+
+        tracing::info!(
+            user_id = %user.user_id,
+            show_name = %show.name,
+            season = episode.season,
+            episode = episode.episode,
+            "User manually downloading {} S{:02}E{:02}",
+            show.name,
+            episode.season,
+            episode.episode
+        );
+
+        // Start the download
+        let add_result = if torrent_link.starts_with("magnet:") {
+            torrent_service.add_magnet(&torrent_link, None).await
+        } else {
+            torrent_service.add_torrent_url(&torrent_link, None).await
+        };
+
+        match add_result {
+            Ok(torrent_info) => {
+                // Link torrent to episode
+                if let Err(e) = db.torrents().link_to_episode(&torrent_info.info_hash, episode.id).await {
+                    tracing::error!("Failed to link torrent to episode: {:?}", e);
+                }
+
+                // Update episode status
+                if let Err(e) = db.episodes().mark_downloading(episode.id).await {
+                    tracing::error!("Failed to update episode status: {:?}", e);
+                }
+
+                Ok(DownloadEpisodeResult {
+                    success: true,
+                    episode: Some(Episode {
+                        id: episode.id.to_string(),
+                        tv_show_id: episode.tv_show_id.to_string(),
+                        season: episode.season,
+                        episode: episode.episode,
+                        absolute_number: episode.absolute_number,
+                        title: episode.title,
+                        overview: episode.overview,
+                        air_date: episode.air_date.map(|d| d.to_string()),
+                        runtime: episode.runtime,
+                        status: EpisodeStatus::Downloading,
+                        tvmaze_id: episode.tvmaze_id,
+                        tmdb_id: episode.tmdb_id,
+                        tvdb_id: episode.tvdb_id,
+                        torrent_link: Some(torrent_link),
+                        torrent_link_added_at: episode.torrent_link_added_at.map(|t| t.to_rfc3339()),
+                    }),
+                    error: None,
+                })
+            }
+            Err(e) => Ok(DownloadEpisodeResult {
+                success: false,
+                episode: None,
+                error: Some(format!("Failed to start download: {}", e)),
+            }),
+        }
+    }
+
     // ------------------------------------------------------------------------
     // Media
     // ------------------------------------------------------------------------
@@ -1634,16 +2276,33 @@ impl MutationRoot {
         };
 
         match result {
-            Ok(info) => Ok(AddTorrentResult {
-                success: true,
-                torrent: Some(info.into()),
-                error: None,
-            }),
-            Err(e) => Ok(AddTorrentResult {
-                success: false,
-                torrent: None,
-                error: Some(e.to_string()),
-            }),
+            Ok(info) => {
+                tracing::info!(
+                    user_id = %user.user_id,
+                    torrent_id = info.id,
+                    torrent_name = %info.name,
+                    info_hash = %info.info_hash,
+                    "User added torrent: {}",
+                    info.name
+                );
+                Ok(AddTorrentResult {
+                    success: true,
+                    torrent: Some(info.into()),
+                    error: None,
+                })
+            }
+            Err(e) => {
+                tracing::warn!(
+                    user_id = %user.user_id,
+                    error = %e,
+                    "User failed to add torrent"
+                );
+                Ok(AddTorrentResult {
+                    success: false,
+                    torrent: None,
+                    error: Some(e.to_string()),
+                })
+            }
         }
     }
 
@@ -1699,6 +2358,94 @@ impl MutationRoot {
             Err(e) => Ok(TorrentActionResult {
                 success: false,
                 error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    /// Organize a completed torrent's files into the library structure
+    /// 
+    /// This processes the torrent files:
+    /// 1. Parses filenames to identify show/episode
+    /// 2. Matches to existing shows in the library
+    /// 3. Copies/moves/hardlinks files based on library settings
+    /// 4. Creates folder structure (Show Name/Season XX/)
+    /// 5. Updates episode status to downloaded
+    async fn organize_torrent(
+        &self,
+        ctx: &Context<'_>,
+        id: i32,
+        #[graphql(desc = "Optional library ID to organize into (uses first TV library if not specified)")]
+        library_id: Option<String>,
+    ) -> Result<OrganizeTorrentResult> {
+        let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let torrent_service = ctx.data_unchecked::<Arc<TorrentService>>();
+
+        let user_id = Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        let library_uuid = if let Some(ref lib_id) = library_id {
+            Some(Uuid::parse_str(lib_id)
+                .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?)
+        } else {
+            None
+        };
+
+        // Get torrent info to get info_hash
+        let torrent_info = match torrent_service.get_torrent_info(id as usize).await {
+            Ok(info) => info,
+            Err(e) => {
+                return Ok(OrganizeTorrentResult {
+                    success: false,
+                    organized_count: 0,
+                    failed_count: 0,
+                    messages: vec![format!("Failed to get torrent info: {}", e)],
+                });
+            }
+        };
+
+        // Get files from the torrent
+        let files = match torrent_service.get_files_for_torrent(&torrent_info.info_hash).await {
+            Ok(f) => f,
+            Err(e) => {
+                return Ok(OrganizeTorrentResult {
+                    success: false,
+                    organized_count: 0,
+                    failed_count: 0,
+                    messages: vec![format!("Failed to get torrent files: {}", e)],
+                });
+            }
+        };
+
+        // Convert to organizer format
+        let files_for_organize: Vec<crate::services::TorrentFileForOrganize> = files
+            .into_iter()
+            .map(|f| crate::services::TorrentFileForOrganize {
+                path: f.path,
+                size: f.size,
+            })
+            .collect();
+
+        // Run the organizer
+        let organizer = crate::services::OrganizerService::new(db.clone());
+        
+        match organizer.organize_torrent(
+            &torrent_info.info_hash,
+            files_for_organize,
+            user_id,
+            library_uuid,
+        ).await {
+            Ok(result) => Ok(OrganizeTorrentResult {
+                success: result.success,
+                organized_count: result.organized_count,
+                failed_count: result.failed_count,
+                messages: result.messages,
+            }),
+            Err(e) => Ok(OrganizeTorrentResult {
+                success: false,
+                organized_count: 0,
+                failed_count: 0,
+                messages: vec![format!("Organization failed: {}", e)],
             }),
         }
     }
@@ -1834,5 +2581,51 @@ impl MutationRoot {
         let _id = id;
         // TODO: Implement Torznab search
         Ok(vec![])
+    }
+
+    // ------------------------------------------------------------------------
+    // Logs
+    // ------------------------------------------------------------------------
+
+    /// Clear all logs
+    async fn clear_all_logs(&self, ctx: &Context<'_>) -> Result<ClearLogsResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let deleted = db
+            .logs()
+            .delete_all()
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(ClearLogsResult {
+            success: true,
+            deleted_count: deleted as i64,
+            error: None,
+        })
+    }
+
+    /// Clear logs older than a specified number of days
+    async fn clear_old_logs(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(desc = "Delete logs older than this many days")] days: i32,
+    ) -> Result<ClearLogsResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let before = time::OffsetDateTime::now_utc() - time::Duration::days(days as i64);
+
+        let deleted = db
+            .logs()
+            .delete_before(before)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(ClearLogsResult {
+            success: true,
+            deleted_count: deleted as i64,
+            error: None,
+        })
     }
 }

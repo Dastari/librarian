@@ -1,14 +1,11 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useState, useEffect, useCallback } from 'react'
-import {
-  Button,
-  Card,
-  CardBody,
-  CardHeader,
-  Input,
-  Switch,
-  Divider,
-} from '@heroui/react'
+import { Button } from '@heroui/button'
+import { Card, CardBody, CardHeader } from '@heroui/card'
+import { Input } from '@heroui/input'
+import { Switch } from '@heroui/switch'
+import { Divider } from '@heroui/divider'
+import { addToast } from '@heroui/toast'
 import {
   graphqlClient,
   TORRENT_SETTINGS_QUERY,
@@ -16,41 +13,17 @@ import {
   type TorrentSettings,
   type SettingsResult,
 } from '../../lib/graphql'
-import { useAuth } from '../../hooks/useAuth'
 import { FolderBrowserInput } from '../../components/FolderBrowserInput'
-import { SettingsLayout } from '../../components/SettingsLayout'
+import { sanitizeError } from '../../lib/format'
 
 export const Route = createFileRoute('/settings/')({
-  beforeLoad: ({ context }) => {
-    if (!context.auth.isAuthenticated) {
-      throw redirect({ to: '/auth/login' })
-    }
-  },
   component: SettingsPage,
 })
 
-// Helper to sanitize error messages (avoid displaying raw HTML)
-function sanitizeError(error: unknown): string {
-  if (!error) return 'Unknown error'
-  const message = typeof error === 'string' ? error : (error as Error).message || String(error)
-  // If the error contains HTML, show a generic message
-  if (message.includes('<!DOCTYPE') || message.includes('<html')) {
-    return 'Failed to connect to server. Please check that the backend is running.'
-  }
-  // Truncate very long messages
-  if (message.length > 200) {
-    return message.substring(0, 200) + '...'
-  }
-  return message
-}
-
 function SettingsPage() {
-  const { session, loading: authLoading } = useAuth()
   const [_settings, setSettings] = useState<TorrentSettings | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState<string | null>(null)
 
   // Form state
   const [downloadDir, setDownloadDir] = useState('')
@@ -76,34 +49,30 @@ function SettingsPage() {
         setDownloadLimit(s.downloadLimit)
       }
       if (result.error) {
-        setError(sanitizeError(result.error))
+        addToast({
+          title: 'Error',
+          description: sanitizeError(result.error),
+          color: 'danger',
+        })
       }
     } catch (e) {
-      setError(sanitizeError(e))
+      addToast({
+        title: 'Error',
+        description: sanitizeError(e),
+        color: 'danger',
+      })
     } finally {
       setIsLoading(false)
     }
   }, [])
 
-  // Wait for auth to be ready before fetching settings
+  // Fetch settings on mount
   useEffect(() => {
-    // Don't fetch until auth has loaded
-    if (authLoading) return
-    
-    // If not authenticated, show error
-    if (!session) {
-      setError('Authentication required')
-      setIsLoading(false)
-      return
-    }
-
     fetchSettings()
-  }, [authLoading, session, fetchSettings])
+  }, [fetchSettings])
 
   const handleSave = async () => {
     setIsSaving(true)
-    setError(null)
-    setSuccess(null)
 
     try {
       const result = await graphqlClient
@@ -121,12 +90,24 @@ function SettingsPage() {
         .toPromise()
 
       if (result.data?.updateTorrentSettings.success) {
-        setSuccess('Settings saved successfully! Restart the server for changes to take effect.')
+        addToast({
+          title: 'Settings Saved',
+          description: 'Restart the server for changes to take effect.',
+          color: 'success',
+        })
       } else {
-        setError(sanitizeError(result.data?.updateTorrentSettings.error || 'Failed to save settings'))
+        addToast({
+          title: 'Error',
+          description: sanitizeError(result.data?.updateTorrentSettings.error || 'Failed to save settings'),
+          color: 'danger',
+        })
       }
     } catch (e) {
-      setError(sanitizeError(e))
+      addToast({
+        title: 'Error',
+        description: sanitizeError(e),
+        color: 'danger',
+      })
     } finally {
       setIsSaving(false)
     }
@@ -140,23 +121,7 @@ function SettingsPage() {
   }
 
   return (
-    <SettingsLayout isLoading={isLoading}>
-      {error && (
-        <Card className="bg-danger-50 border-danger mb-6">
-          <CardBody>
-            <p className="text-danger">{error}</p>
-          </CardBody>
-        </Card>
-      )}
-
-      {success && (
-        <Card className="bg-success-50 border-success mb-6">
-          <CardBody>
-            <p className="text-success">{success}</p>
-          </CardBody>
-        </Card>
-      )}
-
+    <>
       {/* Torrent Client Settings */}
       <Card className="mb-6">
         <CardHeader className="flex gap-3">
@@ -175,6 +140,7 @@ function SettingsPage() {
             placeholder="/data/downloads"
             description="Where downloaded files are saved. Make sure this path is writable."
             modalTitle="Select Download Directory"
+            isDisabled={isLoading}
           />
 
           {/* Session Directory */}
@@ -185,6 +151,7 @@ function SettingsPage() {
             placeholder="/data/session"
             description="Where torrent session data (resume info, DHT cache) is stored."
             modalTitle="Select Session Directory"
+            isDisabled={isLoading}
           />
 
           <Divider />
@@ -197,84 +164,72 @@ function SettingsPage() {
                 Distributed Hash Table for finding peers without trackers
               </p>
             </div>
-            <Switch isSelected={enableDht} onValueChange={setEnableDht} />
+            <Switch isSelected={enableDht} onValueChange={setEnableDht} isDisabled={isLoading} />
           </div>
 
           {/* Listen Port */}
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium">Listen Port</label>
-            <Input
-              type="number"
-              value={listenPort.toString()}
-              onChange={(e) => setListenPort(parseInt(e.target.value) || 0)}
-              placeholder="6881"
-              className="max-w-xs"
-            />
-            <p className="text-xs text-default-400">
-              Port for incoming connections. Set to 0 for random port.
-            </p>
-          </div>
+          <Input
+            type="number"
+            label="Listen Port"
+            description="Port for incoming connections. Set to 0 for random port."
+            value={listenPort.toString()}
+            onChange={(e) => setListenPort(parseInt(e.target.value) || 0)}
+            placeholder="6881"
+            className="max-w-xs"
+            isDisabled={isLoading}
+          />
 
           {/* Max Concurrent */}
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium">Max Concurrent Downloads</label>
-            <Input
-              type="number"
-              value={maxConcurrent.toString()}
-              onChange={(e) => setMaxConcurrent(parseInt(e.target.value) || 1)}
-              placeholder="5"
-              className="max-w-xs"
-              min={1}
-              max={20}
-            />
-            <p className="text-xs text-default-400">
-              Maximum number of torrents downloading simultaneously
-            </p>
-          </div>
+          <Input
+            type="number"
+            label="Max Concurrent Downloads"
+            description="Maximum number of torrents downloading simultaneously"
+            value={maxConcurrent.toString()}
+            onChange={(e) => setMaxConcurrent(parseInt(e.target.value) || 1)}
+            placeholder="5"
+            className="max-w-xs"
+            min={1}
+            max={20}
+            isDisabled={isLoading}
+          />
 
           <Divider />
 
           {/* Speed Limits */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium">
-                Download Limit: {formatSpeed(downloadLimit)}
-              </label>
-              <Input
-                type="number"
-                value={downloadLimit.toString()}
-                onChange={(e) => setDownloadLimit(parseInt(e.target.value) || 0)}
-                placeholder="0"
-                endContent={<span className="text-default-400 text-sm">B/s</span>}
-              />
-              <p className="text-xs text-default-400">0 = unlimited</p>
-            </div>
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium">
-                Upload Limit: {formatSpeed(uploadLimit)}
-              </label>
-              <Input
-                type="number"
-                value={uploadLimit.toString()}
-                onChange={(e) => setUploadLimit(parseInt(e.target.value) || 0)}
-                placeholder="0"
-                endContent={<span className="text-default-400 text-sm">B/s</span>}
-              />
-              <p className="text-xs text-default-400">0 = unlimited</p>
-            </div>
+            <Input
+              type="number"
+              label={`Download Limit: ${formatSpeed(downloadLimit)}`}
+              description="0 = unlimited"
+              value={downloadLimit.toString()}
+              onChange={(e) => setDownloadLimit(parseInt(e.target.value) || 0)}
+              placeholder="0"
+              endContent={<span className="text-default-400 text-sm">B/s</span>}
+              isDisabled={isLoading}
+            />
+            <Input
+              type="number"
+              label={`Upload Limit: ${formatSpeed(uploadLimit)}`}
+              description="0 = unlimited"
+              value={uploadLimit.toString()}
+              onChange={(e) => setUploadLimit(parseInt(e.target.value) || 0)}
+              placeholder="0"
+              endContent={<span className="text-default-400 text-sm">B/s</span>}
+              isDisabled={isLoading}
+            />
           </div>
         </CardBody>
       </Card>
 
       {/* Save Button */}
       <div className="flex justify-end gap-3">
-        <Button variant="flat" onPress={fetchSettings} isDisabled={isSaving}>
+        <Button variant="flat" onPress={fetchSettings} isDisabled={isSaving || isLoading}>
           Reset
         </Button>
-        <Button color="primary" onPress={handleSave} isLoading={isSaving}>
+        <Button color="primary" onPress={handleSave} isLoading={isSaving} isDisabled={isLoading}>
           Save Settings
         </Button>
       </div>
-    </SettingsLayout>
+    </>
   )
 }

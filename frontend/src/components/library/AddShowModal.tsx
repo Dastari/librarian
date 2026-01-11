@@ -1,21 +1,13 @@
 import { useState } from 'react'
-import {
-  Button,
-  Card,
-  CardBody,
-  Modal,
-  ModalContent,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
-  Input,
-  Select,
-  SelectItem,
-  Chip,
-  Spinner,
-  addToast,
-  Image,
-} from '@heroui/react'
+import { Button } from '@heroui/button'
+import { Card, CardBody } from '@heroui/card'
+import { Image } from '@heroui/image'
+import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
+import { Input } from '@heroui/input'
+import { Select, SelectItem } from '@heroui/select'
+import { Chip } from '@heroui/chip'
+import { Spinner } from '@heroui/spinner'
+import { addToast } from '@heroui/toast'
 import {
   graphqlClient,
   SEARCH_TV_SHOWS_QUERY,
@@ -129,7 +121,7 @@ export function AddShowModal({
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} className="dark" size="2xl">
+    <Modal isOpen={isOpen} onClose={onClose} size="2xl">
       <ModalContent>
         <ModalHeader>Add TV Show</ModalHeader>
         <ModalBody>
@@ -162,23 +154,28 @@ export function AddShowModal({
                     <Card
                       key={`${result.provider}-${result.providerId}`}
                       isPressable
-                      className="bg-content2"
+                      className="bg-content2 w-full hover:bg-content3"
                       onPress={() => setSelectedShow(result)}
                     >
                       <CardBody className="flex flex-row gap-3 p-2">
-                        {result.posterUrl ? (
-                          <Image
-                            src={result.posterUrl}
-                            alt={result.name}
-                            className="w-12 h-16 object-cover"
-                            radius="sm"
-                          />
-                        ) : (
-                          <div className="w-12 h-16 bg-default-200 flex items-center justify-center rounded-sm">
-                            📺
-                          </div>
-                        )}
-                        <div className="flex-1">
+                        <div className="shrink-0 w-10">
+                          {result.posterUrl ? (
+                            <Image
+                              src={result.posterUrl}
+                              alt={result.name}
+                              classNames={{
+                                wrapper: "w-full",
+                                img: "w-full aspect-[2/3] object-cover"
+                              }}
+                              radius="sm"
+                            />
+                          ) : (
+                            <div className="w-full aspect-[2/3] bg-default-200 flex items-center justify-center rounded-sm">
+                              📺
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
                           <h4 className="font-medium">
                             {result.name}
                             {result.year && (
@@ -210,20 +207,25 @@ export function AddShowModal({
           ) : (
             <div className="space-y-4">
               <Card className="bg-content2">
-                <CardBody className="flex flex-row gap-4">
-                  {selectedShow.posterUrl ? (
-                    <Image
-                      src={selectedShow.posterUrl}
-                      alt={selectedShow.name}
-                      className="w-20 h-28 object-cover"
-                      radius="sm"
-                    />
-                  ) : (
-                    <div className="w-20 h-28 bg-default-200 flex items-center justify-center rounded-sm">
-                      📺
-                    </div>
-                  )}
-                  <div>
+                <CardBody className="flex flex-row gap-4 p-3">
+                  <div className="flex-shrink-0 w-24">
+                    {selectedShow.posterUrl ? (
+                      <Image
+                        src={selectedShow.posterUrl}
+                        alt={selectedShow.name}
+                        classNames={{
+                          wrapper: "w-full",
+                          img: "w-full aspect-[2/3] object-cover"
+                        }}
+                        radius="md"
+                      />
+                    ) : (
+                      <div className="w-full aspect-[2/3] bg-default-200 flex items-center justify-center rounded-md text-2xl">
+                        📺
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
                     <h4 className="font-semibold text-lg">
                       {selectedShow.name}
                       {selectedShow.year && (

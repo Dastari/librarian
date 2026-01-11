@@ -21,6 +21,7 @@ export const TORRENTS_QUERY = `
       uploadSpeedFormatted
       peers
       eta
+      addedAt
     }
   }
 `;
@@ -35,6 +36,52 @@ export const TORRENT_QUERY = `
       progress
       size
       sizeFormatted
+    }
+  }
+`;
+
+export const TORRENT_DETAILS_QUERY = `
+  query TorrentDetails($id: Int!) {
+    torrentDetails(id: $id) {
+      id
+      infoHash
+      name
+      state
+      progress
+      progressPercent
+      size
+      sizeFormatted
+      downloaded
+      downloadedFormatted
+      uploaded
+      uploadedFormatted
+      downloadSpeed
+      downloadSpeedFormatted
+      uploadSpeed
+      uploadSpeedFormatted
+      savePath
+      files {
+        index
+        path
+        size
+        progress
+      }
+      pieceCount
+      piecesDownloaded
+      averagePieceDownloadMs
+      timeRemainingSecs
+      timeRemainingFormatted
+      peerStats {
+        queued
+        connecting
+        live
+        seen
+        dead
+        notNeeded
+      }
+      error
+      finished
+      ratio
     }
   }
 `;
@@ -74,7 +121,7 @@ export const LIBRARIES_QUERY = `
       scanIntervalMinutes
       watchForChanges
       postDownloadAction
-      autoRename
+      organizeFiles
       namingPattern
       defaultQualityProfileId
       autoAddDiscovered
@@ -99,10 +146,14 @@ export const LIBRARY_QUERY = `
       scanIntervalMinutes
       watchForChanges
       postDownloadAction
-      autoRename
+      organizeFiles
+      renameStyle
       namingPattern
       defaultQualityProfileId
       autoAddDiscovered
+      autoDownload
+      autoHunt
+      scanning
       itemCount
       totalSizeBytes
       showCount
@@ -168,6 +219,11 @@ export const TV_SHOW_QUERY = `
       monitorType
       qualityProfileId
       path
+      autoDownloadOverride
+      backfillExisting
+      organizeFilesOverride
+      renameStyleOverride
+      autoHuntOverride
       episodeCount
       episodeFileCount
       sizeBytes
@@ -308,6 +364,98 @@ export const PARSE_AND_IDENTIFY_QUERY = `
         tvdbId
         imdbId
         score
+      }
+    }
+  }
+`;
+
+// ============================================================================
+// Log Queries
+// ============================================================================
+
+export const LOGS_QUERY = `
+  query Logs($filter: LogFilterInput, $limit: Int!, $offset: Int!) {
+    logs(filter: $filter, limit: $limit, offset: $offset) {
+      logs {
+        id
+        timestamp
+        level
+        target
+        message
+        fields
+        spanName
+      }
+      totalCount
+      hasMore
+      nextCursor
+    }
+  }
+`;
+
+export const LOG_TARGETS_QUERY = `
+  query LogTargets($limit: Int) {
+    logTargets(limit: $limit)
+  }
+`;
+
+export const LOG_STATS_QUERY = `
+  query LogStats {
+    logStats {
+      traceCount
+      debugCount
+      infoCount
+      warnCount
+      errorCount
+      totalCount
+    }
+  }
+`;
+
+// ============================================================================
+// Upcoming Episode Queries (for home page)
+// ============================================================================
+
+export const UPCOMING_EPISODES_QUERY = `
+  query UpcomingEpisodes($days: Int, $country: String) {
+    upcomingEpisodes(days: $days, country: $country) {
+      tvmazeId
+      name
+      season
+      episode
+      airDate
+      airTime
+      airStamp
+      runtime
+      summary
+      episodeImageUrl
+      show {
+        tvmazeId
+        name
+        network
+        posterUrl
+        genres
+      }
+    }
+  }
+`;
+
+export const LIBRARY_UPCOMING_EPISODES_QUERY = `
+  query LibraryUpcomingEpisodes($days: Int) {
+    libraryUpcomingEpisodes(days: $days) {
+      id
+      tvmazeId
+      name
+      season
+      episode
+      airDate
+      status
+      show {
+        id
+        name
+        year
+        network
+        posterUrl
+        libraryId
       }
     }
   }

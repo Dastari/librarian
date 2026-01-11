@@ -175,9 +175,8 @@ impl ArtworkService {
 }
 
 /// Create the artwork bucket if it doesn't exist
-/// Note: This should be done during initial setup or migration
-pub async fn ensure_artwork_bucket(_storage: &StorageClient) -> Result<()> {
-    // Supabase Storage buckets are typically created via the dashboard or migrations
-    // This is a placeholder for future implementation
+pub async fn ensure_artwork_bucket(storage: &StorageClient) -> Result<()> {
+    storage.ensure_bucket("artwork", true).await?;
+    info!("Artwork bucket ready");
     Ok(())
 }

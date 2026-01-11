@@ -18,10 +18,14 @@ pub struct LibraryRecord {
     pub scan_interval_minutes: i32,
     pub watch_for_changes: bool,
     pub post_download_action: String,
-    pub auto_rename: bool,
+    pub organize_files: bool,
+    pub rename_style: String,
     pub naming_pattern: Option<String>,
     pub default_quality_profile_id: Option<Uuid>,
     pub auto_add_discovered: bool,
+    pub auto_download: bool,
+    pub auto_hunt: bool,
+    pub scanning: bool,
     pub last_scanned_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -40,10 +44,13 @@ pub struct CreateLibrary {
     pub scan_interval_minutes: i32,
     pub watch_for_changes: bool,
     pub post_download_action: String,
-    pub auto_rename: bool,
+    pub organize_files: bool,
+    pub rename_style: String,
     pub naming_pattern: Option<String>,
     pub default_quality_profile_id: Option<Uuid>,
     pub auto_add_discovered: bool,
+    pub auto_download: bool,
+    pub auto_hunt: bool,
 }
 
 /// Input for updating a library
@@ -57,10 +64,13 @@ pub struct UpdateLibrary {
     pub scan_interval_minutes: Option<i32>,
     pub watch_for_changes: Option<bool>,
     pub post_download_action: Option<String>,
-    pub auto_rename: Option<bool>,
+    pub organize_files: Option<bool>,
+    pub rename_style: Option<String>,
     pub naming_pattern: Option<String>,
     pub default_quality_profile_id: Option<Uuid>,
     pub auto_add_discovered: Option<bool>,
+    pub auto_download: Option<bool>,
+    pub auto_hunt: Option<bool>,
 }
 
 /// Library statistics
@@ -86,9 +96,9 @@ impl LibraryRepository {
             r#"
             SELECT id, user_id, name, path, library_type, icon, color, 
                    auto_scan, scan_interval_minutes, watch_for_changes,
-                   post_download_action, auto_rename, naming_pattern,
-                   default_quality_profile_id, auto_add_discovered,
-                   last_scanned_at, created_at, updated_at
+                   post_download_action, organize_files, rename_style, naming_pattern,
+                   default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
+                   scanning, last_scanned_at, created_at, updated_at
             FROM libraries
             WHERE user_id = $1
             ORDER BY name
@@ -107,9 +117,9 @@ impl LibraryRepository {
             r#"
             SELECT id, user_id, name, path, library_type, icon, color, 
                    auto_scan, scan_interval_minutes, watch_for_changes,
-                   post_download_action, auto_rename, naming_pattern,
-                   default_quality_profile_id, auto_add_discovered,
-                   last_scanned_at, created_at, updated_at
+                   post_download_action, organize_files, rename_style, naming_pattern,
+                   default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
+                   scanning, last_scanned_at, created_at, updated_at
             FROM libraries
             WHERE id = $1
             "#,
@@ -127,9 +137,9 @@ impl LibraryRepository {
             r#"
             SELECT id, user_id, name, path, library_type, icon, color, 
                    auto_scan, scan_interval_minutes, watch_for_changes,
-                   post_download_action, auto_rename, naming_pattern,
-                   default_quality_profile_id, auto_add_discovered,
-                   last_scanned_at, created_at, updated_at
+                   post_download_action, organize_files, rename_style, naming_pattern,
+                   default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
+                   scanning, last_scanned_at, created_at, updated_at
             FROM libraries
             WHERE id = $1 AND user_id = $2
             "#,
@@ -149,15 +159,15 @@ impl LibraryRepository {
             INSERT INTO libraries (
                 user_id, name, path, library_type, icon, color,
                 auto_scan, scan_interval_minutes, watch_for_changes,
-                post_download_action, auto_rename, naming_pattern,
-                default_quality_profile_id, auto_add_discovered
+                post_download_action, organize_files, rename_style, naming_pattern,
+                default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             RETURNING id, user_id, name, path, library_type, icon, color, 
                       auto_scan, scan_interval_minutes, watch_for_changes,
-                      post_download_action, auto_rename, naming_pattern,
-                      default_quality_profile_id, auto_add_discovered,
-                      last_scanned_at, created_at, updated_at
+                      post_download_action, organize_files, rename_style, naming_pattern,
+                      default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
+                      scanning, last_scanned_at, created_at, updated_at
             "#,
         )
         .bind(input.user_id)
@@ -170,10 +180,13 @@ impl LibraryRepository {
         .bind(input.scan_interval_minutes)
         .bind(input.watch_for_changes)
         .bind(&input.post_download_action)
-        .bind(input.auto_rename)
+        .bind(input.organize_files)
+        .bind(&input.rename_style)
         .bind(&input.naming_pattern)
         .bind(input.default_quality_profile_id)
         .bind(input.auto_add_discovered)
+        .bind(input.auto_download)
+        .bind(input.auto_hunt)
         .fetch_one(&self.pool)
         .await?;
 
@@ -194,17 +207,20 @@ impl LibraryRepository {
                 scan_interval_minutes = COALESCE($7, scan_interval_minutes),
                 watch_for_changes = COALESCE($8, watch_for_changes),
                 post_download_action = COALESCE($9, post_download_action),
-                auto_rename = COALESCE($10, auto_rename),
-                naming_pattern = COALESCE($11, naming_pattern),
-                default_quality_profile_id = COALESCE($12, default_quality_profile_id),
-                auto_add_discovered = COALESCE($13, auto_add_discovered),
+                organize_files = COALESCE($10, organize_files),
+                rename_style = COALESCE($11, rename_style),
+                naming_pattern = COALESCE($12, naming_pattern),
+                default_quality_profile_id = COALESCE($13, default_quality_profile_id),
+                auto_add_discovered = COALESCE($14, auto_add_discovered),
+                auto_download = COALESCE($15, auto_download),
+                auto_hunt = COALESCE($16, auto_hunt),
                 updated_at = NOW()
             WHERE id = $1
             RETURNING id, user_id, name, path, library_type, icon, color, 
                       auto_scan, scan_interval_minutes, watch_for_changes,
-                      post_download_action, auto_rename, naming_pattern,
-                      default_quality_profile_id, auto_add_discovered,
-                      last_scanned_at, created_at, updated_at
+                      post_download_action, organize_files, rename_style, naming_pattern,
+                      default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
+                      scanning, last_scanned_at, created_at, updated_at
             "#,
         )
         .bind(id)
@@ -216,10 +232,13 @@ impl LibraryRepository {
         .bind(input.scan_interval_minutes)
         .bind(input.watch_for_changes)
         .bind(&input.post_download_action)
-        .bind(input.auto_rename)
+        .bind(input.organize_files)
+        .bind(&input.rename_style)
         .bind(&input.naming_pattern)
         .bind(input.default_quality_profile_id)
         .bind(input.auto_add_discovered)
+        .bind(input.auto_download)
+        .bind(input.auto_hunt)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -240,6 +259,17 @@ impl LibraryRepository {
     pub async fn update_last_scanned(&self, id: Uuid) -> Result<()> {
         sqlx::query("UPDATE libraries SET last_scanned_at = NOW() WHERE id = $1")
             .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Set the scanning state for a library
+    pub async fn set_scanning(&self, id: Uuid, scanning: bool) -> Result<()> {
+        sqlx::query("UPDATE libraries SET scanning = $2, updated_at = NOW() WHERE id = $1")
+            .bind(id)
+            .bind(scanning)
             .execute(&self.pool)
             .await?;
 

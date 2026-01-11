@@ -6,12 +6,14 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::artwork::{ArtworkService, ArtworkType};
+use super::cache::{create_cache, SharedCache};
 use super::filename_parser::{parse_episode, ParsedEpisode};
-use super::tvmaze::{TvMazeClient, TvMazeEpisode, TvMazeShow};
+use super::tvmaze::{TvMazeClient, TvMazeEpisode, TvMazeScheduleEntry, TvMazeShow};
 use crate::db::{CreateEpisode, CreateTvShow, Database, TvShowRecord};
 
 /// Metadata provider enum
@@ -115,7 +117,12 @@ pub struct MetadataService {
     config: MetadataServiceConfig,
     db: Database,
     artwork_service: Option<Arc<ArtworkService>>,
+    /// Cache for TVMaze schedule data (TTL: 30 minutes)
+    schedule_cache: SharedCache<Vec<TvMazeScheduleEntry>>,
 }
+
+/// Default cache TTL for TVMaze schedule: 30 minutes
+const SCHEDULE_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 
 impl MetadataService {
     pub fn new(db: Database, config: MetadataServiceConfig) -> Self {
@@ -124,6 +131,7 @@ impl MetadataService {
             config,
             db,
             artwork_service: None,
+            schedule_cache: create_cache(SCHEDULE_CACHE_TTL),
         }
     }
 
@@ -143,7 +151,13 @@ impl MetadataService {
             config,
             db,
             artwork_service: Some(artwork_service),
+            schedule_cache: create_cache(SCHEDULE_CACHE_TTL),
         }
+    }
+
+    /// Get reference to artwork service if available
+    pub fn artwork_service(&self) -> Option<&Arc<ArtworkService>> {
+        self.artwork_service.as_ref()
     }
 
     /// Search for TV shows across providers
@@ -247,6 +261,35 @@ impl MetadataService {
         Ok(ParseAndIdentifyResult { parsed, matches })
     }
 
+    /// Get upcoming TV schedule from TVMaze (cached)
+    /// 
+    /// Fetches episodes airing in the next N days from TVMaze.
+    /// Results are cached for 30 minutes to reduce API calls.
+    /// Optionally filter by country code (e.g., "US", "GB").
+    pub async fn get_upcoming_schedule(
+        &self,
+        days: u32,
+        country: Option<&str>,
+    ) -> Result<Vec<TvMazeScheduleEntry>> {
+        // Create a cache key based on parameters
+        let cache_key = format!("schedule:{}:{}", days, country.unwrap_or("all"));
+        
+        // Check cache first
+        if let Some(cached) = self.schedule_cache.get(&cache_key) {
+            debug!(cache_key = %cache_key, "Returning cached TVMaze schedule");
+            return Ok(cached);
+        }
+        
+        // Fetch from TVMaze
+        info!(days = days, country = ?country, "Fetching fresh TVMaze schedule");
+        let schedule = self.tvmaze.get_upcoming_schedule(days, country).await?;
+        
+        // Cache the result
+        self.schedule_cache.set(cache_key, schedule.clone());
+        
+        Ok(schedule)
+    }
+
     /// Add a TV show from a metadata provider to a library.
     /// 
     /// This is the single code path for creating TV shows, used by both:
@@ -335,6 +378,11 @@ impl MetadataService {
                 monitor_type: options.monitor_type.clone(),
                 quality_profile_id: options.quality_profile_id,
                 path: options.path.clone(),
+                auto_download_override: None,      // Inherit from library
+                backfill_existing: true,           // Default to true for new shows
+                organize_files_override: None,     // Inherit from library
+                rename_style_override: None,       // Inherit from library
+                auto_hunt_override: None,          // Inherit from library
             })
             .await?;
 
@@ -408,7 +456,167 @@ impl MetadataService {
             warn!(show_id = %tv_show.id, error = %e, "Failed to update show stats");
         }
 
+        // Backfill from RSS cache - check if we have any cached torrent links for this show
+        match self.backfill_episodes_from_rss_cache(&tv_show).await {
+            Ok(matched_count) => {
+                if matched_count > 0 {
+                    info!(
+                        show_id = %tv_show.id,
+                        matched_count = matched_count,
+                        "Backfilled episodes from RSS cache"
+                    );
+                }
+            }
+            Err(e) => {
+                warn!(
+                    show_id = %tv_show.id,
+                    error = %e,
+                    "Failed to backfill from RSS cache"
+                );
+            }
+        }
+
         Ok(tv_show)
+    }
+
+    /// Backfill episode availability from cached RSS feed items
+    /// 
+    /// When a show is added to the library, check if we have any cached RSS items
+    /// that match this show's episodes and mark them as "available".
+    async fn backfill_episodes_from_rss_cache(
+        &self,
+        tv_show: &crate::db::TvShowRecord,
+    ) -> Result<i32> {
+        use crate::db::episodes::EpisodeRecord;
+
+        // Normalize the show name for matching
+        let normalized_name = tv_show.name
+            .to_lowercase()
+            .replace(['.', '-', '_'], " ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        info!(
+            show_id = %tv_show.id,
+            show_name = %tv_show.name,
+            normalized = %normalized_name,
+            "Searching RSS cache for matching episodes"
+        );
+
+        // Find RSS items that match this show name
+        let matching_items: Vec<(uuid::Uuid, Option<String>, Option<i32>, Option<i32>, String)> = sqlx::query_as(
+            r#"
+            SELECT id, parsed_show_name, parsed_season, parsed_episode, link
+            FROM rss_feed_items
+            WHERE parsed_show_name IS NOT NULL
+              AND parsed_season IS NOT NULL
+              AND parsed_episode IS NOT NULL
+              AND (
+                  LOWER(REPLACE(REPLACE(REPLACE(parsed_show_name, '.', ' '), '-', ' '), '_', ' '))
+                  LIKE '%' || $1 || '%'
+                  OR $1 LIKE '%' || LOWER(REPLACE(REPLACE(REPLACE(parsed_show_name, '.', ' '), '-', ' '), '_', ' ')) || '%'
+              )
+            ORDER BY pub_date DESC
+            "#,
+        )
+        .bind(&normalized_name)
+        .fetch_all(self.db.pool())
+        .await?;
+
+        if matching_items.is_empty() {
+            debug!(
+                show_name = %tv_show.name,
+                "No cached RSS items found for this show"
+            );
+            return Ok(0);
+        }
+
+        info!(
+            show_name = %tv_show.name,
+            items_found = matching_items.len(),
+            "Found cached RSS items for show"
+        );
+
+        // Get all seasons for this show to handle year-based season mapping
+        let seasons: Vec<(i32,)> = sqlx::query_as(
+            "SELECT DISTINCT season FROM episodes WHERE tv_show_id = $1 ORDER BY season"
+        )
+        .bind(tv_show.id)
+        .fetch_all(self.db.pool())
+        .await?;
+
+        let season_numbers: Vec<i32> = seasons.into_iter().map(|(s,)| s).collect();
+        let uses_year_seasons = season_numbers.iter().any(|&s| s > 2000);
+
+        let mut matched_count = 0;
+
+        for (rss_item_id, _show_name, season, episode, torrent_link) in matching_items {
+            let scene_season = match season {
+                Some(s) => s,
+                None => continue,
+            };
+            let scene_episode = match episode {
+                Some(e) => e,
+                None => continue,
+            };
+
+            // Try to find matching episode using various strategies
+            let matched_episode: Option<EpisodeRecord> = if uses_year_seasons {
+                // Strategy: Map scene season to year-based season
+                if scene_season > 0 && scene_season <= season_numbers.len() as i32 {
+                    let target_year_season = season_numbers[(scene_season - 1) as usize];
+                    
+                    // Get episodes for that season and pick the nth one
+                    let eps: Vec<EpisodeRecord> = sqlx::query_as(
+                        r#"
+                        SELECT * FROM episodes
+                        WHERE tv_show_id = $1 AND season = $2
+                        ORDER BY episode
+                        "#,
+                    )
+                    .bind(tv_show.id)
+                    .bind(target_year_season)
+                    .fetch_all(self.db.pool())
+                    .await?;
+
+                    eps.get((scene_episode - 1) as usize).cloned()
+                } else {
+                    None
+                }
+            } else {
+                // Standard matching: exact season/episode
+                self.db.episodes()
+                    .get_by_show_season_episode(tv_show.id, scene_season, scene_episode)
+                    .await?
+            };
+
+            if let Some(ep) = matched_episode {
+                // Only update if episode is wanted/missing
+                if ep.status == "missing" || ep.status == "wanted" {
+                    if let Err(e) = self.db.episodes()
+                        .mark_available(ep.id, &torrent_link, Some(rss_item_id))
+                        .await
+                    {
+                        warn!(
+                            episode_id = %ep.id,
+                            error = %e,
+                            "Failed to mark episode as available from RSS cache"
+                        );
+                    } else {
+                        info!(
+                            show = %tv_show.name,
+                            season = ep.season,
+                            episode = ep.episode,
+                            "Backfilled episode from RSS cache"
+                        );
+                        matched_count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(matched_count)
     }
 
     /// Convert TVMaze show to unified ShowDetails
@@ -447,7 +655,8 @@ impl MetadataService {
     }
 }
 
-/// Create a sharable metadata service
+/// Create a sharable metadata service - use create_metadata_service_with_artwork instead
+#[allow(dead_code)]
 pub fn create_metadata_service(db: Database, config: MetadataServiceConfig) -> Arc<MetadataService> {
     Arc::new(MetadataService::new(db, config))
 }

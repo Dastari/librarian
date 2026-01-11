@@ -2,6 +2,7 @@
 
 pub mod episodes;
 pub mod libraries;
+pub mod logs;
 pub mod media_files;
 pub mod quality_profiles;
 pub mod rss_feeds;
@@ -13,13 +14,14 @@ use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 
-pub use episodes::{CreateEpisode, EpisodeRepository};
+pub use episodes::{CreateEpisode, EpisodeRecord, EpisodeRepository};
 pub use libraries::{CreateLibrary, LibraryRepository, LibraryStats, UpdateLibrary};
-pub use media_files::{CreateMediaFile, MediaFileRepository};
+pub use logs::{CreateLog, LogFilter, LogsRepository};
+pub use media_files::{CreateMediaFile, MediaFileRecord, MediaFileRepository};
 pub use quality_profiles::{CreateQualityProfile, QualityProfileRepository, UpdateQualityProfile};
-pub use rss_feeds::{CreateRssFeed, RssFeedRepository, UpdateRssFeed};
+pub use rss_feeds::{CreateRssFeed, CreateRssFeedItem, RssFeedRecord, RssFeedRepository, UpdateRssFeed};
 pub use settings::SettingsRepository;
-pub use torrents::{CreateTorrent, TorrentRepository};
+pub use torrents::{CreateTorrent, TorrentRecord, TorrentRepository};
 pub use tv_shows::{CreateTvShow, TvShowRecord, TvShowRepository, UpdateTvShow};
 
 /// Database wrapper providing connection pool access
@@ -29,6 +31,11 @@ pub struct Database {
 }
 
 impl Database {
+    /// Create a new database wrapper from an existing pool
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
     /// Create a new database connection pool
     pub async fn connect(url: &str) -> Result<Self> {
         let pool = PgPoolOptions::new()
@@ -82,6 +89,11 @@ impl Database {
     /// Get a media files repository
     pub fn media_files(&self) -> MediaFileRepository {
         MediaFileRepository::new(self.pool.clone())
+    }
+
+    /// Get a logs repository
+    pub fn logs(&self) -> LogsRepository {
+        LogsRepository::new(self.pool.clone())
     }
 
     /// Run database migrations

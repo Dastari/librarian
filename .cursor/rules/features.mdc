@@ -75,9 +75,38 @@ pub enum LibraryType {
 ### Subscription Flow
 1. User subscribes to a TV show (by TVDB ID)
 2. System monitors for new episodes
-3. When new episode airs, search for torrents via Prowlarr/Torznab
+3. When new episode airs, search for torrents via RSS feeds
 4. Auto-download matching quality profile
 5. Move to library after completion
+
+## RSS Feed System
+
+### RSS Polling
+- RSS feeds are polled every 15 minutes (configurable per feed)
+- Feeds are managed in `/settings/rss`
+- Each item is parsed to extract show name, season, episode, quality
+
+### Episode Status Flow
+```
+missing → wanted → available → downloading → downloaded
+```
+
+- `missing`: Episode hasn't aired yet
+- `wanted`: Episode should be downloaded
+- `available`: RSS match found, torrent link stored
+- `downloading`: Torrent is being downloaded
+- `downloaded`: Episode file exists
+
+### Auto-Download
+- Every 5 minutes, check for episodes with `available` status
+- Start downloading via the torrent service
+- Update status to `downloading`
+
+### GraphQL Operations
+- `rssFeeds` - List all feeds
+- `createRssFeed` / `updateRssFeed` / `deleteRssFeed` - CRUD
+- `testRssFeed` - Test a URL without storing
+- `pollRssFeed` - Manually poll a feed
 
 ### Quality Profiles
 Quality profiles define preferred formats:

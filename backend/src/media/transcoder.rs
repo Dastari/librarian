@@ -1,15 +1,20 @@
 //! FFmpeg-based transcoding service
+//!
+//! NOTE: This module is scaffolded for future HLS transcoding support.
+//! Currently not integrated - the system prefers direct play.
 
 use anyhow::Result;
 use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
 
-/// Transcoding service for HLS generation
+/// Transcoding service for HLS generation (for future direct play fallback)
+#[allow(dead_code)]
 pub struct Transcoder {
     cache_path: String,
 }
 
+#[allow(dead_code)]
 impl Transcoder {
     pub fn new(cache_path: String) -> Self {
         Self { cache_path }
@@ -69,7 +74,8 @@ impl Transcoder {
     }
 }
 
-/// Transcoding profile presets
+/// Transcoding profile presets (for future transcoding)
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum TranscodeProfile {
     /// 1080p profile
@@ -90,13 +96,15 @@ impl TranscodeProfile {
     }
 }
 
-/// Media file information from ffprobe
+/// Media file information from ffprobe (for future transcoding)
+#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize)]
 pub struct MediaInfo {
     pub format: MediaFormat,
     pub streams: Vec<MediaStream>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize)]
 pub struct MediaFormat {
     pub filename: String,
@@ -105,6 +113,7 @@ pub struct MediaFormat {
     pub format_name: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize)]
 pub struct MediaStream {
     pub index: i32,

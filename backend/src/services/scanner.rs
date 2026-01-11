@@ -2,6 +2,10 @@
 //!
 //! Walks library directories to discover media files, parse filenames,
 //! identify TV shows, and update the database.
+//! 
+//! After scanning, if the library has `organize_files` enabled, the scanner
+//! will automatically organize files into the proper folder structure
+//! (Show Name/Season XX/) and optionally rename them based on the rename_style.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -16,6 +20,7 @@ use walkdir::WalkDir;
 use crate::db::{CreateEpisode, CreateMediaFile, Database};
 use super::filename_parser::{self, ParsedEpisode};
 use super::metadata::{AddTvShowOptions, MetadataProvider, MetadataService};
+use super::organizer::OrganizerService;
 
 /// Video file extensions we recognize
 const VIDEO_EXTENSIONS: &[&str] = &[
@@ -61,7 +66,8 @@ impl ScannerService {
         Self { db, metadata_service, progress_tx }
     }
 
-    /// Subscribe to scan progress updates
+    /// Subscribe to scan progress updates - for GraphQL subscriptions
+    #[allow(dead_code)]
     pub fn subscribe(&self) -> broadcast::Receiver<ScanProgress> {
         self.progress_tx.subscribe()
     }
@@ -74,6 +80,26 @@ impl ScannerService {
             .await?
             .context("Library not found")?;
 
+        // Check if already scanning
+        if library.scanning {
+            warn!(library_id = %library_id, "Scan already in progress, skipping");
+            return Ok(ScanProgress {
+                library_id,
+                library_name: library.name,
+                total_files: 0,
+                scanned_files: 0,
+                current_file: None,
+                is_complete: true,
+                new_files: 0,
+                removed_files: 0,
+                shows_added: 0,
+                episodes_linked: 0,
+            });
+        }
+
+        // Set scanning state to true
+        self.db.libraries().set_scanning(library_id, true).await?;
+
         info!(
             library_id = %library_id, 
             path = %library.path, 
@@ -85,6 +111,8 @@ impl ScannerService {
         let library_path = Path::new(&library.path);
         if !library_path.exists() {
             warn!(path = %library.path, "Library path does not exist");
+            // Set scanning back to false before returning
+            let _ = self.db.libraries().set_scanning(library_id, false).await;
             return Ok(ScanProgress {
                 library_id,
                 library_name: library.name,
@@ -108,9 +136,9 @@ impl ScannerService {
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if VIDEO_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
+            if path.is_file()
+                && let Some(ext) = path.extension().and_then(|e| e.to_str())
+                    && VIDEO_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
                         let path_str = path.to_string_lossy().to_string();
                         let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
                         let filename = path.file_name()
@@ -130,8 +158,6 @@ impl ScannerService {
                             relative_path,
                         });
                     }
-                }
-            }
         }
 
         let total_files = video_files.len() as i32;
@@ -179,6 +205,17 @@ impl ScannerService {
 
         // Update library last_scanned_at
         self.db.libraries().update_last_scanned(library_id).await?;
+
+        // Auto-organize files if the library has organize_files enabled
+        if library.organize_files && is_tv_library {
+            info!(library_id = %library_id, "Running automatic file organization");
+            if let Err(e) = self.organize_library_files(library_id).await {
+                error!(library_id = %library_id, error = %e, "Failed to organize library files");
+            }
+        }
+
+        // Set scanning state back to false
+        self.db.libraries().set_scanning(library_id, false).await?;
 
         // Send final progress
         progress.is_complete = true;
@@ -277,8 +314,8 @@ impl ScannerService {
                 if let Some(existing_file) = media_files_repo.get_by_path(&file.path).await? {
                     // File exists - check if it needs to be linked to an episode
                     if existing_file.episode_id.is_none() {
-                        if let (Some(season), Some(episode)) = (file.parsed.season, file.parsed.episode) {
-                            if let Ok(Some(ep_id)) = self.find_or_create_episode(tv_show_id, season as i32, episode as i32).await {
+                        if let (Some(season), Some(episode)) = (file.parsed.season, file.parsed.episode)
+                            && let Ok(Some(ep_id)) = self.find_or_create_episode(tv_show_id, season as i32, episode as i32).await {
                                 // Link the existing file to the episode
                                 if let Err(e) = media_files_repo.link_to_episode(existing_file.id, ep_id).await {
                                     warn!(error = %e, "Failed to link existing file to episode");
@@ -293,7 +330,6 @@ impl ScannerService {
                                     }
                                 }
                             }
-                        }
                     } else {
                         debug!(path = %file.path, "File already linked to episode, skipping");
                     }
@@ -467,15 +503,14 @@ impl ScannerService {
         let best_match = &search_results[0];
         
         // Check if we already have this show in the library
-        if best_match.provider == MetadataProvider::TvMaze {
-            if let Some(existing) = tv_shows_repo
+        if best_match.provider == MetadataProvider::TvMaze
+            && let Some(existing) = tv_shows_repo
                 .get_by_tvmaze_id(library_id, best_match.provider_id as i32)
                 .await?
             {
                 info!(show_name = %existing.name, "Show already exists in library");
                 return Ok(Some((existing.id, false)));
             }
-        }
 
         // Use the unified add_tv_show_from_provider method which handles:
         // - Creating the TV show record with normalized status
@@ -576,6 +611,63 @@ impl ScannerService {
             }
         }
 
+        Ok(())
+    }
+
+    /// Organize library files into proper folder structure
+    /// 
+    /// This method:
+    /// 1. Gets all unorganized files linked to episodes
+    /// 2. For each file, checks if the show has organize_files enabled (respecting overrides)
+    /// 3. Creates the show/season folder structure
+    /// 4. Moves the file to the correct location
+    /// 5. Optionally renames the file based on rename_style setting
+    async fn organize_library_files(&self, library_id: Uuid) -> Result<()> {
+        let organizer = OrganizerService::new(self.db.clone());
+        
+        // Get all shows in this library that have episodes with unorganized files
+        let shows = self.db.tv_shows().list_by_library(library_id).await?;
+        
+        for show in shows {
+            // Check if this show should be organized (respecting overrides)
+            let (organize_enabled, _rename_style) = organizer.get_show_organize_settings(&show).await?;
+            
+            if !organize_enabled {
+                debug!(
+                    show_id = %show.id, 
+                    show_name = %show.name, 
+                    "Show has organize_files disabled (via override), skipping"
+                );
+                continue;
+            }
+            
+            // Create folder structure for this show
+            if let Err(e) = organizer.create_show_folders(show.id).await {
+                warn!(
+                    show_id = %show.id,
+                    error = %e,
+                    "Failed to create folder structure for show"
+                );
+                continue;
+            }
+        }
+        
+        // Now organize all unorganized files
+        let results = organizer.organize_library(library_id).await?;
+        
+        let success_count = results.iter().filter(|r| r.success).count();
+        let error_count = results.iter().filter(|r| !r.success).count();
+        
+        if !results.is_empty() {
+            info!(
+                library_id = %library_id,
+                total = results.len(),
+                success = success_count,
+                errors = error_count,
+                "Library organization complete"
+            );
+        }
+        
         Ok(())
     }
 }

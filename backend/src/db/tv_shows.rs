@@ -28,6 +28,11 @@ pub struct TvShowRecord {
     pub monitor_type: String,
     pub quality_profile_id: Option<Uuid>,
     pub path: Option<String>,
+    pub auto_download_override: Option<bool>,
+    pub backfill_existing: bool,
+    pub organize_files_override: Option<bool>,
+    pub rename_style_override: Option<String>,
+    pub auto_hunt_override: Option<bool>,
     pub episode_count: Option<i32>,
     pub episode_file_count: Option<i32>,
     pub size_bytes: Option<i64>,
@@ -58,6 +63,11 @@ pub struct CreateTvShow {
     pub monitor_type: String,
     pub quality_profile_id: Option<Uuid>,
     pub path: Option<String>,
+    pub auto_download_override: Option<bool>,
+    pub backfill_existing: bool,
+    pub organize_files_override: Option<bool>,
+    pub rename_style_override: Option<String>,
+    pub auto_hunt_override: Option<bool>,
 }
 
 /// Input for updating a TV show
@@ -77,6 +87,11 @@ pub struct UpdateTvShow {
     pub monitor_type: Option<String>,
     pub quality_profile_id: Option<Uuid>,
     pub path: Option<String>,
+    pub auto_download_override: Option<Option<bool>>,
+    pub backfill_existing: Option<bool>,
+    pub organize_files_override: Option<Option<bool>>,
+    pub rename_style_override: Option<Option<String>>,
+    pub auto_hunt_override: Option<Option<bool>>,
 }
 
 pub struct TvShowRepository {
@@ -95,8 +110,10 @@ impl TvShowRepository {
             SELECT id, library_id, user_id, name, sort_name, year, status,
                    tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                    runtime, genres, poster_url, backdrop_url, monitored,
-                   monitor_type, quality_profile_id, path, episode_count,
-                   episode_file_count, size_bytes, created_at, updated_at
+                   monitor_type, quality_profile_id, path,
+                   auto_download_override, backfill_existing,
+                   organize_files_override, rename_style_override, auto_hunt_override,
+                   episode_count, episode_file_count, size_bytes, created_at, updated_at
             FROM tv_shows
             WHERE library_id = $1
             ORDER BY COALESCE(sort_name, name)
@@ -116,8 +133,10 @@ impl TvShowRepository {
             SELECT id, library_id, user_id, name, sort_name, year, status,
                    tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                    runtime, genres, poster_url, backdrop_url, monitored,
-                   monitor_type, quality_profile_id, path, episode_count,
-                   episode_file_count, size_bytes, created_at, updated_at
+                   monitor_type, quality_profile_id, path,
+                   auto_download_override, backfill_existing,
+                   organize_files_override, rename_style_override, auto_hunt_override,
+                   episode_count, episode_file_count, size_bytes, created_at, updated_at
             FROM tv_shows
             WHERE user_id = $1 AND monitored = true
             ORDER BY name
@@ -137,8 +156,10 @@ impl TvShowRepository {
             SELECT id, library_id, user_id, name, sort_name, year, status,
                    tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                    runtime, genres, poster_url, backdrop_url, monitored,
-                   monitor_type, quality_profile_id, path, episode_count,
-                   episode_file_count, size_bytes, created_at, updated_at
+                   monitor_type, quality_profile_id, path,
+                   auto_download_override, backfill_existing,
+                   organize_files_override, rename_style_override, auto_hunt_override,
+                   episode_count, episode_file_count, size_bytes, created_at, updated_at
             FROM tv_shows
             WHERE id = $1
             "#,
@@ -157,14 +178,76 @@ impl TvShowRepository {
             SELECT id, library_id, user_id, name, sort_name, year, status,
                    tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                    runtime, genres, poster_url, backdrop_url, monitored,
-                   monitor_type, quality_profile_id, path, episode_count,
-                   episode_file_count, size_bytes, created_at, updated_at
+                   monitor_type, quality_profile_id, path,
+                   auto_download_override, backfill_existing,
+                   organize_files_override, rename_style_override, auto_hunt_override,
+                   episode_count, episode_file_count, size_bytes, created_at, updated_at
             FROM tv_shows
             WHERE library_id = $1 AND tvmaze_id = $2
             "#,
         )
         .bind(library_id)
         .bind(tvmaze_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(record)
+    }
+
+    /// Find a TV show by name in a library (case-insensitive fuzzy match)
+    pub async fn find_by_name_in_library(&self, library_id: Uuid, name: &str) -> Result<Option<TvShowRecord>> {
+        // First try exact match (case-insensitive)
+        let record = sqlx::query_as::<_, TvShowRecord>(
+            r#"
+            SELECT id, library_id, user_id, name, sort_name, year, status,
+                   tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
+                   runtime, genres, poster_url, backdrop_url, monitored,
+                   monitor_type, quality_profile_id, path,
+                   auto_download_override, backfill_existing,
+                   organize_files_override, rename_style_override, auto_hunt_override,
+                   episode_count, episode_file_count, size_bytes, created_at, updated_at
+            FROM tv_shows
+            WHERE library_id = $1 AND LOWER(name) = LOWER($2)
+            LIMIT 1
+            "#,
+        )
+        .bind(library_id)
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if record.is_some() {
+            return Ok(record);
+        }
+
+        // Try fuzzy match using LIKE with common variations
+        // Remove "The " prefix and try again, also try with dots replaced by spaces
+        let normalized = name
+            .trim()
+            .trim_start_matches("The ")
+            .trim_start_matches("the ")
+            .replace(['.', '_'], " ");
+
+        let record = sqlx::query_as::<_, TvShowRecord>(
+            r#"
+            SELECT id, library_id, user_id, name, sort_name, year, status,
+                   tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
+                   runtime, genres, poster_url, backdrop_url, monitored,
+                   monitor_type, quality_profile_id, path,
+                   auto_download_override, backfill_existing,
+                   organize_files_override, rename_style_override, auto_hunt_override,
+                   episode_count, episode_file_count, size_bytes, created_at, updated_at
+            FROM tv_shows
+            WHERE library_id = $1 
+              AND (
+                LOWER(name) LIKE LOWER($2) 
+                OR LOWER(REPLACE(REPLACE(name, '.', ' '), '_', ' ')) = LOWER($2)
+              )
+            LIMIT 1
+            "#,
+        )
+        .bind(library_id)
+        .bind(&normalized)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -179,14 +262,18 @@ impl TvShowRepository {
                 library_id, user_id, name, sort_name, year, status,
                 tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                 runtime, genres, poster_url, backdrop_url, monitored,
-                monitor_type, quality_profile_id, path
+                monitor_type, quality_profile_id, path,
+                auto_download_override, backfill_existing,
+                organize_files_override, rename_style_override, auto_hunt_override
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
             RETURNING id, library_id, user_id, name, sort_name, year, status,
                       tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                       runtime, genres, poster_url, backdrop_url, monitored,
-                      monitor_type, quality_profile_id, path, episode_count,
-                      episode_file_count, size_bytes, created_at, updated_at
+                      monitor_type, quality_profile_id, path,
+                      auto_download_override, backfill_existing,
+                      organize_files_override, rename_style_override, auto_hunt_override,
+                      episode_count, episode_file_count, size_bytes, created_at, updated_at
             "#,
         )
         .bind(input.library_id)
@@ -209,6 +296,11 @@ impl TvShowRepository {
         .bind(&input.monitor_type)
         .bind(input.quality_profile_id)
         .bind(&input.path)
+        .bind(input.auto_download_override)
+        .bind(input.backfill_existing)
+        .bind(input.organize_files_override)
+        .bind(&input.rename_style_override)
+        .bind(input.auto_hunt_override)
         .fetch_one(&self.pool)
         .await?;
 
@@ -234,13 +326,20 @@ impl TvShowRepository {
                 monitor_type = COALESCE($13, monitor_type),
                 quality_profile_id = COALESCE($14, quality_profile_id),
                 path = COALESCE($15, path),
+                auto_download_override = COALESCE($16, auto_download_override),
+                backfill_existing = COALESCE($17, backfill_existing),
+                organize_files_override = COALESCE($18, organize_files_override),
+                rename_style_override = COALESCE($19, rename_style_override),
+                auto_hunt_override = COALESCE($20, auto_hunt_override),
                 updated_at = NOW()
             WHERE id = $1
             RETURNING id, library_id, user_id, name, sort_name, year, status,
                       tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                       runtime, genres, poster_url, backdrop_url, monitored,
-                      monitor_type, quality_profile_id, path, episode_count,
-                      episode_file_count, size_bytes, created_at, updated_at
+                      monitor_type, quality_profile_id, path,
+                      auto_download_override, backfill_existing,
+                      organize_files_override, rename_style_override, auto_hunt_override,
+                      episode_count, episode_file_count, size_bytes, created_at, updated_at
             "#,
         )
         .bind(id)
@@ -258,6 +357,11 @@ impl TvShowRepository {
         .bind(&input.monitor_type)
         .bind(input.quality_profile_id)
         .bind(&input.path)
+        .bind(input.auto_download_override)
+        .bind(input.backfill_existing)
+        .bind(input.organize_files_override)
+        .bind(&input.rename_style_override)
+        .bind(input.auto_hunt_override)
         .fetch_optional(&self.pool)
         .await?;
 

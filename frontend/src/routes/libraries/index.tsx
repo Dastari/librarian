@@ -1,94 +1,135 @@
-import { createFileRoute, Link, redirect } from '@tanstack/react-router'
-import { useState, useEffect, useCallback } from 'react'
-import {
-  Button,
-  Card,
-  CardBody,
-  CardHeader,
-  useDisclosure,
-  Spinner,
-  Divider,
-  addToast,
-} from '@heroui/react'
-import { useAuth } from '../../hooks/useAuth'
-import { LibraryCard, AddLibraryModal } from '../../components/library'
+import { createFileRoute, redirect } from '@tanstack/react-router'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Button } from '@heroui/button'
+import { Card, CardBody } from '@heroui/card'
+import { useDisclosure } from '@heroui/modal'
+import { Skeleton } from '@heroui/skeleton'
+import { Tooltip } from '@heroui/tooltip'
+import { addToast } from '@heroui/toast'
+import { ConfirmModal } from '../../components/ConfirmModal'
+import { useDataReactivity } from '../../hooks/useSubscription'
+import { AddLibraryModal, EditLibraryModal, LibraryGridCard } from '../../components/library'
+import { PlusIcon } from '../../components/icons'
+import { RouteError } from '../../components/RouteError'
 import {
   graphqlClient,
   LIBRARIES_QUERY,
+  TV_SHOWS_QUERY,
   CREATE_LIBRARY_MUTATION,
+  UPDATE_LIBRARY_MUTATION,
   SCAN_LIBRARY_MUTATION,
   DELETE_LIBRARY_MUTATION,
   type Library,
+  type TvShow,
   type CreateLibraryInput,
+  type UpdateLibraryInput,
 } from '../../lib/graphql'
 
 export const Route = createFileRoute('/libraries/')({
-  beforeLoad: ({ context }) => {
+  beforeLoad: ({ context, location }) => {
     if (!context.auth.isAuthenticated) {
-      throw redirect({ to: '/auth/login' })
+      throw redirect({
+        to: '/',
+        search: {
+          signin: true,
+          redirect: location.href,
+        },
+      })
     }
   },
   component: LibrariesPage,
+  errorComponent: RouteError,
 })
 
 function LibrariesPage() {
-  const { user, loading: authLoading } = useAuth()
-  const { isOpen, onOpen, onClose } = useDisclosure()
+  const { isOpen: isAddOpen, onOpen: onAddOpen, onClose: onAddClose } = useDisclosure()
+  const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure()
+  const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
   const [libraries, setLibraries] = useState<Library[]>([])
+  const [showsByLibrary, setShowsByLibrary] = useState<Record<string, TvShow[]>>({})
+  const [editingLibrary, setEditingLibrary] = useState<Library | null>(null)
+  const [libraryToDelete, setLibraryToDelete] = useState<{ id: string; name: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
 
-  const fetchLibraries = useCallback(async () => {
+  // Track if initial load is done to avoid showing spinner on background refreshes
+  const initialLoadDone = useRef(false)
+
+  const fetchLibraries = useCallback(async (isBackgroundRefresh = false) => {
     try {
-      setLoading(true)
+      // Only show loading spinner on initial load
+      if (!isBackgroundRefresh) {
+        setLoading(true)
+      }
       const { data, error } = await graphqlClient
         .query<{ libraries: Library[] }>(LIBRARIES_QUERY)
         .toPromise()
 
       if (error) {
         console.error('Failed to fetch libraries:', error)
-        addToast({
-          title: 'Error',
-          description: 'Failed to load libraries',
-          color: 'danger',
-        })
+        if (!isBackgroundRefresh) {
+          addToast({
+            title: 'Error',
+            description: 'Failed to load libraries',
+            color: 'danger',
+          })
+        }
         return
       }
 
       if (data?.libraries) {
         setLibraries(data.libraries)
+
+        // Fetch shows for TV libraries (for artwork)
+        const tvLibraries = data.libraries.filter((l) => l.libraryType === 'TV')
+        const showsPromises = tvLibraries.map(async (lib) => {
+          try {
+            const result = await graphqlClient
+              .query<{ tvShows: TvShow[] }>(TV_SHOWS_QUERY, { libraryId: lib.id })
+              .toPromise()
+            return { libraryId: lib.id, shows: result.data?.tvShows || [] }
+          } catch {
+            return { libraryId: lib.id, shows: [] }
+          }
+        })
+
+        const showsResults = await Promise.all(showsPromises)
+        const showsMap: Record<string, TvShow[]> = {}
+        for (const result of showsResults) {
+          showsMap[result.libraryId] = result.shows
+        }
+        setShowsByLibrary(showsMap)
       }
     } catch (err) {
       console.error('Failed to fetch libraries:', err)
     } finally {
       setLoading(false)
+      initialLoadDone.current = true
     }
   }, [])
 
   useEffect(() => {
-    if (user) {
-      fetchLibraries()
-    }
-  }, [user, fetchLibraries])
+    fetchLibraries()
+  }, [fetchLibraries])
 
-  if (authLoading || loading) {
-    return (
-      <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
-        <Spinner size="lg" color="primary" />
-      </div>
-    )
-  }
+  // Subscribe to data changes for live updates
+  useDataReactivity(
+    () => {
+      if (initialLoadDone.current) {
+        fetchLibraries(true)
+      }
+    },
+    { onTorrentComplete: true, periodicInterval: 60000, onFocus: true }
+  )
 
-  if (!user) {
-    return (
-      <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] px-4">
-        <h1 className="text-2xl font-bold mb-4">Sign in to manage libraries</h1>
-        <Link to="/auth/login">
-          <Button color="primary">Sign In</Button>
-        </Link>
-      </div>
-    )
-  }
+  // Skeleton card for loading state
+  const SkeletonLibraryCard = () => (
+    <Card className="aspect-[2/3] bg-content1">
+      <CardBody className="p-0 overflow-hidden">
+        <Skeleton className="w-full h-full" />
+      </CardBody>
+    </Card>
+  )
 
   const handleAddLibrary = async (input: CreateLibraryInput) => {
     try {
@@ -160,16 +201,19 @@ function LibrariesPage() {
     }
   }
 
-  const handleDelete = async (libraryId: string, libraryName: string) => {
-    if (!confirm(`Are you sure you want to delete "${libraryName}"? This cannot be undone.`)) {
-      return
-    }
+  const handleDeleteClick = (libraryId: string, libraryName: string) => {
+    setLibraryToDelete({ id: libraryId, name: libraryName })
+    onConfirmOpen()
+  }
+
+  const handleDelete = async () => {
+    if (!libraryToDelete) return
 
     try {
       const { data, error } = await graphqlClient
         .mutation<{
           deleteLibrary: { success: boolean; error: string | null }
-        }>(DELETE_LIBRARY_MUTATION, { id: libraryId })
+        }>(DELETE_LIBRARY_MUTATION, { id: libraryToDelete.id })
         .toPromise()
 
       if (error || !data?.deleteLibrary.success) {
@@ -178,12 +222,13 @@ function LibrariesPage() {
           description: data?.deleteLibrary.error || 'Failed to delete library',
           color: 'danger',
         })
+        onConfirmClose()
         return
       }
 
       addToast({
         title: 'Deleted',
-        description: `Library "${libraryName}" deleted`,
+        description: `Library "${libraryToDelete.name}" deleted`,
         color: 'success',
       })
 
@@ -192,95 +237,139 @@ function LibrariesPage() {
     } catch (err) {
       console.error('Failed to delete library:', err)
     }
+    onConfirmClose()
   }
 
   const handleEdit = (libraryId: string) => {
-    // TODO: Open edit modal
-    console.log('Editing library:', libraryId)
-    addToast({
-      title: 'Coming Soon',
-      description: 'Library settings editor coming soon!',
-      color: 'warning',
-    })
+    const library = libraries.find((l) => l.id === libraryId)
+    if (library) {
+      setEditingLibrary(library)
+      onEditOpen()
+    }
+  }
+
+  const handleUpdateLibrary = async (id: string, input: UpdateLibraryInput) => {
+    try {
+      setActionLoading(true)
+      const { data, error } = await graphqlClient
+        .mutation<{
+          updateLibrary: {
+            success: boolean
+            library: Library | null
+            error: string | null
+          }
+        }>(UPDATE_LIBRARY_MUTATION, { id, input })
+        .toPromise()
+
+      if (error || !data?.updateLibrary.success) {
+        const errorMsg = data?.updateLibrary.error || error?.message || 'Unknown error'
+        addToast({
+          title: 'Error',
+          description: `Failed to update library: ${errorMsg}`,
+          color: 'danger',
+        })
+        return
+      }
+
+      addToast({
+        title: 'Success',
+        description: `Library "${input.name || editingLibrary?.name}" updated`,
+        color: 'success',
+      })
+
+      // Refresh libraries
+      await fetchLibraries()
+    } catch (err) {
+      console.error('Failed to update library:', err)
+      addToast({
+        title: 'Error',
+        description: 'Failed to update library',
+        color: 'danger',
+      })
+    } finally {
+      setActionLoading(false)
+    }
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Header with title and add button */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold">Libraries</h1>
-          <p className="text-default-500">Manage your media libraries</p>
+          <p className="text-default-500">Organize and manage your media collections</p>
         </div>
-        <Button color="primary" onPress={onOpen}>
-          + Add Library
-        </Button>
+        <Tooltip content="Add Library">
+          <Button isIconOnly color="primary" size="sm" onPress={onAddOpen}>
+            <PlusIcon />
+          </Button>
+        </Tooltip>
       </div>
 
-      {libraries.length === 0 ? (
+      {/* Content */}
+      {loading ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <SkeletonLibraryCard key={i} />
+          ))}
+        </div>
+      ) : libraries.length === 0 ? (
         <Card className="bg-content1/50 border-default-300 border-dashed border-2">
-          <CardBody className="py-12 text-center">
-            <span className="text-5xl mb-4 block">📚</span>
-            <h3 className="text-lg font-semibold mb-2">No libraries yet</h3>
-            <p className="text-default-500 mb-4">
-              Add a library to start organizing your media collection.
+          <CardBody className="py-16 text-center">
+            <div className="mx-auto w-20 h-20 rounded-full bg-default-100 flex items-center justify-center mb-6">
+              <span className="text-4xl">📚</span>
+            </div>
+            <h3 className="text-xl font-semibold mb-2">No libraries yet</h3>
+            <p className="text-default-500 mb-6 max-w-md mx-auto">
+              Libraries help you organize your media. Add a library to start managing your movies,
+              TV shows, music, and more.
             </p>
-            <Button color="primary" onPress={onOpen}>
+            <Button color="primary" size="lg" onPress={onAddOpen}>
               Add Your First Library
             </Button>
           </CardBody>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
           {libraries.map((library) => (
-            <LibraryCard
+            <LibraryGridCard
               key={library.id}
               library={library}
+              shows={showsByLibrary[library.id] || []}
               onScan={() => handleScan(library.id, library.name)}
               onEdit={() => handleEdit(library.id)}
-              onDelete={() => handleDelete(library.id, library.name)}
+              onDelete={() => handleDeleteClick(library.id, library.name)}
             />
           ))}
         </div>
       )}
 
+      {/* Confirm Delete Modal */}
+      <ConfirmModal
+        isOpen={isConfirmOpen}
+        onClose={onConfirmClose}
+        onConfirm={handleDelete}
+        title="Delete Library"
+        message={`Are you sure you want to delete "${libraryToDelete?.name}"?`}
+        description="This will remove the library and all associated shows from your collection. Downloaded files will not be deleted."
+        confirmLabel="Delete"
+        confirmColor="danger"
+      />
+
       <AddLibraryModal
-        isOpen={isOpen}
-        onClose={onClose}
+        isOpen={isAddOpen}
+        onClose={onAddClose}
         onAdd={handleAddLibrary}
         isLoading={actionLoading}
       />
 
-      {/* Info section */}
-      <Card className="mt-8 bg-content2">
-        <CardHeader>
-          <h3 className="font-semibold">About Libraries</h3>
-        </CardHeader>
-        <Divider />
-        <CardBody>
-          <ul className="text-default-500 text-sm space-y-1">
-            <li>
-              • <strong>TV Shows</strong> - Series organized by show, season, and
-              episode with automatic episode tracking
-            </li>
-            <li>
-              • <strong>Movies</strong> - Feature films, organized by title and
-              year
-            </li>
-            <li>
-              • <strong>Music</strong> - Albums and tracks (coming soon)
-            </li>
-            <li>
-              • <strong>Audiobooks</strong> - Audio books organized by author and
-              title (coming soon)
-            </li>
-            <li>• Each library can have its own scan schedule and settings</li>
-            <li>
-              • TV libraries support automatic episode tracking via metadata
-              providers
-            </li>
-          </ul>
-        </CardBody>
-      </Card>
+      <EditLibraryModal
+        isOpen={isEditOpen}
+        onClose={onEditClose}
+        library={editingLibrary}
+        onSave={handleUpdateLibrary}
+        isLoading={actionLoading}
+      />
     </div>
   )
 }

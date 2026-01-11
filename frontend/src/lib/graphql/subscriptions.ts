@@ -44,3 +44,33 @@ export const TORRENT_REMOVED_SUBSCRIPTION = `
     }
   }
 `;
+
+// ============================================================================
+// Log Subscriptions
+// ============================================================================
+
+export const LOG_EVENTS_SUBSCRIPTION = `
+  subscription LogEvents($levels: [LogLevel!]) {
+    logEvents(levels: $levels) {
+      timestamp
+      level
+      target
+      message
+      fields
+      spanName
+    }
+  }
+`;
+
+export const ERROR_LOGS_SUBSCRIPTION = `
+  subscription ErrorLogs {
+    errorLogs {
+      timestamp
+      level
+      target
+      message
+      fields
+      spanName
+    }
+  }
+`;

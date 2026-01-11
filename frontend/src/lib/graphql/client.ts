@@ -9,11 +9,26 @@ import {
   type OperationVariables,
   type TypedDocumentNode,
 } from '@apollo/client';
+import { onError } from '@apollo/client/link/error';
 import { setContext } from '@apollo/client/link/context';
 import { GraphQLWsLink } from '@apollo/client/link/subscriptions';
 import { getMainDefinition } from '@apollo/client/utilities';
 import { createClient as createWSClient } from 'graphql-ws';
 import { supabase } from '../supabase';
+
+// Error event emitter for components to subscribe to
+type GraphQLErrorHandler = (error: { message: string; isNetworkError: boolean }) => void;
+const errorHandlers: Set<GraphQLErrorHandler> = new Set();
+
+/** Subscribe to GraphQL errors for displaying toasts/alerts */
+export function onGraphQLError(handler: GraphQLErrorHandler): () => void {
+  errorHandlers.add(handler);
+  return () => errorHandlers.delete(handler);
+}
+
+function notifyError(message: string, isNetworkError: boolean) {
+  errorHandlers.forEach(handler => handler({ message, isNetworkError }));
+}
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 const WS_URL = API_URL.replace(/^http/, 'ws');
@@ -95,8 +110,46 @@ const wsLink = new GraphQLWsLink(
   })
 );
 
-// Combine auth link with http link
-const authedHttpLink = from([authLink, httpLink]);
+// Error link to handle GraphQL and network errors gracefully
+// Apollo Client v4 uses a unified error interface
+import { CombinedGraphQLErrors } from '@apollo/client/errors';
+
+const errorLink = onError(({ error, operation }) => {
+  const operationName = operation.operationName || 'Unknown operation';
+  
+  // Check if it's a GraphQL error (has errors array)
+  if (CombinedGraphQLErrors.is(error)) {
+    error.errors.forEach((err) => {
+      const message = err.message;
+      
+      console.error(
+        `[GraphQL error]: Message: ${message}, Operation: ${operationName}`
+      );
+      
+      // Don't notify for auth errors (handled separately)
+      const isAuthError = message.toLowerCase().includes('not authenticated') || 
+                         message.toLowerCase().includes('unauthorized');
+      
+      // Notify subscribers about the error
+      if (!isAuthError) {
+        notifyError(message, false);
+      }
+    });
+  } else if (error) {
+    // Network or other error
+    console.error(`[Network error]: ${error.message}, Operation: ${operationName}`);
+    
+    // Notify subscribers about network error
+    const errorMessage = error.message.includes('Failed to fetch')
+      ? 'Unable to connect to server. Please check your connection.'
+      : error.message;
+    
+    notifyError(errorMessage, true);
+  }
+});
+
+// Combine error, auth and http links
+const authedHttpLink = from([errorLink, authLink, httpLink]);
 
 // Split link: subscriptions go to WebSocket, everything else to HTTP
 const splitLink = split(

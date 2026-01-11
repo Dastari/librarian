@@ -1,14 +1,7 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useState, useEffect, useCallback } from 'react'
-import {
-  Button,
-  Card,
-  CardBody,
-  Input,
-  Spinner,
-  Tabs,
-  Tab,
-} from '@heroui/react'
+import { useDisclosure } from '@heroui/modal'
+import { addToast } from '@heroui/toast'
 import {
   graphqlClient,
   TORRENTS_QUERY,
@@ -16,6 +9,7 @@ import {
   PAUSE_TORRENT_MUTATION,
   RESUME_TORRENT_MUTATION,
   REMOVE_TORRENT_MUTATION,
+  ORGANIZE_TORRENT_MUTATION,
   TORRENT_PROGRESS_SUBSCRIPTION,
   TORRENT_ADDED_SUBSCRIPTION,
   TORRENT_REMOVED_SUBSCRIPTION,
@@ -23,76 +17,62 @@ import {
   type TorrentProgress,
   type AddTorrentResult,
   type TorrentActionResult,
+  type OrganizeTorrentResult,
 } from '../../lib/graphql'
-import { useAuth } from '../../hooks/useAuth'
-import { TorrentCard } from '../../components/downloads'
+import { TorrentTable, AddTorrentModal, TorrentInfoModal } from '../../components/downloads'
+import { sanitizeError } from '../../lib/format'
+import { RouteError } from '../../components/RouteError'
 
 export const Route = createFileRoute('/downloads/')({
-  beforeLoad: ({ context }) => {
+  beforeLoad: ({ context, location }) => {
     if (!context.auth.isAuthenticated) {
-      throw redirect({ to: '/auth/login' })
+      throw redirect({
+        to: '/',
+        search: {
+          signin: true,
+          redirect: location.href,
+        },
+      })
     }
   },
   component: DownloadsPage,
+  errorComponent: RouteError,
 })
 
-// Helper to sanitize error messages (avoid displaying raw HTML)
-function sanitizeError(error: unknown): string {
-  if (!error) return 'Unknown error'
-  const message = typeof error === 'string' ? error : (error as Error).message || String(error)
-  // If the error contains HTML, show a generic message
-  if (message.includes('<!DOCTYPE') || message.includes('<html')) {
-    return 'Failed to connect to server. Please check that the backend is running.'
-  }
-  // Truncate very long messages
-  if (message.length > 200) {
-    return message.substring(0, 200) + '...'
-  }
-  return message
-}
-
-type InputMode = 'magnet' | 'url' | 'file'
-
 function DownloadsPage() {
-  const { session, loading: authLoading } = useAuth()
   const [torrents, setTorrents] = useState<Torrent[]>([])
-  const [magnetUrl, setMagnetUrl] = useState('')
-  const [torrentUrl, setTorrentUrl] = useState('')
-  const [inputMode, setInputMode] = useState<InputMode>('magnet')
   const [isAdding, setIsAdding] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [isDragging, setIsDragging] = useState(false)
+  const { isOpen, onOpen, onClose } = useDisclosure()
+  const { isOpen: isInfoOpen, onOpen: onInfoOpen, onClose: onInfoClose } = useDisclosure()
+  const [selectedTorrentId, setSelectedTorrentId] = useState<number | null>(null)
 
   const fetchTorrents = useCallback(async () => {
     try {
       const result = await graphqlClient.query<{ torrents: Torrent[] }>(TORRENTS_QUERY, {}).toPromise()
       if (result.data?.torrents) {
         setTorrents(result.data.torrents)
-        setError(null)
       }
       if (result.error) {
-        setError(sanitizeError(result.error))
+        addToast({
+          title: 'Error',
+          description: sanitizeError(result.error),
+          color: 'danger',
+        })
       }
     } catch (e) {
-      setError(sanitizeError(e))
+      addToast({
+        title: 'Error',
+        description: sanitizeError(e),
+        color: 'danger',
+      })
     } finally {
       setIsLoading(false)
     }
   }, [])
 
-  // Wait for auth to be ready before fetching torrents
+  // Fetch torrents and subscribe to updates
   useEffect(() => {
-    // Don't fetch until auth has loaded
-    if (authLoading) return
-    
-    // If not authenticated, show error
-    if (!session) {
-      setError('Authentication required')
-      setIsLoading(false)
-      return
-    }
-
     fetchTorrents()
 
     // Apollo subscriptions return Observables
@@ -107,13 +87,13 @@ function DownloadsPage() {
             prev.map((t) =>
               t.id === p.id
                 ? {
-                    ...t,
-                    progress: p.progress,
-                    downloadSpeed: p.downloadSpeed,
-                    uploadSpeed: p.uploadSpeed,
-                    peers: p.peers,
-                    state: p.state,
-                  }
+                  ...t,
+                  progress: p.progress,
+                  downloadSpeed: p.downloadSpeed,
+                  uploadSpeed: p.uploadSpeed,
+                  peers: p.peers,
+                  state: p.state,
+                }
                 : t
             )
           )
@@ -141,38 +121,77 @@ function DownloadsPage() {
       addedSub.unsubscribe()
       removedSub.unsubscribe()
     }
-  }, [authLoading, session, fetchTorrents])
+  }, [fetchTorrents])
 
-  const handleAddTorrent = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const input = inputMode === 'magnet' ? magnetUrl.trim() : torrentUrl.trim()
-    if (!input) return
-
+  // Add torrent handlers
+  const handleAddMagnet = async (magnet: string) => {
     setIsAdding(true)
-    setError(null)
     try {
       const result = await graphqlClient
         .mutation<{ addTorrent: AddTorrentResult }>(ADD_TORRENT_MUTATION, {
-          input: inputMode === 'magnet' ? { magnet: input } : { url: input },
+          input: { magnet },
         })
         .toPromise()
       if (result.data?.addTorrent.success && result.data.addTorrent.torrent) {
         setTorrents((prev) => [result.data!.addTorrent.torrent!, ...prev])
-        setMagnetUrl('')
-        setTorrentUrl('')
+        addToast({
+          title: 'Torrent Added',
+          description: `Started downloading: ${result.data.addTorrent.torrent.name}`,
+          color: 'success',
+        })
       } else {
-        setError(sanitizeError(result.data?.addTorrent.error || result.error?.message || 'Failed'))
+        addToast({
+          title: 'Error',
+          description: sanitizeError(result.data?.addTorrent.error || result.error?.message || 'Failed'),
+          color: 'danger',
+        })
       }
     } catch {
-      setError('Failed to add torrent')
+      addToast({
+        title: 'Error',
+        description: 'Failed to add torrent',
+        color: 'danger',
+      })
     } finally {
       setIsAdding(false)
     }
   }
 
-  const handleFileUpload = async (file: File) => {
+  const handleAddUrl = async (url: string) => {
     setIsAdding(true)
-    setError(null)
+    try {
+      const result = await graphqlClient
+        .mutation<{ addTorrent: AddTorrentResult }>(ADD_TORRENT_MUTATION, {
+          input: { url },
+        })
+        .toPromise()
+      if (result.data?.addTorrent.success && result.data.addTorrent.torrent) {
+        setTorrents((prev) => [result.data!.addTorrent.torrent!, ...prev])
+        addToast({
+          title: 'Torrent Added',
+          description: `Started downloading: ${result.data.addTorrent.torrent.name}`,
+          color: 'success',
+        })
+      } else {
+        addToast({
+          title: 'Error',
+          description: sanitizeError(result.data?.addTorrent.error || result.error?.message || 'Failed'),
+          color: 'danger',
+        })
+      }
+    } catch {
+      addToast({
+        title: 'Error',
+        description: 'Failed to add torrent',
+        color: 'danger',
+      })
+    } finally {
+      setIsAdding(false)
+    }
+  }
+
+  const handleAddFile = async (file: File) => {
+    setIsAdding(true)
 
     try {
       const formData = new FormData()
@@ -204,54 +223,54 @@ function DownloadsPage() {
 
       if (data.success && data.torrent) {
         fetchTorrents()
+        addToast({
+          title: 'Torrent Added',
+          description: `Started downloading: ${data.torrent.name}`,
+          color: 'success',
+        })
       } else {
-        setError(data.error || 'Failed to upload torrent file')
+        addToast({
+          title: 'Error',
+          description: data.error || 'Failed to upload torrent file',
+          color: 'danger',
+        })
       }
     } catch (e) {
-      setError('Failed to upload torrent file')
+      addToast({
+        title: 'Error',
+        description: 'Failed to upload torrent file',
+        color: 'danger',
+      })
       console.error(e)
     } finally {
       setIsAdding(false)
     }
   }
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragging(false)
-
-    const files = e.dataTransfer.files
-    if (files.length > 0) {
-      const file = files[0]
-      if (file.name.endsWith('.torrent')) {
-        handleFileUpload(file)
-      } else {
-        setError('Please drop a .torrent file')
-      }
-    }
-  }
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (files && files.length > 0) {
-      handleFileUpload(files[0])
-      e.target.value = ''
-    }
-  }
-
+  // Single torrent actions
   const handlePause = async (id: number) => {
-    await graphqlClient
+    const result = await graphqlClient
       .mutation<{ pauseTorrent: TorrentActionResult }>(PAUSE_TORRENT_MUTATION, { id })
       .toPromise()
+    if (result.data?.pauseTorrent.success) {
+      setTorrents((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, state: 'PAUSED' as const } : t))
+      )
+    }
   }
 
   const handleResume = async (id: number) => {
-    await graphqlClient
+    const result = await graphqlClient
       .mutation<{ resumeTorrent: TorrentActionResult }>(RESUME_TORRENT_MUTATION, { id })
       .toPromise()
+    if (result.data?.resumeTorrent.success) {
+      setTorrents((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, state: 'DOWNLOADING' as const } : t))
+      )
+    }
   }
 
   const handleRemove = async (id: number) => {
-    if (!confirm('Remove this torrent?')) return
     const result = await graphqlClient
       .mutation<{ removeTorrent: TorrentActionResult }>(REMOVE_TORRENT_MUTATION, {
         id,
@@ -260,144 +279,157 @@ function DownloadsPage() {
       .toPromise()
     if (result.data?.removeTorrent.success) {
       setTorrents((prev) => prev.filter((t) => t.id !== id))
+      addToast({
+        title: 'Torrent Removed',
+        description: 'The torrent has been removed.',
+        color: 'success',
+      })
     }
   }
 
+  const handleInfo = (id: number) => {
+    setSelectedTorrentId(id)
+    onInfoOpen()
+  }
+
+  const handleOrganize = async (id: number) => {
+    const result = await graphqlClient
+      .mutation<{ organizeTorrent: OrganizeTorrentResult }>(ORGANIZE_TORRENT_MUTATION, {
+        id,
+        libraryId: null, // Will use first TV library
+      })
+      .toPromise()
+
+    if (result.data?.organizeTorrent) {
+      const org = result.data.organizeTorrent
+      if (org.success) {
+        addToast({
+          title: 'Files Organized',
+          description: `Organized ${org.organizedCount} file(s)${org.failedCount > 0 ? `, ${org.failedCount} failed` : ''}`,
+          color: 'success',
+        })
+        // Show detailed messages if any
+        if (org.messages.length > 0) {
+          console.log('Organize messages:', org.messages)
+        }
+      } else {
+        addToast({
+          title: 'Organization Failed',
+          description: org.messages[0] || 'Failed to organize files',
+          color: 'danger',
+        })
+      }
+    } else if (result.error) {
+      addToast({
+        title: 'Error',
+        description: sanitizeError(result.error),
+        color: 'danger',
+      })
+    }
+  }
+
+  // Bulk actions
+  const handleBulkPause = async (ids: number[]) => {
+    let successCount = 0
+    for (const id of ids) {
+      const result = await graphqlClient
+        .mutation<{ pauseTorrent: TorrentActionResult }>(PAUSE_TORRENT_MUTATION, { id })
+        .toPromise()
+      if (result.data?.pauseTorrent.success) {
+        successCount++
+        setTorrents((prev) =>
+          prev.map((t) => (t.id === id ? { ...t, state: 'PAUSED' as const } : t))
+        )
+      }
+    }
+    addToast({
+      title: 'Paused Torrents',
+      description: `Paused ${successCount} of ${ids.length} torrent(s)`,
+      color: 'success',
+    })
+  }
+
+  const handleBulkResume = async (ids: number[]) => {
+    let successCount = 0
+    for (const id of ids) {
+      const result = await graphqlClient
+        .mutation<{ resumeTorrent: TorrentActionResult }>(RESUME_TORRENT_MUTATION, { id })
+        .toPromise()
+      if (result.data?.resumeTorrent.success) {
+        successCount++
+        setTorrents((prev) =>
+          prev.map((t) => (t.id === id ? { ...t, state: 'DOWNLOADING' as const } : t))
+        )
+      }
+    }
+    addToast({
+      title: 'Resumed Torrents',
+      description: `Resumed ${successCount} of ${ids.length} torrent(s)`,
+      color: 'success',
+    })
+  }
+
+  const handleBulkRemove = async (ids: number[]) => {
+    let successCount = 0
+    for (const id of ids) {
+      const result = await graphqlClient
+        .mutation<{ removeTorrent: TorrentActionResult }>(REMOVE_TORRENT_MUTATION, {
+          id,
+          deleteFiles: false,
+        })
+        .toPromise()
+      if (result.data?.removeTorrent.success) {
+        successCount++
+        setTorrents((prev) => prev.filter((t) => t.id !== id))
+      }
+    }
+    addToast({
+      title: 'Removed Torrents',
+      description: `Removed ${successCount} of ${ids.length} torrent(s)`,
+      color: 'success',
+    })
+  }
+
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <h1 className="text-2xl font-bold mb-6">Downloads</h1>
-
-      {/* Error message */}
-      {error && (
-        <Card className="bg-danger-50 border-danger mb-6">
-          <CardBody className="flex-row justify-between items-center">
-            <p className="text-danger">{error}</p>
-            <Button size="sm" variant="light" color="danger" onPress={() => setError(null)}>
-              Dismiss
-            </Button>
-          </CardBody>
-        </Card>
-      )}
-
-      {/* Add torrent tabs */}
-      <Card className="mb-8">
-        <CardBody>
-          <Tabs
-            selectedKey={inputMode}
-            onSelectionChange={(key) => setInputMode(key as InputMode)}
-            aria-label="Add torrent options"
-          >
-            <Tab key="magnet" title="🧲 Magnet Link">
-              <form onSubmit={handleAddTorrent} className="pt-4">
-                <div className="flex gap-4">
-                  <Input
-                    value={magnetUrl}
-                    onChange={(e) => setMagnetUrl(e.target.value)}
-                    placeholder="Paste magnet link (magnet:?xt=urn:btih:...)..."
-                    className="flex-1"
-                    size="lg"
-                  />
-                  <Button
-                    type="submit"
-                    color="primary"
-                    size="lg"
-                    isLoading={isAdding}
-                    isDisabled={!magnetUrl.trim()}
-                  >
-                    Add
-                  </Button>
-                </div>
-              </form>
-            </Tab>
-            <Tab key="url" title="🔗 Torrent URL">
-              <form onSubmit={handleAddTorrent} className="pt-4">
-                <div className="flex gap-4">
-                  <Input
-                    value={torrentUrl}
-                    onChange={(e) => setTorrentUrl(e.target.value)}
-                    placeholder="Enter URL to .torrent file (https://...)..."
-                    className="flex-1"
-                    size="lg"
-                  />
-                  <Button
-                    type="submit"
-                    color="primary"
-                    size="lg"
-                    isLoading={isAdding}
-                    isDisabled={!torrentUrl.trim()}
-                  >
-                    Add
-                  </Button>
-                </div>
-              </form>
-            </Tab>
-            <Tab key="file" title="📁 Upload File">
-              <div
-                onDragOver={(e) => {
-                  e.preventDefault()
-                  setIsDragging(true)
-                }}
-                onDragLeave={() => setIsDragging(false)}
-                onDrop={handleDrop}
-                className={`mt-4 border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
-                  isDragging ? 'border-primary bg-primary/10' : 'border-default-300'
-                }`}
-              >
-                <input
-                  type="file"
-                  accept=".torrent"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                  id="torrent-file-input"
-                />
-                <label htmlFor="torrent-file-input" className="cursor-pointer">
-                  <div className="text-4xl mb-4">📁</div>
-                  <p className="text-default-600 mb-2">
-                    {isDragging ? 'Drop your .torrent file here!' : 'Drag & drop a .torrent file'}
-                  </p>
-                  <p className="text-default-400 text-sm mb-4">or</p>
-                  <Button color="primary" as="span" isLoading={isAdding}>
-                    Browse Files
-                  </Button>
-                </label>
-              </div>
-            </Tab>
-          </Tabs>
-        </CardBody>
-      </Card>
-
-      {/* Loading */}
-      {isLoading && (
-        <div className="flex justify-center py-12">
-          <Spinner size="lg" />
+    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 min-w-0 grow flex flex-col ">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">Downloads</h1>
+          <p className="text-default-500">Manage your torrent downloads</p>
         </div>
-      )}
+      </div>
 
-      {/* Torrents list */}
-      {!isLoading && (
-        <div className="space-y-4">
-          {torrents.map((t) => (
-            <TorrentCard
-              key={t.id}
-              torrent={t}
-              onPause={() => handlePause(t.id)}
-              onResume={() => handleResume(t.id)}
-              onRemove={() => handleRemove(t.id)}
-            />
-          ))}
+      {/* Torrents table - skeleton loading handled by DataTable */}
+      <TorrentTable
+        torrents={torrents}
+        isLoading={isLoading}
+        onPause={handlePause}
+        onResume={handleResume}
+        onRemove={handleRemove}
+        onInfo={handleInfo}
+        onOrganize={handleOrganize}
+        onBulkPause={handleBulkPause}
+        onBulkResume={handleBulkResume}
+        onBulkRemove={handleBulkRemove}
+        onAddClick={onOpen}
+      />
 
-          {torrents.length === 0 && (
-            <Card>
-              <CardBody className="text-center py-12">
-                <p className="text-lg text-default-600 mb-2">No active downloads</p>
-                <p className="text-sm text-default-400">
-                  Add a torrent using the options above to start downloading.
-                </p>
-              </CardBody>
-            </Card>
-          )}
-        </div>
-      )}
+      {/* Add Torrent Modal */}
+      <AddTorrentModal
+        isOpen={isOpen}
+        onClose={onClose}
+        onAddMagnet={handleAddMagnet}
+        onAddUrl={handleAddUrl}
+        onAddFile={handleAddFile}
+        isLoading={isAdding}
+      />
+
+      {/* Torrent Info Modal */}
+      <TorrentInfoModal
+        torrentId={selectedTorrentId}
+        isOpen={isInfoOpen}
+        onClose={onInfoClose}
+      />
     </div>
   )
 }

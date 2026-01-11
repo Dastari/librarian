@@ -47,9 +47,7 @@ pub fn parse_episode(filename: &str) -> ParsedEpisode {
 
     // Clean up the filename (replace dots/underscores with spaces, but keep the original)
     let cleaned = filename
-        .replace('.', " ")
-        .replace('_', " ")
-        .replace('-', " ");
+        .replace(['.', '_', '-'], " ");
 
     // Try different patterns in order of specificity
 
@@ -230,6 +228,8 @@ fn clean_show_name(name: &str) -> String {
 }
 
 /// Try to match a parsed episode to a show name (fuzzy matching)
+/// NOTE: Reserved for future fuzzy matching improvements
+#[allow(dead_code)]
 pub fn normalize_show_name(name: &str) -> String {
     let mut normalized = name.to_lowercase();
 
@@ -253,6 +253,8 @@ pub fn normalize_show_name(name: &str) -> String {
 }
 
 /// Calculate similarity between two show names (0.0 to 1.0)
+/// NOTE: Reserved for future fuzzy matching improvements
+#[allow(dead_code)]
 pub fn show_name_similarity(name1: &str, name2: &str) -> f64 {
     let n1 = normalize_show_name(name1);
     let n2 = normalize_show_name(name2);
@@ -273,6 +275,7 @@ pub fn show_name_similarity(name1: &str, name2: &str) -> f64 {
 }
 
 /// Calculate Levenshtein distance between two strings
+#[allow(dead_code)]
 fn levenshtein_distance(s1: &str, s2: &str) -> usize {
     let s1_chars: Vec<char> = s1.chars().collect();
     let s2_chars: Vec<char> = s2.chars().collect();

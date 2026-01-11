@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from 'react'
+import { Button } from '@heroui/button'
 
 interface Props {
   children: ReactNode
@@ -41,18 +42,22 @@ export class ErrorBoundary extends Component<Props, State> {
               {this.state.error?.message || 'An unexpected error occurred'}
             </p>
             <div className="space-y-3">
-              <button
-                onClick={() => window.location.reload()}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition-colors"
+              <Button
+                color="primary"
+                size="lg"
+                className="w-full"
+                onPress={() => window.location.reload()}
               >
                 Reload Page
-              </button>
-              <button
-                onClick={() => this.setState({ hasError: false, error: null })}
-                className="w-full bg-slate-700 hover:bg-slate-600 text-white font-semibold py-3 rounded-lg transition-colors"
+              </Button>
+              <Button
+                variant="flat"
+                size="lg"
+                className="w-full"
+                onPress={() => this.setState({ hasError: false, error: null })}
               >
                 Try Again
-              </button>
+              </Button>
             </div>
             {import.meta.env.DEV && this.state.error && (
               <details className="mt-6 text-left">

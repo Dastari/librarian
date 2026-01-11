@@ -96,13 +96,37 @@ pub struct TvMazeEpisode {
     pub episode_type: Option<String>,
     pub airdate: Option<String>,
     pub airtime: Option<String>,
+    #[serde(rename = "airstamp")]
+    pub air_stamp: Option<String>,
     pub runtime: Option<u32>,
     pub image: Option<TvMazeImage>,
     pub summary: Option<String>,
     pub rating: Option<TvMazeRating>,
 }
 
-/// Season from TVMaze
+/// Schedule entry from TVMaze (episode with embedded show)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TvMazeScheduleEntry {
+    pub id: u32,
+    pub name: String,
+    pub season: u32,
+    pub number: u32,
+    #[serde(rename = "type")]
+    pub episode_type: Option<String>,
+    pub airdate: Option<String>,
+    pub airtime: Option<String>,
+    #[serde(rename = "airstamp")]
+    pub air_stamp: Option<String>,
+    pub runtime: Option<u32>,
+    pub image: Option<TvMazeImage>,
+    pub summary: Option<String>,
+    pub rating: Option<TvMazeRating>,
+    /// The show this episode belongs to
+    pub show: TvMazeShow,
+}
+
+/// Season from TVMaze (for future season-level features)
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TvMazeSeason {
     pub id: u32,
@@ -204,7 +228,8 @@ impl TvMazeClient {
         Ok(episodes)
     }
 
-    /// Get seasons for a show
+    /// Get seasons for a show (for future season-level features)
+    #[allow(dead_code)]
     pub async fn get_seasons(&self, tvmaze_id: u32) -> Result<Vec<TvMazeSeason>> {
         info!(tvmaze_id = tvmaze_id, "Fetching seasons from TVMaze");
 
@@ -232,7 +257,8 @@ impl TvMazeClient {
         Ok(seasons)
     }
 
-    /// Search for a single show (returns best match)
+    /// Search for a single show (returns best match) - for future use
+    #[allow(dead_code)]
     pub async fn search_single(&self, query: &str) -> Result<Option<TvMazeShow>> {
         let url = format!("{}/singlesearch/shows", self.base_url);
         let response = self
@@ -262,7 +288,8 @@ impl TvMazeClient {
         Ok(Some(show))
     }
 
-    /// Look up show by TVDB ID
+    /// Look up show by TVDB ID - for future cross-provider matching
+    #[allow(dead_code)]
     pub async fn lookup_by_tvdb(&self, tvdb_id: u32) -> Result<Option<TvMazeShow>> {
         let url = format!("{}/lookup/shows", self.base_url);
         let response = self
@@ -292,7 +319,8 @@ impl TvMazeClient {
         Ok(Some(show))
     }
 
-    /// Look up show by IMDB ID
+    /// Look up show by IMDB ID - for future cross-provider matching
+    #[allow(dead_code)]
     pub async fn lookup_by_imdb(&self, imdb_id: &str) -> Result<Option<TvMazeShow>> {
         let url = format!("{}/lookup/shows", self.base_url);
         let response = self
@@ -320,6 +348,112 @@ impl TvMazeClient {
             .context("Failed to parse TVMaze show")?;
 
         Ok(Some(show))
+    }
+
+    /// Get TV schedule for a specific date
+    /// 
+    /// Returns all episodes airing on the given date.
+    /// If no date is provided, defaults to today.
+    pub async fn get_schedule(&self, date: Option<&str>, country: Option<&str>) -> Result<Vec<TvMazeScheduleEntry>> {
+        info!(date = ?date, country = ?country, "Fetching TV schedule from TVMaze");
+
+        let url = format!("{}/schedule", self.base_url);
+        let mut query_params: Vec<(&str, &str)> = Vec::new();
+        
+        if let Some(d) = date {
+            query_params.push(("date", d));
+        }
+        if let Some(c) = country {
+            query_params.push(("country", c));
+        }
+
+        let response = self
+            .client
+            .get(&url)
+            .query(&query_params)
+            .send()
+            .await
+            .context("Failed to fetch TV schedule from TVMaze")?;
+
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "TVMaze schedule request failed with status: {}",
+                response.status()
+            );
+        }
+
+        let schedule: Vec<TvMazeScheduleEntry> = response
+            .json()
+            .await
+            .context("Failed to parse TVMaze schedule")?;
+
+        debug!(count = schedule.len(), "TVMaze schedule returned episodes");
+        Ok(schedule)
+    }
+
+    /// Get upcoming episodes for the next N days
+    /// 
+    /// Fetches schedules for multiple days and combines them.
+    pub async fn get_upcoming_schedule(&self, days: u32, country: Option<&str>) -> Result<Vec<TvMazeScheduleEntry>> {
+        info!(days = days, country = ?country, "Fetching upcoming TV schedule from TVMaze");
+
+        let today = chrono::Utc::now().date_naive();
+        let mut all_episodes = Vec::new();
+
+        for day_offset in 0..days {
+            let date = today + chrono::Duration::days(day_offset as i64);
+            let date_str = date.format("%Y-%m-%d").to_string();
+            
+            match self.get_schedule(Some(&date_str), country).await {
+                Ok(episodes) => {
+                    all_episodes.extend(episodes);
+                }
+                Err(e) => {
+                    debug!(date = %date_str, error = %e, "Failed to fetch schedule for date, continuing");
+                }
+            }
+        }
+
+        debug!(count = all_episodes.len(), "TVMaze returned total upcoming episodes");
+        Ok(all_episodes)
+    }
+
+    /// Get web channel schedule (streaming services)
+    /// 
+    /// Returns episodes from streaming platforms like Netflix, Hulu, etc.
+    #[allow(dead_code)]
+    pub async fn get_web_schedule(&self, date: Option<&str>) -> Result<Vec<TvMazeScheduleEntry>> {
+        info!(date = ?date, "Fetching web schedule from TVMaze");
+
+        let url = format!("{}/schedule/web", self.base_url);
+        let mut query_params: Vec<(&str, &str)> = Vec::new();
+        
+        if let Some(d) = date {
+            query_params.push(("date", d));
+        }
+
+        let response = self
+            .client
+            .get(&url)
+            .query(&query_params)
+            .send()
+            .await
+            .context("Failed to fetch web schedule from TVMaze")?;
+
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "TVMaze web schedule request failed with status: {}",
+                response.status()
+            );
+        }
+
+        let schedule: Vec<TvMazeScheduleEntry> = response
+            .json()
+            .await
+            .context("Failed to parse TVMaze web schedule")?;
+
+        debug!(count = schedule.len(), "TVMaze web schedule returned episodes");
+        Ok(schedule)
     }
 }
 
@@ -376,7 +510,8 @@ impl TvMazeShow {
 }
 
 impl TvMazeEpisode {
-    /// Parse air date to NaiveDate
+    /// Parse air date to NaiveDate - for future date-based matching
+    #[allow(dead_code)]
     pub fn air_date(&self) -> Option<chrono::NaiveDate> {
         self.airdate.as_ref().and_then(|d| {
             chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()

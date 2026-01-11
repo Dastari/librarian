@@ -1,0 +1,164 @@
+---
+description: Visual design patterns and UI style conventions
+globs:
+  - "frontend/src/**/*.tsx"
+  - "frontend/src/**/*.ts"
+alwaysApply: false
+---
+
+# Style Guide Reference
+
+**Always read `docs/style-guide.md` before implementing new UI components or layouts.**
+
+This rule summarizes key patterns. For full examples and code snippets, consult the style guide.
+
+---
+
+## Quick Reference
+
+### Cards
+
+| Type | Usage |
+|------|-------|
+| **Content Card** | `<Card className="bg-content1">` with CardHeader/Divider/CardBody |
+| **Poster Card** | `aspect-[2/3]` with background image, gradient overlay, bottom text |
+| **Empty State** | `border-dashed border-2 border-default-300 bg-content1/50` |
+
+### Poster/Media Cards Pattern
+```tsx
+<Card isPressable className="relative overflow-hidden aspect-[2/3] group border-none bg-content2">
+  {/* Background image + gradient: from-black/90 via-black/20 to-black/40 */}
+  {/* Top-left badge: bg-black/50 backdrop-blur-sm */}
+  {/* Bottom content: absolute bottom-0, text-white, drop-shadow-lg */}
+  {/* Hover actions: opacity-0 group-hover:opacity-100 */}
+</Card>
+```
+
+### Data Tables
+Always use the `DataTable` component from `components/data-table`:
+- Provides search, filters, sorting, view toggle, bulk actions
+- Use `stateKey` for persistence
+- Define columns with `render` functions
+- Use `Chip` for status columns
+- Use `tabular-nums` for numeric columns
+
+### Page Layouts
+```tsx
+// Standard page
+<div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+// Full-height with scroll
+<div className="h-[calc(100vh-4rem)] flex flex-col">
+  <ScrollShadow className="flex-1 min-h-0">
+```
+
+### Settings/Tab Layout
+- Keep sidebar visible during loading
+- Use `ScrollShadow` for scrollable content with fade edges
+- Active tab: `bg-primary text-primary-foreground shadow-md`
+- Inactive tab: `hover:bg-content2 text-default-600`
+
+---
+
+## Color Usage
+
+```
+primary   → Main actions, active states
+success   → Completed, seeding, positive
+warning   → Paused, attention needed
+danger    → Errors, destructive actions
+default   → Neutral, secondary
+
+text-default-500 → Descriptions
+text-default-400 → Muted hints
+bg-content1      → Card backgrounds
+bg-content2      → Nested/secondary surfaces
+bg-default-100   → Table headers
+```
+
+---
+
+## Loading States
+
+**Critical**: Keep navigation/layout visible during loading. Only replace the content area:
+
+```tsx
+// ✅ Good - layout stays visible
+<Layout>
+  {isLoading ? <Spinner /> : content}
+</Layout>
+
+// ❌ Bad - entire page flashes
+if (isLoading) return <Spinner />
+return <Layout>{content}</Layout>
+```
+
+---
+
+## Status Chips
+
+```tsx
+<Chip size="sm" variant="flat" color={STATUS_COLORS[status]}>
+  {label}
+</Chip>
+
+// Colors: primary, success, warning, danger, secondary, default
+```
+
+---
+
+## Typography
+
+- **Numeric data**: `className="tabular-nums"`
+- **Hashes/IDs**: `className="font-mono text-xs text-default-400"`
+- **Truncate**: `className="truncate"` or `className="line-clamp-2"`
+
+---
+
+## Grid Layouts
+
+```tsx
+// Poster cards (6 columns max)
+"grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
+
+// Content cards (2 columns)
+"grid grid-cols-1 lg:grid-cols-2 gap-4"
+```
+
+---
+
+## Hover & Transitions
+
+```tsx
+// Reveal on hover
+className="opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+
+// Interactive cards
+<Card isPressable className="hover:bg-content2 transition-colors">
+
+// Floating elements
+className="bg-black/50 backdrop-blur-sm"
+```
+
+---
+
+## Library Type Gradients
+
+When no artwork available, use type-specific gradients:
+```
+MOVIES:     from-violet-900 via-purple-800 to-fuchsia-900
+TV:         from-blue-900 via-indigo-800 to-cyan-900
+MUSIC:      from-emerald-900 via-green-800 to-teal-900
+AUDIOBOOKS: from-amber-900 via-orange-800 to-yellow-900
+OTHER:      from-slate-800 via-gray-700 to-zinc-800
+```
+
+---
+
+## Before Implementing UI
+
+1. Check `docs/style-guide.md` for existing patterns
+2. Use `DataTable` for any list/table views
+3. Use `ScrollShadow` for scrollable containers
+4. Match existing card styles (content vs poster)
+5. Keep layouts visible during loading states

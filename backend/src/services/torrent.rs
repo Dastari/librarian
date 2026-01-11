@@ -84,6 +84,43 @@ pub struct TorrentFile {
     pub progress: f64,
 }
 
+/// Detailed peer statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeerStats {
+    pub queued: usize,
+    pub connecting: usize,
+    pub live: usize,
+    pub seen: usize,
+    pub dead: usize,
+    pub not_needed: usize,
+}
+
+/// Detailed torrent information for the info modal
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TorrentDetails {
+    pub id: usize,
+    pub info_hash: String,
+    pub name: String,
+    pub state: TorrentState,
+    pub progress: f64,
+    pub size: u64,
+    pub downloaded: u64,
+    pub uploaded: u64,
+    pub download_speed: u64,
+    pub upload_speed: u64,
+    pub save_path: String,
+    pub files: Vec<TorrentFile>,
+    // Detailed stats
+    pub piece_count: u64,
+    pub pieces_downloaded: u64,
+    pub average_piece_download_ms: Option<u64>,
+    pub time_remaining_secs: Option<u64>,
+    pub peer_stats: PeerStats,
+    // Error info
+    pub error: Option<String>,
+    pub finished: bool,
+}
+
 /// Configuration for the torrent service
 #[derive(Debug, Clone)]
 pub struct TorrentServiceConfig {
@@ -228,7 +265,13 @@ impl TorrentService {
             completed: Arc::new(RwLock::new(std::collections::HashSet::new())),
         };
 
-        // Restore torrents from database
+        // First, sync any torrents loaded from session files TO the database
+        // This ensures the database reflects all torrents the session knows about
+        if let Err(e) = service.sync_session_to_database().await {
+            warn!(error = %e, "Failed to sync session torrents to database");
+        }
+
+        // Then, restore any additional torrents from database that aren't in the session
         if let Err(e) = service.restore_from_database().await {
             warn!(error = %e, "Failed to restore torrents from database");
         }
@@ -239,6 +282,63 @@ impl TorrentService {
 
         info!("Torrent service initialized");
         Ok(service)
+    }
+
+    /// Sync all torrents from the librqbit session to the database
+    /// This ensures the database reflects the current state of the session
+    async fn sync_session_to_database(&self) -> Result<()> {
+        let repo = self.db.torrents();
+        
+        // Get a fallback user_id for creating new records
+        let fallback_user_id = match repo.get_default_user_id().await? {
+            Some(uid) => uid,
+            None => {
+                info!("No user found in database, skipping session sync");
+                return Ok(());
+            }
+        };
+
+        // Get all torrents from the session
+        let session_torrents: Vec<(usize, Arc<librqbit::ManagedTorrent>)> = 
+            self.session.with_torrents(|iter| iter.map(|(id, h)| (id, h.clone())).collect());
+
+        info!(count = session_torrents.len(), "Syncing session torrents to database");
+
+        for (id, handle) in session_torrents {
+            let info_hash = get_info_hash_hex(&handle);
+            let name = handle.name().unwrap_or_else(|| "Unknown".to_string());
+            let stats = handle.stats();
+            let progress = stats.progress_bytes as f64 / stats.total_bytes.max(1) as f64;
+
+            let state = {
+                use librqbit::TorrentStatsState;
+                match &stats.state {
+                    TorrentStatsState::Paused => "paused",
+                    TorrentStatsState::Error => "error",
+                    TorrentStatsState::Live if progress >= 1.0 => "seeding",
+                    TorrentStatsState::Live => "downloading",
+                    TorrentStatsState::Initializing => "queued",
+                }
+            };
+
+            if let Err(e) = repo.upsert_from_session(
+                &info_hash,
+                &name,
+                state,
+                progress,
+                stats.total_bytes as i64,
+                stats.progress_bytes as i64,
+                stats.uploaded_bytes as i64,
+                &self.config.download_dir.to_string_lossy(),
+                fallback_user_id,
+            ).await {
+                warn!(id = %id, info_hash = %info_hash, error = %e, "Failed to sync torrent to database");
+            } else {
+                info!(id = %id, info_hash = %info_hash, name = %name, "Synced session torrent to database");
+            }
+        }
+
+        Ok(())
     }
 
     /// Restore torrents from database on startup
@@ -274,6 +374,8 @@ impl TorrentService {
         self.db.torrents()
     }
 
+    /// Subscribe to torrent events - for GraphQL subscriptions
+    #[allow(dead_code)]
     pub fn subscribe(&self) -> broadcast::Receiver<TorrentEvent> {
         self.event_tx.subscribe()
     }
@@ -312,12 +414,12 @@ impl TorrentService {
                     }
                 }
 
-                let _ = self.event_tx.send(TorrentEvent::Added { id: id.into(), name, info_hash });
-                self.get_torrent_info(id.into()).await
+                let _ = self.event_tx.send(TorrentEvent::Added { id, name, info_hash });
+                self.get_torrent_info(id).await
             }
             AddTorrentResponse::AlreadyManaged(id, _) => {
                 warn!(id = %id, "Torrent already exists");
-                self.get_torrent_info(id.into()).await
+                self.get_torrent_info(id).await
             }
             AddTorrentResponse::ListOnly(_) => anyhow::bail!("Torrent was added in list-only mode"),
         }
@@ -358,10 +460,10 @@ impl TorrentService {
                     }
                 }
 
-                let _ = self.event_tx.send(TorrentEvent::Added { id: id.into(), name, info_hash });
-                self.get_torrent_info(id.into()).await
+                let _ = self.event_tx.send(TorrentEvent::Added { id, name, info_hash });
+                self.get_torrent_info(id).await
             }
-            AddTorrentResponse::AlreadyManaged(id, _) => self.get_torrent_info(id.into()).await,
+            AddTorrentResponse::AlreadyManaged(id, _) => self.get_torrent_info(id).await,
             AddTorrentResponse::ListOnly(_) => anyhow::bail!("Torrent was added in list-only mode"),
         }
     }
@@ -398,19 +500,19 @@ impl TorrentService {
                     }
                 }
 
-                let _ = self.event_tx.send(TorrentEvent::Added { id: id.into(), name, info_hash });
-                self.get_torrent_info(id.into()).await
+                let _ = self.event_tx.send(TorrentEvent::Added { id, name, info_hash });
+                self.get_torrent_info(id).await
             }
             AddTorrentResponse::AlreadyManaged(id, _) => {
                 warn!(id = %id, "Torrent already exists");
-                self.get_torrent_info(id.into()).await
+                self.get_torrent_info(id).await
             }
             AddTorrentResponse::ListOnly(_) => anyhow::bail!("Torrent was added in list-only mode"),
         }
     }
 
     pub async fn get_torrent_info(&self, id: usize) -> Result<TorrentInfo> {
-        let handle = self.session.get(TorrentIdOrHash::Id(id.into())).context("Torrent not found")?;
+        let handle = self.session.get(TorrentIdOrHash::Id(id)).context("Torrent not found")?;
         let stats = handle.stats();
         let info_hash = get_info_hash_hex(&handle);
         let name = handle.name().unwrap_or_else(|| "Unknown".to_string());
@@ -427,13 +529,162 @@ impl TorrentService {
             })
             .unwrap_or((0, 0, 0));
 
+        // Get file info
+        let files = self.get_torrent_files(&handle);
+
         Ok(TorrentInfo {
             id, info_hash, name, state, progress,
             size: stats.total_bytes, downloaded: stats.progress_bytes, uploaded: stats.uploaded_bytes,
             download_speed, upload_speed, peers, seeds: 0,
             save_path: self.config.download_dir.to_string_lossy().to_string(),
-            files: vec![],
+            files,
         })
+    }
+
+    /// Get detailed torrent information including peer stats, file progress, etc.
+    pub async fn get_torrent_details(&self, id: usize) -> Result<TorrentDetails> {
+        let handle = self.session.get(TorrentIdOrHash::Id(id)).context("Torrent not found")?;
+        let stats = handle.stats();
+        let info_hash = get_info_hash_hex(&handle);
+        let name = handle.name().unwrap_or_else(|| "Unknown".to_string());
+
+        let progress = stats.progress_bytes as f64 / stats.total_bytes.max(1) as f64;
+        let state = self.map_state(&stats.state, progress);
+
+        // Extract detailed stats from live stats
+        let (download_speed, upload_speed, peer_stats, avg_piece_ms, time_remaining) = stats.live.as_ref()
+            .map(|live| {
+                let dl = (live.download_speed.mbps * 125000.0) as u64;
+                let ul = (live.upload_speed.mbps * 125000.0) as u64;
+                let ps = PeerStats {
+                    queued: live.snapshot.peer_stats.queued,
+                    connecting: live.snapshot.peer_stats.connecting,
+                    live: live.snapshot.peer_stats.live,
+                    seen: live.snapshot.peer_stats.seen,
+                    dead: live.snapshot.peer_stats.dead,
+                    not_needed: live.snapshot.peer_stats.not_needed,
+                };
+                let avg_ms = live.average_piece_download_time.map(|d| d.as_millis() as u64);
+                // Estimate time remaining from download speed if available
+                let time_rem = if dl > 0 && stats.total_bytes > stats.progress_bytes {
+                    Some((stats.total_bytes - stats.progress_bytes) / dl)
+                } else {
+                    None
+                };
+                (dl, ul, ps, avg_ms, time_rem)
+            })
+            .unwrap_or((0, 0, PeerStats {
+                queued: 0, connecting: 0, live: 0, seen: 0, dead: 0, not_needed: 0
+            }, None, None));
+
+        // Get file info with progress
+        let files = self.get_torrent_files_detailed(&handle, &stats);
+
+        // Calculate piece count from file_progress array length
+        let piece_count = stats.file_progress.len() as u64;
+        let pieces_downloaded = stats.file_progress.iter().filter(|&&b| b > 0).count() as u64;
+
+        Ok(TorrentDetails {
+            id,
+            info_hash,
+            name,
+            state,
+            progress,
+            size: stats.total_bytes,
+            downloaded: stats.progress_bytes,
+            uploaded: stats.uploaded_bytes,
+            download_speed,
+            upload_speed,
+            save_path: self.config.download_dir.to_string_lossy().to_string(),
+            files,
+            piece_count,
+            pieces_downloaded,
+            average_piece_download_ms: avg_piece_ms,
+            time_remaining_secs: time_remaining,
+            peer_stats,
+            error: stats.error.clone(),
+            finished: stats.finished,
+        })
+    }
+
+    /// Get file info with progress from stats
+    fn get_torrent_files_detailed(&self, handle: &Arc<librqbit::ManagedTorrent>, stats: &librqbit::TorrentStats) -> Vec<TorrentFile> {
+        let mut files = Vec::new();
+        
+        // Try to get file info from torrent metadata using file_infos
+        if let Some(metadata) = handle.metadata.load_full() {
+            for (idx, file_info) in metadata.file_infos.iter().enumerate() {
+                let file_progress = stats.file_progress.get(idx).copied().unwrap_or(0);
+                let size = file_info.len;
+                let progress = if size > 0 { file_progress as f64 / size as f64 } else { 0.0 };
+                
+                files.push(TorrentFile {
+                    index: idx,
+                    path: file_info.relative_filename.to_string_lossy().to_string(),
+                    size,
+                    progress: progress.min(1.0),
+                });
+            }
+        }
+        
+        files
+    }
+
+    /// Get files for a torrent by info_hash
+    pub async fn get_files_for_torrent(&self, info_hash: &str) -> Result<Vec<TorrentFile>> {
+        // Find the torrent by info_hash
+        let handle = self.session.with_torrents(|iter| {
+            for (id, handle) in iter {
+                if get_info_hash_hex(&handle) == info_hash {
+                    return Some((id, handle.clone()));
+                }
+            }
+            None
+        });
+
+        match handle {
+            Some((_, h)) => Ok(self.get_torrent_files(&h)),
+            None => anyhow::bail!("Torrent not found: {}", info_hash),
+        }
+    }
+
+    /// Extract file information from a torrent handle
+    fn get_torrent_files(&self, handle: &Arc<librqbit::ManagedTorrent>) -> Vec<TorrentFile> {
+        let mut files = Vec::new();
+        
+        // Get file info from torrent metadata
+        if let Some(metadata) = handle.metadata.load_full() {
+            let stats = handle.stats();
+            
+            for (idx, file_info) in metadata.file_infos.iter().enumerate() {
+                let file_progress = stats.file_progress.get(idx).copied().unwrap_or(0);
+                let size = file_info.len;
+                let progress = if size > 0 { file_progress as f64 / size as f64 } else { 0.0 };
+                
+                // Build the full path: download_dir / torrent_name / relative_filename
+                // For single-file torrents, there might not be a folder
+                let torrent_name = handle.name().unwrap_or_else(|| "unknown".to_string());
+                let relative_path = file_info.relative_filename.to_string_lossy().to_string();
+                
+                // Check if there's a torrent folder or if files are directly in download dir
+                let full_path = if metadata.file_infos.len() == 1 {
+                    // Single file torrent - file might be directly in download dir or in a folder
+                    self.config.download_dir.join(&torrent_name).to_string_lossy().to_string()
+                } else {
+                    // Multi-file torrent - files are in a folder named after the torrent
+                    self.config.download_dir.join(&torrent_name).join(&relative_path).to_string_lossy().to_string()
+                };
+                
+                files.push(TorrentFile {
+                    index: idx,
+                    path: full_path,
+                    size,
+                    progress: progress.min(1.0),
+                });
+            }
+        }
+        
+        files
     }
 
     pub async fn list_torrents(&self) -> Vec<TorrentInfo> {
@@ -448,25 +699,25 @@ impl TorrentService {
     }
 
     pub async fn pause(&self, id: usize) -> Result<()> {
-        let handle = self.session.get(TorrentIdOrHash::Id(id.into())).context("Torrent not found")?;
+        let handle = self.session.get(TorrentIdOrHash::Id(id)).context("Torrent not found")?;
         self.session.pause(&handle).await.context("Failed to pause torrent")?;
         info!(id = %id, "Torrent paused");
         Ok(())
     }
 
     pub async fn resume(&self, id: usize) -> Result<()> {
-        let handle = self.session.get(TorrentIdOrHash::Id(id.into())).context("Torrent not found")?;
+        let handle = self.session.get(TorrentIdOrHash::Id(id)).context("Torrent not found")?;
         self.session.unpause(&handle).await.context("Failed to resume torrent")?;
         info!(id = %id, "Torrent resumed");
         Ok(())
     }
 
     pub async fn remove(&self, id: usize, delete_files: bool) -> Result<()> {
-        let handle = self.session.get(TorrentIdOrHash::Id(id.into())).context("Torrent not found")?;
+        let handle = self.session.get(TorrentIdOrHash::Id(id)).context("Torrent not found")?;
         let info_hash = get_info_hash_hex(&handle);
         
         // Delete from librqbit
-        self.session.delete(TorrentIdOrHash::Id(id.into()), delete_files).await?;
+        self.session.delete(TorrentIdOrHash::Id(id), delete_files).await?;
         
         // Delete from database
         let repo = self.db.torrents();
@@ -503,7 +754,7 @@ impl TorrentService {
                 let ids: Vec<usize> = session.with_torrents(|iter| iter.map(|(id, _)| id).collect());
 
                 for id in ids {
-                    if let Some(handle) = session.get(TorrentIdOrHash::Id(id.into())) {
+                    if let Some(handle) = session.get(TorrentIdOrHash::Id(id)) {
                         let stats = handle.stats();
                         let info_hash = get_info_hash_hex(&handle);
                         let name = handle.name().unwrap_or_else(|| "Unknown".to_string());
@@ -548,35 +799,59 @@ impl TorrentService {
         let session = self.session.clone();
         let db = self.db.clone();
         let completed = self.completed.clone();
+        let download_dir = self.config.download_dir.clone();
 
         tokio::spawn(async move {
             // Sync to database every 10 seconds (less frequent than progress updates)
             let mut interval = tokio::time::interval(Duration::from_secs(10));
 
+            // Get fallback user_id once for the sync loop
+            let fallback_user_id = {
+                let repo = db.torrents();
+                repo.get_default_user_id().await.ok().flatten()
+            };
+
             loop {
                 interval.tick().await;
 
-                let ids: Vec<usize> = session.with_torrents(|iter| iter.map(|(id, _)| id).collect());
+                let torrents: Vec<(usize, Arc<librqbit::ManagedTorrent>)> = 
+                    session.with_torrents(|iter| iter.map(|(id, h)| (id, h.clone())).collect());
                 let repo = db.torrents();
 
-                for id in ids {
-                    if let Some(handle) = session.get(TorrentIdOrHash::Id(id.into())) {
-                        let stats = handle.stats();
-                        let info_hash = get_info_hash_hex(&handle);
-                        let progress = stats.progress_bytes as f64 / stats.total_bytes.max(1) as f64;
+                for (_id, handle) in torrents {
+                    let stats = handle.stats();
+                    let info_hash = get_info_hash_hex(&handle);
+                    let name = handle.name().unwrap_or_else(|| "Unknown".to_string());
+                    let progress = stats.progress_bytes as f64 / stats.total_bytes.max(1) as f64;
 
-                        let state = {
-                            use librqbit::TorrentStatsState;
-                            match &stats.state {
-                                TorrentStatsState::Paused => "paused",
-                                TorrentStatsState::Error => "error",
-                                TorrentStatsState::Live if progress >= 1.0 => "seeding",
-                                TorrentStatsState::Live => "downloading",
-                                TorrentStatsState::Initializing => "queued",
-                            }
-                        };
+                    let state = {
+                        use librqbit::TorrentStatsState;
+                        match &stats.state {
+                            TorrentStatsState::Paused => "paused",
+                            TorrentStatsState::Error => "error",
+                            TorrentStatsState::Live if progress >= 1.0 => "seeding",
+                            TorrentStatsState::Live => "downloading",
+                            TorrentStatsState::Initializing => "queued",
+                        }
+                    };
 
-                        // Update database
+                    // Use upsert to handle torrents that might not be in the database yet
+                    if let Some(uid) = fallback_user_id {
+                        if let Err(e) = repo.upsert_from_session(
+                            &info_hash,
+                            &name,
+                            state,
+                            progress,
+                            stats.total_bytes as i64,
+                            stats.progress_bytes as i64,
+                            stats.uploaded_bytes as i64,
+                            &download_dir.to_string_lossy(),
+                            uid,
+                        ).await {
+                            warn!(error = %e, info_hash = %info_hash, "Failed to sync torrent to database");
+                        }
+                    } else {
+                        // No fallback user, just try to update existing records
                         if let Err(e) = repo.update_progress(
                             &info_hash,
                             state,
@@ -584,16 +859,16 @@ impl TorrentService {
                             stats.progress_bytes as i64,
                             stats.uploaded_bytes as i64,
                         ).await {
-                            warn!(error = %e, info_hash = %info_hash, "Failed to sync torrent to database");
-                        }
-
-                        // Mark completed in database
-                        if progress >= 1.0 && !completed.read().contains(&info_hash) {
-                            if let Err(e) = repo.mark_completed(&info_hash).await {
-                                warn!(error = %e, "Failed to mark torrent as completed in database");
-                            }
+                            // This is expected if the torrent isn't in the database
+                            tracing::trace!(error = %e, info_hash = %info_hash, "Failed to update torrent progress");
                         }
                     }
+
+                    // Mark completed in database
+                    if progress >= 1.0 && !completed.read().contains(&info_hash)
+                        && let Err(e) = repo.mark_completed(&info_hash).await {
+                            warn!(error = %e, "Failed to mark torrent as completed in database");
+                        }
                 }
             }
         });

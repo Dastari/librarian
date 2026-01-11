@@ -8,9 +8,13 @@ import { routeTree } from './routeTree.gen'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
 import type { AuthContext } from './lib/auth-context'
+import { initializeTheme } from './hooks/useTheme'
 
 import './styles.css'
 import reportWebVitals from './reportWebVitals.ts'
+
+// Initialize theme immediately to prevent flash of wrong theme
+initializeTheme()
 
 
 // Create a new router instance with auth context
@@ -61,8 +65,9 @@ function InnerApp() {
 
     // Listen for auth changes - only update on meaningful events
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      // Skip token refresh events - they don't change auth status
-      // and would cause unnecessary re-renders
+      // Skip events that don't change auth status to avoid re-renders
+      // - TOKEN_REFRESHED: token was refreshed but user is still authenticated
+      // These events fire on window focus/visibility changes
       if (event === 'TOKEN_REFRESHED') {
         return
       }
@@ -70,9 +75,13 @@ function InnerApp() {
       setAuth((prev) => {
         // Only update if authentication status actually changed
         const isAuthenticated = !!session
-        if (prev.isAuthenticated === isAuthenticated && !prev.isLoading) {
+        const sessionChanged = prev.session?.access_token !== session?.access_token
+        
+        // Skip update if nothing meaningful changed
+        if (prev.isAuthenticated === isAuthenticated && !prev.isLoading && !sessionChanged) {
           return prev // Return same reference to avoid re-render
         }
+        
         return {
           isAuthenticated,
           isLoading: false,

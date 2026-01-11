@@ -1,15 +1,21 @@
 //! Metadata fetching service for TheTVDB and TMDB
+//!
+//! NOTE: This module is scaffolded for direct TMDB/TheTVDB API access.
+//! The primary metadata service is in `services/metadata.rs` which uses TVMaze.
+//! This module will be used when TMDB/TheTVDB implementations are added.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-/// Metadata fetching service
+/// Metadata fetching service (for future TMDB/TheTVDB direct API access)
+#[allow(dead_code)]
 pub struct MetadataService {
     tvdb_api_key: Option<String>,
     tmdb_api_key: Option<String>,
     client: reqwest::Client,
 }
 
+#[allow(dead_code)]
 impl MetadataService {
     pub fn new(tvdb_api_key: Option<String>, tmdb_api_key: Option<String>) -> Self {
         Self {

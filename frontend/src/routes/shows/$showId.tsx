@@ -1,70 +1,69 @@
-import { createFileRoute, Link, redirect } from '@tanstack/react-router'
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import {
-  Button,
-  Card,
-  CardBody,
-  Chip,
-  Image,
-  Spinner,
-  Table,
-  TableHeader,
-  TableBody,
-  TableColumn,
-  TableRow,
-  TableCell,
-  Accordion,
-  AccordionItem,
-  addToast,
-} from '@heroui/react'
-import { useAuth } from '../../hooks/useAuth'
+import { createFileRoute, Link, redirect, useNavigate } from '@tanstack/react-router'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { Button } from '@heroui/button'
+import { Card, CardBody } from '@heroui/card'
+import { Chip } from '@heroui/chip'
+import { Image } from '@heroui/image'
+import { Skeleton } from '@heroui/skeleton'
+import { Accordion, AccordionItem } from '@heroui/accordion'
+import { Breadcrumbs, BreadcrumbItem } from '@heroui/breadcrumbs'
+import { Switch } from '@heroui/switch'
+import { useDisclosure } from '@heroui/modal'
+import { addToast } from '@heroui/toast'
+import { useDataReactivity } from '../../hooks/useSubscription'
+import { RouteError } from '../../components/RouteError'
 import {
   graphqlClient,
   TV_SHOW_QUERY,
+  LIBRARY_QUERY,
   EPISODES_QUERY,
+  QUALITY_PROFILES_QUERY,
   REFRESH_TV_SHOW_MUTATION,
+  DOWNLOAD_EPISODE_MUTATION,
+  DELETE_TV_SHOW_MUTATION,
+  UPDATE_TV_SHOW_MUTATION,
   type TvShow,
+  type Library,
   type Episode,
   type EpisodeStatus,
+  type DownloadEpisodeResult,
+  type TvShowResult,
+  type QualityProfile,
 } from '../../lib/graphql'
+import { formatBytes, formatDate } from '../../lib/format'
+import { DataTable, type DataTableColumn, type RowAction } from '../../components/data-table'
+import { DownloadIcon } from '../../components/icons'
+import { DeleteShowModal, ShowSettingsModal, type ShowSettingsInput } from '../../components/shows'
 
 export const Route = createFileRoute('/shows/$showId')({
-  beforeLoad: ({ context }) => {
+  beforeLoad: ({ context, location }) => {
     if (!context.auth.isAuthenticated) {
-      throw redirect({ to: '/auth/login' })
+      throw redirect({
+        to: '/',
+        search: {
+          signin: true,
+          redirect: location.href,
+        },
+      })
     }
   },
   component: ShowDetailPage,
+  errorComponent: RouteError,
 })
 
-function formatBytes(bytes: number | null): string {
-  if (!bytes) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let unitIndex = 0
-  let size = bytes
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024
-    unitIndex++
-  }
-  return `${size.toFixed(1)} ${units[unitIndex]}`
+// Helper to format air date with 'TBA' fallback for unknown dates
+function formatAirDate(dateStr: string | null): string {
+  return formatDate(dateStr, 'TBA')
 }
 
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return 'TBA'
-  const date = new Date(dateStr)
-  return date.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  })
-}
-
-function getStatusColor(status: EpisodeStatus): 'success' | 'warning' | 'danger' | 'default' | 'primary' {
+function getStatusColor(status: EpisodeStatus): 'success' | 'warning' | 'danger' | 'default' | 'primary' | 'secondary' {
   switch (status) {
     case 'DOWNLOADED':
       return 'success'
     case 'DOWNLOADING':
       return 'primary'
+    case 'AVAILABLE':
+      return 'secondary'
     case 'WANTED':
       return 'warning'
     case 'MISSING':
@@ -82,6 +81,8 @@ function getStatusLabel(status: EpisodeStatus): string {
       return 'Downloaded'
     case 'DOWNLOADING':
       return 'Downloading'
+    case 'AVAILABLE':
+      return 'Available'
     case 'WANTED':
       return 'Wanted'
     case 'MISSING':
@@ -100,45 +101,180 @@ interface SeasonData {
   totalCount: number
 }
 
+// Episode table columns
+const episodeColumns: DataTableColumn<Episode>[] = [
+  {
+    key: 'episode',
+    label: '#',
+    width: 80,
+    sortable: true,
+    render: (ep) => (
+      <span className="font-mono text-default-500">
+        {String(ep.episode).padStart(2, '0')}
+      </span>
+    ),
+  },
+  {
+    key: 'title',
+    label: 'Title',
+    sortable: true,
+    render: (ep) => (
+      <span className="font-medium">
+        {ep.title || `Episode ${ep.episode}`}
+      </span>
+    ),
+  },
+  {
+    key: 'airDate',
+    label: 'Air Date',
+    width: 120,
+    sortable: true,
+    render: (ep) => (
+      <span className="text-default-500 text-sm">
+        {formatAirDate(ep.airDate)}
+      </span>
+    ),
+  },
+  {
+    key: 'status',
+    label: 'Status',
+    width: 120,
+    sortable: true,
+    render: (ep) => (
+      <Chip size="sm" color={getStatusColor(ep.status)} variant="flat">
+        {getStatusLabel(ep.status)}
+      </Chip>
+    ),
+  },
+]
+
+interface EpisodeTableProps {
+  episodes: Episode[]
+  seasonNumber: number
+  downloadingEpisodes: Set<string>
+  onDownload: (episodeId: string) => void
+}
+
+function EpisodeTable({ episodes, seasonNumber, downloadingEpisodes, onDownload }: EpisodeTableProps) {
+  const rowActions = useMemo<RowAction<Episode>[]>(() => [
+    {
+      key: 'download',
+      label: 'Download Episode',
+      icon: <DownloadIcon />,
+      color: 'primary',
+      inDropdown: true,
+      isVisible: (ep) => ep.status === 'AVAILABLE',
+      isDisabled: (ep) => downloadingEpisodes.has(ep.id),
+      onAction: (ep) => onDownload(ep.id),
+    },
+  ], [downloadingEpisodes, onDownload])
+
+  return (
+    <DataTable
+      data={episodes}
+      columns={episodeColumns}
+      getRowKey={(ep) => ep.id}
+      ariaLabel={`Season ${seasonNumber} episodes`}
+      removeWrapper
+      isCompact
+      showItemCount={false}
+      hideToolbar
+      defaultSortColumn="episode"
+      defaultSortDirection="asc"
+      rowActions={rowActions}
+    />
+  )
+}
+
 function ShowDetailPage() {
   const { showId } = Route.useParams()
-  const { user, loading: authLoading } = useAuth()
+  const navigate = useNavigate()
   const [show, setShow] = useState<TvShow | null>(null)
+  const [library, setLibrary] = useState<Library | null>(null)
   const [episodes, setEpisodes] = useState<Episode[]>([])
+  const [qualityProfiles, setQualityProfiles] = useState<QualityProfile[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [downloadingEpisodes, setDownloadingEpisodes] = useState<Set<string>>(new Set())
+  const [deleting, setDeleting] = useState(false)
+  const [savingSettings, setSavingSettings] = useState(false)
+  const [togglingAutoDownload, setTogglingAutoDownload] = useState(false)
+  const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure()
+  const { isOpen: isSettingsOpen, onOpen: onSettingsOpen, onClose: onSettingsClose } = useDisclosure()
 
-  const fetchData = useCallback(async () => {
+  // Track if initial load is done to avoid showing spinner on background refreshes
+  const initialLoadDone = useRef(false)
+
+  // Update page title when show data is loaded
+  useEffect(() => {
+    if (show) {
+      document.title = `Librarian - ${show.name}`
+    }
+    return () => {
+      document.title = 'Librarian'
+    }
+  }, [show])
+
+  const fetchData = useCallback(async (isBackgroundRefresh = false) => {
     try {
-      setLoading(true)
+      // Only show loading spinner on initial load
+      if (!isBackgroundRefresh) {
+        setLoading(true)
+      }
 
-      const [showResult, episodesResult] = await Promise.all([
-        graphqlClient
-          .query<{ tvShow: TvShow | null }>(TV_SHOW_QUERY, { id: showId })
-          .toPromise(),
-        graphqlClient
-          .query<{ episodes: Episode[] }>(EPISODES_QUERY, { tvShowId: showId })
-          .toPromise(),
-      ])
+      // First fetch the show to get libraryId
+      const showResult = await graphqlClient
+        .query<{ tvShow: TvShow | null }>(TV_SHOW_QUERY, { id: showId })
+        .toPromise()
 
       if (showResult.data?.tvShow) {
         setShow(showResult.data.tvShow)
-      }
-      if (episodesResult.data?.episodes) {
-        setEpisodes(episodesResult.data.episodes)
+
+        // Now fetch library, episodes, and quality profiles in parallel
+        const [libraryResult, episodesResult, profilesResult] = await Promise.all([
+          graphqlClient
+            .query<{ library: Library | null }>(LIBRARY_QUERY, { id: showResult.data.tvShow.libraryId })
+            .toPromise(),
+          graphqlClient
+            .query<{ episodes: Episode[] }>(EPISODES_QUERY, { tvShowId: showId })
+            .toPromise(),
+          graphqlClient
+            .query<{ qualityProfiles: QualityProfile[] }>(QUALITY_PROFILES_QUERY)
+            .toPromise(),
+        ])
+
+        if (libraryResult.data?.library) {
+          setLibrary(libraryResult.data.library)
+        }
+        if (episodesResult.data?.episodes) {
+          setEpisodes(episodesResult.data.episodes)
+        }
+        if (profilesResult.data?.qualityProfiles) {
+          setQualityProfiles(profilesResult.data.qualityProfiles)
+        }
       }
     } catch (err) {
       console.error('Failed to fetch show data:', err)
     } finally {
       setLoading(false)
+      initialLoadDone.current = true
     }
   }, [showId])
 
   useEffect(() => {
-    if (user) {
-      fetchData()
-    }
-  }, [user, fetchData])
+    fetchData()
+  }, [fetchData])
+
+  // Subscribe to data changes for live updates (especially episode status changes)
+  useDataReactivity(
+    () => {
+      if (initialLoadDone.current) {
+        fetchData(true)
+      }
+    },
+    { onTorrentComplete: true, periodicInterval: 15000, onFocus: true }
+  )
+
 
   const handleRefresh = async () => {
     setRefreshing(true)
@@ -173,6 +309,178 @@ function ShowDetailPage() {
     }
   }
 
+  const handleDownloadEpisode = async (episodeId: string) => {
+    setDownloadingEpisodes(prev => new Set([...prev, episodeId]))
+    try {
+      const { data, error } = await graphqlClient
+        .mutation<{ downloadEpisode: DownloadEpisodeResult }>(
+          DOWNLOAD_EPISODE_MUTATION,
+          { episodeId }
+        )
+        .toPromise()
+
+      if (error || !data?.downloadEpisode.success) {
+        addToast({
+          title: 'Download Failed',
+          description: data?.downloadEpisode.error || 'Failed to start download',
+          color: 'danger',
+        })
+        return
+      }
+
+      addToast({
+        title: 'Download Started',
+        description: 'Episode download has been queued',
+        color: 'success',
+      })
+
+      // Update the episode status in local state
+      setEpisodes(prev =>
+        prev.map(ep =>
+          ep.id === episodeId
+            ? { ...ep, status: 'DOWNLOADING' as EpisodeStatus }
+            : ep
+        )
+      )
+    } catch (err) {
+      console.error('Failed to download episode:', err)
+      addToast({
+        title: 'Error',
+        description: 'Failed to start download',
+        color: 'danger',
+      })
+    } finally {
+      setDownloadingEpisodes(prev => {
+        const next = new Set(prev)
+        next.delete(episodeId)
+        return next
+      })
+    }
+  }
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    try {
+      const { data, error } = await graphqlClient
+        .mutation<{ deleteTvShow: { success: boolean; error: string | null } }>(
+          DELETE_TV_SHOW_MUTATION,
+          { id: showId }
+        )
+        .toPromise()
+
+      if (error || !data?.deleteTvShow.success) {
+        addToast({
+          title: 'Error',
+          description: data?.deleteTvShow.error || 'Failed to delete show',
+          color: 'danger',
+        })
+        return
+      }
+
+      addToast({
+        title: 'Deleted',
+        description: 'Show has been removed from library',
+        color: 'success',
+      })
+
+      onDeleteClose()
+      navigate({ to: `/libraries/${show?.libraryId}` as any })
+    } catch (err) {
+      console.error('Failed to delete show:', err)
+      addToast({
+        title: 'Error',
+        description: 'Failed to delete show',
+        color: 'danger',
+      })
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const handleSaveSettings = async (input: ShowSettingsInput) => {
+    setSavingSettings(true)
+    try {
+      const { data, error } = await graphqlClient
+        .mutation<{ updateTvShow: TvShowResult }>(
+          UPDATE_TV_SHOW_MUTATION,
+          { id: showId, input }
+        )
+        .toPromise()
+
+      if (error || !data?.updateTvShow.success) {
+        addToast({
+          title: 'Error',
+          description: data?.updateTvShow.error || 'Failed to save settings',
+          color: 'danger',
+        })
+        return
+      }
+
+      if (data.updateTvShow.tvShow) {
+        setShow(prev => prev ? { ...prev, ...data.updateTvShow.tvShow } : null)
+      }
+
+      addToast({
+        title: 'Saved',
+        description: 'Show settings updated',
+        color: 'success',
+      })
+
+      onSettingsClose()
+    } catch (err) {
+      console.error('Failed to save settings:', err)
+      addToast({
+        title: 'Error',
+        description: 'Failed to save settings',
+        color: 'danger',
+      })
+    } finally {
+      setSavingSettings(false)
+    }
+  }
+
+  const handleToggleAutoDownload = async (enabled: boolean) => {
+    setTogglingAutoDownload(true)
+    try {
+      const { data, error } = await graphqlClient
+        .mutation<{ updateTvShow: TvShowResult }>(
+          UPDATE_TV_SHOW_MUTATION,
+          { id: showId, input: { autoDownloadOverride: enabled } }
+        )
+        .toPromise()
+
+      if (error || !data?.updateTvShow.success) {
+        addToast({
+          title: 'Error',
+          description: data?.updateTvShow.error || 'Failed to update auto-download',
+          color: 'danger',
+        })
+        return
+      }
+
+      if (data.updateTvShow.tvShow) {
+        setShow(prev => prev ? { ...prev, ...data.updateTvShow.tvShow } : null)
+      }
+    } catch (err) {
+      console.error('Failed to toggle auto-download:', err)
+      addToast({
+        title: 'Error',
+        description: 'Failed to update auto-download',
+        color: 'danger',
+      })
+    } finally {
+      setTogglingAutoDownload(false)
+    }
+  }
+
+  // Scroll to a season accordion
+  const scrollToSeason = (seasonNumber: number) => {
+    const element = document.getElementById(`season-${seasonNumber}`)
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }
+
   // Group episodes by season
   const seasons = useMemo<SeasonData[]>(() => {
     const seasonMap = new Map<number, Episode[]>()
@@ -199,10 +507,60 @@ function ShowDetailPage() {
   const downloadedEpisodes = episodes.filter((e) => e.status === 'DOWNLOADED').length
   const missingEpisodes = episodes.filter((e) => e.status === 'MISSING' || e.status === 'WANTED').length
 
-  if (authLoading || loading) {
+  // Loading skeleton for show detail page
+  if (loading) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
-        <Spinner size="lg" color="primary" />
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col mb-20">
+        {/* Header Skeleton */}
+        <div className="flex flex-col md:flex-row gap-6 mb-8">
+          {/* Poster Skeleton */}
+          <Skeleton className="w-48 h-72 rounded-lg shrink-0" />
+          
+          {/* Details Skeleton */}
+          <div className="flex-1">
+            <Skeleton className="w-48 h-4 rounded mb-4" />
+            <Skeleton className="w-64 h-8 rounded mb-4" />
+            <div className="flex gap-2 mb-4">
+              <Skeleton className="w-20 h-6 rounded-full" />
+              <Skeleton className="w-16 h-6 rounded-full" />
+              <Skeleton className="w-24 h-6 rounded-full" />
+            </div>
+            <Skeleton className="w-full h-16 rounded mb-4" />
+            <div className="flex gap-4 mb-4">
+              <Skeleton className="w-32 h-4 rounded" />
+              <Skeleton className="w-24 h-4 rounded" />
+            </div>
+            <div className="flex gap-2">
+              <Skeleton className="w-36 h-10 rounded-lg" />
+              <Skeleton className="w-28 h-10 rounded-lg" />
+              <Skeleton className="w-24 h-10 rounded-lg" />
+            </div>
+          </div>
+        </div>
+
+        {/* Settings Summary Skeleton */}
+        <Card className="bg-content1 mb-8">
+          <CardBody>
+            <div className="flex items-center justify-between">
+              <Skeleton className="w-32 h-6 rounded" />
+              <div className="flex gap-4">
+                <Skeleton className="w-24 h-4 rounded" />
+                <Skeleton className="w-24 h-4 rounded" />
+                <Skeleton className="w-24 h-4 rounded" />
+              </div>
+            </div>
+          </CardBody>
+        </Card>
+
+        {/* Seasons Skeleton */}
+        <div className="space-y-4">
+          <Skeleton className="w-48 h-6 rounded" />
+          <div className="space-y-2">
+            <Skeleton className="w-full h-14 rounded-lg" />
+            <Skeleton className="w-full h-14 rounded-lg" />
+            <Skeleton className="w-full h-14 rounded-lg" />
+          </div>
+        </div>
       </div>
     )
   }
@@ -223,11 +581,11 @@ function ShowDetailPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col mb-20 ">
       {/* Header with Show Info */}
       <div className="flex flex-col md:flex-row gap-6 mb-8">
         {/* Poster */}
-        <div className="flex-shrink-0">
+        <div className="shrink-0">
           {show.posterUrl ? (
             <Image
               src={show.posterUrl}
@@ -243,20 +601,13 @@ function ShowDetailPage() {
 
         {/* Show Details */}
         <div className="flex-1">
-          <div className="flex items-center gap-2 mb-2 text-sm text-default-500">
-            <Link to="/libraries" className="hover:text-default-700">
-              Libraries
-            </Link>
-            <span>/</span>
-            <Link
-              to={`/libraries/${show.libraryId}` as any}
-              className="hover:text-default-700"
-            >
-              Library
-            </Link>
-            <span>/</span>
-            <span>{show.name}</span>
-          </div>
+          <Breadcrumbs className="mb-2">
+            <BreadcrumbItem href="/libraries">Libraries</BreadcrumbItem>
+            <BreadcrumbItem href={`/libraries/${show.libraryId}`}>
+              {library?.name || 'Library'}
+            </BreadcrumbItem>
+            <BreadcrumbItem isCurrent>{show.name}</BreadcrumbItem>
+          </Breadcrumbs>
 
           <h1 className="text-3xl font-bold mb-2">
             {show.name}
@@ -268,6 +619,7 @@ function ShowDetailPage() {
           <div className="flex flex-wrap gap-2 mb-4">
             <Chip
               size="sm"
+              className='capitalize'
               color={show.status === 'CONTINUING' ? 'success' : 'default'}
               variant="flat"
             >
@@ -308,10 +660,11 @@ function ShowDetailPage() {
             )}
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button
               color="primary"
               variant="flat"
+              size="sm"
               onPress={handleRefresh}
               isLoading={refreshing}
             >
@@ -319,18 +672,128 @@ function ShowDetailPage() {
             </Button>
             <Button
               variant="flat"
-              as={Link}
-              to={`/libraries/${show.libraryId}` as any}
+              size="sm"
+              onPress={onSettingsOpen}
             >
-              Back to Library
+              Settings
+            </Button>
+            <Button
+              color="danger"
+              variant="flat"
+              size="sm"
+              onPress={onDeleteOpen}
+            >
+              Delete
             </Button>
           </div>
         </div>
       </div>
 
+      {/* Show Settings Summary */}
+      <Card className="bg-content1 mb-8">
+        <CardBody className="gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <Switch
+                isSelected={show.autoDownloadOverride === true}
+                isDisabled={togglingAutoDownload}
+                onValueChange={handleToggleAutoDownload}
+                size="sm"
+              >
+                <span className="text-sm font-medium">Auto Download</span>
+              </Switch>
+              {show.autoDownloadOverride === null && (
+                <Chip size="sm" variant="flat" className="text-xs">
+                  Inheriting from library
+                </Chip>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-3 text-sm text-default-500">
+              <div className="flex items-center gap-1">
+                <span className="text-default-400">Organization:</span>
+                <span className="font-medium text-foreground">
+                  {show.organizeFilesOverride === null
+                    ? 'Inherit'
+                    : show.organizeFilesOverride
+                    ? 'Enabled'
+                    : 'Disabled'}
+                </span>
+              </div>
+              <span className="text-default-300">•</span>
+              <div className="flex items-center gap-1">
+                <span className="text-default-400">Rename:</span>
+                <span className="font-medium text-foreground">
+                  {show.renameStyleOverride === null
+                    ? 'Inherit'
+                    : show.renameStyleOverride === 'none'
+                    ? 'Keep Original'
+                    : show.renameStyleOverride === 'clean'
+                    ? 'Clean'
+                    : 'With Quality'}
+                </span>
+              </div>
+              <span className="text-default-300">•</span>
+              <div className="flex items-center gap-1">
+                <span className="text-default-400">Monitor:</span>
+                <span className="font-medium text-foreground">
+                  {show.monitorType === 'ALL' ? 'All Episodes' : show.monitorType === 'FUTURE' ? 'Future Only' : show.monitorType}
+                </span>
+              </div>
+              <span className="text-default-300">•</span>
+              <div className="flex items-center gap-1">
+                <span className="text-default-400">Quality:</span>
+                <span className="font-medium text-foreground">
+                  {(() => {
+                    // Get effective quality profile
+                    const showProfile = show.qualityProfileId
+                      ? qualityProfiles.find(p => p.id === show.qualityProfileId)
+                      : null
+                    const libraryProfile = library?.defaultQualityProfileId
+                      ? qualityProfiles.find(p => p.id === library.defaultQualityProfileId)
+                      : null
+                    const profile = showProfile || libraryProfile
+                    
+                    if (!profile) return 'Any'
+                    
+                    // Format resolution nicely
+                    const res = profile.preferredResolution
+                    if (!res || res === 'any') return 'Any'
+                    if (res === '2160p') return '4K (2160p)'
+                    if (res === '1080p') return 'HD (1080p)'
+                    if (res === '720p') return 'SD (720p)'
+                    return profile.name
+                  })()}
+                </span>
+                {!show.qualityProfileId && library?.defaultQualityProfileId && (
+                  <Chip size="sm" variant="flat" className="text-xs ml-1">
+                    Library
+                  </Chip>
+                )}
+              </div>
+            </div>
+          </div>
+        </CardBody>
+      </Card>
+
       {/* Seasons & Episodes */}
       <div className="space-y-4">
-        <h2 className="text-xl font-semibold">Seasons & Episodes</h2>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <h2 className="text-xl font-semibold">Seasons & Episodes</h2>
+          {seasons.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {seasons.map((s) => (
+                <Button
+                  key={s.season}
+                  size="sm"
+                  variant="flat"
+                  onPress={() => scrollToSeason(s.season)}
+                >
+                  {s.season === 0 ? 'Specials' : `S${s.season}`}
+                </Button>
+              ))}
+            </div>
+          )}
+        </div>
 
         {seasons.length === 0 ? (
           <Card className="bg-content1/50 border-default-300 border-dashed border-2">
@@ -351,6 +814,7 @@ function ShowDetailPage() {
               <AccordionItem
                 key={String(seasonData.season)}
                 aria-label={`Season ${seasonData.season}`}
+                id={`season-${seasonData.season}`}
                 title={
                   <div className="flex items-center justify-between w-full pr-4">
                     <span className="font-semibold">
@@ -369,55 +833,35 @@ function ShowDetailPage() {
                 }
                 className="bg-content1"
               >
-                <Table
-                  aria-label={`Season ${seasonData.season} episodes`}
-                  removeWrapper
-                  className="min-w-full"
-                >
-                  <TableHeader>
-                    <TableColumn width={80}>#</TableColumn>
-                    <TableColumn>TITLE</TableColumn>
-                    <TableColumn width={120}>AIR DATE</TableColumn>
-                    <TableColumn width={100}>STATUS</TableColumn>
-                  </TableHeader>
-                  <TableBody>
-                    {seasonData.episodes.map((ep) => (
-                      <TableRow key={ep.id}>
-                        <TableCell>
-                          <span className="font-mono text-default-500">
-                            {String(ep.episode).padStart(2, '0')}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <div>
-                            <span className="font-medium">
-                              {ep.title || `Episode ${ep.episode}`}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <span className="text-default-500 text-sm">
-                            {formatDate(ep.airDate)}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <Chip
-                            size="sm"
-                            color={getStatusColor(ep.status)}
-                            variant="flat"
-                          >
-                            {getStatusLabel(ep.status)}
-                          </Chip>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <EpisodeTable
+                  episodes={seasonData.episodes}
+                  seasonNumber={seasonData.season}
+                  downloadingEpisodes={downloadingEpisodes}
+                  onDownload={handleDownloadEpisode}
+                />
               </AccordionItem>
             ))}
           </Accordion>
         )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      <DeleteShowModal
+        isOpen={isDeleteOpen}
+        onClose={onDeleteClose}
+        showName={show.name}
+        onConfirm={handleDelete}
+        isLoading={deleting}
+      />
+
+      {/* Settings Modal */}
+      <ShowSettingsModal
+        isOpen={isSettingsOpen}
+        onClose={onSettingsClose}
+        show={show}
+        onSave={handleSaveSettings}
+        isLoading={savingSettings}
+      />
     </div>
   )
 }

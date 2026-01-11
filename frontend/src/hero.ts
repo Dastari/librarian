@@ -11,6 +11,46 @@ export default heroui({
     },
   },
   themes: {
+    light: {
+      colors: {
+        background: "#edf0ff", // HSL(229.19, 100%, 96.46%) - soft lavender
+        foreground: "#0f172a",
+        default: {
+          50: "#020617",   // slate-950
+          100: "#f1f5f9",  // slate-100
+          200: "#e2e8f0",  // slate-200
+          300: "#cbd5e1",  // slate-300
+          400: "#94a3b8",  // slate-400
+          500: "#64748b",  // slate-500
+          600: "#475569",  // slate-600
+          700: "#334155",  // slate-700
+          800: "#1e293b",  // slate-800
+          900: "#0f172a",  // slate-900
+          DEFAULT: "#f1f5f9",
+          foreground: "#0f172a",
+        },
+        content1: "#ffffff",
+        content2: "#f8fafc",
+        content3: "#f1f5f9",
+        content4: "#e2e8f0",
+        primary: {
+          50: "#eff6ff",
+          100: "#dbeafe",
+          200: "#bfdbfe",
+          300: "#93c5fd",
+          400: "#60a5fa",
+          500: "#3b82f6",
+          600: "#2563eb",
+          700: "#1d4ed8",
+          800: "#1e40af",
+          900: "#1e3a8a",
+          DEFAULT: "#2563eb",
+          foreground: "#ffffff",
+        },
+        focus: "#2563eb",
+
+      },
+    },
     dark: {
       colors: {
         background: "#020617", // slate-950
