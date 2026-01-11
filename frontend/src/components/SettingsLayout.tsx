@@ -1,5 +1,7 @@
 import { Link, useLocation } from '@tanstack/react-router'
-import { Card, CardBody, Spinner } from '@heroui/react'
+import { Card, CardBody } from '@heroui/card'
+import { Spinner } from '@heroui/spinner'
+import { ScrollShadow } from '@heroui/scroll-shadow'
 import type { ReactNode } from 'react'
 
 interface SettingsTab {
@@ -19,11 +21,25 @@ const settingsTabs: SettingsTab[] = [
     description: 'Download settings',
   },
   {
+    key: 'rss',
+    path: '/settings/rss',
+    label: 'RSS Feeds',
+    icon: '📡',
+    description: 'Torrent feed sources',
+  },
+  {
     key: 'metadata',
     path: '/settings/metadata',
     label: 'Metadata & Parser',
     icon: '🎬',
     description: 'Media identification',
+  },
+  {
+    key: 'logs',
+    path: '/settings/logs',
+    label: 'System Logs',
+    icon: '📋',
+    description: 'Activity & errors',
   },
 ]
 
@@ -42,21 +58,11 @@ export function SettingsLayout({ children, isLoading }: SettingsLayoutProps) {
     return location.pathname.startsWith(path)
   }
 
-  if (isLoading) {
-    return (
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex justify-center items-center py-20">
-          <Spinner size="lg" />
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <h1 className="text-2xl font-bold mb-6">Settings</h1>
+    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col grow">
+      <h1 className="text-2xl font-bold mb-6 flex-shrink-0">Settings</h1>
 
-      <div className="flex flex-col lg:flex-row gap-6">
+      <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
         {/* Left Sidebar - Vertical Tabs */}
         <div className="lg:w-64 flex-shrink-0">
           <Card className="sticky top-4">
@@ -68,10 +74,9 @@ export function SettingsLayout({ children, isLoading }: SettingsLayoutProps) {
                     to={tab.path}
                     className={`
                       flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200
-                      ${
-                        isActive(tab.path)
-                          ? 'bg-primary text-primary-foreground shadow-md'
-                          : 'hover:bg-content2 text-default-600 hover:text-foreground'
+                      ${isActive(tab.path)
+                        ? 'bg-primary text-primary-foreground shadow-md'
+                        : 'hover:bg-content2 text-default-600 hover:text-foreground'
                       }
                     `}
                   >
@@ -79,11 +84,10 @@ export function SettingsLayout({ children, isLoading }: SettingsLayoutProps) {
                     <div className="flex flex-col">
                       <span className="font-medium text-sm">{tab.label}</span>
                       <span
-                        className={`text-xs ${
-                          isActive(tab.path)
-                            ? 'text-primary-foreground/70'
-                            : 'text-default-400'
-                        }`}
+                        className={`text-xs ${isActive(tab.path)
+                          ? 'text-primary-foreground/70'
+                          : 'text-default-400'
+                          }`}
                       >
                         {tab.description}
                       </span>
@@ -96,7 +100,15 @@ export function SettingsLayout({ children, isLoading }: SettingsLayoutProps) {
         </div>
 
         {/* Right Content Area */}
-        <div className="flex-1 min-w-0">{children}</div>
+        <ScrollShadow className="flex-1 min-w-0">
+          {isLoading ? (
+            <div className="flex justify-center items-center py-20">
+              <Spinner size="lg" />
+            </div>
+          ) : (
+            <div className="pb-4 flex h-full grow h-0">{children}</div>
+          )}
+        </ScrollShadow>
       </div>
     </div>
   )

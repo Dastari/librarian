@@ -1,9 +1,14 @@
 //! Quality profile matching for torrent selection
+//!
+//! NOTE: This is a local quality profile for torrent matching. The database-backed
+//! quality profiles are in `db/quality_profiles.rs`. This module will be used for
+//! the actual torrent quality filtering in Stage 3B quality enhancement.
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-/// Quality profile for filtering torrent releases
+/// Quality profile for filtering torrent releases (for future quality filtering)
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QualityProfile {
     pub name: String,
@@ -16,20 +21,19 @@ pub struct QualityProfile {
     pub banned_terms: Vec<String>,
 }
 
+#[allow(dead_code)]
 impl QualityProfile {
     /// Check if a release matches this quality profile
     pub fn matches(&self, release_title: &str, size_mb: u64) -> bool {
         // Check size constraints
-        if let Some(min) = self.min_size_mb {
-            if size_mb < min {
+        if let Some(min) = self.min_size_mb
+            && size_mb < min {
                 return false;
             }
-        }
-        if let Some(max) = self.max_size_mb {
-            if size_mb > max {
+        if let Some(max) = self.max_size_mb
+            && size_mb > max {
                 return false;
             }
-        }
 
         let title_lower = release_title.to_lowercase();
 
@@ -92,11 +96,10 @@ impl QualityProfile {
 
         let title_lower = title.to_lowercase();
         for (pattern, resolution) in patterns {
-            if let Ok(re) = Regex::new(pattern) {
-                if re.is_match(&title_lower) {
+            if let Ok(re) = Regex::new(pattern)
+                && re.is_match(&title_lower) {
                     return Some(resolution.to_string());
                 }
-            }
         }
 
         None

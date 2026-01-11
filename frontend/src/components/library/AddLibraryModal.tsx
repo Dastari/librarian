@@ -1,17 +1,10 @@
 import { useState } from 'react'
-import {
-  Button,
-  Modal,
-  ModalContent,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
-  Input,
-  Select,
-  SelectItem,
-  Switch,
-  Divider,
-} from '@heroui/react'
+import { Button } from '@heroui/button'
+import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
+import { Input } from '@heroui/input'
+import { Select, SelectItem } from '@heroui/select'
+import { Switch } from '@heroui/switch'
+import { Divider } from '@heroui/divider'
 import { FolderBrowserInput } from '../FolderBrowserInput'
 import type { LibraryType, PostDownloadAction, CreateLibraryInput } from '../../lib/graphql'
 
@@ -39,7 +32,7 @@ export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibrar
   const [watchForChanges, setWatchForChanges] = useState(false)
   const [postDownloadAction, setPostDownloadAction] =
     useState<PostDownloadAction>('COPY')
-  const [autoRename, setAutoRename] = useState(true)
+  const [organizeFiles, setOrganizeFiles] = useState(true)
   const [autoAddDiscovered, setAutoAddDiscovered] = useState(true)
 
   const handleSubmit = async () => {
@@ -52,7 +45,7 @@ export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibrar
       scanIntervalMinutes: scanInterval,
       watchForChanges,
       postDownloadAction,
-      autoRename,
+      organizeFiles,
       autoAddDiscovered,
     })
     // Reset form
@@ -63,13 +56,13 @@ export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibrar
     setScanInterval(60)
     setWatchForChanges(false)
     setPostDownloadAction('COPY')
-    setAutoRename(true)
+    setOrganizeFiles(true)
     setAutoAddDiscovered(true)
     onClose()
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} className="dark" size="xl">
+    <Modal isOpen={isOpen} onClose={onClose} size="xl">
       <ModalContent>
         <ModalHeader>Add Library</ModalHeader>
         <ModalBody>
@@ -162,12 +155,12 @@ export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibrar
 
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium">Auto-rename</p>
+                <p className="text-sm font-medium">Organize files</p>
                 <p className="text-xs text-default-500">
-                  Automatically rename files to a consistent format
+                  Organize downloaded files into show/season folders
                 </p>
               </div>
-              <Switch isSelected={autoRename} onValueChange={setAutoRename} />
+              <Switch isSelected={organizeFiles} onValueChange={setOrganizeFiles} />
             </div>
 
             <div className="flex items-center justify-between">

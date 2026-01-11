@@ -32,8 +32,9 @@ use crate::config::Config;
 use crate::db::Database;
 use crate::graphql::{verify_token, AuthUser, LibrarianSchema};
 use crate::services::{
-    create_metadata_service_with_artwork, create_scanner_service, ArtworkService,
-    MetadataServiceConfig, ScannerService, StorageClient, TorrentService, TorrentServiceConfig,
+    artwork::ensure_artwork_bucket, create_database_layer, create_metadata_service_with_artwork,
+    create_scanner_service, ArtworkService, DatabaseLoggerConfig, MetadataServiceConfig,
+    ScannerService, StorageClient, TorrentService, TorrentServiceConfig,
 };
 
 /// Application state shared across all handlers
@@ -48,26 +49,35 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing
+    // Load configuration first (before tracing, so we can use the database for logging)
+    dotenvy::dotenv().ok();
+    let config = Config::from_env()?;
+    let config = Arc::new(config);
+
+    // Initialize database connection early so we can use it for logging
+    let db = Database::connect(&config.database_url).await?;
+
+    // Create the database logging layer
+    let db_logger_config = DatabaseLoggerConfig {
+        min_level: tracing::Level::INFO,
+        batch_size: 100,
+        flush_interval_ms: 2000,
+        broadcast_capacity: 1000,
+    };
+    let (db_layer, log_broadcast_sender) = create_database_layer(db.pool().clone(), db_logger_config);
+
+    // Initialize tracing with both console output and database logging
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "librarian_backend=debug,tower_http=debug,librqbit=info".into()),
         )
         .with(tracing_subscriber::fmt::layer().json())
+        .with(db_layer)
         .init();
 
     tracing::info!("Starting Librarian Backend");
-
-    // Load configuration
-    dotenvy::dotenv().ok();
-    let config = Config::from_env()?;
-    let config = Arc::new(config);
-
     tracing::info!("Configuration loaded");
-
-    // Initialize database connection
-    let db = Database::connect(&config.database_url).await?;
     tracing::info!("Database connected");
 
     // Initialize torrent service with database for persistence
@@ -86,6 +96,12 @@ async fn main() -> anyhow::Result<()> {
         config.supabase_url.clone(),
         config.supabase_service_key.clone(),
     );
+    
+    // Ensure artwork bucket exists
+    if let Err(e) = ensure_artwork_bucket(&storage_client).await {
+        tracing::warn!(error = %e, "Failed to create artwork bucket - artwork caching may not work");
+    }
+    
     let artwork_service = Arc::new(ArtworkService::new(storage_client));
     tracing::info!("Artwork service initialized");
 
@@ -112,11 +128,16 @@ async fn main() -> anyhow::Result<()> {
         metadata_service,
         scanner_service.clone(),
         db.clone(),
+        Some(log_broadcast_sender),
     );
     tracing::info!("GraphQL schema built");
 
     // Start job scheduler
-    let _scheduler = jobs::start_scheduler(scanner_service.clone()).await?;
+    let _scheduler = jobs::start_scheduler(
+        scanner_service.clone(),
+        torrent_service.clone(),
+        db.pool().clone(),
+    ).await?;
     tracing::info!("Job scheduler started");
 
     // Build application state
@@ -177,10 +198,10 @@ async fn graphql_handler(
     // Extract and verify auth token if present
     let mut request = req.into_inner();
 
-    if let Some(token) = extract_token(&headers) {
-        if let Ok(user) = verify_token(&token) {
-            request = request.data(user);
-        }
+    if let Some(token) = extract_token(&headers)
+        && let Ok(user) = verify_token(&token)
+    {
+        request = request.data(user);
     }
 
     state.schema.execute(request).await.into()

@@ -1,15 +1,20 @@
 //! Media file organization and renaming
+//!
+//! NOTE: This is a legacy organizer module. The primary organizer is in `services/organizer.rs`.
+//! This module is kept for potential future use with movies and direct file operations.
 
 use anyhow::Result;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 
-/// Media organizer for renaming and moving files
+/// Media organizer for renaming and moving files (legacy - use services/organizer.rs)
+#[allow(dead_code)]
 pub struct MediaOrganizer {
     movies_path: PathBuf,
     tv_path: PathBuf,
 }
 
+#[allow(dead_code)]
 impl MediaOrganizer {
     pub fn new(base_path: &Path) -> Self {
         Self {
@@ -69,13 +74,12 @@ impl MediaOrganizer {
         ];
 
         for pattern in patterns {
-            if let Ok(re) = Regex::new(pattern) {
-                if let Some(caps) = re.captures(filename) {
+            if let Ok(re) = Regex::new(pattern)
+                && let Some(caps) = re.captures(filename) {
                     let season: i32 = caps.get(1)?.as_str().parse().ok()?;
                     let episode: i32 = caps.get(2)?.as_str().parse().ok()?;
                     return Some((season, episode));
                 }
-            }
         }
 
         None

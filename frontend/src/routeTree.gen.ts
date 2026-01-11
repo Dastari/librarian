@@ -9,17 +9,29 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SubscriptionsIndexRouteImport } from './routes/subscriptions/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as LibrariesIndexRouteImport } from './routes/libraries/index'
 import { Route as DownloadsIndexRouteImport } from './routes/downloads/index'
 import { Route as ShowsShowIdRouteImport } from './routes/shows/$showId'
+import { Route as SettingsRssRouteImport } from './routes/settings/rss'
 import { Route as SettingsMetadataRouteImport } from './routes/settings/metadata'
-import { Route as LibraryMediaIdRouteImport } from './routes/library/$mediaId'
+import { Route as SettingsLogsRouteImport } from './routes/settings/logs'
 import { Route as LibrariesLibraryIdRouteImport } from './routes/libraries/$libraryId'
 import { Route as AuthLoginRouteImport } from './routes/auth/login'
+import { Route as LibrariesLibraryIdIndexRouteImport } from './routes/libraries/$libraryId/index'
+import { Route as LibrariesLibraryIdUnmatchedRouteImport } from './routes/libraries/$libraryId/unmatched'
+import { Route as LibrariesLibraryIdShowsRouteImport } from './routes/libraries/$libraryId/shows'
+import { Route as LibrariesLibraryIdSettingsRouteImport } from './routes/libraries/$libraryId/settings'
+import { Route as LibrariesLibraryIdBrowserRouteImport } from './routes/libraries/$libraryId/browser'
 
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -31,9 +43,9 @@ const SubscriptionsIndexRoute = SubscriptionsIndexRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
-  id: '/settings/',
-  path: '/settings/',
-  getParentRoute: () => rootRouteImport,
+  id: '/',
+  path: '/',
+  getParentRoute: () => SettingsRoute,
 } as any)
 const LibrariesIndexRoute = LibrariesIndexRouteImport.update({
   id: '/libraries/',
@@ -50,15 +62,20 @@ const ShowsShowIdRoute = ShowsShowIdRouteImport.update({
   path: '/shows/$showId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SettingsMetadataRoute = SettingsMetadataRouteImport.update({
-  id: '/settings/metadata',
-  path: '/settings/metadata',
-  getParentRoute: () => rootRouteImport,
+const SettingsRssRoute = SettingsRssRouteImport.update({
+  id: '/rss',
+  path: '/rss',
+  getParentRoute: () => SettingsRoute,
 } as any)
-const LibraryMediaIdRoute = LibraryMediaIdRouteImport.update({
-  id: '/library/$mediaId',
-  path: '/library/$mediaId',
-  getParentRoute: () => rootRouteImport,
+const SettingsMetadataRoute = SettingsMetadataRouteImport.update({
+  id: '/metadata',
+  path: '/metadata',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsLogsRoute = SettingsLogsRouteImport.update({
+  id: '/logs',
+  path: '/logs',
+  getParentRoute: () => SettingsRoute,
 } as any)
 const LibrariesLibraryIdRoute = LibrariesLibraryIdRouteImport.update({
   id: '/libraries/$libraryId',
@@ -70,98 +87,169 @@ const AuthLoginRoute = AuthLoginRouteImport.update({
   path: '/auth/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LibrariesLibraryIdIndexRoute = LibrariesLibraryIdIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => LibrariesLibraryIdRoute,
+} as any)
+const LibrariesLibraryIdUnmatchedRoute =
+  LibrariesLibraryIdUnmatchedRouteImport.update({
+    id: '/unmatched',
+    path: '/unmatched',
+    getParentRoute: () => LibrariesLibraryIdRoute,
+  } as any)
+const LibrariesLibraryIdShowsRoute = LibrariesLibraryIdShowsRouteImport.update({
+  id: '/shows',
+  path: '/shows',
+  getParentRoute: () => LibrariesLibraryIdRoute,
+} as any)
+const LibrariesLibraryIdSettingsRoute =
+  LibrariesLibraryIdSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => LibrariesLibraryIdRoute,
+  } as any)
+const LibrariesLibraryIdBrowserRoute =
+  LibrariesLibraryIdBrowserRouteImport.update({
+    id: '/browser',
+    path: '/browser',
+    getParentRoute: () => LibrariesLibraryIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/settings': typeof SettingsRouteWithChildren
   '/auth/login': typeof AuthLoginRoute
-  '/libraries/$libraryId': typeof LibrariesLibraryIdRoute
-  '/library/$mediaId': typeof LibraryMediaIdRoute
+  '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
+  '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
+  '/settings/rss': typeof SettingsRssRoute
   '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads': typeof DownloadsIndexRoute
   '/libraries': typeof LibrariesIndexRoute
-  '/settings': typeof SettingsIndexRoute
+  '/settings/': typeof SettingsIndexRoute
   '/subscriptions': typeof SubscriptionsIndexRoute
+  '/libraries/$libraryId/browser': typeof LibrariesLibraryIdBrowserRoute
+  '/libraries/$libraryId/settings': typeof LibrariesLibraryIdSettingsRoute
+  '/libraries/$libraryId/shows': typeof LibrariesLibraryIdShowsRoute
+  '/libraries/$libraryId/unmatched': typeof LibrariesLibraryIdUnmatchedRoute
+  '/libraries/$libraryId/': typeof LibrariesLibraryIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth/login': typeof AuthLoginRoute
-  '/libraries/$libraryId': typeof LibrariesLibraryIdRoute
-  '/library/$mediaId': typeof LibraryMediaIdRoute
+  '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
+  '/settings/rss': typeof SettingsRssRoute
   '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads': typeof DownloadsIndexRoute
   '/libraries': typeof LibrariesIndexRoute
   '/settings': typeof SettingsIndexRoute
   '/subscriptions': typeof SubscriptionsIndexRoute
+  '/libraries/$libraryId/browser': typeof LibrariesLibraryIdBrowserRoute
+  '/libraries/$libraryId/settings': typeof LibrariesLibraryIdSettingsRoute
+  '/libraries/$libraryId/shows': typeof LibrariesLibraryIdShowsRoute
+  '/libraries/$libraryId/unmatched': typeof LibrariesLibraryIdUnmatchedRoute
+  '/libraries/$libraryId': typeof LibrariesLibraryIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/settings': typeof SettingsRouteWithChildren
   '/auth/login': typeof AuthLoginRoute
-  '/libraries/$libraryId': typeof LibrariesLibraryIdRoute
-  '/library/$mediaId': typeof LibraryMediaIdRoute
+  '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
+  '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
+  '/settings/rss': typeof SettingsRssRoute
   '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads/': typeof DownloadsIndexRoute
   '/libraries/': typeof LibrariesIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/subscriptions/': typeof SubscriptionsIndexRoute
+  '/libraries/$libraryId/browser': typeof LibrariesLibraryIdBrowserRoute
+  '/libraries/$libraryId/settings': typeof LibrariesLibraryIdSettingsRoute
+  '/libraries/$libraryId/shows': typeof LibrariesLibraryIdShowsRoute
+  '/libraries/$libraryId/unmatched': typeof LibrariesLibraryIdUnmatchedRoute
+  '/libraries/$libraryId/': typeof LibrariesLibraryIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/settings'
     | '/auth/login'
     | '/libraries/$libraryId'
-    | '/library/$mediaId'
+    | '/settings/logs'
     | '/settings/metadata'
+    | '/settings/rss'
     | '/shows/$showId'
     | '/downloads'
     | '/libraries'
-    | '/settings'
+    | '/settings/'
     | '/subscriptions'
+    | '/libraries/$libraryId/browser'
+    | '/libraries/$libraryId/settings'
+    | '/libraries/$libraryId/shows'
+    | '/libraries/$libraryId/unmatched'
+    | '/libraries/$libraryId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/auth/login'
-    | '/libraries/$libraryId'
-    | '/library/$mediaId'
+    | '/settings/logs'
     | '/settings/metadata'
+    | '/settings/rss'
     | '/shows/$showId'
     | '/downloads'
     | '/libraries'
     | '/settings'
     | '/subscriptions'
+    | '/libraries/$libraryId/browser'
+    | '/libraries/$libraryId/settings'
+    | '/libraries/$libraryId/shows'
+    | '/libraries/$libraryId/unmatched'
+    | '/libraries/$libraryId'
   id:
     | '__root__'
     | '/'
+    | '/settings'
     | '/auth/login'
     | '/libraries/$libraryId'
-    | '/library/$mediaId'
+    | '/settings/logs'
     | '/settings/metadata'
+    | '/settings/rss'
     | '/shows/$showId'
     | '/downloads/'
     | '/libraries/'
     | '/settings/'
     | '/subscriptions/'
+    | '/libraries/$libraryId/browser'
+    | '/libraries/$libraryId/settings'
+    | '/libraries/$libraryId/shows'
+    | '/libraries/$libraryId/unmatched'
+    | '/libraries/$libraryId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  SettingsRoute: typeof SettingsRouteWithChildren
   AuthLoginRoute: typeof AuthLoginRoute
-  LibrariesLibraryIdRoute: typeof LibrariesLibraryIdRoute
-  LibraryMediaIdRoute: typeof LibraryMediaIdRoute
-  SettingsMetadataRoute: typeof SettingsMetadataRoute
+  LibrariesLibraryIdRoute: typeof LibrariesLibraryIdRouteWithChildren
   ShowsShowIdRoute: typeof ShowsShowIdRoute
   DownloadsIndexRoute: typeof DownloadsIndexRoute
   LibrariesIndexRoute: typeof LibrariesIndexRoute
-  SettingsIndexRoute: typeof SettingsIndexRoute
   SubscriptionsIndexRoute: typeof SubscriptionsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -178,10 +266,10 @@ declare module '@tanstack/react-router' {
     }
     '/settings/': {
       id: '/settings/'
-      path: '/settings'
-      fullPath: '/settings'
+      path: '/'
+      fullPath: '/settings/'
       preLoaderRoute: typeof SettingsIndexRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof SettingsRoute
     }
     '/libraries/': {
       id: '/libraries/'
@@ -204,19 +292,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShowsShowIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/rss': {
+      id: '/settings/rss'
+      path: '/rss'
+      fullPath: '/settings/rss'
+      preLoaderRoute: typeof SettingsRssRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/metadata': {
       id: '/settings/metadata'
-      path: '/settings/metadata'
+      path: '/metadata'
       fullPath: '/settings/metadata'
       preLoaderRoute: typeof SettingsMetadataRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof SettingsRoute
     }
-    '/library/$mediaId': {
-      id: '/library/$mediaId'
-      path: '/library/$mediaId'
-      fullPath: '/library/$mediaId'
-      preLoaderRoute: typeof LibraryMediaIdRouteImport
-      parentRoute: typeof rootRouteImport
+    '/settings/logs': {
+      id: '/settings/logs'
+      path: '/logs'
+      fullPath: '/settings/logs'
+      preLoaderRoute: typeof SettingsLogsRouteImport
+      parentRoute: typeof SettingsRoute
     }
     '/libraries/$libraryId': {
       id: '/libraries/$libraryId'
@@ -232,19 +327,89 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthLoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/libraries/$libraryId/': {
+      id: '/libraries/$libraryId/'
+      path: '/'
+      fullPath: '/libraries/$libraryId/'
+      preLoaderRoute: typeof LibrariesLibraryIdIndexRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/unmatched': {
+      id: '/libraries/$libraryId/unmatched'
+      path: '/unmatched'
+      fullPath: '/libraries/$libraryId/unmatched'
+      preLoaderRoute: typeof LibrariesLibraryIdUnmatchedRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/shows': {
+      id: '/libraries/$libraryId/shows'
+      path: '/shows'
+      fullPath: '/libraries/$libraryId/shows'
+      preLoaderRoute: typeof LibrariesLibraryIdShowsRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/settings': {
+      id: '/libraries/$libraryId/settings'
+      path: '/settings'
+      fullPath: '/libraries/$libraryId/settings'
+      preLoaderRoute: typeof LibrariesLibraryIdSettingsRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/browser': {
+      id: '/libraries/$libraryId/browser'
+      path: '/browser'
+      fullPath: '/libraries/$libraryId/browser'
+      preLoaderRoute: typeof LibrariesLibraryIdBrowserRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
   }
 }
 
+interface SettingsRouteChildren {
+  SettingsLogsRoute: typeof SettingsLogsRoute
+  SettingsMetadataRoute: typeof SettingsMetadataRoute
+  SettingsRssRoute: typeof SettingsRssRoute
+  SettingsIndexRoute: typeof SettingsIndexRoute
+}
+
+const SettingsRouteChildren: SettingsRouteChildren = {
+  SettingsLogsRoute: SettingsLogsRoute,
+  SettingsMetadataRoute: SettingsMetadataRoute,
+  SettingsRssRoute: SettingsRssRoute,
+  SettingsIndexRoute: SettingsIndexRoute,
+}
+
+const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
+  SettingsRouteChildren,
+)
+
+interface LibrariesLibraryIdRouteChildren {
+  LibrariesLibraryIdBrowserRoute: typeof LibrariesLibraryIdBrowserRoute
+  LibrariesLibraryIdSettingsRoute: typeof LibrariesLibraryIdSettingsRoute
+  LibrariesLibraryIdShowsRoute: typeof LibrariesLibraryIdShowsRoute
+  LibrariesLibraryIdUnmatchedRoute: typeof LibrariesLibraryIdUnmatchedRoute
+  LibrariesLibraryIdIndexRoute: typeof LibrariesLibraryIdIndexRoute
+}
+
+const LibrariesLibraryIdRouteChildren: LibrariesLibraryIdRouteChildren = {
+  LibrariesLibraryIdBrowserRoute: LibrariesLibraryIdBrowserRoute,
+  LibrariesLibraryIdSettingsRoute: LibrariesLibraryIdSettingsRoute,
+  LibrariesLibraryIdShowsRoute: LibrariesLibraryIdShowsRoute,
+  LibrariesLibraryIdUnmatchedRoute: LibrariesLibraryIdUnmatchedRoute,
+  LibrariesLibraryIdIndexRoute: LibrariesLibraryIdIndexRoute,
+}
+
+const LibrariesLibraryIdRouteWithChildren =
+  LibrariesLibraryIdRoute._addFileChildren(LibrariesLibraryIdRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  SettingsRoute: SettingsRouteWithChildren,
   AuthLoginRoute: AuthLoginRoute,
-  LibrariesLibraryIdRoute: LibrariesLibraryIdRoute,
-  LibraryMediaIdRoute: LibraryMediaIdRoute,
-  SettingsMetadataRoute: SettingsMetadataRoute,
+  LibrariesLibraryIdRoute: LibrariesLibraryIdRouteWithChildren,
   ShowsShowIdRoute: ShowsShowIdRoute,
   DownloadsIndexRoute: DownloadsIndexRoute,
   LibrariesIndexRoute: LibrariesIndexRoute,
-  SettingsIndexRoute: SettingsIndexRoute,
   SubscriptionsIndexRoute: SubscriptionsIndexRoute,
 }
 export const routeTree = rootRouteImport

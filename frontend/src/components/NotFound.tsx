@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router'
-import { Button, Card, CardBody } from '@heroui/react'
+import { Button } from '@heroui/button'
+import { Card, CardBody } from '@heroui/card'
 
 export function NotFound() {
   return (

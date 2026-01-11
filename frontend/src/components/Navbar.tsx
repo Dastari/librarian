@@ -1,35 +1,29 @@
-import { Link, useLocation } from '@tanstack/react-router'
-import {
-  Navbar as HeroNavbar,
-  NavbarBrand,
-  NavbarContent,
-  NavbarItem,
-  NavbarMenuToggle,
-  NavbarMenu,
-  NavbarMenuItem,
-  Button,
-  Dropdown,
-  DropdownTrigger,
-  DropdownMenu,
-  DropdownItem,
-  Avatar,
-  Chip,
-} from '@heroui/react'
+import { Link, useLocation, useNavigate } from '@tanstack/react-router'
+import { Navbar as HeroNavbar, NavbarBrand, NavbarContent, NavbarItem, NavbarMenuToggle, NavbarMenu, NavbarMenuItem } from '@heroui/navbar'
+import { Button } from '@heroui/button'
+import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
+import { Avatar } from '@heroui/avatar'
+import { Chip } from '@heroui/chip'
+import { Tooltip } from '@heroui/tooltip'
 import { useState } from 'react'
+import { Sun, Moon } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
+import { useTheme } from '../hooks/useTheme'
 
 const navItems = [
   { to: '/', label: 'Home' },
   { to: '/libraries', label: 'Libraries' },
   { to: '/downloads', label: 'Downloads' },
   { to: '/subscriptions', label: 'Subscriptions' },
-  { to: '/settings', label: '⚙️ Settings' },
+  { to: '/settings', label: 'Settings' },
 ]
 
 export function Navbar() {
   const { user, signOut, loading, error, isConfigured } = useAuth()
+  const { isDark, toggleTheme } = useTheme()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const location = useLocation()
+  const navigate = useNavigate()
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/'
@@ -43,7 +37,7 @@ export function Navbar() {
       onMenuOpenChange={setIsMenuOpen}
       classNames={{
         base: 'bg-content1',
-        wrapper: 'max-w-7xl',
+        wrapper: 'container max-w-8xl',
       }}
     >
       {/* Mobile menu toggle */}
@@ -74,9 +68,10 @@ export function Navbar() {
           {navItems.map((item) => (
             <NavbarItem key={item.to} isActive={isActive(item.to)}>
               <Button
+              className="text-sm font-semibold"
                 as={Link}
                 to={item.to}
-                variant={isActive(item.to) ? 'flat' : 'light'}
+                variant={'light'}
                 color={isActive(item.to) ? 'primary' : 'default'}
                 size="sm"
               >
@@ -87,8 +82,27 @@ export function Navbar() {
         </NavbarContent>
       )}
 
-      {/* Right side - auth status */}
+      {/* Right side - theme toggle & auth status */}
       <NavbarContent justify="end">
+        {/* Theme toggle */}
+        <NavbarItem>
+          <Tooltip content={isDark ? 'Switch to light mode' : 'Switch to dark mode'}>
+            <Button
+              isIconOnly
+              variant="light"
+              size="sm"
+              onPress={toggleTheme}
+              aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? (
+                <Sun className="w-5 h-5 text-default-500" />
+              ) : (
+                <Moon className="w-5 h-5 text-default-500" />
+              )}
+            </Button>
+          </Tooltip>
+        </NavbarItem>
+
         {!isConfigured ? (
           <NavbarItem>
             <Chip color="warning" variant="flat" size="sm">
@@ -123,7 +137,7 @@ export function Navbar() {
                   <p className="font-semibold">Signed in as</p>
                   <p className="text-default-500">{user.email}</p>
                 </DropdownItem>
-                <DropdownItem key="settings" href="/settings">
+                <DropdownItem key="settings" onPress={() => navigate({ to: '/settings' })}>
                   Settings
                 </DropdownItem>
                 <DropdownItem
@@ -138,7 +152,12 @@ export function Navbar() {
           </NavbarItem>
         ) : (
           <NavbarItem>
-            <Button as={Link} to="/auth/login" color="primary" variant="flat" size="sm">
+            <Button
+              color="primary"
+              variant="shadow"
+              size="sm"
+              onPress={() => navigate({ to: '/', search: { signin: true } })}
+            >
               Sign In
             </Button>
           </NavbarItem>
@@ -152,11 +171,10 @@ export function Navbar() {
             <NavbarMenuItem key={item.to}>
               <Link
                 to={item.to}
-                className={`w-full ${
-                  isActive(item.to)
-                    ? 'text-primary font-semibold'
-                    : 'text-foreground'
-                }`}
+                className={`w-full ${isActive(item.to)
+                  ? 'text-primary font-semibold'
+                  : 'text-foreground'
+                  }`}
                 onClick={() => setIsMenuOpen(false)}
               >
                 {item.label}

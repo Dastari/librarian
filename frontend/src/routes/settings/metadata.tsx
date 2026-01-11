@@ -1,35 +1,22 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
-import {
-  Button,
-  Card,
-  CardBody,
-  CardHeader,
-  Input,
-  Divider,
-  addToast,
-  Chip,
-  Textarea,
-} from '@heroui/react'
-import { useAuth } from '../../hooks/useAuth'
+import { Button } from '@heroui/button'
+import { Card, CardBody, CardHeader } from '@heroui/card'
+import { Input, Textarea } from '@heroui/input'
+import { Divider } from '@heroui/divider'
+import { addToast } from '@heroui/toast'
+import { Chip } from '@heroui/chip'
 import {
   graphqlClient,
   PARSE_AND_IDENTIFY_QUERY,
   type ParseAndIdentifyResult,
 } from '../../lib/graphql'
-import { SettingsLayout } from '../../components/SettingsLayout'
 
 export const Route = createFileRoute('/settings/metadata')({
-  beforeLoad: ({ context }) => {
-    if (!context.auth.isAuthenticated) {
-      throw redirect({ to: '/auth/login' })
-    }
-  },
   component: MetadataSettingsPage,
 })
 
 function MetadataSettingsPage() {
-  const { loading: authLoading } = useAuth()
   const [testInput, setTestInput] = useState('')
   const [testResult, setTestResult] = useState<ParseAndIdentifyResult | null>(null)
   const [testing, setTesting] = useState(false)
@@ -83,7 +70,7 @@ function MetadataSettingsPage() {
   }
 
   return (
-    <SettingsLayout isLoading={authLoading}>
+    <>
       {/* Metadata Providers */}
       <Card className="mb-6">
         <CardHeader>
@@ -359,6 +346,6 @@ function MetadataSettingsPage() {
           </CardBody>
         </Card>
       )}
-    </SettingsLayout>
+    </>
   )
 }

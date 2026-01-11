@@ -1,8 +1,8 @@
 [package]
-name = "librarian-backend"
+name = "librarian"
 version = "0.1.0"
 edition = "2024"
-authors = ["Librarian Contributors"]
+authors = ["toby@dastari.net"]
 description = "Rust backend for Librarian media library"
 
 [dependencies]
@@ -39,7 +39,7 @@ anyhow = "1"
 jsonwebtoken = "9"
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "cookies"], default-features = false }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "cookies", "gzip", "deflate"], default-features = false }
 
 # Job scheduling
 tokio-cron-scheduler = "0.13"
@@ -67,5 +67,15 @@ chrono = { version = "0.4.42", features = ["serde"] }
 sha2 = "0.10.9"
 rust_decimal = { version = "1.39.0", features = ["serde"] }
 
+# XML parsing for RSS feeds
+quick-xml = "0.37"
+
 [dev-dependencies]
 tokio-test = "0.4"
+
+[profile.release]
+opt-level = 'z'
+lto = true
+codegen-units = 1
+panic = 'abort'
+strip = true

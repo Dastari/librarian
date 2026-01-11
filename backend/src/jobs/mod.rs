@@ -1,6 +1,7 @@
 //! Background job scheduling and workers
 
 pub mod artwork;
+pub mod auto_download;
 pub mod download_monitor;
 pub mod rss_poller;
 pub mod scanner;
@@ -8,13 +9,18 @@ pub mod transcode_gc;
 
 use std::sync::Arc;
 
+use sqlx::PgPool;
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::info;
 
-use crate::services::ScannerService;
+use crate::services::{ScannerService, TorrentService};
 
 /// Initialize and start the job scheduler
-pub async fn start_scheduler(scanner_service: Arc<ScannerService>) -> anyhow::Result<JobScheduler> {
+pub async fn start_scheduler(
+    scanner_service: Arc<ScannerService>,
+    torrent_service: Arc<TorrentService>,
+    pool: PgPool,
+) -> anyhow::Result<JobScheduler> {
     let scheduler = JobScheduler::new().await?;
 
     // Library scanner - run every hour
@@ -41,10 +47,29 @@ pub async fn start_scheduler(scanner_service: Arc<ScannerService>) -> anyhow::Re
     })?;
     scheduler.add(rss_job).await?;
 
-    // Download monitor - run every minute
-    let download_job = Job::new_async("0 * * * * *", |_uuid, _l| {
+    // Auto-download available episodes - run every 5 minutes
+    let torrent_svc = torrent_service.clone();
+    let download_pool = pool.clone();
+    let auto_download_job = Job::new_async("0 */5 * * * *", move |_uuid, _l| {
+        let svc = torrent_svc.clone();
+        let p = download_pool.clone();
         Box::pin(async move {
-            if let Err(e) = download_monitor::check_downloads().await {
+            info!("Running auto-download check");
+            if let Err(e) = auto_download::process_available_episodes(p, svc).await {
+                tracing::error!("Auto-download error: {}", e);
+            }
+        })
+    })?;
+    scheduler.add(auto_download_job).await?;
+
+    // Download monitor - run every minute to process completed torrents
+    let monitor_torrent_svc = torrent_service.clone();
+    let monitor_pool = pool.clone();
+    let download_job = Job::new_async("0 * * * * *", move |_uuid, _l| {
+        let svc = monitor_torrent_svc.clone();
+        let p = monitor_pool.clone();
+        Box::pin(async move {
+            if let Err(e) = download_monitor::process_completed_torrents(p, svc).await {
                 tracing::error!("Download monitor error: {}", e);
             }
         })

@@ -1,16 +1,10 @@
 import { useState, useCallback } from 'react'
-import {
-  Button,
-  Input,
-  Modal,
-  ModalContent,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
-  useDisclosure,
-  Spinner,
-  Divider,
-} from '@heroui/react'
+import { Button } from '@heroui/button'
+import { Input } from '@heroui/input'
+import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from '@heroui/modal'
+import { Spinner } from '@heroui/spinner'
+import { Divider } from '@heroui/divider'
+import { Chip } from '@heroui/chip'
 import {
   browseDirectory,
   createDirectory,
@@ -208,39 +202,41 @@ export function FolderBrowserInput({
               <div className="max-h-80 overflow-y-auto">
                 {/* Parent directory */}
                 {parentPath && (
-                  <button
-                    onClick={() => browse(parentPath)}
-                    className="w-full text-left px-3 py-2 hover:bg-default-100 rounded-lg flex items-center gap-2 transition-colors"
+                  <Button
+                    variant="light"
+                    onPress={() => browse(parentPath)}
+                    className="w-full justify-start px-3 py-2 h-auto"
                   >
                     <span className="text-lg">📁</span>
                     <span className="text-default-600">..</span>
                     <span className="text-xs text-default-400 ml-auto">Parent directory</span>
-                  </button>
+                  </Button>
                 )}
 
                 {/* Directory entries */}
                 {entries.map((entry) => (
-                  <button
+                  <Button
                     key={entry.path}
-                    onClick={() => entry.isDir && entry.readable && browse(entry.path)}
-                    className={`w-full text-left px-3 py-2 hover:bg-default-100 rounded-lg flex items-center gap-2 transition-colors ${
-                      !entry.readable ? 'opacity-50 cursor-not-allowed' : ''
+                    variant="light"
+                    onPress={() => entry.isDir && entry.readable && browse(entry.path)}
+                    className={`w-full justify-start px-3 py-2 h-auto ${
+                      !entry.readable ? 'opacity-50' : ''
                     }`}
-                    disabled={!entry.isDir || !entry.readable}
+                    isDisabled={!entry.isDir || !entry.readable}
                   >
                     <span className="text-lg">{entry.isDir ? '📁' : '📄'}</span>
-                    <span className="flex-1 truncate">{entry.name}</span>
+                    <span className="flex-1 truncate text-left">{entry.name}</span>
                     {entry.isDir && entry.writable && (
-                      <span className="text-xs text-success-600 bg-success-50 px-2 py-0.5 rounded">
+                      <Chip size="sm" color="success" variant="flat">
                         writable
-                      </span>
+                      </Chip>
                     )}
                     {entry.isDir && !entry.writable && entry.readable && (
-                      <span className="text-xs text-warning-600 bg-warning-50 px-2 py-0.5 rounded">
+                      <Chip size="sm" color="warning" variant="flat">
                         read-only
-                      </span>
+                      </Chip>
                     )}
-                  </button>
+                  </Button>
                 ))}
 
                 {entries.length === 0 && !parentPath && (

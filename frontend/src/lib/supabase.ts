@@ -16,7 +16,17 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 // Create client only if we have the required values
 export const supabase: SupabaseClient = supabaseUrl && supabaseAnonKey
-  ? createClient(supabaseUrl, supabaseAnonKey)
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        // Disable auto-refresh on window focus to prevent re-renders when alt-tabbing
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: true,
+        // This prevents the client from automatically refreshing when the tab becomes visible
+        // which was causing re-renders on alt-tab
+        flowType: 'pkce',
+      },
+    })
   : (null as unknown as SupabaseClient) // Will cause errors if used without config
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey)

@@ -2,7 +2,8 @@
 
 use anyhow::Result;
 
-/// Fetch artwork for media items
+/// Fetch artwork for media items (for future scheduled job use)
+#[allow(dead_code)]
 pub async fn fetch_artwork(_media_id: &str) -> Result<()> {
     // TODO: Implement artwork fetching
     // 1. Query TheTVDB/TMDB for artwork URLs

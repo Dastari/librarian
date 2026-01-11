@@ -1,0 +1,1247 @@
+import { useMemo, useCallback, useState, type Key, type ReactNode } from 'react'
+import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, type SortDescriptor } from '@heroui/table'
+import { Button, ButtonGroup } from '@heroui/button'
+import { Input } from '@heroui/input'
+import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
+import { Chip } from '@heroui/chip'
+import { Tooltip } from '@heroui/tooltip'
+import { Spinner } from '@heroui/spinner'
+import { Pagination } from '@heroui/pagination'
+import { Select, SelectItem } from '@heroui/select'
+import { Divider } from '@heroui/divider'
+import { Checkbox } from '@heroui/checkbox'
+import { Skeleton } from '@heroui/skeleton'
+import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from '@heroui/modal'
+import type {
+  DataTableProps,
+  DataTableColumn,
+  DataTableGroup,
+  RowAction,
+  FilterOption,
+  ViewMode,
+  SortDirection,
+  ColumnSizing,
+} from './types'
+import {
+  useDataTableState,
+  useFilteredData,
+  useSortedData,
+  usePagination,
+  useInfiniteScroll,
+  useColumnReorder,
+  useColumnResize,
+} from './hooks'
+
+// ============================================================================
+// Column Sizing Utilities
+// ============================================================================
+
+/** Parse column width configuration into a ColumnSizing object */
+function parseColumnSizing<T>(column: DataTableColumn<T>): ColumnSizing {
+  const { width } = column
+  if (width === undefined) {
+    return { grow: 1 } // Default: flexible, grows to fill space
+  }
+  if (typeof width === 'number') {
+    return { width, grow: 0 } // Fixed width, no grow
+  }
+  if (typeof width === 'string') {
+    // Legacy string support - try to parse as px
+    const match = width.match(/^(\d+)px$/)
+    if (match) {
+      return { width: parseInt(match[1], 10), grow: 0 }
+    }
+    // For percentages or other CSS values, just treat as flexible
+    return { grow: 1 }
+  }
+  // It's a ColumnSizing object
+  return width
+}
+
+/** Calculate column styles based on sizing configuration */
+function getColumnStyle(
+  sizing: ColumnSizing,
+  overrideWidth?: number
+): React.CSSProperties {
+  const style: React.CSSProperties = {}
+  
+  if (overrideWidth !== undefined) {
+    // User has resized this column
+    style.width = overrideWidth
+    style.minWidth = overrideWidth
+    style.maxWidth = overrideWidth
+    style.flexGrow = 0
+    style.flexShrink = 0
+  } else if (sizing.width !== undefined) {
+    // Fixed width column
+    style.width = sizing.width
+    style.minWidth = sizing.minWidth ?? sizing.width
+    style.maxWidth = sizing.maxWidth ?? sizing.width
+    style.flexGrow = 0
+    style.flexShrink = 0
+  } else {
+    // Flexible column
+    style.flexGrow = sizing.grow ?? 1
+    style.flexShrink = 1
+    style.flexBasis = 0
+    if (sizing.minWidth) {
+      style.minWidth = sizing.minWidth
+    } else {
+      style.minWidth = 50 // Reasonable default minimum
+    }
+    if (sizing.maxWidth) {
+      style.maxWidth = sizing.maxWidth
+    }
+  }
+  
+  return style
+}
+import {
+  SearchIcon,
+  FilterIcon,
+  ClearIcon,
+  MoreVerticalIcon,
+  TableIcon,
+  GridIcon,
+} from './icons'
+
+// ============================================================================
+// Sub-components
+// ============================================================================
+
+interface RowActionsDropdownProps<T> {
+  item: T
+  actions: RowAction<T>[]
+}
+
+function RowActionsDropdown<T>({ item, actions }: RowActionsDropdownProps<T>) {
+  const visibleActions = actions.filter((action) =>
+    action.isVisible ? action.isVisible(item) : true
+  )
+  const dropdownActions = visibleActions.filter((action) => action.inDropdown !== false)
+
+  if (dropdownActions.length === 0) return null
+
+  return (
+    <Dropdown>
+      <DropdownTrigger>
+        <Button isIconOnly size="sm" variant="light">
+          <MoreVerticalIcon />
+        </Button>
+      </DropdownTrigger>
+      <DropdownMenu aria-label="Row actions">
+        {dropdownActions.map((action) => (
+          <DropdownItem
+            key={action.key}
+            color={action.isDestructive ? 'danger' : action.color}
+            className={action.isDestructive ? 'text-danger' : ''}
+            startContent={action.icon}
+            isDisabled={action.isDisabled ? action.isDisabled(item) : false}
+            onPress={() => action.onAction(item)}
+          >
+            {action.label}
+          </DropdownItem>
+        ))}
+      </DropdownMenu>
+    </Dropdown>
+  )
+}
+
+interface InlineRowActionsProps<T> {
+  item: T
+  actions: RowAction<T>[]
+}
+
+function InlineRowActions<T>({ item, actions }: InlineRowActionsProps<T>) {
+  const visibleActions = actions.filter(
+    (action) =>
+      action.inDropdown === false && (action.isVisible ? action.isVisible(item) : true)
+  )
+
+  return (
+    <>
+      {visibleActions.map((action) => (
+        <Tooltip key={action.key} content={action.label}>
+          <Button
+            isIconOnly
+            size="sm"
+            variant="light"
+            color={action.isDestructive ? 'danger' : action.color}
+            isDisabled={action.isDisabled ? action.isDisabled(item) : false}
+            onPress={() => action.onAction(item)}
+          >
+            {action.icon}
+          </Button>
+        </Tooltip>
+      ))}
+    </>
+  )
+}
+
+// ============================================================================
+// Filter Chips
+// ============================================================================
+
+interface FilterChipsProps {
+  options: FilterOption[]
+  value: string | null
+  onChange: (value: string | null) => void
+  allLabel?: string
+}
+
+function FilterChips({ options, value, onChange, allLabel = 'All' }: FilterChipsProps) {
+  return (
+    <ButtonGroup size="sm" variant="flat">
+      <Button
+        variant={value === null ? 'solid' : 'flat'}
+        color={value === null ? 'primary' : 'default'}
+        onPress={() => onChange(null)}
+      >
+        {allLabel}
+      </Button>
+      {options.map((option) => (
+        <Button
+          key={option.key}
+          variant={value === option.key ? 'solid' : 'flat'}
+          color={value === option.key ? option.color ?? 'primary' : 'default'}
+          onPress={() => onChange(option.key)}
+          className="gap-1"
+        >
+          {option.icon && <span>{option.icon}</span>}
+          <span>{option.label}</span>
+          {option.count !== undefined && (
+            <Chip size="sm" variant="flat" className="ml-1">
+              {option.count}
+            </Chip>
+          )}
+        </Button>
+      ))}
+    </ButtonGroup>
+  )
+}
+
+
+// ============================================================================
+// Table View Wrapper - Handles fill height with sticky header
+// ============================================================================
+
+interface TableViewWrapperProps {
+  fillHeight: boolean
+  className?: string
+  children: ReactNode
+}
+
+function TableViewWrapper({ fillHeight, className, children }: TableViewWrapperProps) {
+  if (!fillHeight) {
+    return <div className={className}>{children}</div>
+  }
+
+  // Using the flex-grow pattern with min-h-0 to allow proper scrolling
+  // The table inside handles its own overflow-auto for scrolling
+  return (
+    <div className={`grow h-0 ${className ?? ''}`}>
+      {children}
+    </div>
+  )
+}
+
+
+// ============================================================================
+// Main DataTable Component
+// ============================================================================
+
+export function DataTable<T>({
+  stateKey,
+  data,
+  columns,
+  getRowKey,
+  isLoading = false,
+  skeletonRowCount = 5,
+  emptyContent,
+  isPinned,
+
+  // Selection
+  selectionMode = 'none',
+  selectedKeys: controlledSelectedKeys,
+  onSelectionChange,
+  isRowSelectable,
+  checkboxSelectionOnly = false,
+
+  // Filtering
+  filters = [],
+  filterValues: controlledFilterValues,
+  onFilterChange,
+  searchFn,
+  searchPlaceholder = 'Search...',
+
+  // Sorting
+  defaultSortColumn,
+  defaultSortDirection = 'asc',
+  sortColumn: controlledSortColumn,
+  sortDirection: controlledSortDirection,
+  onSortChange,
+  defaultSortFn,
+
+  // View Mode
+  showViewModeToggle = false,
+  defaultViewMode = 'table',
+  viewMode: controlledViewMode,
+  onViewModeChange,
+  cardRenderer,
+  cardGridClassName = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4',
+  groupBy,
+  groupHeaderRenderer,
+
+  // Actions
+  bulkActions = [],
+  rowActions = [],
+
+  // Pagination
+  paginationMode = 'none',
+  pageSizeOptions = [10, 20, 50, 100],
+  defaultPageSize = 20,
+  onLoadMore,
+  hasMore = false,
+  isLoadingMore = false,
+
+  // Layout
+  headerContent,
+  footerContent,
+  toolbarContent,
+  toolbarContentPosition = 'end',
+  filterRowContent,
+  showItemCount = true,
+  hideToolbar = false,
+  classNames = {},
+  fillHeight = false,
+
+  // Table Props
+  ariaLabel = 'Data table',
+  removeWrapper = false,
+  isStriped = false,
+  isCompact = false,
+
+  // Column Features
+  enableColumnReorder = false,
+  columnOrder: controlledColumnOrder,
+  onColumnOrderChange,
+  enableColumnResize: _enableColumnResize = false,
+  columnWidths: controlledColumnWidths,
+  onColumnWidthsChange,
+  minColumnWidth = 50,
+  maxColumnWidth,
+}: DataTableProps<T>) {
+  // ============================================================================
+  // State Management
+  // ============================================================================
+
+  const tableState = useDataTableState({
+    stateKey,
+    defaultSortColumn,
+    defaultSortDirection,
+    defaultViewMode,
+    defaultPageSize,
+  })
+
+  // Confirm modal state for bulk actions
+  const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
+  const [confirmAction, setConfirmAction] = useState<{
+    message: string
+    onConfirm: () => Promise<void> | void
+  } | null>(null)
+
+  // Use controlled state or internal state
+  const sortColumn = controlledSortColumn ?? tableState.sortColumn
+  const sortDirection = controlledSortDirection ?? tableState.sortDirection
+  const filterValues = controlledFilterValues ?? tableState.filterValues
+  const viewMode = controlledViewMode ?? tableState.viewMode
+  const selectedKeys = controlledSelectedKeys ?? tableState.selectedKeys
+  const pageSize = tableState.pageSize
+
+  // Column order and widths
+  const columnWidths = controlledColumnWidths ?? tableState.columnWidths
+  
+  // Compute default column order from columns if not specified
+  const defaultColumnOrder = useMemo(
+    () => columns.filter((c) => !c.hidden).map((c) => c.key),
+    [columns]
+  )
+  const columnOrder = controlledColumnOrder ?? 
+    (tableState.columnOrder.length > 0 ? tableState.columnOrder : defaultColumnOrder)
+
+  // Column reorder hook
+  const handleColumnOrderChange = useCallback(
+    (newOrder: string[]) => {
+      if (onColumnOrderChange) {
+        onColumnOrderChange(newOrder)
+      } else {
+        tableState.setColumnOrder(newOrder)
+      }
+    },
+    [onColumnOrderChange, tableState]
+  )
+
+  const { getDragProps, draggingColumn, dragOverColumn } = useColumnReorder({
+    columnOrder,
+    onOrderChange: handleColumnOrderChange,
+  })
+
+  // Column resize hook
+  const handleColumnWidthsChange = useCallback(
+    (newWidths: Record<string, number>) => {
+      if (onColumnWidthsChange) {
+        onColumnWidthsChange(newWidths)
+      } else {
+        tableState.setColumnWidths(newWidths)
+      }
+    },
+    [onColumnWidthsChange, tableState]
+  )
+
+  const { resizingColumn } = useColumnResize({
+    columnWidths,
+    onWidthChange: handleColumnWidthsChange,
+    minWidth: minColumnWidth,
+    maxWidth: maxColumnWidth,
+  })
+
+  // Get search filter value
+  const searchTerm = (filterValues['_search'] as string) ?? ''
+
+  // Sort descriptor for HeroUI Table
+  const sortDescriptor: SortDescriptor | undefined = useMemo(() => {
+    if (!sortColumn) return undefined
+    return {
+      column: sortColumn,
+      direction: sortDirection === 'asc' ? 'ascending' : 'descending',
+    }
+  }, [sortColumn, sortDirection])
+
+  // Handle HeroUI Table sort change
+  const handleTableSortChange = useCallback(
+    (descriptor: SortDescriptor) => {
+      const column = descriptor.column as string
+      const direction: SortDirection = descriptor.direction === 'ascending' ? 'asc' : 'desc'
+      if (onSortChange) {
+        onSortChange(column, direction)
+      } else {
+        tableState.setSortColumn(column)
+        tableState.setSortDirection(direction)
+      }
+    },
+    [onSortChange, tableState]
+  )
+
+  const handleFilterChange = useCallback(
+    (key: string, value: unknown) => {
+      const newValues = { ...filterValues, [key]: value }
+      if (onFilterChange) {
+        onFilterChange(newValues)
+      } else {
+        tableState.setFilterValue(key, value)
+      }
+    },
+    [filterValues, onFilterChange, tableState]
+  )
+
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      handleFilterChange('_search', value)
+    },
+    [handleFilterChange]
+  )
+
+  const handleClearFilters = useCallback(() => {
+    if (onFilterChange) {
+      onFilterChange({})
+    } else {
+      tableState.clearFilters()
+    }
+  }, [onFilterChange, tableState])
+
+  const handleViewModeChange = useCallback(
+    (mode: ViewMode) => {
+      if (onViewModeChange) {
+        onViewModeChange(mode)
+      } else {
+        tableState.setViewMode(mode)
+      }
+    },
+    [onViewModeChange, tableState]
+  )
+
+  const handleSelectionChange = useCallback(
+    (keys: Set<Key> | 'all') => {
+      // Handle 'all' selection
+      const newKeys = keys === 'all' ? new Set(data.map(getRowKey)) : keys
+      if (onSelectionChange) {
+        onSelectionChange(newKeys)
+      } else {
+        tableState.setSelectedKeys(newKeys)
+      }
+    },
+    [data, getRowKey, onSelectionChange, tableState]
+  )
+
+  // ============================================================================
+  // Data Processing
+  // ============================================================================
+
+  const filteredData = useFilteredData(data, filters, filterValues, searchTerm, searchFn)
+  const baseSortedData = useSortedData(filteredData, columns, sortColumn, sortDirection, defaultSortFn)
+
+  // Move pinned items to the top (after sorting)
+  const sortedData = useMemo(() => {
+    if (!isPinned) return baseSortedData
+    const pinned = baseSortedData.filter((item) => isPinned(item))
+    const unpinned = baseSortedData.filter((item) => !isPinned(item))
+    return [...pinned, ...unpinned]
+  }, [baseSortedData, isPinned])
+
+  // Pagination
+  const pagination = usePagination({
+    totalItems: sortedData.length,
+    pageSize,
+  })
+
+  // Get paginated data
+  const paginatedData = useMemo(() => {
+    if (paginationMode === 'pagination') {
+      return sortedData.slice(pagination.startIndex, pagination.endIndex)
+    }
+    return sortedData
+  }, [sortedData, paginationMode, pagination.startIndex, pagination.endIndex])
+
+  // Infinite scroll with guard against infinite loops
+  // Use isLoadingMore if provided, otherwise fall back to isLoading
+  const { sentinelRef } = useInfiniteScroll({
+    hasMore,
+    isLoading: isLoadingMore || isLoading,
+    onLoadMore: onLoadMore ?? (() => { }),
+    dataLength: paginatedData.length,
+  })
+
+  // Normalize selected keys to strings for consistent comparison (HeroUI may convert keys to strings)
+  const selectedKeyStrings = useMemo(
+    () => new Set(Array.from(selectedKeys).map(String)),
+    [selectedKeys]
+  )
+
+  // Helper to check if a key is selected (handles type differences)
+  const isKeySelected = useCallback(
+    (key: Key) => selectedKeyStrings.has(String(key)),
+    [selectedKeyStrings]
+  )
+
+  // Get selected items
+  const selectedItems = useMemo(() => {
+    if (selectedKeys.size === 0) return []
+    return data.filter((item) => selectedKeyStrings.has(String(getRowKey(item))))
+  }, [data, selectedKeys, selectedKeyStrings, getRowKey])
+
+  // Get disabled keys (rows that are not selectable) - convert to strings for HeroUI compatibility
+  const disabledKeys = useMemo(() => {
+    if (!isRowSelectable) return new Set<Key>()
+    return new Set(
+      data.filter((item) => !isRowSelectable(item)).map((item) => String(getRowKey(item)))
+    )
+  }, [data, isRowSelectable, getRowKey])
+
+
+  // Visible columns (respecting order)
+  const visibleColumns = useMemo(() => {
+    const visible = columns.filter((col) => !col.hidden)
+    
+    // If column order is specified, sort by it
+    if (columnOrder.length > 0) {
+      const orderMap = new Map(columnOrder.map((key, index) => [key, index]))
+      return [...visible].sort((a, b) => {
+        const aIndex = orderMap.get(a.key) ?? Infinity
+        const bIndex = orderMap.get(b.key) ?? Infinity
+        return aIndex - bIndex
+      })
+    }
+    
+    return visible
+  }, [columns, columnOrder])
+
+  // Check if there are active filters (excluding search)
+  const hasActiveFilters = useMemo(() => {
+    return Object.entries(filterValues).some(([key, value]) => {
+      if (key === '_search') return false
+      if (value === null || value === undefined || value === '') return false
+      if (Array.isArray(value) && value.length === 0) return false
+      return true
+    })
+  }, [filterValues])
+
+  // Grouped data for card view
+  const groupedData: DataTableGroup<T>[] = useMemo(() => {
+    if (!groupBy) return []
+    return groupBy(paginatedData)
+  }, [groupBy, paginatedData])
+
+  // ============================================================================
+  // Render Helpers
+  // ============================================================================
+
+  const renderCell = useCallback(
+    (item: T, column: DataTableColumn<T>, index: number) => {
+      const shouldTruncate = column.truncate !== false // Default to true
+      let content: ReactNode
+
+      if (column.render) {
+        content = column.render(item, index)
+      } else {
+        const value = (item as Record<string, unknown>)[column.key]
+        if (value === null || value === undefined) {
+          content = '—'
+        } else {
+          content = String(value)
+        }
+      }
+
+      // Wrap content in truncate container if needed
+      // This ensures text truncation works even without explicit column widths
+      if (shouldTruncate && typeof content === 'string') {
+        return (
+          <span className="block truncate" title={content}>
+            {content}
+          </span>
+        )
+      }
+
+      // For custom rendered content, wrap in overflow-hidden container
+      if (shouldTruncate) {
+        return (
+          <div className="overflow-hidden">
+            {content}
+          </div>
+        )
+      }
+
+      return content
+    },
+    []
+  )
+
+  // ============================================================================
+  // Render
+  // ============================================================================
+
+  return (
+    <div className={`${fillHeight ? 'flex flex-col h-full' : 'space-y-4'} ${classNames.wrapper ?? ''}`}>
+      {/* Header Content */}
+      {headerContent}
+
+      {/* Toolbar */}
+      {!hideToolbar && (
+        <div className={`flex flex-col gap-4 shrink-0 ${fillHeight ? 'sticky top-0 z-20 bg-background pb-4' : ''} ${classNames.toolbar ?? ''}`}>
+          {/* Search, Actions, View Toggle Row */}
+          <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+            {/* Search and custom toolbar content (start) */}
+            <div className="flex gap-2 items-center w-full sm:w-auto grow">
+              <Input
+                className="w-full sm:max-w-xs"
+                placeholder={searchPlaceholder}
+                value={searchTerm}
+                onValueChange={handleSearchChange}
+                startContent={<SearchIcon />}
+                isClearable
+                onClear={() => handleSearchChange('')}
+              />
+              {toolbarContentPosition === 'start' && toolbarContent}
+            </div>
+
+            {/* Bulk actions and view toggle */}
+            <div className="flex gap-2 items-center">
+              {/* Selection info and bulk actions */}
+              {selectionMode !== 'none' && selectedItems.length > 0 && (
+                <>
+                  <span className="text-sm text-default-500">
+                    {selectedItems.length} selected
+                  </span>
+                  {bulkActions.map((action) => {
+                    const isDisabled =
+                      typeof action.disabled === 'function'
+                        ? action.disabled(selectedItems)
+                        : action.disabled
+
+                    return (
+                      <Tooltip key={action.key} content={action.label}>
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          color={action.isDestructive ? 'danger' : action.color}
+                          isIconOnly={!!action.icon}
+                          isDisabled={isDisabled}
+                          onPress={() => {
+                            if (action.confirm) {
+                              const msg =
+                                action.confirmMessage ??
+                                `Are you sure you want to ${action.label.toLowerCase()} ${selectedItems.length} item(s)?`
+                              setConfirmAction({
+                                message: msg,
+                                onConfirm: async () => {
+                                  await action.onAction(selectedItems)
+                                  tableState.clearSelection()
+                                  onConfirmClose()
+                                },
+                              })
+                              onConfirmOpen()
+                            } else {
+                              action.onAction(selectedItems)
+                              tableState.clearSelection()
+                            }
+                          }}
+                        >
+                          {action.icon ?? action.label}
+                        </Button>
+                      </Tooltip>
+                    )
+                  })}
+                  <Divider orientation="vertical" className="h-6" />
+                </>
+              )}
+
+              {/* View mode toggle */}
+              {showViewModeToggle && cardRenderer && (
+                <ButtonGroup size="sm">
+                  <Tooltip content="Table view">
+                    <Button
+                      isIconOnly
+                      variant={viewMode === 'table' ? 'solid' : 'flat'}
+                      onPress={() => handleViewModeChange('table')}
+                    >
+                      <TableIcon />
+                    </Button>
+                  </Tooltip>
+                  <Tooltip content="Card view">
+                    <Button
+                      isIconOnly
+                      variant={viewMode === 'cards' ? 'solid' : 'flat'}
+                      onPress={() => handleViewModeChange('cards')}
+                    >
+                      <GridIcon />
+                    </Button>
+                  </Tooltip>
+                </ButtonGroup>
+              )}
+
+              {toolbarContentPosition === 'end' && toolbarContent}
+            </div>
+          </div>
+
+          {/* Filter chips and custom filter content */}
+          {(filters.some((f) => f.type === 'select' && f.position !== 'dropdown') || filterRowContent) && (
+            <div className="flex flex-wrap gap-2 items-center">
+              <span className="text-sm text-default-500 flex items-center gap-1">
+                <FilterIcon /> Filter:
+              </span>
+              {filters
+                .filter((f) => f.type === 'select' && f.position !== 'dropdown')
+                .map((filter) => (
+                  <FilterChips
+                    key={filter.key}
+                    options={filter.options ?? []}
+                    value={(filterValues[filter.key] as string) ?? null}
+                    onChange={(value) => handleFilterChange(filter.key, value)}
+                    allLabel={`All ${filter.label}`}
+                  />
+                ))}
+
+              {/* Custom filter row content */}
+              {filterRowContent}
+
+              {(hasActiveFilters || searchTerm) && (
+                <Button
+                  size="sm"
+                  variant="light"
+                  color="danger"
+                  onPress={handleClearFilters}
+                  startContent={<ClearIcon />}
+                >
+                  Clear
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Table View - always show table structure, empty state is inside TableBody */}
+      {viewMode === 'table' && (
+        <TableViewWrapper fillHeight={fillHeight} className={classNames.tableContainer}>
+          <Table
+            aria-label={ariaLabel}
+            selectionMode={selectionMode === 'none' ? 'none' : selectionMode}
+            selectedKeys={selectedKeyStrings}
+            onSelectionChange={handleSelectionChange}
+            disabledKeys={disabledKeys as any}
+            removeWrapper={removeWrapper}
+            isStriped={isStriped}
+            isCompact={isCompact}
+            sortDescriptor={sortDescriptor}
+            onSortChange={handleTableSortChange}
+            isHeaderSticky={fillHeight}
+            classNames={{
+              base: `${fillHeight ? 'h-full' : ''} ${checkboxSelectionOnly ? 'checkbox-selection-only' : ''} w-full max-w-full ${resizingColumn ? 'select-none' : ''}`,
+              wrapper: `${classNames.table ?? ''} ${fillHeight ? 'h-full overflow-auto' : ''} max-w-full`,
+              table: 'table-fixed w-full',
+              th: `text-default-600 first:rounded-l-lg last:rounded-r-lg relative group ${selectionMode !== 'none' ? 'first:w-[50px] first:min-w-[50px] first:max-w-[50px]' : ''}`,
+              thead: '',
+              td: `overflow-hidden ${selectionMode !== 'none' ? 'first:w-[50px] first:min-w-[50px] first:max-w-[50px]' : ''}`,
+            }}
+          >
+            <TableHeader>
+              {[
+                ...visibleColumns.map((column) => {
+                  const sizing = parseColumnSizing(column)
+                  const overrideWidth = columnWidths[column.key]
+                  const columnStyle = getColumnStyle(sizing, overrideWidth)
+                  const isReorderable = enableColumnReorder && column.reorderable !== false
+                  const isDragging = draggingColumn === column.key
+                  const isDragOver = dragOverColumn === column.key
+
+                  return (
+                    <TableColumn
+                      key={column.key}
+                      align={column.align}
+                      allowsSorting={column.sortable !== false}
+                      className={`
+                        ${isDragging ? 'opacity-50' : ''}
+                        ${isDragOver ? 'bg-primary/20 border-l-2 border-primary' : ''}
+                        ${isReorderable ? 'cursor-grab active:cursor-grabbing' : ''}
+                      `}
+                      style={columnStyle}
+                      {...(isReorderable ? getDragProps(column.key) : {})}
+                    >
+                      {column.label}
+                    </TableColumn>
+                  )
+                }),
+                ...(rowActions.length > 0
+                  ? [
+                    <TableColumn 
+                      key="_actions" 
+                      align="end"
+                      style={{ width: 100, minWidth: 100, maxWidth: 100, flexGrow: 0, flexShrink: 0 }}
+                    >
+                      ACTIONS
+                    </TableColumn>,
+                  ]
+                  : []),
+              ]}
+            </TableHeader>
+            <TableBody
+              items={(() => {
+                // Build items array with skeleton rows, data rows, and optional sentinel row
+                if (isLoading && data.length === 0) {
+                  // Show skeleton rows during initial loading
+                  return Array.from({ length: skeletonRowCount }).map((_, i) => ({ _skeletonId: i }) as unknown as T)
+                }
+                
+                const items: T[] = [...paginatedData]
+                
+                // Add skeleton rows when loading more
+                if (paginationMode === 'infinite' && isLoadingMore) {
+                  const loadingSkeletons = Array.from({ length: skeletonRowCount }).map((_, i) => ({ 
+                    _skeletonId: i,
+                    _isLoadMoreSkeleton: true 
+                  }) as unknown as T)
+                  items.push(...loadingSkeletons)
+                }
+                
+                // Add sentinel row at the end for infinite scroll (only when not loading and has more)
+                if (paginationMode === 'infinite' && hasMore && !isLoadingMore) {
+                  items.push({ _sentinelRow: true } as unknown as T)
+                }
+                
+                return items
+              })()}
+              emptyContent={
+                emptyContent ?? (
+                  <div className="py-8 text-center">
+                    <p className="text-default-500">No records found</p>
+                    {(hasActiveFilters || searchTerm) && (
+                      <Button
+                        variant="light"
+                        color="primary"
+                        size="sm"
+                        className="mt-2"
+                        onPress={handleClearFilters}
+                      >
+                        Clear filters
+                      </Button>
+                    )}
+                  </div>
+                )
+              }
+            >
+              {(item) => {
+                // Check if this is a skeleton row (initial load or load-more)
+                const isSkeleton = '_skeletonId' in (item as object)
+                
+                if (isSkeleton) {
+                  const skeletonData = item as unknown as { _skeletonId: number; _isLoadMoreSkeleton?: boolean }
+                  const skeletonId = skeletonData._skeletonId
+                  const keyPrefix = skeletonData._isLoadMoreSkeleton ? 'load-more-skeleton' : 'skeleton'
+                  return (
+                    <TableRow key={`${keyPrefix}-${skeletonId}`}>
+                      {[
+                        ...visibleColumns.map((column) => {
+                          const sizing = parseColumnSizing(column)
+                          const overrideWidth = columnWidths[column.key]
+                          const columnStyle = getColumnStyle(sizing, overrideWidth)
+                          
+                          return (
+                            <TableCell key={column.key} style={columnStyle} className="overflow-hidden">
+                              {column.skeleton ? column.skeleton() : <Skeleton className="w-full h-4 rounded" />}
+                            </TableCell>
+                          )
+                        }),
+                        ...(rowActions.length > 0
+                          ? [
+                            <TableCell 
+                              key="_actions"
+                              style={{ width: 100, minWidth: 100, maxWidth: 100, flexGrow: 0, flexShrink: 0 }}
+                            >
+                              <Skeleton className="ml-auto w-6 h-6 rounded" />
+                            </TableCell>,
+                          ]
+                          : []),
+                      ]}
+                    </TableRow>
+                  )
+                }
+
+                // Check if this is the sentinel row for infinite scroll
+                const isSentinel = '_sentinelRow' in (item as object)
+                
+                if (isSentinel) {
+                  return (
+                    <TableRow key="_sentinel" className="hover:bg-transparent data-[selected=true]:bg-transparent">
+                      {[
+                        // First cell contains the sentinel observer (invisible, just for triggering)
+                        <TableCell key="_sentinel_observer" style={getColumnStyle(parseColumnSizing(visibleColumns[0]))}>
+                          <div ref={sentinelRef} className="h-px" />
+                        </TableCell>,
+                        // Empty cells for remaining columns
+                        ...visibleColumns.slice(1).map((column) => (
+                          <TableCell 
+                            key={`_sentinel_${column.key}`}
+                            style={getColumnStyle(parseColumnSizing(column))}
+                          >
+                            {''}
+                          </TableCell>
+                        )),
+                        // Empty cell for actions column if present
+                        ...(rowActions.length > 0
+                          ? [
+                            <TableCell 
+                              key="_sentinel_actions"
+                              style={{ width: 100, minWidth: 100, maxWidth: 100, flexGrow: 0, flexShrink: 0 }}
+                            >
+                              {''}
+                            </TableCell>
+                          ]
+                          : []),
+                      ]}
+                    </TableRow>
+                  )
+                }
+                
+                const index = paginatedData.indexOf(item)
+                const cells = [
+                  ...visibleColumns.map((column) => {
+                    const sizing = parseColumnSizing(column)
+                    const overrideWidth = columnWidths[column.key]
+                    const columnStyle = getColumnStyle(sizing, overrideWidth)
+                    
+                    return (
+                      <TableCell 
+                        key={column.key}
+                        style={columnStyle}
+                        className="overflow-hidden"
+                      >
+                        {renderCell(item, column, index)}
+                      </TableCell>
+                    )
+                  }),
+                ]
+                if (rowActions.length > 0) {
+                  cells.push(
+                    <TableCell 
+                      key="_actions"
+                      style={{ width: 100, minWidth: 100, maxWidth: 100, flexGrow: 0, flexShrink: 0 }}
+                    >
+                      <div className="flex gap-1 justify-end">
+                        <InlineRowActions item={item} actions={rowActions} />
+                        <RowActionsDropdown item={item} actions={rowActions} />
+                      </div>
+                    </TableCell>
+                  )
+                }
+                return (
+                  <TableRow key={getRowKey(item)}>
+                    {cells}
+                  </TableRow>
+                )
+              }}
+            </TableBody>
+          </Table>
+        </TableViewWrapper>
+      )}
+
+      {/* Card View - Ungrouped */}
+      {viewMode === 'cards' && cardRenderer && !groupBy && (
+        <div className={`${fillHeight ? 'flex-1 min-h-0 overflow-y-auto' : ''}`}>
+          {paginatedData.length === 0 ? (
+            <div className="py-8 text-center">
+              {emptyContent ?? (
+                <>
+                  <p className="text-default-500">No records found</p>
+                  {(hasActiveFilters || searchTerm) && (
+                    <Button
+                      variant="light"
+                      color="primary"
+                      size="sm"
+                      className="mt-2"
+                      onPress={handleClearFilters}
+                    >
+                      Clear filters
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className={`${cardGridClassName} ${fillHeight ? 'pb-4' : ''}`}>
+                {paginatedData.map((item, index) => {
+                  const key = getRowKey(item)
+                  const isSelected = isKeySelected(key)
+                  const isSelectable = !isRowSelectable || isRowSelectable(item)
+                  return (
+                    <div key={key} className="relative">
+                      {selectionMode !== 'none' && isSelectable && (
+                        <div className="absolute top-2 left-2 z-10">
+                          <Checkbox
+                            color="danger"
+                            isSelected={isSelected}
+                            onValueChange={(checked) => {
+                              const newKeys = new Set(selectedKeys)
+                              if (checked) {
+                                newKeys.add(key)
+                              } else {
+                                newKeys.delete(key)
+                              }
+                              handleSelectionChange(newKeys)
+                            }}
+                          />
+                        </div>
+                      )}
+                      {cardRenderer({
+                        item,
+                        index,
+                        isSelected,
+                        onSelect: () => {
+                          if (!isSelectable) return
+                          const newKeys = new Set(selectedKeys)
+                          if (isSelected) {
+                            newKeys.delete(key)
+                          } else {
+                            newKeys.add(key)
+                          }
+                          handleSelectionChange(newKeys)
+                        },
+                        actions: rowActions,
+                      })}
+                    </div>
+                  )
+                })}
+              </div>
+              {/* Infinite scroll sentinel for card view */}
+              {paginationMode === 'infinite' && hasMore && (
+                <div ref={sentinelRef} className="flex justify-center py-4">
+                  {(isLoadingMore || isLoading) && <Spinner size="sm" />}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Card View - Grouped */}
+      {viewMode === 'cards' && cardRenderer && groupBy && (
+        <div className={`${fillHeight ? 'flex-1 min-h-0 overflow-y-auto' : ''}`}>
+          {groupedData.length === 0 ? (
+            <div className="py-8 text-center">
+              {emptyContent ?? (
+                <>
+                  <p className="text-default-500">No records found</p>
+                  {(hasActiveFilters || searchTerm) && (
+                    <Button
+                      variant="light"
+                      color="primary"
+                      size="sm"
+                      className="mt-2"
+                      onPress={handleClearFilters}
+                    >
+                      Clear filters
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className={`space-y-6 ${fillHeight ? 'pb-4' : ''}`}>
+                {groupedData.map((group) => (
+                  <div key={group.key}>
+                    {/* Group Header */}
+                    {groupHeaderRenderer ? (
+                      groupHeaderRenderer(group)
+                    ) : (
+                      <div className="flex items-center gap-2 mb-3 sticky top-0 bg-background/95 backdrop-blur py-2 z-10">
+                        <span className="text-xl font-bold text-primary">{group.label}</span>
+                        <span className="text-sm text-default-400">
+                          {group.items.length} item{group.items.length !== 1 ? 's' : ''}
+                        </span>
+                      </div>
+                    )}
+                    {/* Group Items */}
+                    <div className={cardGridClassName}>
+                      {group.items.map((item, index) => {
+                        const key = getRowKey(item)
+                        const isSelected = isKeySelected(key)
+                        const isSelectable = !isRowSelectable || isRowSelectable(item)
+                        return (
+                          <div key={key} className="relative">
+                            {selectionMode !== 'none' && isSelectable && (
+                              <div className="absolute top-2 left-2 z-10">
+                                <Checkbox
+                                  color="danger"
+                                  isSelected={isSelected}
+                                  onValueChange={(checked) => {
+                                    const newKeys = new Set(selectedKeys)
+                                    if (checked) {
+                                      newKeys.add(key)
+                                    } else {
+                                      newKeys.delete(key)
+                                    }
+                                    handleSelectionChange(newKeys)
+                                  }}
+                                />
+                              </div>
+                            )}
+                            {cardRenderer({
+                              item,
+                              index,
+                              isSelected,
+                              onSelect: () => {
+                                if (!isSelectable) return
+                                const newKeys = new Set(selectedKeys)
+                                if (isSelected) {
+                                  newKeys.delete(key)
+                                } else {
+                                  newKeys.add(key)
+                                }
+                                handleSelectionChange(newKeys)
+                              },
+                              actions: rowActions,
+                            })}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* Infinite scroll sentinel for grouped card view */}
+              {paginationMode === 'infinite' && hasMore && (
+                <div ref={sentinelRef} className="flex justify-center py-4">
+                  {(isLoadingMore || isLoading) && <Spinner size="sm" />}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+
+      {/* Pagination */}
+      {paginationMode === 'pagination' && sortedData.length > 0 && (
+        <div className="flex flex-col sm:flex-row justify-between items-center gap-4 py-2">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-default-500">Rows per page:</span>
+            <Select
+              aria-label="Page size"
+              size="sm"
+              className="w-20"
+              selectedKeys={[String(pageSize)]}
+              onChange={(e) => tableState.setPageSize(Number(e.target.value))}
+            >
+              {pageSizeOptions.map((size) => (
+                <SelectItem key={String(size)}>{size}</SelectItem>
+              ))}
+            </Select>
+          </div>
+
+          <Pagination
+            total={pagination.totalPages}
+            page={pagination.page}
+            onChange={pagination.setPage}
+            showControls
+            size="sm"
+          />
+
+          <span className="text-sm text-default-500">
+            {pagination.startIndex + 1}–{pagination.endIndex} of {sortedData.length}
+          </span>
+        </div>
+      )}
+
+      {/* Item count footer */}
+      {showItemCount && paginationMode !== 'pagination' && (
+        <div className={`h-14 flex justify-between items-center text-sm text-default-500 px-2 ${classNames.footer ?? ''}`}>
+          <span className="flex items-center gap-2">
+            {sortedData.length === data.length
+              ? `${data.length} item${data.length !== 1 ? 's' : ''}`
+              : `${sortedData.length} of ${data.length} items`}
+            {(isLoadingMore || (paginationMode === 'infinite' && isLoading && data.length > 0)) && (
+              <span className="flex items-center gap-1 text-default-400">
+                <Spinner size="sm" />
+                <span>Loading...</span>
+              </span>
+            )}
+          </span>
+        </div>
+      )}
+
+      {/* Footer Content */}
+      {footerContent}
+
+      {/* Confirm Modal for bulk actions */}
+      <Modal isOpen={isConfirmOpen} onClose={onConfirmClose} size="sm">
+        <ModalContent>
+          <ModalHeader>Confirm Action</ModalHeader>
+          <ModalBody>
+            <p>{confirmAction?.message}</p>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={onConfirmClose}>
+              Cancel
+            </Button>
+            <Button
+              color="danger"
+              onPress={() => confirmAction?.onConfirm()}
+            >
+              Confirm
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+    </div>
+  )
+}

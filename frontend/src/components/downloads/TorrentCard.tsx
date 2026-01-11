@@ -1,29 +1,54 @@
-import { Button, Card, CardBody, Progress, Chip, Tooltip } from '@heroui/react'
-import type { Torrent } from '../../lib/graphql'
+import { Button } from '@heroui/button'
+import { Card, CardBody } from '@heroui/card'
+import { Progress } from '@heroui/progress'
+import { Chip } from '@heroui/chip'
+import { Tooltip } from '@heroui/tooltip'
+import { useDisclosure } from '@heroui/modal'
+import type { Torrent, TorrentState } from '../../lib/graphql'
+import { formatBytes, formatSpeed } from '../../lib/format'
+import { PlayIcon, PauseIcon, DeleteIcon } from '../icons'
+import { ConfirmModal } from '../ConfirmModal'
 
-function formatBytes(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let unitIndex = 0
-  let size = bytes
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024
-    unitIndex++
-  }
-  return `${size.toFixed(1)} ${units[unitIndex]}`
+// ============================================================================
+// State Configuration
+// ============================================================================
+
+export const TORRENT_STATE_INFO: Record<
+  TorrentState,
+  { label: string; color: 'default' | 'primary' | 'success' | 'warning' | 'danger' | 'secondary' }
+> = {
+  QUEUED: { label: 'Queued', color: 'default' },
+  CHECKING: { label: 'Checking', color: 'secondary' },
+  DOWNLOADING: { label: 'Downloading', color: 'primary' },
+  SEEDING: { label: 'Seeding', color: 'success' },
+  PAUSED: { label: 'Paused', color: 'warning' },
+  ERROR: { label: 'Error', color: 'danger' },
 }
 
-function formatSpeed(bytesPerSecond: number): string {
-  return `${formatBytes(bytesPerSecond)}/s`
-}
+// ============================================================================
+// Component Props
+// ============================================================================
 
 export interface TorrentCardProps {
   torrent: Torrent
-  onPause: () => void
-  onResume: () => void
-  onRemove: () => void
+  onPause: (id: number) => void
+  onResume: (id: number) => void
+  onRemove: (id: number) => void
+  /** Whether to show checkbox space on the left (for alignment with DataTable) */
+  showCheckboxSpace?: boolean
 }
 
-export function TorrentCard({ torrent, onPause, onResume, onRemove }: TorrentCardProps) {
+// ============================================================================
+// Component
+// ============================================================================
+
+export function TorrentCard({
+  torrent,
+  onPause,
+  onResume,
+  onRemove,
+  showCheckboxSpace = false,
+}: TorrentCardProps) {
   const isPaused = torrent.state === 'PAUSED'
   const isSeeding = torrent.state === 'SEEDING'
   const isError = torrent.state === 'ERROR'
@@ -37,22 +62,34 @@ export function TorrentCard({ torrent, onPause, onResume, onRemove }: TorrentCar
         ? 'warning'
         : 'primary'
 
-  const stateLabels: Record<string, { label: string; color: 'default' | 'primary' | 'success' | 'warning' | 'danger' }> = {
-    QUEUED: { label: 'Queued', color: 'default' },
-    CHECKING: { label: 'Checking', color: 'primary' },
-    DOWNLOADING: { label: 'Downloading', color: 'primary' },
-    SEEDING: { label: 'Seeding', color: 'success' },
-    PAUSED: { label: 'Paused', color: 'warning' },
-    ERROR: { label: 'Error', color: 'danger' },
+  const stateInfo = TORRENT_STATE_INFO[torrent.state] || TORRENT_STATE_INFO.QUEUED
+
+  // Confirm modal state
+  const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
+
+  const handleRemove = () => {
+    onConfirmOpen()
   }
 
-  const stateInfo = stateLabels[torrent.state] || stateLabels.QUEUED
-
   return (
+    <>
+    <ConfirmModal
+      isOpen={isConfirmOpen}
+      onClose={onConfirmClose}
+      onConfirm={() => {
+        onRemove(torrent.id)
+        onConfirmClose()
+      }}
+      title="Remove Torrent"
+      message={`Are you sure you want to remove "${torrent.name}"?`}
+      description="This will stop the download but will not delete any downloaded files."
+      confirmLabel="Remove"
+      confirmColor="danger"
+    />
     <Card>
       <CardBody>
         <div className="flex items-start justify-between mb-3">
-          <div className="flex-1 min-w-0 mr-4">
+          <div className={`flex-1 min-w-0 mr-4 ${showCheckboxSpace ? 'ml-8' : ''}`}>
             <h3 className="font-semibold truncate" title={torrent.name}>
               {torrent.name}
             </h3>
@@ -68,20 +105,38 @@ export function TorrentCard({ torrent, onPause, onResume, onRemove }: TorrentCar
           <div className="flex gap-1">
             {isPaused ? (
               <Tooltip content="Resume">
-                <Button isIconOnly size="sm" variant="light" color="success" onPress={onResume}>
-                  ▶️
+                <Button
+                  isIconOnly
+                  size="sm"
+                  variant="light"
+                  color="success"
+                  onPress={() => onResume(torrent.id)}
+                >
+                  <PlayIcon />
                 </Button>
               </Tooltip>
             ) : isDownloading ? (
               <Tooltip content="Pause">
-                <Button isIconOnly size="sm" variant="light" color="warning" onPress={onPause}>
-                  ⏸️
+                <Button
+                  isIconOnly
+                  size="sm"
+                  variant="light"
+                  color="warning"
+                  onPress={() => onPause(torrent.id)}
+                >
+                  <PauseIcon />
                 </Button>
               </Tooltip>
             ) : null}
             <Tooltip content="Remove">
-              <Button isIconOnly size="sm" variant="light" color="danger" onPress={onRemove}>
-                🗑️
+              <Button
+                isIconOnly
+                size="sm"
+                variant="light"
+                color="danger"
+                onPress={handleRemove}
+              >
+                <DeleteIcon />
               </Button>
             </Tooltip>
           </div>
@@ -114,5 +169,6 @@ export function TorrentCard({ torrent, onPause, onResume, onRemove }: TorrentCar
         </div>
       </CardBody>
     </Card>
+    </>
   )
 }

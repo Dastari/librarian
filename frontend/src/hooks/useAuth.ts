@@ -24,10 +24,29 @@ export function useAuth() {
       setLoading(false)
     })
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session)
-      setUser(session?.user ?? null)
+    // Listen for auth changes - skip token refresh events to avoid unnecessary re-renders
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Skip token refresh events - they don't change auth status
+      // and would cause unnecessary re-renders (e.g., when alt-tabbing back)
+      if (event === 'TOKEN_REFRESHED') {
+        return
+      }
+      
+      setSession((prev) => {
+        // Only update if session actually changed
+        if (prev?.access_token === session?.access_token) {
+          return prev
+        }
+        return session
+      })
+      setUser((prev) => {
+        const newUser = session?.user ?? null
+        // Only update if user actually changed
+        if (prev?.id === newUser?.id) {
+          return prev
+        }
+        return newUser
+      })
       setLoading(false)
     })
 

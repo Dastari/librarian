@@ -1,82 +1,106 @@
-import { createFileRoute, Link, redirect } from '@tanstack/react-router'
-import { Button, Card, CardBody, Spinner } from '@heroui/react'
+import { createFileRoute, Link, useNavigate, useSearch } from '@tanstack/react-router'
+import { Button } from '@heroui/button'
+import { Card, CardBody } from '@heroui/card'
+import { Chip } from '@heroui/chip'
+import { Image } from '@heroui/image'
+import { Spinner } from '@heroui/spinner'
+import { Skeleton } from '@heroui/skeleton'
+import { useDisclosure } from '@heroui/modal'
+import { useEffect } from 'react'
 import { useAuth } from '../hooks/useAuth'
-import { MediaCard } from '../components/MediaCard'
-import { LIBRARY_TYPES, type MediaItem, type Library } from '../lib/graphql'
+import { useDashboardCache } from '../hooks/useDashboardCache'
+import { useDataReactivity } from '../hooks/useSubscription'
+import { AlbumArtCarousel } from '../components/AlbumArtCarousel'
+import { SignInModal } from '../components/SignInModal'
+import { LIBRARY_TYPES } from '../lib/graphql'
+import { formatBytes } from '../lib/format'
 
+// Format air date to a readable format
+function formatAirDate(dateStr: string): string {
+  const date = new Date(dateStr)
+  const today = new Date()
+  const tomorrow = new Date(today)
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  
+  const isToday = date.toDateString() === today.toDateString()
+  const isTomorrow = date.toDateString() === tomorrow.toDateString()
+  
+  if (isToday) return 'Today'
+  if (isTomorrow) return 'Tomorrow'
+  
+  return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
+// Search params for the home page
+interface HomeSearchParams {
+  signin?: boolean
+  redirect?: string
+}
+
+// The index route is public - unauthenticated users see the landing page
+// Authenticated users see the dashboard
 export const Route = createFileRoute('/')({
-  beforeLoad: ({ context }) => {
-    if (!context.auth.isAuthenticated) {
-      throw redirect({ to: '/auth/login' })
+  validateSearch: (search: Record<string, unknown>): HomeSearchParams => {
+    return {
+      signin: search.signin === true || search.signin === 'true',
+      redirect: typeof search.redirect === 'string' ? search.redirect : undefined,
     }
   },
   component: HomePage,
 })
 
-// Mock data for initial display
-const mockMedia: MediaItem[] = []
-
-const mockLibraries: Library[] = [
-  {
-    id: '1',
-    name: 'Movies',
-    path: '/data/media/Movies',
-    libraryType: 'MOVIES',
-    icon: 'film',
-    color: 'purple',
-    autoScan: true,
-    scanIntervalMinutes: 60,
-    watchForChanges: false,
-    postDownloadAction: 'COPY',
-    autoRename: true,
-    namingPattern: null,
-    defaultQualityProfileId: null,
-    autoAddDiscovered: true,
-    itemCount: 142,
-    totalSizeBytes: 856000000000,
-    showCount: 0,
-    lastScannedAt: null,
-  },
-  {
-    id: '2',
-    name: 'TV Shows',
-    path: '/data/media/TV',
-    libraryType: 'TV',
-    icon: 'tv',
-    color: 'blue',
-    autoScan: true,
-    scanIntervalMinutes: 60,
-    watchForChanges: false,
-    postDownloadAction: 'COPY',
-    autoRename: true,
-    namingPattern: null,
-    defaultQualityProfileId: null,
-    autoAddDiscovered: true,
-    itemCount: 1247,
-    totalSizeBytes: 2340000000000,
-    showCount: 45,
-    lastScannedAt: '2026-01-08T12:00:00Z',
-  },
-]
-
-function formatBytes(bytes: number | null): string {
-  if (!bytes) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let unitIndex = 0
-  let size = bytes
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024
-    unitIndex++
-  }
-  return `${size.toFixed(1)} ${units[unitIndex]}`
-}
 
 function HomePage() {
-  const { user, loading } = useAuth()
+  const { user, loading: authLoading } = useAuth()
+  const navigate = useNavigate()
+  const { signin, redirect: redirectUrl } = useSearch({ from: '/' })
+  const { isOpen, onOpen, onClose } = useDisclosure()
+  
+  // Dashboard data with caching - loads instantly from cache while fetching fresh data
+  const { 
+    data: { libraries, recentShows, libraryUpcoming, globalUpcoming },
+    isLoading,
+    isStale,
+    isFetching,
+    refetch 
+  } = useDashboardCache(user?.id ?? null)
 
-  if (loading) {
+  // Subscribe to data changes for live updates
+  useDataReactivity(
+    () => {
+      if (user && !isLoading) {
+        refetch()
+      }
+    },
+    { onTorrentComplete: true, periodicInterval: 60000, onFocus: true }
+  )
+
+  // Open sign-in modal if signin search param is true
+  useEffect(() => {
+    if (signin && !user && !authLoading) {
+      onOpen()
+    }
+  }, [signin, user, authLoading, onOpen])
+
+  // Handle modal close - clear the search params
+  const handleModalClose = () => {
+    onClose()
+    // Clear the signin param from URL
+    navigate({ to: '/', search: {}, replace: true })
+  }
+
+  // Handle successful sign in
+  const handleSignInSuccess = () => {
+    // If there's a redirect URL, the modal will handle it
+    // Otherwise just close the modal
+    if (!redirectUrl) {
+      handleModalClose()
+    }
+  }
+
+  if (authLoading) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
+      <div className="flex items-center justify-center grow w-full h-full">
         <Spinner size="lg" color="primary" />
       </div>
     )
@@ -84,151 +108,225 @@ function HomePage() {
 
   if (!user) {
     return (
-      <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] px-4">
-        <h1 className="text-4xl font-bold mb-4 text-center">
-          Welcome to Librarian
-        </h1>
-        <p className="text-default-500 text-lg mb-8 text-center max-w-md">
-          Your local-first, privacy-preserving media library. Sign in to access
-          your collection.
-        </p>
-        <Link to="/auth/login">
-          <Button color="primary" size="lg">
+      <div className="relative h-[calc(100vh-4rem)] overflow-hidden w-full">
+        {/* 3D Album Art Carousel Background */}
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-950 via-purple-950 to-slate-950">
+          <AlbumArtCarousel />
+        </div>
+
+        {/* Content overlay */}
+        <div className="absolute inset-0 bg-gradient-to-t from-background via-background/60 to-transparent" />
+
+        {/* Content */}
+        <div className="relative flex flex-col items-center justify-center h-full px-4">
+          <h1 className="text-5xl md:text-6xl font-bold mb-4 text-center drop-shadow-4xl">
+            Welcome to Librarian
+          </h1>
+          <p className="text-default-600 text-xl mb-8 text-center max-w-md drop-shadow-lg">
+            Your local-first, privacy-preserving media library. Sign in to access
+            your collection.
+          </p>
+          <Button color="primary" size="lg" className="shadow-2xl" onPress={onOpen}>
             Get Started
           </Button>
-        </Link>
+        </div>
+
+        {/* Sign In Modal */}
+        <SignInModal
+          isOpen={isOpen}
+          onClose={handleModalClose}
+          onSuccess={handleSignInSuccess}
+          redirectUrl={redirectUrl}
+        />
       </div>
     )
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Hero section with backdrop */}
+    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Hero section with 3D album art carousel */}
       <Card className="mb-8 overflow-hidden">
-        <div className="relative h-48 md:h-64 bg-gradient-to-r from-blue-900 to-purple-900">
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent" />
-          <div className="absolute bottom-0 left-0 p-6 md:p-8">
-            <h1 className="text-2xl md:text-3xl font-bold mb-1">
+        <div className="relative h-56 md:h-72 bg-gradient-to-br from-blue-950 via-purple-950 to-slate-950">
+          {/* 3D Album Art Carousel */}
+          <AlbumArtCarousel />
+
+          {/* Content overlay */}
+          <div className="absolute inset-0 bg-gradient-to-t from-background/95 via-background/30 to-transparent pointer-events-none" />
+
+          {/* Text content */}
+          <div className="absolute bottom-0 left-0 p-6 md:p-8 z-10">
+            <h1 className="text-2xl md:text-4xl font-bold mb-2 drop-shadow-lg">
               Welcome back!
             </h1>
-            <p className="text-default-400">Your media library at a glance</p>
+            <p className="text-default-400 drop-shadow-md">
+              Your media library at a glance
+              {isFetching && isStale && (
+                <span className="ml-2 text-xs text-primary animate-pulse">• Refreshing...</span>
+              )}
+            </p>
           </div>
         </div>
       </Card>
 
-      {/* Libraries overview */}
-      <section className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold">Your Libraries</h2>
-          <Link to="/libraries">
-            <Button variant="light" color="primary" size="sm">
-              Manage Libraries →
-            </Button>
-          </Link>
-        </div>
-
-        {mockLibraries.length === 0 ? (
-          <Card className="border-dashed border-2 border-default-300 bg-content1/50">
-            <CardBody className="py-8 text-center">
-              <span className="text-4xl mb-3 block">📚</span>
-              <h3 className="font-semibold mb-2">No libraries yet</h3>
-              <p className="text-default-500 text-sm mb-4">
-                Add a library to start organizing your media.
-              </p>
-              <Link to="/libraries">
-                <Button color="primary">Add Library</Button>
-              </Link>
-            </CardBody>
-          </Card>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {mockLibraries.map((library) => {
-              const typeInfo =
-                LIBRARY_TYPES.find((t) => t.value === library.libraryType) ||
-                LIBRARY_TYPES[4]
-              return (
-                <Link key={library.id} to="/libraries">
-                  <Card
-                    isPressable
-                    className="bg-content1 hover:bg-content2 transition-colors"
-                  >
-                    <CardBody>
-                      <div className="flex items-center gap-3 mb-3">
-                        <span className="text-2xl">{typeInfo.icon}</span>
-                        <div>
-                          <h3 className="font-semibold">{library.name}</h3>
-                          <p className="text-default-500 text-xs">
-                            {typeInfo.label}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex justify-between text-sm text-default-500">
-                        <span>{library.itemCount ?? 0} files</span>
-                        <span>{formatBytes(library.totalSizeBytes)}</span>
-                      </div>
-                    </CardBody>
-                  </Card>
-                </Link>
-              )
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* Quick actions */}
-      <section className="mb-8">
-        <h2 className="text-xl font-semibold mb-4">Quick Actions</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Link to="/downloads">
-            <Card isPressable className="bg-content1 hover:bg-content2 transition-colors">
-              <CardBody>
-                <span className="text-2xl mb-2 block">⬇️</span>
-                <h3 className="font-semibold">Downloads</h3>
-                <p className="text-default-500 text-sm">
-                  Manage active downloads
-                </p>
-              </CardBody>
-            </Card>
-          </Link>
-          <Link to="/subscriptions">
-            <Card isPressable className="bg-content1 hover:bg-content2 transition-colors">
-              <CardBody>
-                <span className="text-2xl mb-2 block">📺</span>
-                <h3 className="font-semibold">Subscriptions</h3>
-                <p className="text-default-500 text-sm">
-                  Track your favorite shows
-                </p>
-              </CardBody>
-            </Card>
-          </Link>
-          <Link to="/libraries">
-            <Card isPressable className="bg-content1 hover:bg-content2 transition-colors">
-              <CardBody>
-                <span className="text-2xl mb-2 block">📚</span>
-                <h3 className="font-semibold">Libraries</h3>
-                <p className="text-default-500 text-sm">
-                  Configure media folders
-                </p>
-              </CardBody>
-            </Card>
-          </Link>
-        </div>
-      </section>
-
-      {/* Recently Added */}
-      {mockMedia.length > 0 && (
+      {/* Airing Soon in Your Library */}
+      {libraryUpcoming.length > 0 && (
         <section className="mb-8">
-          <h2 className="text-xl font-semibold mb-4">Recently Added</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-            {mockMedia.map((media) => (
-              <MediaCard key={media.id} media={media} />
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-semibold">Airing Soon in Your Library</h2>
+              <p className="text-default-500 text-sm">Episodes from shows you're tracking</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {libraryUpcoming.slice(0, 8).map((ep) => (
+              <Link key={ep.id} to="/shows/$showId" params={{ showId: ep.show.id }}>
+                <Card 
+                  isPressable 
+                  className="bg-content1 hover:bg-content2 transition-colors overflow-hidden w-full"
+                >
+                  <div className="flex gap-3 p-3">
+                    {/* Show poster */}
+                    <div className="w-16 h-24 shrink-0 rounded-md overflow-hidden bg-default-200">
+                      {ep.show.posterUrl ? (
+                        <Image
+                          src={ep.show.posterUrl}
+                          alt={ep.show.name}
+                          classNames={{
+                            wrapper: "w-full h-full",
+                            img: "w-full h-full object-cover"
+                          }}
+                          radius="none"
+                          removeWrapper={false}
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-2xl">
+                          📺
+                        </div>
+                      )}
+                    </div>
+                    {/* Episode info */}
+                    <div className='flex-1 min-w-0 text-left flex flex-col'>
+                      <p className="font-semibold truncate">{ep.show.name}</p>
+                      <p className="text-sm text-default-500 grow">
+                        S{ep.season.toString().padStart(2, '0')}E{ep.episode.toString().padStart(2, '0')}
+                        {ep.name && `: ${ep.name}`}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <Chip size="sm" variant="flat" color="primary">
+                          {formatAirDate(ep.airDate)}
+                        </Chip>
+                        {ep.show.network && (
+                          <span className="text-xs text-default-400">{ep.show.network}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              </Link>
             ))}
           </div>
         </section>
       )}
 
-      {/* Empty state when no content */}
-      {mockMedia.length === 0 && mockLibraries.length > 0 && (
+      {/* Recently Added Shows */}
+      {recentShows.length > 0 && (
+        <section className="mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold">Recently Added Shows</h2>
+            <Link to="/subscriptions">
+              <Button variant="light" color="primary" size="sm">
+                View All →
+              </Button>
+            </Link>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            {recentShows.map((show) => (
+              <Link key={show.id} to="/shows/$showId" params={{ showId: show.id }}>
+                <Card isPressable isHoverable className="bg-content1 overflow-hidden">
+                  <div className="aspect-[2/3] relative">
+                    {show.posterUrl ? (
+                      <Image
+                        src={show.posterUrl}
+                        alt={show.name}
+                        classNames={{
+                          wrapper: "w-full h-full !max-w-full",
+                          img: "w-full h-full object-cover"
+                        }}
+                        radius="none"
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-default-200 flex items-center justify-center">
+                        <span className="text-4xl">📺</span>
+                      </div>
+                    )}
+                  </div>
+                  <CardBody className="p-2">
+                    <p className="text-sm font-medium truncate">{show.name}</p>
+                    <p className="text-xs text-default-500">
+                      {show.episodeFileCount ?? 0} / {show.episodeCount ?? 0} episodes
+                    </p>
+                  </CardBody>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Airing Soon (Global) */}
+      {globalUpcoming.length > 0 && (
+        <section className="mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-semibold">Airing Soon</h2>
+              <p className="text-default-500 text-sm">Popular shows airing this week</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            {globalUpcoming.map((ep) => (
+              <Card 
+                key={`${ep.show.tvmazeId}-${ep.season}-${ep.episode}`}
+                isHoverable
+                className="bg-content1 overflow-hidden"
+              >
+                <div className="aspect-[2/3] relative">
+                  {ep.show.posterUrl ? (
+                    <Image
+                      src={ep.show.posterUrl}
+                      alt={ep.show.name}
+                      classNames={{
+                        wrapper: "w-full h-full !max-w-full",
+                        img: "w-full h-full object-cover"
+                      }}
+                      radius="none"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-default-200 flex items-center justify-center">
+                      <span className="text-4xl">📺</span>
+                    </div>
+                  )}
+                  {/* Air date badge */}
+                  <div className="absolute top-2 right-2 z-10">
+                    <Chip size="sm" variant="solid" className="bg-black/70">
+                      {formatAirDate(ep.airDate)}
+                    </Chip>
+                  </div>
+                </div>
+                <CardBody className="p-2">
+                  <p className="text-sm font-medium truncate">{ep.show.name}</p>
+                  <p className="text-xs text-default-500">
+                    S{ep.season.toString().padStart(2, '0')}E{ep.episode.toString().padStart(2, '0')}
+                    {ep.show.network && ` • ${ep.show.network}`}
+                  </p>
+                </CardBody>
+              </Card>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Empty state when no recent content but has libraries */}
+      {recentShows.length === 0 && libraryUpcoming.length === 0 && libraries.length > 0 && !isLoading && (
         <section className="mb-8">
           <h2 className="text-xl font-semibold mb-4">Recently Added</h2>
           <Card className="bg-content1/50">

@@ -1,6 +1,9 @@
-import { Link } from '@tanstack/react-router'
-import { Button, Card, CardBody, CardHeader, Chip } from '@heroui/react'
+import { useNavigate } from '@tanstack/react-router'
+import { Button } from '@heroui/button'
+import { Card, CardBody, CardHeader } from '@heroui/card'
+import { Chip } from '@heroui/chip'
 import type { Library } from '../../lib/graphql'
+import { formatBytes } from '../../lib/format'
 
 const LIBRARY_TYPES = [
   { value: 'MOVIES', label: 'Movies', icon: '🎬', color: 'purple' },
@@ -10,18 +13,6 @@ const LIBRARY_TYPES = [
   { value: 'OTHER', label: 'Other', icon: '📁', color: 'slate' },
 ] as const
 
-function formatBytes(bytes: number | null): string {
-  if (!bytes) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let unitIndex = 0
-  let size = bytes
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024
-    unitIndex++
-  }
-  return `${size.toFixed(1)} ${units[unitIndex]}`
-}
-
 export interface LibraryCardProps {
   library: Library
   onScan: () => void
@@ -30,6 +21,7 @@ export interface LibraryCardProps {
 }
 
 export function LibraryCard({ library, onScan, onEdit, onDelete }: LibraryCardProps) {
+  const navigate = useNavigate()
   const typeInfo =
     LIBRARY_TYPES.find((t) => t.value === library.libraryType) || LIBRARY_TYPES[4]
 
@@ -101,14 +93,13 @@ export function LibraryCard({ library, onScan, onEdit, onDelete }: LibraryCardPr
               Settings
             </Button>
             {library.libraryType === 'TV' && (
-              <Link
-                to="/libraries/$libraryId"
-                params={{ libraryId: library.id }}
+              <Button
+                size="sm"
+                variant="flat"
+                onPress={() => navigate({ to: '/libraries/$libraryId', params: { libraryId: library.id } })}
               >
-                <Button size="sm" variant="flat" className="w-full">
-                  View Shows
-                </Button>
-              </Link>
+                View Shows
+              </Button>
             )}
             <Button
               size="sm"

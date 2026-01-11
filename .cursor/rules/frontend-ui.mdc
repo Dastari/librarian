@@ -3,10 +3,30 @@ description: Frontend UI patterns and component usage
 globs:
   - "frontend/src/**/*.tsx"
   - "frontend/src/**/*.ts"
-alwaysApply: false
+alwaysApply: true
 ---
 
 # Frontend UI Rules
+
+## ⛔ DO NOT Use Raw HTML Elements
+
+**Never use these raw HTML elements in React components:**
+
+| ❌ Don't Use | ✅ Use Instead |
+|-------------|----------------|
+| `<button>` | `<Button>` from @heroui/react |
+| `<input>` | `<Input>` from @heroui/react |
+| `<select>` | `<Select>` from @heroui/react |
+| `<textarea>` | `<Textarea>` from @heroui/react |
+| `<img>` | `<Image>` from @heroui/react |
+| `<a>` (styled as button) | `<Button as={Link}>` or `<Link>` |
+| `<label>` with inputs | Use Input's `label` prop |
+| styled `<span>` badges | `<Chip>` from @heroui/react |
+| styled `<div>` alerts | `<Card>` with color classes |
+
+**Exception:** `<input type="file">` is allowed when hidden and triggered by a Button (HeroUI doesn't have a file input component).
+
+---
 
 ## HeroUI Component Installation
 
@@ -98,7 +118,8 @@ npx heroui doctor
 ## Component Library
 
 ### Use HeroUI Components
-- **ALWAYS use HeroUI components** instead of custom HTML elements
+- **ALWAYS use HeroUI components** instead of raw HTML elements
+- **NEVER write `<button>`, `<input>`, `<select>`, `<img>` tags** - use the HeroUI equivalents
 - Import from `@heroui/react`
 - Common components to use:
 

@@ -1,16 +1,21 @@
 //! Prowlarr/Jackett Torznab client
+//!
+//! NOTE: This module is scaffolded for future Prowlarr integration (Stage 4+).
+//! RSS feed matching is currently the primary indexer mechanism.
 
 use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-/// Prowlarr API client for Torznab searches
+/// Prowlarr API client for Torznab searches (for future integration)
+#[allow(dead_code)]
 pub struct ProwlarrClient {
     base_url: String,
     api_key: String,
     client: Client,
 }
 
+#[allow(dead_code)]
 impl ProwlarrClient {
     pub fn new(base_url: String, api_key: String) -> Self {
         Self {
@@ -85,6 +90,7 @@ impl ProwlarrClient {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TorznabResult {
     pub title: String,

@@ -29,6 +29,9 @@ pub struct MediaFileRecord {
     pub resolution: Option<String>,
     pub is_hdr: Option<bool>,
     pub hdr_type: Option<String>,
+    pub organized: bool,
+    pub organized_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub original_path: Option<String>,
     pub added_at: chrono::DateTime<chrono::Utc>,
     pub modified_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -72,7 +75,8 @@ impl MediaFileRepository {
                    container, video_codec, audio_codec, width, height,
                    duration, bitrate, file_hash, episode_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
-                   resolution, is_hdr, hdr_type, added_at, modified_at
+                   resolution, is_hdr, hdr_type, organized, organized_at,
+                   original_path, added_at, modified_at
             FROM media_files
             WHERE library_id = $1
             ORDER BY path
@@ -105,7 +109,8 @@ impl MediaFileRepository {
                    container, video_codec, audio_codec, width, height,
                    duration, bitrate, file_hash, episode_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
-                   resolution, is_hdr, hdr_type, added_at, modified_at
+                   resolution, is_hdr, hdr_type, organized, organized_at,
+                   original_path, added_at, modified_at
             FROM media_files
             WHERE path = $1
             "#,
@@ -131,7 +136,8 @@ impl MediaFileRepository {
                       container, video_codec, audio_codec, width, height,
                       duration, bitrate, file_hash, episode_id, relative_path,
                       original_name, video_bitrate, audio_channels, audio_language,
-                      resolution, is_hdr, hdr_type, added_at, modified_at
+                      resolution, is_hdr, hdr_type, organized, organized_at,
+                      original_path, added_at, modified_at
             "#,
         )
         .bind(input.library_id)
@@ -185,7 +191,8 @@ impl MediaFileRepository {
                       container, video_codec, audio_codec, width, height,
                       duration, bitrate, file_hash, episode_id, relative_path,
                       original_name, video_bitrate, audio_channels, audio_language,
-                      resolution, is_hdr, hdr_type, added_at, modified_at
+                      resolution, is_hdr, hdr_type, organized, organized_at,
+                      original_path, added_at, modified_at
             "#,
         )
         .bind(input.library_id)
@@ -254,5 +261,81 @@ impl MediaFileRepository {
             .await?;
 
         Ok(())
+    }
+
+    /// Get unorganized files for a library
+    pub async fn list_unorganized_by_library(&self, library_id: Uuid) -> Result<Vec<MediaFileRecord>> {
+        let records = sqlx::query_as::<_, MediaFileRecord>(
+            r#"
+            SELECT id, media_item_id, library_id, path, size as size_bytes, 
+                   container, video_codec, audio_codec, width, height,
+                   duration, bitrate, file_hash, episode_id, relative_path,
+                   original_name, video_bitrate, audio_channels, audio_language,
+                   resolution, is_hdr, hdr_type, organized, organized_at,
+                   original_path, added_at, modified_at
+            FROM media_files
+            WHERE library_id = $1 AND organized = false
+            ORDER BY path
+            "#,
+        )
+        .bind(library_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(records)
+    }
+
+    /// Mark a file as organized (moved to library structure)
+    pub async fn mark_organized(&self, file_id: Uuid, new_path: &str, original_path: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE media_files SET 
+                path = $2, 
+                original_path = $3,
+                organized = true, 
+                organized_at = NOW(),
+                modified_at = NOW()
+            WHERE id = $1
+            "#
+        )
+        .bind(file_id)
+        .bind(new_path)
+        .bind(original_path)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update only the path of a media file
+    pub async fn update_path(&self, file_id: Uuid, new_path: &str) -> Result<()> {
+        sqlx::query("UPDATE media_files SET path = $2, modified_at = NOW() WHERE id = $1")
+            .bind(file_id)
+            .bind(new_path)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Get a media file by ID
+    pub async fn get_by_id(&self, id: Uuid) -> Result<Option<MediaFileRecord>> {
+        let record = sqlx::query_as::<_, MediaFileRecord>(
+            r#"
+            SELECT id, media_item_id, library_id, path, size as size_bytes, 
+                   container, video_codec, audio_codec, width, height,
+                   duration, bitrate, file_hash, episode_id, relative_path,
+                   original_name, video_bitrate, audio_channels, audio_language,
+                   resolution, is_hdr, hdr_type, organized, organized_at,
+                   original_path, added_at, modified_at
+            FROM media_files
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(record)
     }
 }

@@ -22,4 +22,26 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  build: {
+    chunkSizeWarningLimit: 1000, // HeroUI + React is large
+    rollupOptions: {
+      output: {
+        manualChunks: (id) => {
+          if (!id.includes('node_modules/')) return
+          
+          // Supabase - independent, used for auth
+          if (id.includes('@supabase/')) {
+            return 'vendor-supabase'
+          }
+          // GraphQL/Apollo - independent data layer
+          if (id.includes('/graphql') || id.includes('@apollo/')) {
+            return 'vendor-graphql'
+          }
+          // Everything else (React, HeroUI, Router, etc.) goes to vendor
+          // This avoids circular dependency issues
+          return 'vendor'
+        },
+      },
+    },
+  },
 })

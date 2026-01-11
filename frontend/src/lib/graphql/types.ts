@@ -76,6 +76,7 @@ export interface Torrent {
   uploadSpeedFormatted: string;
   peers: number;
   eta: number | null;
+  addedAt: string | null;
 }
 
 export type TorrentState = 'QUEUED' | 'CHECKING' | 'DOWNLOADING' | 'SEEDING' | 'PAUSED' | 'ERROR';
@@ -99,6 +100,59 @@ export interface AddTorrentResult {
 export interface TorrentActionResult {
   success: boolean;
   error: string | null;
+}
+
+export interface OrganizeTorrentResult {
+  success: boolean;
+  organizedCount: number;
+  failedCount: number;
+  messages: string[];
+}
+
+export interface PeerStats {
+  queued: number;
+  connecting: number;
+  live: number;
+  seen: number;
+  dead: number;
+  notNeeded: number;
+}
+
+export interface TorrentDetails {
+  id: number;
+  infoHash: string;
+  name: string;
+  state: TorrentState;
+  progress: number;
+  progressPercent: number;
+  size: number;
+  sizeFormatted: string;
+  downloaded: number;
+  downloadedFormatted: string;
+  uploaded: number;
+  uploadedFormatted: string;
+  downloadSpeed: number;
+  downloadSpeedFormatted: string;
+  uploadSpeed: number;
+  uploadSpeedFormatted: string;
+  savePath: string;
+  files: TorrentFileInfo[];
+  pieceCount: number;
+  piecesDownloaded: number;
+  averagePieceDownloadMs: number | null;
+  timeRemainingSecs: number | null;
+  timeRemainingFormatted: string | null;
+  peerStats: PeerStats;
+  error: string | null;
+  finished: boolean;
+  ratio: number;
+}
+
+export interface TorrentFileInfo {
+  index: number;
+  path: string;
+  size: number;
+  progress: number;
 }
 
 // ============================================================================
@@ -180,10 +234,16 @@ export interface Library {
   scanIntervalMinutes: number;
   watchForChanges: boolean;
   postDownloadAction: PostDownloadAction;
-  autoRename: boolean;
+  organizeFiles: boolean;
+  renameStyle: string;
   namingPattern: string | null;
   defaultQualityProfileId: string | null;
   autoAddDiscovered: boolean;
+  autoDownload: boolean;
+  /** Automatically hunt for missing episodes using indexers */
+  autoHunt: boolean;
+  /** Whether a scan is currently in progress */
+  scanning: boolean;
   itemCount: number;
   totalSizeBytes: number;
   showCount: number;
@@ -206,7 +266,7 @@ export interface CreateLibraryInput {
   scanIntervalMinutes?: number;
   watchForChanges?: boolean;
   postDownloadAction?: PostDownloadAction;
-  autoRename?: boolean;
+  organizeFiles?: boolean;
   namingPattern?: string;
   defaultQualityProfileId?: string;
   autoAddDiscovered?: boolean;
@@ -221,10 +281,12 @@ export interface UpdateLibraryInput {
   scanIntervalMinutes?: number;
   watchForChanges?: boolean;
   postDownloadAction?: PostDownloadAction;
-  autoRename?: boolean;
+  organizeFiles?: boolean;
   namingPattern?: string;
-  defaultQualityProfileId?: string;
+  defaultQualityProfileId?: string | null;
   autoAddDiscovered?: boolean;
+  autoDownload?: boolean;
+  autoHunt?: boolean;
 }
 
 // ============================================================================
@@ -233,7 +295,7 @@ export interface UpdateLibraryInput {
 
 export type TvShowStatus = 'CONTINUING' | 'ENDED' | 'UPCOMING' | 'CANCELLED' | 'UNKNOWN';
 export type MonitorType = 'ALL' | 'FUTURE' | 'NONE';
-export type EpisodeStatus = 'MISSING' | 'WANTED' | 'DOWNLOADING' | 'DOWNLOADED' | 'IGNORED';
+export type EpisodeStatus = 'MISSING' | 'WANTED' | 'AVAILABLE' | 'DOWNLOADING' | 'DOWNLOADED' | 'IGNORED';
 
 export interface TvShow {
   id: string;
@@ -256,6 +318,16 @@ export interface TvShow {
   monitorType: MonitorType;
   qualityProfileId: string | null;
   path: string | null;
+  /** Override library auto-download setting (null = inherit) */
+  autoDownloadOverride: boolean | null;
+  /** Whether to backfill existing episodes when added */
+  backfillExisting: boolean;
+  /** Override library organize_files setting (null = inherit) */
+  organizeFilesOverride: boolean | null;
+  /** Override library rename_style setting (null = inherit) */
+  renameStyleOverride: string | null;
+  /** Override library auto_hunt setting (null = inherit) */
+  autoHuntOverride: boolean | null;
   episodeCount: number;
   episodeFileCount: number;
   sizeBytes: number;
@@ -289,11 +361,21 @@ export interface Episode {
   tvmazeId: number | null;
   tmdbId: number | null;
   tvdbId: number | null;
+  /** URL/magnet link to download this episode (when status is 'available') */
+  torrentLink: string | null;
+  /** When the torrent link was found in RSS */
+  torrentLinkAddedAt: string | null;
 }
 
 export interface TvShowResult {
   success: boolean;
   tvShow: TvShow | null;
+  error: string | null;
+}
+
+export interface DownloadEpisodeResult {
+  success: boolean;
+  episode: Episode | null;
   error: string | null;
 }
 
@@ -303,6 +385,21 @@ export interface AddTvShowInput {
   monitorType?: MonitorType;
   qualityProfileId?: string;
   path?: string;
+}
+
+export interface UpdateTvShowInput {
+  monitored?: boolean;
+  monitorType?: MonitorType;
+  qualityProfileId?: string;
+  path?: string;
+  /** Override library auto-download (null = inherit, true/false = override) */
+  autoDownloadOverride?: boolean | null;
+  /** Whether to backfill existing episodes */
+  backfillExisting?: boolean;
+  /** Override library organize_files (null = inherit) */
+  organizeFilesOverride?: boolean | null;
+  /** Override library rename_style (null = inherit) */
+  renameStyleOverride?: string | null;
 }
 
 // ============================================================================
@@ -343,6 +440,47 @@ export interface RssFeed {
   consecutiveFailures: number;
 }
 
+export interface RssFeedResult {
+  success: boolean;
+  rssFeed: RssFeed | null;
+  error: string | null;
+}
+
+export interface RssItem {
+  title: string;
+  link: string;
+  pubDate: string | null;
+  description: string | null;
+  parsedShowName: string | null;
+  parsedSeason: number | null;
+  parsedEpisode: number | null;
+  parsedResolution: string | null;
+  parsedCodec: string | null;
+}
+
+export interface RssFeedTestResult {
+  success: boolean;
+  itemCount: number;
+  sampleItems: RssItem[];
+  error: string | null;
+}
+
+export interface CreateRssFeedInput {
+  libraryId?: string;
+  name: string;
+  url: string;
+  enabled?: boolean;
+  pollIntervalMinutes?: number;
+}
+
+export interface UpdateRssFeedInput {
+  libraryId?: string;
+  name?: string;
+  url?: string;
+  enabled?: boolean;
+  pollIntervalMinutes?: number;
+}
+
 // ============================================================================
 // Parse and Identify Types
 // ============================================================================
@@ -367,4 +505,109 @@ export interface ParsedEpisodeInfo {
 export interface ParseAndIdentifyResult {
   parsed: ParsedEpisodeInfo;
   matches: TvShowSearchResult[];
+}
+
+// ============================================================================
+// Log Types
+// ============================================================================
+
+export type LogLevel = 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+
+export interface LogEntry {
+  id: string;
+  timestamp: string;
+  level: LogLevel;
+  target: string;
+  message: string;
+  fields: Record<string, unknown> | null;
+  spanName: string | null;
+}
+
+export interface PaginatedLogResult {
+  logs: LogEntry[];
+  totalCount: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
+export interface LogFilterInput {
+  levels?: LogLevel[];
+  target?: string;
+  keyword?: string;
+  fromTimestamp?: string;
+  toTimestamp?: string;
+}
+
+export interface LogStats {
+  traceCount: number;
+  debugCount: number;
+  infoCount: number;
+  warnCount: number;
+  errorCount: number;
+  totalCount: number;
+}
+
+export interface ClearLogsResult {
+  success: boolean;
+  deletedCount: number;
+  error: string | null;
+}
+
+export interface LogEventSubscription {
+  timestamp: string;
+  level: LogLevel;
+  target: string;
+  message: string;
+  fields: Record<string, unknown> | null;
+  spanName: string | null;
+}
+
+// ============================================================================
+// Upcoming Episode Types (for home page)
+// ============================================================================
+
+/** Show information embedded in upcoming episode */
+export interface UpcomingEpisodeShow {
+  tvmazeId: number;
+  name: string;
+  network: string | null;
+  posterUrl: string | null;
+  genres: string[];
+}
+
+/** An upcoming episode from TVMaze with show info */
+export interface UpcomingEpisode {
+  tvmazeId: number;
+  name: string;
+  season: number;
+  episode: number;
+  airDate: string;
+  airTime: string | null;
+  airStamp: string | null;
+  runtime: number | null;
+  summary: string | null;
+  episodeImageUrl: string | null;
+  show: UpcomingEpisodeShow;
+}
+
+/** Show information for library upcoming episodes */
+export interface LibraryUpcomingShow {
+  id: string;
+  name: string;
+  year: number | null;
+  network: string | null;
+  posterUrl: string | null;
+  libraryId: string;
+}
+
+/** An upcoming episode from the user's library */
+export interface LibraryUpcomingEpisode {
+  id: string;
+  tvmazeId: number | null;
+  name: string | null;
+  season: number;
+  episode: number;
+  airDate: string;
+  status: EpisodeStatus;
+  show: LibraryUpcomingShow;
 }

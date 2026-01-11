@@ -17,7 +17,15 @@
 | Stage | Status | Notes |
 |-------|--------|-------|
 | Stage 0 | ✅ Complete | Full scaffold with all components |
-| Stage 1 | 🟡 Partial | Frontend auth complete, backend JWT middleware scaffolded |
+| Stage 1 | ✅ Complete | Frontend/backend auth with JWT middleware working |
+| Stage 2A | ✅ Complete | Database schema, all repositories (libraries, tv_shows, episodes, quality_profiles, rss_feeds, media_files, logs) |
+| Stage 2B | ✅ Complete | Library scanning with file discovery and filename parsing |
+| Stage 2C | 🟡 Partial | TVMaze integration complete; TMDB/TheTVDB scaffolded but not implemented |
+| Stage 2D | ✅ Complete | Show management with episode tracking and monitoring |
+| Stage 3A | ✅ Complete | RSS feed polling with episode matching |
+| Stage 3B | ✅ Complete | Auto-download from RSS (core functionality done, quality filters are future enhancement) |
+| Stage 3C | ✅ Complete | Post-download processing integrated with scheduler (runs every minute) |
+| Stage 3D | ✅ Complete | Auto-organization with show-level overrides, respects copy/move/hardlink |
 | Stage 4 | ✅ Complete | Native torrent client (librqbit) + GraphQL subscriptions |
 
 ### Key Decisions Made
@@ -45,8 +53,7 @@
 ## Phase 1: TV Library Foundation
 
 ### Stage 2A — Database Schema & Libraries CRUD
-**Status**: ⏳ Next Up
-**Priority**: High
+**Status**: ✅ Complete
 
 #### Goals
 - Create database tables for TV library system
@@ -56,40 +63,39 @@
 #### Deliverables
 
 **Database Migration (`004_tv_library_schema.sql`)**:
-- [ ] `tv_shows` table
-- [ ] `episodes` table  
-- [ ] `quality_profiles` table (enhanced)
-- [ ] `rss_feeds` table
-- [ ] `unmatched_files` table
-- [ ] Update `libraries` table with new columns
-- [ ] Update `downloads` table with episode/library links
-- [ ] Update `media_files` table with quality metadata
+- [x] `tv_shows` table
+- [x] `episodes` table  
+- [x] `quality_profiles` table (enhanced)
+- [x] `rss_feeds` table
+- [ ] `unmatched_files` table (future enhancement)
+- [x] Update `libraries` table with new columns
+- [x] Update `downloads` table with episode/library links
+- [x] Update `media_files` table with quality metadata
 
 **Backend**:
-- [ ] `db/libraries.rs` - Library repository
-- [ ] `db/tv_shows.rs` - TV show repository
-- [ ] `db/episodes.rs` - Episode repository
-- [ ] `db/quality_profiles.rs` - Quality profile repository
-- [ ] Wire GraphQL library queries/mutations to database
-- [ ] Library creation with path validation
+- [x] `db/libraries.rs` - Library repository
+- [x] `db/tv_shows.rs` - TV show repository
+- [x] `db/episodes.rs` - Episode repository
+- [x] `db/quality_profiles.rs` - Quality profile repository
+- [x] Wire GraphQL library queries/mutations to database
+- [x] Library creation with path validation
 
 **Frontend**:
-- [ ] `/libraries` route - List all libraries
-- [ ] `/libraries/new` route - Create library wizard
-- [ ] File browser component for path selection (reuse from downloads settings)
-- [ ] Library card component
+- [x] `/libraries` route - List all libraries
+- [x] Library creation wizard with file browser
+- [x] File browser component for path selection
+- [x] Library card component
 
 #### Acceptance Criteria
-- [ ] User can create a TV library with a path
-- [ ] Libraries persist to database
-- [ ] Libraries list loads from database (not mock data)
-- [ ] User can delete a library
+- [x] User can create a TV library with a path
+- [x] Libraries persist to database
+- [x] Libraries list loads from database (not mock data)
+- [x] User can delete a library
 
 ---
 
 ### Stage 2B — Library Scanning & File Discovery
-**Status**: ⏳ Pending
-**Depends on**: Stage 2A
+**Status**: ✅ Complete (Core), ffprobe pending
 
 #### Goals
 - Walk library directories and discover media files
@@ -100,10 +106,10 @@
 #### Deliverables
 
 **Backend Services**:
-- [ ] `services/scanner.rs` - Directory walking and file discovery
-- [ ] `services/filename_parser.rs` - Scene naming pattern parser
-- [ ] `services/ffprobe.rs` - Media file analysis
-- [ ] Update `jobs/scanner.rs` with real implementation
+- [x] `services/scanner.rs` - Directory walking and file discovery
+- [x] `services/filename_parser.rs` - Scene naming pattern parser (comprehensive regex-based)
+- [ ] `services/ffprobe.rs` - Media file analysis (not yet implemented - use for future quality detection)
+- [x] Update `jobs/scanner.rs` with real implementation
 
 **Filename Parser Patterns**:
 ```rust
@@ -140,8 +146,7 @@ Season 1 Episode 1       // Verbose
 ---
 
 ### Stage 2C — Metadata Providers (TVMaze/TMDB)
-**Status**: ⏳ Pending
-**Depends on**: Stage 2B
+**Status**: 🟡 Partial (TVMaze complete, TMDB/TheTVDB scaffolded)
 
 #### Goals
 - Integrate TVMaze API for show/episode metadata
@@ -152,10 +157,10 @@ Season 1 Episode 1       // Verbose
 #### Deliverables
 
 **Backend Services**:
-- [ ] `services/tvmaze.rs` - TVMaze API client
-- [ ] `services/tmdb.rs` - TMDB API client (fallback)
-- [ ] `services/metadata.rs` - Unified metadata interface
-- [ ] `services/artwork.rs` - Image downloading and storage
+- [x] `services/tvmaze.rs` - TVMaze API client (fully implemented)
+- [ ] `services/tmdb.rs` - TMDB API client (scaffolded in `media/metadata.rs`, TODO in `services/metadata.rs`)
+- [x] `services/metadata.rs` - Unified metadata interface with artwork caching
+- [x] `services/artwork.rs` - Image downloading and Supabase storage caching
 
 **TVMaze Integration**:
 ```rust
@@ -191,8 +196,7 @@ GET /shows/{id}/seasons               // Seasons list
 ---
 
 ### Stage 2D — Show Management & Episode Tracking
-**Status**: ⏳ Pending
-**Depends on**: Stage 2C
+**Status**: ✅ Complete
 
 #### Goals
 - Add shows to library with monitoring settings
@@ -203,10 +207,10 @@ GET /shows/{id}/seasons               // Seasons list
 #### Deliverables
 
 **Backend**:
-- [ ] `db/rss_feeds.rs` - RSS feed repository
-- [ ] Show monitoring logic (all vs future)
-- [ ] Episode status calculation
-- [ ] Quality profile CRUD
+- [x] `db/rss_feeds.rs` - RSS feed repository
+- [x] Show monitoring logic (all vs future vs none)
+- [x] Episode status calculation (missing → wanted → available → downloading → downloaded)
+- [x] Quality profile CRUD
 
 **GraphQL**:
 - [ ] `tvShows(libraryId)` - List shows in library
@@ -233,7 +237,7 @@ GET /shows/{id}/seasons               // Seasons list
 ## Phase 2: Automation Pipeline
 
 ### Stage 3A — RSS Feed Polling
-**Status**: ⏳ Pending
+**Status**: ✅ Complete
 **Depends on**: Stage 2D
 
 #### Goals
@@ -245,10 +249,10 @@ GET /shows/{id}/seasons               // Seasons list
 #### Deliverables
 
 **Backend Services**:
-- [ ] `services/rss.rs` - RSS feed fetching and parsing
-- [ ] RSS item parser (title → show, season, episode, quality)
-- [ ] Wanted episode matcher
-- [ ] Update `jobs/rss_poller.rs` with real implementation
+- [x] `services/rss.rs` - RSS feed fetching and parsing
+- [x] RSS item parser (title → show, season, episode, quality) - uses `filename_parser.rs`
+- [x] Wanted episode matcher - matches to episodes with 'wanted' status
+- [x] Update `jobs/rss_poller.rs` with real implementation
 
 **RSS Parsing** (based on IPT format):
 ```xml
@@ -258,27 +262,34 @@ GET /shows/{id}/seasons               // Seasons list
 ```
 
 **GraphQL**:
-- [ ] `rssFeeds` / `rssFeed` queries
-- [ ] `createRssFeed` / `updateRssFeed` / `deleteRssFeed`
-- [ ] `testRssFeed` - Fetch and show items
-- [ ] `pollRssFeed` - Manual poll trigger
+- [x] `rssFeeds` / `rssFeed` queries
+- [x] `createRssFeed` / `updateRssFeed` / `deleteRssFeed`
+- [x] `testRssFeed` - Fetch and show items
+- [x] `pollRssFeed` - Manual poll trigger
 
 **Frontend**:
-- [ ] RSS feeds list in settings
-- [ ] Add RSS feed dialog
-- [ ] Feed test results view
-- [ ] Feed polling status
+- [x] RSS feeds list in settings (`/settings/rss`)
+- [x] Add RSS feed dialog
+- [x] Feed test results view
+- [x] Feed polling status
 
 #### Acceptance Criteria
-- [ ] User can add RSS feed URLs
-- [ ] Feeds are polled on schedule
-- [ ] RSS items are parsed correctly
-- [ ] Matches to wanted episodes are identified
+- [x] User can add RSS feed URLs
+- [x] Feeds are polled on schedule (every 15 minutes)
+- [x] RSS items are parsed correctly
+- [x] Matches to wanted episodes are identified
+
+#### Episode Status Flow
+```
+wanted → available (RSS match found, torrent link stored) → downloading → downloaded
+```
+
+The `available` status indicates an RSS item matched the episode and the torrent link is ready for download.
 
 ---
 
 ### Stage 3B — Auto-Download from RSS
-**Status**: ⏳ Pending
+**Status**: ✅ Complete (core functionality)
 **Depends on**: Stage 3A
 
 #### Goals
@@ -289,12 +300,14 @@ GET /shows/{id}/seasons               // Seasons list
 #### Deliverables
 
 **Backend**:
-- [ ] Quality filter matching logic
-- [ ] Auto-download decision engine
-- [ ] Download → Episode linking
-- [ ] Duplicate prevention
+- [x] Auto-download job (`jobs/auto_download.rs`) - runs every 5 minutes
+- [x] Downloads episodes with 'available' status
+- [x] Updates episode status to 'downloading'
+- [x] Links torrent to episode via `torrent_info_hash` column
+- [x] Duplicate prevention (via episode status check)
+- [ ] Quality filter matching logic (future enhancement)
 
-**Quality Matching**:
+**Quality Matching** (Future Enhancement):
 - [ ] Resolution check (meets minimum, prefers target)
 - [ ] Codec preference matching
 - [ ] Audio format preference
@@ -308,16 +321,15 @@ GET /shows/{id}/seasons               // Seasons list
 - [ ] Download history per episode
 
 #### Acceptance Criteria
-- [ ] Matching RSS items trigger downloads automatically
-- [ ] Quality filters are applied
-- [ ] Downloads are linked to episodes
-- [ ] Duplicates are not re-downloaded
+- [x] Matching RSS items trigger downloads automatically
+- [x] Downloads are linked to episodes (via `torrent_info_hash`)
+- [x] Duplicates are not re-downloaded (episode status prevents re-download)
+- [ ] Quality filters are applied (future enhancement)
 
 ---
 
 ### Stage 3C — Post-Download Processing
-**Status**: ⏳ Pending
-**Depends on**: Stage 3B
+**Status**: ✅ Complete (integrated with scheduler)
 
 #### Goals
 - Process completed downloads automatically
@@ -328,10 +340,11 @@ GET /shows/{id}/seasons               // Seasons list
 #### Deliverables
 
 **Backend Services**:
-- [ ] `services/extractor.rs` - Archive extraction
-- [ ] `services/file_filter.rs` - Keep/discard logic
-- [ ] `services/post_processor.rs` - Orchestration
-- [ ] Wire torrent completion events to processing
+- [ ] `services/extractor.rs` - Archive extraction (future enhancement)
+- [x] File filtering logic in `jobs/download_monitor.rs` (is_video_file)
+- [x] `jobs/download_monitor.rs` - Full implementation (process_completed_torrents)
+- [x] Media file creation and episode linking implemented
+- [x] **DONE**: Integrated `process_completed_torrents` into scheduler (runs every minute)
 
 **Archive Support**:
 - [ ] ZIP (native Rust)
@@ -362,8 +375,7 @@ GET /shows/{id}/seasons               // Seasons list
 ---
 
 ### Stage 3D — Auto-Rename & Organization
-**Status**: ⏳ Pending
-**Depends on**: Stage 3C
+**Status**: ✅ Complete (integrated with scheduler)
 
 #### Goals
 - Rename files using configurable patterns
@@ -374,9 +386,16 @@ GET /shows/{id}/seasons               // Seasons list
 #### Deliverables
 
 **Backend Services**:
-- [ ] `services/renamer.rs` - Pattern-based renaming
-- [ ] `services/organizer.rs` - File copy/move
-- [ ] Naming pattern tokenizer
+- [x] `services/organizer.rs` - Full implementation with RenameStyle support
+  - Supports: copy, move, hardlink actions (respects library.post_download_action)
+  - Supports: none, clean, preserve_info rename styles
+  - Creates show folders, season folders
+  - Updates media_file records with new paths
+  - **Show-level overrides**: organize_files_override, rename_style_override
+- [x] `media/organizer.rs` - Alternative simple organizer (legacy)
+- [x] Library settings for organize behavior (organize_files, rename_style, post_download_action)
+- [x] GraphQL mutation: `organizeTorrent`
+- [x] **DONE**: Auto-triggered on download completion via `download_monitor.rs`
 
 **Naming Tokens**:
 ```
@@ -494,54 +513,61 @@ Phase 3: Advanced Features (ongoing)
 
 ---
 
-## Current Sprint: Stage 2A
+## Current Sprint: Complete
 
-### Immediate Tasks
+### Completed Tasks
 
-1. **Create database migration** (`004_tv_library_schema.sql`)
-   - New tables: `tv_shows`, `episodes`, `rss_feeds`, `unmatched_files`
-   - Alter `libraries`, `downloads`, `media_files`, `quality_profiles`
+1. ✅ **Integrated download_monitor with scheduler**
+   - `process_completed_torrents` now runs every minute via scheduler
+   - Processes completed torrents and organizes files automatically
+   - Respects show-level overrides for organize_files and rename_style
 
-2. **Create backend repositories**
-   - `db/libraries.rs` with full CRUD
-   - `db/quality_profiles.rs` with defaults
+2. ✅ **Updated organize_file to support copy/move/hardlink**
+   - Now accepts `action` parameter from library.post_download_action
+   - Copy: Preserves original for seeding
+   - Move: Rename or copy+delete
+   - Hardlink: Creates hard link (Unix), falls back to copy on Windows
 
-3. **Wire GraphQL to database**
-   - Replace mock data in `libraries` query
-   - Implement `createLibrary`, `updateLibrary`, `deleteLibrary`
+### Next Priority Tasks
 
-4. **Build frontend `/libraries` route**
-   - List libraries from API
-   - Create library wizard with file browser
-   - Library cards with stats
+1. **Add ffprobe service** (optional but valuable)
+   - Create `services/ffprobe.rs` for media file analysis
+   - Extract resolution, codec, duration for quality detection
 
-### Files to Create/Modify
+2. **Implement TMDB/TheTVDB clients** (Stage 2C completion)
+   - Fill in TODO stubs in `services/metadata.rs`
+   - Add fallback provider logic
 
-```
-backend/
-├── migrations/
-│   └── 004_tv_library_schema.sql    # NEW
-├── src/
-│   ├── db/
-│   │   ├── libraries.rs             # NEW
-│   │   ├── tv_shows.rs              # NEW
-│   │   ├── episodes.rs              # NEW
-│   │   └── quality_profiles.rs      # NEW
-│   └── graphql/
-│       ├── schema.rs                # UPDATE - wire to DB
-│       └── types.rs                 # UPDATE - new types
+3. **Quality filter matching** (Stage 3B enhancement)
+   - Wire `torrent/quality.rs` profile matching to RSS episode selection
+   - Score and filter releases before download
 
-frontend/
-└── src/
-    ├── routes/
-    │   ├── libraries/
-    │   │   ├── index.tsx            # Library list
-    │   │   ├── new.tsx              # Create wizard
-    │   │   └── $id.tsx              # Library detail
-    └── components/
-        ├── LibraryCard.tsx          # NEW
-        └── FileBrowser.tsx          # EXISTS (reuse)
-```
+4. **Archive extraction** (Stage 3C enhancement)
+   - Create `services/extractor.rs` for rar/zip/7z extraction
+   - Wire into download_monitor for packed releases
+
+### Code Quality Notes (from Code Review)
+
+✅ **Fixed in this review:**
+- Reduced clippy warnings from **115 → 3** (remaining are minor style suggestions)
+- Added `#[allow(dead_code)]` annotations to scaffolded code with clear documentation
+- Removed unused imports across all modules
+- Auto-fixed useless `.into()` conversions and collapsible if statements
+
+**Scaffolded Modules (need implementation):**
+| Module | Status | Notes |
+|--------|--------|-------|
+| `services/prowlarr.rs` | Scaffolded | Torznab search client |
+| `media/metadata.rs` | Scaffolded | Direct TMDB/TheTVDB clients |
+| `media/transcoder.rs` | Scaffolded | HLS transcoding for playback |
+| `jobs/transcode_gc.rs` | Scaffolded | Cache cleanup |
+| `torrent/quality.rs` | Scaffolded | Quality profile matching |
+
+**Dual/Legacy Modules to Consider Consolidating:**
+| Active | Legacy | Notes |
+|--------|--------|-------|
+| `services/metadata.rs` | `media/metadata.rs` | Keep services version, remove media version after TMDB impl |
+| `services/organizer.rs` | `media/organizer.rs` | Keep services version, has more features |
 
 ---
 

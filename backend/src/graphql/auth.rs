@@ -1,6 +1,22 @@
 //! GraphQL authentication and authorization
 //!
 //! Provides JWT token verification and user context for GraphQL operations.
+//!
+//! ## Guards
+//!
+//! Use `AuthGuard` to require authentication on any GraphQL operation:
+//!
+//! ```ignore
+//! #[graphql(guard = "AuthGuard")]
+//! async fn protected_query(&self, ctx: &Context<'_>) -> Result<String> { ... }
+//! ```
+//!
+//! Use `RoleGuard` to require a specific role:
+//!
+//! ```ignore
+//! #[graphql(guard = "RoleGuard::new(\"admin\")")]
+//! async fn admin_only(&self, ctx: &Context<'_>) -> Result<String> { ... }
+//! ```
 
 use async_graphql::{Context, ErrorExtensions, Result};
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
@@ -20,14 +36,18 @@ pub struct SupabaseClaims {
     pub sub: String,
     pub email: Option<String>,
     pub role: Option<String>,
+    #[allow(dead_code)]
     pub exp: usize,
+    #[allow(dead_code)]
     pub iat: usize,
 }
 
-/// Authentication token passed via WebSocket or HTTP header
+/// Authentication token passed via WebSocket or HTTP header (for future use)
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct AuthToken(pub Option<String>);
 
+#[allow(dead_code)]
 impl AuthToken {
     pub fn new(token: Option<String>) -> Self {
         Self(token)
@@ -62,7 +82,7 @@ pub fn verify_token(token: &str) -> Result<AuthUser> {
             .extend_with(|_, e| e.set("code", "UNAUTHORIZED"))
     })?;
 
-    tracing::info!("JWT verified for user: {:?}", token_data.claims.email);
+    tracing::debug!("JWT verified for user: {:?}", token_data.claims.email);
 
     Ok(AuthUser {
         user_id: token_data.claims.sub,
@@ -76,7 +96,8 @@ pub trait AuthExt {
     /// Get the authenticated user, or return an error if not authenticated
     fn auth_user(&self) -> Result<&AuthUser>;
 
-    /// Get the authenticated user if present, or None
+    /// Get the authenticated user if present, or None (for future use)
+    #[allow(dead_code)]
     fn try_auth_user(&self) -> Option<&AuthUser>;
 }
 
@@ -93,17 +114,30 @@ impl<'a> AuthExt for Context<'a> {
     }
 }
 
-/// Guard that requires authentication
+/// Guard that requires authentication for GraphQL operations.
+/// 
+/// Use with `#[graphql(guard = "AuthGuard")]` on queries, mutations, or subscriptions.
+/// 
+/// # Example
+/// ```ignore
+/// #[graphql(guard = "AuthGuard")]
+/// async fn my_protected_query(&self, ctx: &Context<'_>) -> Result<String> {
+///     // Only authenticated users can reach here
+///     Ok("secret data".to_string())
+/// }
+/// ```
 pub struct AuthGuard;
 
-impl AuthGuard {
-    pub fn check(ctx: &Context<'_>) -> Result<()> {
-        ctx.auth_user()?;
-        Ok(())
+impl async_graphql::Guard for AuthGuard {
+    fn check(&self, ctx: &Context<'_>) -> impl std::future::Future<Output = Result<()>> + Send {
+        let result = ctx.auth_user().map(|_| ());
+        async move { result }
     }
 }
 
-/// Guard that requires a specific role
+/// Guard that requires a specific role for GraphQL operations.
+/// 
+/// Use with `#[graphql(guard = "RoleGuard::new(\"admin\")")]` on queries, mutations, or subscriptions.
 pub struct RoleGuard {
     pub role: String,
 }
@@ -112,16 +146,20 @@ impl RoleGuard {
     pub fn new(role: impl Into<String>) -> Self {
         Self { role: role.into() }
     }
+}
 
-    pub fn check(&self, ctx: &Context<'_>) -> Result<()> {
-        let user = ctx.auth_user()?;
-        match &user.role {
-            Some(r) if r == &self.role => Ok(()),
-            _ => Err(async_graphql::Error::new(format!(
-                "Role '{}' required",
-                self.role
-            ))
-            .extend_with(|_, e| e.set("code", "FORBIDDEN"))),
-        }
+impl async_graphql::Guard for RoleGuard {
+    fn check(&self, ctx: &Context<'_>) -> impl std::future::Future<Output = Result<()>> + Send {
+        let result = ctx.auth_user().and_then(|user| {
+            match &user.role {
+                Some(r) if r == &self.role => Ok(()),
+                _ => Err(async_graphql::Error::new(format!(
+                    "Role '{}' required",
+                    self.role
+                ))
+                .extend_with(|_, e| e.set("code", "FORBIDDEN"))),
+            }
+        });
+        async move { result }
     }
 }
