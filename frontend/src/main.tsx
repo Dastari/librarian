@@ -71,17 +71,17 @@ function InnerApp() {
       if (event === 'TOKEN_REFRESHED') {
         return
       }
-      
+
       setAuth((prev) => {
         // Only update if authentication status actually changed
         const isAuthenticated = !!session
         const sessionChanged = prev.session?.access_token !== session?.access_token
-        
+
         // Skip update if nothing meaningful changed
         if (prev.isAuthenticated === isAuthenticated && !prev.isLoading && !sessionChanged) {
           return prev // Return same reference to avoid re-render
         }
-        
+
         return {
           isAuthenticated,
           isLoading: false,
