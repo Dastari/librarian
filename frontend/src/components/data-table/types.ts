@@ -254,6 +254,9 @@ export interface DataTableProps<T> {
   /** Number of skeleton rows to show during initial loading (default: 5) */
   skeletonRowCount?: number
 
+  /** Whether to enable skeleton testing mode (adds a toggle to show/hide skeletons) */
+  enableSkeletonTesting?: boolean
+
   /** Error message to display */
   error?: string | null
 

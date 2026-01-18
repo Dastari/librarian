@@ -76,7 +76,7 @@ export function TorrentTable({
         sortable: true,
         skeleton: () => (
           <div className="flex flex-col gap-1">
-            <Skeleton className="w-48 h-4 rounded" />
+            <Skeleton className="w-full h-4 rounded" />
           </div>
         ),
         render: (torrent) => (
@@ -94,8 +94,8 @@ export function TorrentTable({
         width: 300,
         sortable: true,
         skeleton: () => (
-          <div className="flex flex-col gap-1">
-            <Skeleton className="w-full h-2 rounded" />
+          <div className="flex flex-row gap-4 items-center">
+            <Skeleton className="w-full h-4 rounded" />
             <Skeleton className="w-10 h-3 rounded" />
           </div>
         ),
@@ -141,7 +141,7 @@ export function TorrentTable({
         width: 120,
         sortable: true,
         skeleton: () => (
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 pt-1">
             <Skeleton className="w-20 h-3 rounded" />
             <Skeleton className="w-20 h-3 rounded" />
             <Skeleton className="w-16 h-3 rounded" />

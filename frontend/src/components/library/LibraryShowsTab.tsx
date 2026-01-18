@@ -209,22 +209,22 @@ export function LibraryShowsTab({ shows, onDeleteShow, onAddShow }: LibraryShows
     [onDeleteShow]
   )
 
-  if (shows.length === 0) {
-    return (
-      <Card className="bg-content1/50 border-default-300 border-dashed border-2 w-full">
-        <CardBody className="py-12 text-center">
-          <span className="text-5xl mb-4 block">📺</span>
-          <h3 className="text-lg font-semibold mb-2">No shows yet</h3>
-          <p className="text-default-500 mb-4">
-            Add TV shows to start tracking episodes.
-          </p>
-          <Button color="primary" onPress={onAddShow}>
-            Add Your First Show
-          </Button>
-        </CardBody>
-      </Card>
-    )
-  }
+  // if (shows.length === 0) {
+  //   return (
+  //     <Card className="bg-content1/50 border-default-300 border-dashed border-2 w-full">
+  //       <CardBody className="py-12 text-center">
+  //         <span className="text-5xl mb-4 block">📺</span>
+  //         <h3 className="text-lg font-semibold mb-2">No shows yet</h3>
+  //         <p className="text-default-500 mb-4">
+  //           Add TV shows to start tracking episodes.
+  //         </p>
+  //         <Button color="primary" onPress={onAddShow}>
+  //           Add Your First Show
+  //         </Button>
+  //       </CardBody>
+  //     </Card>
+  //   )
+  // }
 
   return (
     <div className="flex flex-col grow w-full">
