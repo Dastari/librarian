@@ -2,6 +2,7 @@ import { useMemo, useCallback, useState, type Key, type ReactNode } from 'react'
 import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, type SortDescriptor } from '@heroui/table'
 import { Button, ButtonGroup } from '@heroui/button'
 import { Input } from '@heroui/input'
+import { Switch } from '@heroui/switch'
 import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
 import { Chip } from '@heroui/chip'
 import { Tooltip } from '@heroui/tooltip'
@@ -257,6 +258,7 @@ export function DataTable<T>({
   getRowKey,
   isLoading = false,
   skeletonRowCount = 5,
+  enableSkeletonTesting = false,
   emptyContent,
   isPinned,
 
@@ -349,6 +351,9 @@ export function DataTable<T>({
     message: string
     onConfirm: () => Promise<void> | void
   } | null>(null)
+
+  // Skeleton testing state
+  const [isSkeletonTesting, setIsSkeletonTesting] = useState(false)
 
   // Use controlled state or internal state
   const sortColumn = controlledSortColumn ?? tableState.sortColumn
@@ -728,6 +733,20 @@ export function DataTable<T>({
                 </ButtonGroup>
               )}
 
+              {/* Skeleton testing toggle */}
+              {enableSkeletonTesting && (
+                <Switch
+                  size="sm"
+                  isSelected={isSkeletonTesting}
+                  onValueChange={setIsSkeletonTesting}
+                  classNames={{
+                    label: 'text-sm text-default-500',
+                  }}
+                >
+                  Skeletons
+                </Switch>
+              )}
+
               {toolbarContentPosition === 'end' && toolbarContent}
             </div>
           </div>
@@ -836,11 +855,16 @@ export function DataTable<T>({
             <TableBody
               items={(() => {
                 // Build items array with skeleton rows, data rows, and optional sentinel row
+                if (isSkeletonTesting) {
+                  // Show skeleton rows during skeleton testing mode
+                  return Array.from({ length: skeletonRowCount }).map((_, i) => ({ _skeletonId: i }) as unknown as T)
+                }
+
                 if (isLoading && data.length === 0) {
                   // Show skeleton rows during initial loading
                   return Array.from({ length: skeletonRowCount }).map((_, i) => ({ _skeletonId: i }) as unknown as T)
                 }
-                
+
                 const items: T[] = [...paginatedData]
                 
                 // Add skeleton rows when loading more
