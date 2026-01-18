@@ -125,22 +125,31 @@ export function AddShowModal({
         <ModalBody>
           {!selectedShow ? (
             <div className="space-y-4">
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Search for a TV show..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                  className="flex-1"
-                />
-                <Button
-                  color="primary"
-                  onPress={handleSearch}
-                  isLoading={searching}
-                >
-                  Search
-                </Button>
-              </div>
+              <Input
+                label="Search TV Shows"
+                labelPlacement="inside"
+                variant="flat"
+                placeholder="Search for a TV show..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                className="flex-1"
+                classNames={{
+                  label: 'text-sm font-medium text-primary!',
+                }}
+                endContent={
+                  <Button
+                    size="sm"
+                    variant="light"
+                    color="primary"
+                    className="font-semibold"
+                    onPress={handleSearch}
+                    isLoading={searching}
+                  >
+                    Search
+                  </Button>
+                }
+              />
 
               {searching ? (
                 <div className="flex justify-center py-8">

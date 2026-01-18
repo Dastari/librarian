@@ -20,6 +20,10 @@ interface CastButtonProps {
   startPosition?: number;
   /** Button size */
   size?: 'sm' | 'md' | 'lg';
+  /** Button variant override */
+  variant?: 'solid' | 'bordered' | 'light' | 'flat' | 'faded' | 'shadow' | 'ghost';
+  /** Additional class names for the button */
+  className?: string;
   /** Called when cast starts */
   onCastStart?: () => void;
   /** Called on error */
@@ -31,6 +35,8 @@ export function CastButton({
   episodeId,
   startPosition,
   size = 'sm',
+  variant,
+  className,
   onCastStart,
   onError,
 }: CastButtonProps) {
@@ -73,11 +79,12 @@ export function CastButton({
         <Button
           isIconOnly={size === 'sm'}
           size={size}
-          variant={isCastingThisMedia ? 'solid' : 'flat'}
+          variant={isCastingThisMedia ? 'solid' : (variant || 'flat')}
           color={isCastingThisMedia ? 'primary' : 'default'}
+          className={className}
           isLoading={isCasting}
         >
-          <IconCast size={size === 'sm' ? 16 : 20} />
+          <IconCast size={size === 'lg' ? 24 : 20} />
           {size !== 'sm' && <span className="ml-2">Cast</span>}
         </Button>
       </DropdownTrigger>

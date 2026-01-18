@@ -388,31 +388,37 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
         </div>
 
         {/* Path Input */}
-        <div className="flex items-center gap-2">
-          <Input
-            value={inputPath}
-            onChange={(e) => setInputPath(e.target.value)}
-            onKeyDown={handlePathInputKeyDown}
-            className="flex-1"
-            classNames={{
-              input: 'font-mono text-sm',
-            }}
-            size="sm"
-            placeholder="/path/to/folder"
-          />
-          <Button size="sm" onPress={() => navigateTo(inputPath)}>
-            Go
-          </Button>
-          <Button
-            size="sm"
-            variant="flat"
-            isLoading={loading}
-            onPress={() => fetchDirectory(currentPath)}
-            startContent={<IconRefresh size={16} />}
-          >
-            Refresh
-          </Button>
-        </div>
+        <Input
+          label="Path"
+          labelPlacement="inside"
+          variant="flat"
+          value={inputPath}
+          onChange={(e) => setInputPath(e.target.value)}
+          onKeyDown={handlePathInputKeyDown}
+          className="flex-1"
+          classNames={{
+            input: 'font-mono text-sm',
+            label: 'text-sm font-medium text-primary!',
+          }}
+          size="sm"
+          placeholder="/path/to/folder"
+          endContent={
+            <div className="flex items-center gap-1">
+              <Button size="sm" variant="light" color="primary" className="font-semibold" onPress={() => navigateTo(inputPath)}>
+                Go
+              </Button>
+              <Button
+                size="sm"
+                variant="light"
+                isLoading={loading}
+                onPress={() => fetchDirectory(currentPath)}
+                isIconOnly
+              >
+                <IconRefresh size={16} />
+              </Button>
+            </div>
+          }
+        />
 
         {/* Quick Paths */}
         {quickPaths.length > 0 && (

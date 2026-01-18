@@ -5,17 +5,30 @@
 //! 2. Checks library and show settings to determine if auto-download is enabled
 //! 3. Starts downloading enabled episodes via the torrent service
 //! 4. Updates episode status to 'downloading'
+//!
+//! Uses bounded concurrency to prevent overwhelming the torrent service.
 
 use anyhow::Result;
 use sqlx::PgPool;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::time::Duration;
+use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::db::Database;
 use crate::services::TorrentService;
 
+/// Maximum concurrent download starts
+const MAX_CONCURRENT_DOWNLOADS: usize = 3;
+
+/// Delay between download batches (ms)
+const BATCH_DELAY_MS: u64 = 500;
+
 /// Check for available episodes and start downloading them
+/// 
+/// Uses bounded concurrency to prevent overwhelming the torrent client.
 pub async fn process_available_episodes(
     pool: PgPool,
     torrent_service: Arc<TorrentService>,
@@ -41,157 +54,197 @@ pub async fn process_available_episodes(
     info!(
         job = "auto_download",
         episode_count = available_episodes.len(),
+        max_concurrent = MAX_CONCURRENT_DOWNLOADS,
         "Found available episodes to download"
     );
 
-    let mut downloaded = 0;
-    let mut skipped = 0;
-    let mut failed = 0;
+    // Atomic counters for thread-safe progress tracking
+    let downloaded = Arc::new(AtomicI32::new(0));
+    let skipped = Arc::new(AtomicI32::new(0));
+    let failed = Arc::new(AtomicI32::new(0));
+    
+    // Semaphore to limit concurrent downloads
+    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS));
+    
+    // Process episodes in chunks
+    let chunk_size = MAX_CONCURRENT_DOWNLOADS;
+    
+    for chunk in available_episodes.chunks(chunk_size) {
+        let mut handles = Vec::with_capacity(chunk.len());
+        
+        for episode in chunk {
+            let db = db.clone();
+            let torrent_service = torrent_service.clone();
+            let semaphore = semaphore.clone();
+            let downloaded = downloaded.clone();
+            let skipped = skipped.clone();
+            let failed = failed.clone();
+            let episode = episode.clone();
+            
+            let handle = tokio::spawn(async move {
+                let _permit = semaphore.acquire().await.expect("Semaphore closed");
+                
+                // Get show info
+                let show = match db.tv_shows().get_by_id(episode.tv_show_id).await {
+                    Ok(Some(s)) => s,
+                    _ => {
+                        warn!(
+                            job = "auto_download",
+                            episode_id = %episode.id,
+                            "Skipping episode: no associated show found"
+                        );
+                        return;
+                    }
+                };
 
-    for episode in available_episodes {
-        // Get show info
-        let show = match db.tv_shows().get_by_id(episode.tv_show_id).await? {
-            Some(s) => s,
-            None => {
-                warn!(
-                    job = "auto_download",
-                    episode_id = %episode.id,
-                    "Skipping episode: no associated show found"
-                );
-                continue;
-            }
-        };
+                // Get library info
+                let library = match db.libraries().get_by_id(show.library_id).await {
+                    Ok(Some(l)) => l,
+                    _ => {
+                        warn!(
+                            job = "auto_download",
+                            show_id = %show.id,
+                            show_name = %show.name,
+                            "Skipping show: no associated library found"
+                        );
+                        return;
+                    }
+                };
 
-        // Get library info
-        let library = match db.libraries().get_by_id(show.library_id).await? {
-            Some(l) => l,
-            None => {
-                warn!(
-                    job = "auto_download",
-                    show_id = %show.id,
-                    show_name = %show.name,
-                    "Skipping show: no associated library found"
-                );
-                continue;
-            }
-        };
+                // Check if auto-download is enabled
+                let auto_download_enabled = match show.auto_download_override {
+                    Some(override_value) => override_value,
+                    None => library.auto_download,
+                };
 
-        // Check if auto-download is enabled
-        // Show override takes precedence, then fall back to library setting
-        let auto_download_enabled = match show.auto_download_override {
-            Some(override_value) => override_value,
-            None => library.auto_download,
-        };
+                if !auto_download_enabled {
+                    debug!(
+                        job = "auto_download",
+                        show_name = %show.name,
+                        show_override = ?show.auto_download_override,
+                        library_setting = library.auto_download,
+                        "Auto-download disabled for show, skipping"
+                    );
+                    skipped.fetch_add(1, Ordering::SeqCst);
+                    return;
+                }
 
-        if !auto_download_enabled {
-            debug!(
-                job = "auto_download",
-                show_name = %show.name,
-                show_override = ?show.auto_download_override,
-                library_setting = library.auto_download,
-                "Auto-download disabled for show, skipping"
-            );
-            skipped += 1;
-            continue;
-        }
+                let torrent_link = match &episode.torrent_link {
+                    Some(link) => link.clone(),
+                    None => {
+                        warn!(
+                            job = "auto_download",
+                            show_name = %show.name,
+                            season = episode.season,
+                            episode = episode.episode,
+                            "Skipping episode: no torrent link available"
+                        );
+                        return;
+                    }
+                };
 
-        let torrent_link = match &episode.torrent_link {
-            Some(link) => link.clone(),
-            None => {
-                warn!(
-                    job = "auto_download",
-                    show_name = %show.name,
-                    season = episode.season,
-                    episode = episode.episode,
-                    "Skipping episode: no torrent link available"
-                );
-                continue;
-            }
-        };
-
-        info!(
-            job = "auto_download",
-            show_name = %show.name,
-            season = episode.season,
-            episode = episode.episode,
-            "Starting download for {} S{:02}E{:02}",
-            show.name,
-            episode.season,
-            episode.episode
-        );
-
-        // Try to add the torrent
-        // The torrent link could be a .torrent URL or a magnet link
-        let add_result = if torrent_link.starts_with("magnet:") {
-            torrent_service.add_magnet(&torrent_link, None).await
-        } else {
-            torrent_service.add_torrent_url(&torrent_link, None).await
-        };
-
-        match add_result {
-            Ok(torrent_info) => {
                 info!(
                     job = "auto_download",
                     show_name = %show.name,
                     season = episode.season,
                     episode = episode.episode,
-                    torrent_id = torrent_info.id,
-                    torrent_name = %torrent_info.name,
-                    "Successfully started download for {} S{:02}E{:02}",
-                    show.name, episode.season, episode.episode
+                    "Starting download for {} S{:02}E{:02}",
+                    show.name,
+                    episode.season,
+                    episode.episode
                 );
 
-                // Link torrent to episode for post-processing
-                if let Err(e) = db
-                    .torrents()
-                    .link_to_episode(&torrent_info.info_hash, episode.id)
-                    .await
-                {
-                    error!(
-                        job = "auto_download",
-                        show_name = %show.name,
-                        error = %e,
-                        "Failed to link torrent to episode"
-                    );
-                }
+                // Try to add the torrent
+                let add_result = if torrent_link.starts_with("magnet:") {
+                    torrent_service.add_magnet(&torrent_link, None).await
+                } else {
+                    torrent_service.add_torrent_url(&torrent_link, None).await
+                };
 
-                // Update episode status to 'downloading'
-                if let Err(e) = db.episodes().mark_downloading(episode.id).await {
-                    error!(
-                        job = "auto_download",
-                        show_name = %show.name,
-                        episode_id = %episode.id,
-                        error = %e,
-                        "Failed to update episode status to downloading"
-                    );
-                }
+                match add_result {
+                    Ok(torrent_info) => {
+                        info!(
+                            job = "auto_download",
+                            show_name = %show.name,
+                            season = episode.season,
+                            episode = episode.episode,
+                            torrent_id = torrent_info.id,
+                            torrent_name = %torrent_info.name,
+                            "Successfully started download for {} S{:02}E{:02}",
+                            show.name, episode.season, episode.episode
+                        );
 
-                downloaded += 1;
+                        // Link torrent to episode for post-processing
+                        if let Err(e) = db
+                            .torrents()
+                            .link_to_episode(&torrent_info.info_hash, episode.id)
+                            .await
+                        {
+                            error!(
+                                job = "auto_download",
+                                show_name = %show.name,
+                                error = %e,
+                                "Failed to link torrent to episode"
+                            );
+                        }
+
+                        // Update episode status to 'downloading'
+                        if let Err(e) = db.episodes().mark_downloading(episode.id).await {
+                            error!(
+                                job = "auto_download",
+                                show_name = %show.name,
+                                episode_id = %episode.id,
+                                error = %e,
+                                "Failed to update episode status to downloading"
+                            );
+                        }
+
+                        downloaded.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(e) => {
+                        error!(
+                            job = "auto_download",
+                            show_name = %show.name,
+                            season = episode.season,
+                            episode = episode.episode,
+                            error = %e,
+                            "Failed to start download for {} S{:02}E{:02}",
+                            show.name, episode.season, episode.episode
+                        );
+                        failed.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            });
+            
+            handles.push(handle);
+        }
+        
+        // Wait for all downloads in this chunk to start
+        for handle in handles {
+            if let Err(e) = handle.await {
+                error!(job = "auto_download", error = %e, "Download task panicked");
             }
-            Err(e) => {
-                error!(
-                    job = "auto_download",
-                    show_name = %show.name,
-                    season = episode.season,
-                    episode = episode.episode,
-                    error = %e,
-                    "Failed to start download for {} S{:02}E{:02}",
-                    show.name, episode.season, episode.episode
-                );
-                failed += 1;
-            }
+        }
+        
+        // Small delay between chunks
+        if BATCH_DELAY_MS > 0 {
+            tokio::time::sleep(Duration::from_millis(BATCH_DELAY_MS)).await;
         }
     }
 
+    let final_downloaded = downloaded.load(Ordering::SeqCst);
+    let final_skipped = skipped.load(Ordering::SeqCst);
+    let final_failed = failed.load(Ordering::SeqCst);
+
     info!(
         job = "auto_download",
-        downloaded = downloaded,
-        skipped = skipped,
-        failed = failed,
+        downloaded = final_downloaded,
+        skipped = final_skipped,
+        failed = final_failed,
         "Auto-download job complete: {} started, {} skipped (disabled), {} failed",
-        downloaded,
-        skipped,
-        failed
+        final_downloaded,
+        final_skipped,
+        final_failed
     );
 
     Ok(())

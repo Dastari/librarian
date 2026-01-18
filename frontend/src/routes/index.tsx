@@ -108,7 +108,7 @@ function HomePage() {
     return (
       <div className="relative h-[calc(100vh-4rem)] overflow-hidden w-full">
         {/* 3D Album Art Carousel Background */}
-        <div className="absolute inset-0 bg-gradient-to-br from-blue-950 via-purple-950 to-slate-950">
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-400 via-purple-500 to-indigo-600 dark:from-blue-950 dark:via-purple-950 dark:to-slate-950">
           <AlbumArtCarousel />
         </div>
 
@@ -117,12 +117,14 @@ function HomePage() {
 
         {/* Content */}
         <div className="relative flex flex-col items-center justify-center h-full px-4">
+          {/* Large logo */}
+          <img src="/logo.svg" alt="" className="h-24 w-24 md:h-32 md:w-32 mb-6 drop-shadow-2xl" />
+          
           <h1 className="text-5xl md:text-6xl font-bold mb-4 text-center drop-shadow-4xl">
-            Welcome to Librarian
+            Welcome to <span style={{ fontFamily: '"Playwrite Australia SA", cursive' }}>Librarian</span>
           </h1>
           <p className="text-default-600 text-xl mb-8 text-center max-w-md drop-shadow-lg">
-            Your local-first, privacy-preserving media library. Sign in to access
-            your collection.
+            Self-hosted media automation: discover, download, organize, and stream your collection.
           </p>
           <Button color="primary" size="lg" className="shadow-2xl" onPress={onOpen}>
             Get Started
@@ -144,22 +146,22 @@ function HomePage() {
     <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Hero section with 3D album art carousel */}
       <Card className="mb-8 overflow-hidden">
-        <div className="relative h-56 md:h-72 bg-gradient-to-br from-blue-950 via-purple-950 to-slate-950">
+        <div className="relative h-56 md:h-72 bg-gradient-to-br from-blue-400 via-purple-500 to-indigo-600 dark:from-blue-950 dark:via-purple-950 dark:to-slate-950">
           {/* 3D Album Art Carousel */}
           <AlbumArtCarousel />
 
-          {/* Content overlay */}
-          <div className="absolute inset-0 bg-gradient-to-t from-background/95 via-background/30 to-transparent pointer-events-none" />
+          {/* Content overlay - fade to primary-900 for better text contrast */}
+          <div className="absolute inset-0 bg-gradient-to-t from-primary-900/95 via-primary-900/40 to-transparent pointer-events-none" />
 
           {/* Text content */}
           <div className="absolute bottom-0 left-0 p-6 md:p-8 z-10">
-            <h1 className="text-2xl md:text-4xl font-bold mb-2 drop-shadow-lg">
+            <h1 className="text-2xl md:text-4xl font-bold mb-2 drop-shadow-lg text-white">
               Welcome back!
             </h1>
-            <p className="text-default-400 drop-shadow-md">
+            <p className="text-white/70 drop-shadow-md">
               Your media library at a glance
               {isFetching && isStale && (
-                <span className="ml-2 text-xs text-primary animate-pulse">• Refreshing...</span>
+                <span className="ml-2 text-xs text-primary-200 animate-pulse">• Refreshing...</span>
               )}
             </p>
           </div>
@@ -231,7 +233,7 @@ function HomePage() {
         <section className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold">Recently Added Shows</h2>
-            <Link to="/subscriptions">
+            <Link to="/libraries">
               <Button variant="light" color="primary" size="sm">
                 View All →
               </Button>

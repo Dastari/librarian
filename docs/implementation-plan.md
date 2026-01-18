@@ -24,10 +24,13 @@
 | Stage 2D | ✅ Complete | Show management with episode tracking and monitoring |
 | Stage 3A | ✅ Complete | RSS feed polling with episode matching |
 | Stage 3B | ✅ Complete | Auto-download from RSS (core functionality done, quality filters are future enhancement) |
-| Stage 3C | ✅ Complete | Post-download processing integrated with scheduler (runs every minute) |
+| Stage 3C | ✅ Complete | Post-download processing with auto-matching and organization |
 | Stage 3D | ✅ Complete | Auto-organization with show-level overrides, respects copy/move/hardlink |
 | Stage 4 | ✅ Complete | Native torrent client (librqbit) + GraphQL subscriptions |
 | Stage 5 | ✅ Complete | Chromecast casting with device discovery, media streaming, playback controls |
+| Stage 6 | ✅ Complete | Multi-indexer search ("Hunt") with authenticated downloads |
+| Stage 7 | ✅ Complete | Unified content acquisition: search, download, match, organize pipeline |
+| Stage 8 | ✅ Complete | Library consolidation for cleaning up duplicate folders |
 
 ### Key Decisions Made
 
@@ -513,6 +516,115 @@ Phase 3: Advanced Features (ongoing)
 
 Phase 4: Media Playback & Casting
 └── Stage 5: Chromecast/Google Cast ✅ COMPLETE
+
+Phase 5: Unified Content Acquisition
+├── Stage 6: Multi-Indexer Search ("Hunt") ✅ COMPLETE
+├── Stage 7: Unified Download Pipeline ✅ COMPLETE
+└── Stage 8: Library Consolidation ✅ COMPLETE
+```
+
+---
+
+## Stage 6: Multi-Indexer Search ("Hunt") (Completed)
+
+### Goals
+- Search for content across all configured indexers simultaneously
+- Support authenticated downloads from private trackers
+- Deep linking from episode pages to pre-filled search
+
+### Deliverables
+
+**Backend (Rust)**:
+- ✅ `indexer/manager.rs` - Manages indexer instances
+- ✅ `indexer/encryption.rs` - AES-256-GCM credential encryption
+- ✅ `indexer/definitions/iptorrents.rs` - IPTorrents scraper
+- ✅ `indexer/torznab/` - Torznab protocol support
+- ✅ GraphQL query: `searchIndexers(input: IndexerSearchInput!)`
+- ✅ Authenticated `.torrent` file downloads
+
+**Frontend (React)**:
+- ✅ `/hunt` route - Search across indexers
+- ✅ `/search` route - Local library search (navbar modal)
+- ✅ `SearchModal.tsx` - Keyboard-accessible search (Cmd/Ctrl+K)
+- ✅ `AddToLibraryModal.tsx` - Download + add to library flow
+
+---
+
+## Stage 7: Unified Download Pipeline (Completed)
+
+### Goals
+- Automatic matching of downloads to episodes
+- Seamless organization after download completion
+- Support for torrents without explicit library context
+
+### Deliverables
+
+**Backend (Rust)**:
+- ✅ Auto-match at add time (`add_torrent` mutation)
+- ✅ `process_no_library` - Match against all user's TV libraries
+- ✅ `process_unlinked` - Match within a specific library
+- ✅ Episode status updates (Downloading → Downloaded)
+- ✅ Startup processing for torrents completed while offline
+
+### Flow
+```
+User downloads from Hunt
+    ↓
+add_torrent mutation (with optional library_id)
+    ↓
+Auto-match: parse filename → find show → find episode
+    ↓
+Link torrent to episode, set status = "Downloading"
+    ↓
+Download completes (librqbit)
+    ↓
+download_monitor job (every minute)
+    ↓
+process_completed_torrents
+    ↓
+Create media file, run organizer, set status = "Downloaded"
+```
+
+---
+
+## Stage 8: Library Consolidation (Completed)
+
+### Goals
+- Clean up duplicate folders from naming convention changes
+- Merge files from old folder structures to new
+- Update database paths to reflect actual file locations
+
+### Deliverables
+
+**Backend (Rust)**:
+- ✅ `consolidate_library` in `services/organizer.rs`
+- ✅ `move_folder_contents` - Recursive file moving
+- ✅ `remove_empty_folder` - Cleanup after consolidation
+- ✅ `organize_root_files` - Handle loose files in library root
+- ✅ `update_media_file_paths` - Sync database with filesystem
+- ✅ GraphQL mutation: `consolidateLibrary(id: String!)`
+
+**Frontend (React)**:
+- ✅ "Consolidate" button on library detail page
+- ✅ Progress feedback via toast notifications
+
+### Use Case
+```
+Before:
+/TV Shows/
+├── Girl Taken/           ← Old naming (no year)
+│   └── Season 01/
+├── Girl Taken (2026)/    ← New naming (with year)
+│   └── Season 01/
+└── Fallout/              ← Old naming
+    └── Season 01/
+
+After consolidateLibrary():
+/TV Shows/
+├── Girl Taken (2026)/    ← All files merged here
+│   └── Season 01/
+└── Fallout (2024)/       ← All files merged here
+    └── Season 01/
 ```
 
 ---
@@ -553,7 +665,45 @@ Phase 4: Media Playback & Casting
 
 ## Current Sprint: Complete
 
-### Completed Tasks
+### Recently Completed Tasks (January 2026)
+
+1. ✅ **Unified Search & Hunt System**
+   - `/hunt` route for searching across all configured indexers
+   - `/search` route (navbar modal) for searching local library content
+   - Global keyboard shortcut (Cmd/Ctrl+K) opens local search modal
+   - Deep linking support with query parameters via `nuqs`
+
+2. ✅ **Auto-Matching at Download Time**
+   - When torrents are added, they're matched to episodes via filename parsing
+   - Episode status updates to "Downloading" immediately
+   - Works with both library-linked and unlinked torrents
+
+3. ✅ **Enhanced Post-Download Processing**
+   - `process_no_library`: Matches torrents against ALL user libraries
+   - `process_unlinked`: Matches files within a library
+   - Automatic organization after matching (copy/move to proper folders)
+   - Episode status updates to "Downloaded" after organization
+
+4. ✅ **Authenticated Torrent Downloads**
+   - Private tracker support (IPTorrents, etc.)
+   - Stores and uses indexer credentials for .torrent file downloads
+   - AES-256-GCM encryption for stored credentials
+
+5. ✅ **Library Consolidation Feature**
+   - `consolidateLibrary` mutation to merge duplicate folders
+   - Handles naming convention changes (e.g., "Show" → "Show (2024)")
+   - Moves files, removes empty folders, updates database paths
+   - UI button on library page
+
+6. ✅ **Quality Badge Improvements**
+   - Shows all selected resolutions (e.g., "4K/1080p" instead of just "4K")
+   - Detailed tooltips with full quality criteria
+
+7. ✅ **Startup Torrent Processing**
+   - Processes any completed torrents that weren't organized when server was down
+   - Runs 5 seconds after server startup
+
+### Previous Completed Tasks
 
 1. ✅ **Integrated download_monitor with scheduler**
    - `process_completed_torrents` now runs every minute via scheduler
@@ -583,6 +733,10 @@ Phase 4: Media Playback & Casting
 4. **Archive extraction** (Stage 3C enhancement)
    - Create `services/extractor.rs` for rar/zip/7z extraction
    - Wire into download_monitor for packed releases
+
+5. **Movies, Music, Audiobooks UI**
+   - Database schema ready (migrations 018-020)
+   - Need frontend routes and components
 
 ### Code Quality Notes (from Code Review)
 

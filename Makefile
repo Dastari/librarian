@@ -26,11 +26,19 @@ help:
 	@echo "  make db-migrate-revert - Revert the last migration"
 	@echo "  make db-migrate-add NAME=<name> - Create a new migration"
 	@echo ""
-	@echo "Docker:"
+	@echo "Docker (Development):"
 	@echo "  make docker-up      - Start all Docker services"
 	@echo "  make docker-down    - Stop all Docker services"
 	@echo "  make docker-logs    - View Docker service logs"
 	@echo "  make docker-build   - Build Docker images"
+	@echo ""
+	@echo "Docker (Production):"
+	@echo "  make prod-build     - Build production Docker images"
+	@echo "  make prod-up        - Start production services"
+	@echo "  make prod-down      - Stop production services"
+	@echo "  make prod-logs      - View production logs"
+	@echo "  make prod-restart   - Restart production services"
+	@echo "  make prod-status    - Show production service status"
 	@echo ""
 	@echo "Other:"
 	@echo "  make build          - Build all projects"
@@ -98,7 +106,7 @@ endif
 	cd backend && sqlx migrate add $(NAME)
 
 # =============================================================================
-# Docker
+# Docker (Development)
 # =============================================================================
 
 docker-up:
@@ -115,6 +123,37 @@ docker-build:
 
 docker-up-with-indexers:
 	docker compose --profile indexers up -d
+
+docker-restart:
+	docker compose down && docker compose up -d
+
+# =============================================================================
+# Docker (Production)
+# =============================================================================
+
+prod-build:
+	@echo "Building production images..."
+	docker compose -f docker-compose.prod.yml build
+
+prod-up:
+	@echo "Starting production services..."
+	docker compose -f docker-compose.prod.yml up -d
+
+prod-down:
+	@echo "Stopping production services..."
+	docker compose -f docker-compose.prod.yml down
+
+prod-logs:
+	docker compose -f docker-compose.prod.yml logs -f
+
+prod-restart:
+	docker compose -f docker-compose.prod.yml down && docker compose -f docker-compose.prod.yml up -d
+
+prod-status:
+	docker compose -f docker-compose.prod.yml ps
+
+prod-pull:
+	docker compose -f docker-compose.prod.yml pull
 
 # =============================================================================
 # Build

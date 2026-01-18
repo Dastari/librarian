@@ -123,13 +123,13 @@ export function SettingsLayout({ children, isLoading }: SettingsLayoutProps) {
         </div>
 
         {/* Right Content Area */}
-        <ScrollShadow className="flex-1 min-w-0">
+        <ScrollShadow className="flex-1 min-w-0 px-4 -mx-4">
           {isLoading ? (
             <div className="flex justify-center items-center py-20">
               <Spinner size="lg" />
             </div>
           ) : (
-            <div className="pb-4 flex h-full grow">{children}</div>
+            <div className="pb-4 flex flex-col h-full grow">{children}</div>
           )}
         </ScrollShadow>
       </div>

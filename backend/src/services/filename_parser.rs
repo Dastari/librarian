@@ -5,9 +5,76 @@
 //! - "The.Daily.Show.2026.01.07.Stephen.J.Dubner.720p.WEB.h264-EDITH"
 //! - "Corner Gas S06E12 Super Sensitive 1080p AMZN WEB-DL DDP2 0 H 264-QOQ"
 
+use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
+
+// ============================================================================
+// Lazy-initialized regex patterns (compiled once, reused across calls)
+// ============================================================================
+
+/// Pattern for S01E01 format (most common)
+static SXXEXX_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)(.+?)\s*[Ss](\d{1,2})[Ee](\d{1,2})").unwrap());
+
+/// Pattern for 1x01 format
+static NXNN_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)(.+?)\s*(\d{1,2})x(\d{2})").unwrap());
+
+/// Pattern for "Season X Episode Y" format
+static VERBOSE_SEASON_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)(.+?)\s*Season\s*(\d+).*?Episode\s*(\d+)").unwrap());
+
+/// Pattern for daily shows (2026 01 07)
+static DAILY_SHOW_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)(.+?)\s*(\d{4})\s*(\d{2})\s*(\d{2})").unwrap());
+
+/// Pattern for standalone year extraction
+static YEAR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(19\d{2}|20\d{2})\b").unwrap());
+
+/// Pattern for release group extraction
+static GROUP_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"-([A-Za-z0-9]+)(?:\.[A-Za-z0-9]+)?$").unwrap());
+
+/// Pattern for resolution extraction
+static RESOLUTION_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)(2160p|1080p|720p|480p|4K|UHD)").unwrap());
+
+/// Pattern for trailing year cleanup
+static TRAILING_YEAR_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\s*(19\d{2}|20\d{2})\s*$").unwrap());
+
+/// Pattern for country suffix cleanup
+static COUNTRY_SUFFIX_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\s*(US|UK|AU|NZ)\s*$").unwrap());
+
+/// Pattern for multiple spaces cleanup
+static MULTI_SPACE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s+").unwrap());
+
+/// Pattern for special characters (for normalization)
+static SPECIAL_CHARS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[^a-z0-9\s]").unwrap());
+
+/// Pattern for movie year extraction
+static MOVIE_YEAR_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(.+?)[\s\(\[\.]*((?:19|20)\d{2})[\s\)\]\.]").unwrap());
+
+/// Pattern for quality boundary in movie titles
+static QUALITY_BOUNDARY_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\s+(2160p|1080p|720p|480p|4K|UHD|HDR|BluRay|WEB|HDTV|DVDRip|BRRip)").unwrap()
+});
+
+/// Pattern for movie release group
+static MOVIE_GROUP_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[-\s]([A-Za-z0-9]+)(?:\.\w{2,4})?$").unwrap());
+
+/// Pattern for trailing parentheses
+static TRAILING_PAREN_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\s*\([^)]*\)\s*$").unwrap());
+
+/// Pattern for trailing brackets
+static TRAILING_BRACKET_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\s*\[[^\]]*\]\s*$").unwrap());
 
 /// Parsed episode information from a filename
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -51,47 +118,36 @@ pub fn parse_episode(filename: &str) -> ParsedEpisode {
     // Try different patterns in order of specificity
 
     // Pattern 1: S01E01 format (most common)
-    let sxxexx_re = Regex::new(r"(?i)(.+?)\s*[Ss](\d{1,2})[Ee](\d{1,2})").unwrap();
-    if let Some(caps) = sxxexx_re.captures(&cleaned) {
+    if let Some(caps) = SXXEXX_RE.captures(&cleaned) {
         result.show_name = Some(clean_show_name(caps.get(1).unwrap().as_str()));
         result.season = caps.get(2).and_then(|m| m.as_str().parse().ok());
         result.episode = caps.get(3).and_then(|m| m.as_str().parse().ok());
     }
     // Pattern 2: 1x01 format
-    else {
-        let nxnn_re = Regex::new(r"(?i)(.+?)\s*(\d{1,2})x(\d{2})").unwrap();
-        if let Some(caps) = nxnn_re.captures(&cleaned) {
-            result.show_name = Some(clean_show_name(caps.get(1).unwrap().as_str()));
-            result.season = caps.get(2).and_then(|m| m.as_str().parse().ok());
-            result.episode = caps.get(3).and_then(|m| m.as_str().parse().ok());
-        }
-        // Pattern 3: Season X Episode Y format
-        else {
-            let verbose_re = Regex::new(r"(?i)(.+?)\s*Season\s*(\d+).*?Episode\s*(\d+)").unwrap();
-            if let Some(caps) = verbose_re.captures(&cleaned) {
-                result.show_name = Some(clean_show_name(caps.get(1).unwrap().as_str()));
-                result.season = caps.get(2).and_then(|m| m.as_str().parse().ok());
-                result.episode = caps.get(3).and_then(|m| m.as_str().parse().ok());
-            }
-            // Pattern 4: Daily show format (2026 01 07)
-            else {
-                let daily_re = Regex::new(r"(?i)(.+?)\s*(\d{4})\s*(\d{2})\s*(\d{2})").unwrap();
-                if let Some(caps) = daily_re.captures(&cleaned) {
-                    result.show_name = Some(clean_show_name(caps.get(1).unwrap().as_str()));
-                    let year = caps.get(2).unwrap().as_str();
-                    let month = caps.get(3).unwrap().as_str();
-                    let day = caps.get(4).unwrap().as_str();
-                    result.date = Some(format!("{}-{}-{}", year, month, day));
-                    result.year = caps.get(2).and_then(|m| m.as_str().parse().ok());
-                }
-            }
-        }
+    else if let Some(caps) = NXNN_RE.captures(&cleaned) {
+        result.show_name = Some(clean_show_name(caps.get(1).unwrap().as_str()));
+        result.season = caps.get(2).and_then(|m| m.as_str().parse().ok());
+        result.episode = caps.get(3).and_then(|m| m.as_str().parse().ok());
+    }
+    // Pattern 3: Season X Episode Y format
+    else if let Some(caps) = VERBOSE_SEASON_RE.captures(&cleaned) {
+        result.show_name = Some(clean_show_name(caps.get(1).unwrap().as_str()));
+        result.season = caps.get(2).and_then(|m| m.as_str().parse().ok());
+        result.episode = caps.get(3).and_then(|m| m.as_str().parse().ok());
+    }
+    // Pattern 4: Daily show format (2026 01 07)
+    else if let Some(caps) = DAILY_SHOW_RE.captures(&cleaned) {
+        result.show_name = Some(clean_show_name(caps.get(1).unwrap().as_str()));
+        let year = caps.get(2).unwrap().as_str();
+        let month = caps.get(3).unwrap().as_str();
+        let day = caps.get(4).unwrap().as_str();
+        result.date = Some(format!("{}-{}-{}", year, month, day));
+        result.year = caps.get(2).and_then(|m| m.as_str().parse().ok());
     }
 
     // Extract year from show name or filename (for disambiguation)
     if result.year.is_none() {
-        let year_re = Regex::new(r"\b(19\d{2}|20\d{2})\b").unwrap();
-        if let Some(caps) = year_re.captures(filename) {
+        if let Some(caps) = YEAR_RE.captures(filename) {
             result.year = caps.get(1).and_then(|m| m.as_str().parse().ok());
         }
     }
@@ -105,8 +161,7 @@ pub fn parse_episode(filename: &str) -> ParsedEpisode {
     result.audio = quality.audio;
 
     // Extract release group (usually after the last dash)
-    let group_re = Regex::new(r"-([A-Za-z0-9]+)(?:\.[A-Za-z0-9]+)?$").unwrap();
-    if let Some(caps) = group_re.captures(filename) {
+    if let Some(caps) = GROUP_RE.captures(filename) {
         result.release_group = Some(caps.get(1).unwrap().as_str().to_string());
     }
 
@@ -132,8 +187,7 @@ pub fn parse_quality(filename: &str) -> ParsedQuality {
     let mut quality = ParsedQuality::default();
 
     // Resolution
-    let res_re = Regex::new(r"(?i)(2160p|1080p|720p|480p|4K|UHD)").unwrap();
-    if let Some(caps) = res_re.captures(filename) {
+    if let Some(caps) = RESOLUTION_RE.captures(filename) {
         let res = caps.get(1).unwrap().as_str().to_uppercase();
         quality.resolution = Some(match res.as_str() {
             "4K" | "UHD" => "2160p".to_string(),
@@ -219,16 +273,13 @@ fn clean_show_name(name: &str) -> String {
     let mut cleaned = name.trim().to_string();
 
     // Remove trailing year if present (we extract it separately)
-    let year_re = Regex::new(r"\s*(19\d{2}|20\d{2})\s*$").unwrap();
-    cleaned = year_re.replace(&cleaned, "").to_string();
+    cleaned = TRAILING_YEAR_RE.replace(&cleaned, "").to_string();
 
     // Remove common suffixes
-    let suffix_re = Regex::new(r"(?i)\s*(US|UK|AU|NZ)\s*$").unwrap();
-    cleaned = suffix_re.replace(&cleaned, "").to_string();
+    cleaned = COUNTRY_SUFFIX_RE.replace(&cleaned, "").to_string();
 
     // Clean up multiple spaces
-    let space_re = Regex::new(r"\s+").unwrap();
-    cleaned = space_re.replace_all(&cleaned, " ").to_string();
+    cleaned = MULTI_SPACE_RE.replace_all(&cleaned, " ").to_string();
 
     cleaned.trim().to_string()
 }
@@ -248,12 +299,10 @@ pub fn normalize_show_name(name: &str) -> String {
     }
 
     // Remove special characters
-    let special_re = Regex::new(r"[^a-z0-9\s]").unwrap();
-    normalized = special_re.replace_all(&normalized, "").to_string();
+    normalized = SPECIAL_CHARS_RE.replace_all(&normalized, "").to_string();
 
     // Remove multiple spaces
-    let space_re = Regex::new(r"\s+").unwrap();
-    normalized = space_re.replace_all(&normalized, " ").to_string();
+    normalized = MULTI_SPACE_RE.replace_all(&normalized, " ").to_string();
 
     normalized.trim().to_string()
 }
@@ -318,6 +367,87 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
     }
 
     dp[m][n]
+}
+
+/// Parse a filename to extract movie information
+/// Parses filenames like:
+/// - "The.Matrix.1999.1080p.BluRay.x264-GROUP"
+/// - "Inception (2010) 2160p UHD BluRay x265"
+pub fn parse_movie(filename: &str) -> ParsedEpisode {
+    let mut result = ParsedEpisode {
+        original_title: filename.to_string(),
+        ..Default::default()
+    };
+
+    // Clean up the filename
+    let cleaned = filename.replace(['.', '_'], " ").replace(" - ", " ");
+
+    // Try to extract title and year
+    // Pattern: Title (Year) or Title.Year or Title Year (where year is 4 digits 19xx/20xx)
+    if let Some(caps) = MOVIE_YEAR_RE.captures(&cleaned) {
+        result.show_name = Some(clean_movie_title(caps.get(1).unwrap().as_str()));
+        result.year = caps.get(2).and_then(|m| m.as_str().parse().ok());
+    } else {
+        // No year found, just use the whole thing up to quality indicators
+        if let Some(mat) = QUALITY_BOUNDARY_RE.find(&cleaned) {
+            result.show_name = Some(clean_movie_title(&cleaned[..mat.start()]));
+        } else {
+            result.show_name = Some(clean_movie_title(&cleaned));
+        }
+    }
+
+    // Extract quality info
+    let quality = parse_quality(&cleaned);
+    result.resolution = quality.resolution;
+    result.source = quality.source;
+    result.codec = quality.codec;
+    result.hdr = quality.hdr;
+    result.audio = quality.audio;
+
+    // Extract release group
+    if let Some(caps) = MOVIE_GROUP_RE.captures(&cleaned) {
+        let potential_group = caps.get(1).unwrap().as_str();
+        // Filter out common file extensions and resolutions
+        let ignore_list = [
+            "mkv", "mp4", "avi", "1080p", "720p", "2160p", "480p", "x264", "x265", "hevc", "h264",
+        ];
+        if !ignore_list.contains(&potential_group.to_lowercase().as_str()) {
+            result.release_group = Some(potential_group.to_string());
+        }
+    }
+
+    // Check for PROPER/REPACK
+    result.is_proper = cleaned.to_uppercase().contains("PROPER");
+    result.is_repack = cleaned.to_uppercase().contains("REPACK");
+
+    debug!(
+        filename = filename,
+        title = ?result.show_name,
+        year = ?result.year,
+        resolution = ?result.resolution,
+        "Parsed movie filename"
+    );
+
+    result
+}
+
+/// Clean up the movie title
+fn clean_movie_title(name: &str) -> String {
+    let mut cleaned = name.trim().to_string();
+
+    // Remove trailing year if present (we extract it separately)
+    cleaned = TRAILING_YEAR_RE.replace(&cleaned, "").to_string();
+
+    // Remove parentheses at the end
+    cleaned = TRAILING_PAREN_RE.replace(&cleaned, "").to_string();
+
+    // Remove brackets at the end
+    cleaned = TRAILING_BRACKET_RE.replace(&cleaned, "").to_string();
+
+    // Clean up multiple spaces
+    cleaned = MULTI_SPACE_RE.replace_all(&cleaned, " ").to_string();
+
+    cleaned.trim().to_string()
 }
 
 #[cfg(test)]

@@ -174,6 +174,21 @@ export const LIBRARY_QUERY = `
 // TV Show Queries
 // ============================================================================
 
+export const ALL_TV_SHOWS_QUERY = `
+  query AllTvShows {
+    allTvShows {
+      id
+      libraryId
+      name
+      sortName
+      year
+      status
+      posterUrl
+      monitored
+    }
+  }
+`;
+
 export const TV_SHOWS_QUERY = `
   query TvShows($libraryId: String!) {
     tvShows(libraryId: $libraryId) {
@@ -265,6 +280,134 @@ export const SEARCH_TV_SHOWS_QUERY = `
   }
 `;
 
+// ============================================================================
+// Movie Queries
+// ============================================================================
+
+export const ALL_MOVIES_QUERY = `
+  query AllMovies {
+    allMovies {
+      id
+      libraryId
+      title
+      sortTitle
+      year
+      status
+      posterUrl
+      monitored
+      hasFile
+    }
+  }
+`;
+
+export const MOVIES_QUERY = `
+  query Movies($libraryId: String!) {
+    movies(libraryId: $libraryId) {
+      id
+      libraryId
+      title
+      sortTitle
+      originalTitle
+      year
+      tmdbId
+      imdbId
+      status
+      overview
+      tagline
+      runtime
+      genres
+      director
+      castNames
+      posterUrl
+      backdropUrl
+      monitored
+      hasFile
+      sizeBytes
+      path
+      collectionId
+      collectionName
+      collectionPosterUrl
+      tmdbRating
+      tmdbVoteCount
+      certification
+      releaseDate
+      allowedResolutionsOverride
+      allowedVideoCodecsOverride
+      allowedAudioFormatsOverride
+      requireHdrOverride
+      allowedHdrTypesOverride
+      allowedSourcesOverride
+      releaseGroupBlacklistOverride
+      releaseGroupWhitelistOverride
+    }
+  }
+`;
+
+export const MOVIE_QUERY = `
+  query Movie($id: String!) {
+    movie(id: $id) {
+      id
+      libraryId
+      title
+      sortTitle
+      originalTitle
+      year
+      tmdbId
+      imdbId
+      status
+      overview
+      tagline
+      runtime
+      genres
+      director
+      castNames
+      posterUrl
+      backdropUrl
+      monitored
+      hasFile
+      sizeBytes
+      path
+      collectionId
+      collectionName
+      collectionPosterUrl
+      tmdbRating
+      tmdbVoteCount
+      certification
+      releaseDate
+      allowedResolutionsOverride
+      allowedVideoCodecsOverride
+      allowedAudioFormatsOverride
+      requireHdrOverride
+      allowedHdrTypesOverride
+      allowedSourcesOverride
+      releaseGroupBlacklistOverride
+      releaseGroupWhitelistOverride
+    }
+  }
+`;
+
+export const SEARCH_MOVIES_QUERY = `
+  query SearchMovies($query: String!, $year: Int) {
+    searchMovies(query: $query, year: $year) {
+      provider
+      providerId
+      title
+      originalTitle
+      year
+      overview
+      posterUrl
+      backdropUrl
+      imdbId
+      voteAverage
+      popularity
+    }
+  }
+`;
+
+// ============================================================================
+// Episode Queries
+// ============================================================================
+
 export const EPISODES_QUERY = `
   query Episodes($tvShowId: String!) {
     episodes(tvShowId: $tvShowId) {
@@ -321,6 +464,23 @@ export const QUALITY_PROFILES_QUERY = `
       releaseGroupWhitelist
       releaseGroupBlacklist
       upgradeUntil
+    }
+  }
+`;
+
+// ============================================================================
+// Naming Pattern Queries
+// ============================================================================
+
+export const NAMING_PATTERNS_QUERY = `
+  query NamingPatterns {
+    namingPatterns {
+      id
+      name
+      pattern
+      description
+      isDefault
+      isSystem
     }
   }
 `;
@@ -618,6 +778,29 @@ export const CAST_SETTINGS_QUERY = `
 `;
 
 // ============================================================================
+// Playback Session Queries
+// ============================================================================
+
+export const PLAYBACK_SESSION_QUERY = `
+  query PlaybackSession {
+    playbackSession {
+      id
+      userId
+      episodeId
+      mediaFileId
+      tvShowId
+      currentPosition
+      duration
+      volume
+      isMuted
+      isPlaying
+      startedAt
+      lastUpdatedAt
+    }
+  }
+`;
+
+// ============================================================================
 // Filesystem Queries
 // ============================================================================
 
@@ -664,6 +847,65 @@ export const VALIDATE_PATH_QUERY = `
       libraryId
       libraryName
       error
+    }
+  }
+`;
+
+// ============================================================================
+// Indexer Search
+// ============================================================================
+
+export const SEARCH_INDEXERS_QUERY = `
+  query SearchIndexers($input: IndexerSearchInput!) {
+    searchIndexers(input: $input) {
+      indexers {
+        indexerId
+        indexerName
+        releases {
+          title
+          guid
+          link
+          magnetUri
+          infoHash
+          details
+          publishDate
+          categories
+          size
+          sizeFormatted
+          seeders
+          leechers
+          peers
+          grabs
+          isFreeleech
+          imdbId
+          poster
+          description
+          indexerId
+          indexerName
+        }
+        elapsedMs
+        fromCache
+        error
+      }
+      totalReleases
+      totalElapsedMs
+    }
+  }
+`;
+
+export const INDEXER_CONFIGS_QUERY = `
+  query IndexerConfigs {
+    indexerConfigs {
+      id
+      name
+      indexerType
+      enabled
+      priority
+      supportsSearch
+      supportsRss
+      apiUrl
+      createdAt
+      updatedAt
     }
   }
 `;

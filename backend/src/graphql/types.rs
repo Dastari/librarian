@@ -225,6 +225,16 @@ pub struct AddTorrentInput {
     pub magnet: Option<String>,
     /// URL to a .torrent file
     pub url: Option<String>,
+    /// Optional display name for the torrent
+    pub name: Option<String>,
+    /// Optional library ID to associate the torrent with
+    pub library_id: Option<String>,
+    /// Optional episode ID to link the download to
+    pub episode_id: Option<String>,
+    /// Optional movie ID to link the download to
+    pub movie_id: Option<String>,
+    /// Optional indexer ID (for authenticated .torrent downloads)
+    pub indexer_id: Option<String>,
 }
 
 /// Result of adding a torrent
@@ -525,6 +535,40 @@ pub struct ScanStatus {
     pub library_id: String,
     pub status: String,
     pub message: Option<String>,
+}
+
+/// Result of library consolidation
+#[derive(Debug, SimpleObject)]
+pub struct ConsolidateLibraryResult {
+    pub success: bool,
+    pub folders_removed: i32,
+    pub files_moved: i32,
+    pub messages: Vec<String>,
+}
+
+/// Type of library change event
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum LibraryChangeType {
+    /// Library was created
+    Created,
+    /// Library was updated
+    Updated,
+    /// Library was deleted
+    Deleted,
+}
+
+/// Event when a library changes
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct LibraryChangedEvent {
+    /// Type of change
+    pub change_type: LibraryChangeType,
+    /// Library ID
+    pub library_id: String,
+    /// Library name (None if deleted)
+    pub library_name: Option<String>,
+    /// The full library object (None if deleted)
+    pub library: Option<Library>,
 }
 
 // ============================================================================
@@ -1110,6 +1154,17 @@ pub struct SettingsResult {
     pub error: Option<String>,
 }
 
+/// Result of refreshing the schedule cache
+#[derive(Debug, SimpleObject)]
+pub struct RefreshScheduleResult {
+    /// Whether the operation succeeded
+    pub success: bool,
+    /// Number of schedule entries updated
+    pub entries_updated: i32,
+    /// Error message if failed
+    pub error: Option<String>,
+}
+
 // ============================================================================
 // TV Show Types
 // ============================================================================
@@ -1192,6 +1247,66 @@ pub struct TvShow {
     pub release_group_whitelist_override: Option<Vec<String>>,
 }
 
+impl TvShow {
+    /// Convert a TvShowRecord from the database to a TvShow GraphQL type
+    pub fn from_record(r: crate::db::TvShowRecord) -> Self {
+        Self {
+            id: r.id.to_string(),
+            library_id: r.library_id.to_string(),
+            name: r.name,
+            sort_name: r.sort_name,
+            year: r.year,
+            status: match r.status.as_str() {
+                "Running" | "Continuing" => TvShowStatus::Continuing,
+                "Ended" => TvShowStatus::Ended,
+                "Upcoming" | "To Be Determined" | "In Development" => TvShowStatus::Upcoming,
+                "Cancelled" => TvShowStatus::Cancelled,
+                _ => TvShowStatus::Unknown,
+            },
+            tvmaze_id: r.tvmaze_id,
+            tmdb_id: r.tmdb_id,
+            tvdb_id: r.tvdb_id,
+            imdb_id: r.imdb_id,
+            overview: r.overview,
+            network: r.network,
+            runtime: r.runtime,
+            genres: r.genres,
+            poster_url: r.poster_url,
+            backdrop_url: r.backdrop_url,
+            monitored: r.monitored,
+            monitor_type: match r.monitor_type.as_str() {
+                "future" => MonitorType::Future,
+                "none" => MonitorType::None,
+                _ => MonitorType::All,
+            },
+            quality_profile_id: r.quality_profile_id.map(|id| id.to_string()),
+            path: r.path,
+            auto_download_override: r.auto_download_override,
+            backfill_existing: r.backfill_existing,
+            organize_files_override: r.organize_files_override,
+            rename_style_override: r.rename_style_override,
+            auto_hunt_override: r.auto_hunt_override,
+            episode_count: r.episode_count.unwrap_or(0),
+            episode_file_count: r.episode_file_count.unwrap_or(0),
+            size_bytes: r.size_bytes.unwrap_or(0),
+            allowed_resolutions_override: r.allowed_resolutions_override,
+            allowed_video_codecs_override: r.allowed_video_codecs_override,
+            allowed_audio_formats_override: r.allowed_audio_formats_override,
+            require_hdr_override: r.require_hdr_override,
+            allowed_hdr_types_override: r.allowed_hdr_types_override,
+            allowed_sources_override: r.allowed_sources_override,
+            release_group_blacklist_override: r.release_group_blacklist_override,
+            release_group_whitelist_override: r.release_group_whitelist_override,
+        }
+    }
+}
+
+impl From<crate::db::TvShowRecord> for TvShow {
+    fn from(record: crate::db::TvShowRecord) -> Self {
+        TvShow::from_record(record)
+    }
+}
+
 /// TV show search result from metadata providers
 #[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
 pub struct TvShowSearchResult {
@@ -1264,6 +1379,135 @@ pub struct UpdateTvShowInput {
 pub struct TvShowResult {
     pub success: bool,
     pub tv_show: Option<TvShow>,
+    pub error: Option<String>,
+}
+
+// ============================================================================
+// Movie Types
+// ============================================================================
+
+/// Movie status
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize, Default)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum MovieStatus {
+    /// Movie has been released
+    Released,
+    /// Movie is upcoming
+    Upcoming,
+    /// Movie has been announced
+    Announced,
+    /// Movie is in production
+    InProduction,
+    /// Status unknown
+    #[default]
+    Unknown,
+}
+
+impl From<&str> for MovieStatus {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "released" => MovieStatus::Released,
+            "upcoming" => MovieStatus::Upcoming,
+            "announced" => MovieStatus::Announced,
+            "in_production" => MovieStatus::InProduction,
+            _ => MovieStatus::Unknown,
+        }
+    }
+}
+
+/// A movie in a library
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct Movie {
+    pub id: String,
+    pub library_id: String,
+    pub title: String,
+    pub sort_title: Option<String>,
+    pub original_title: Option<String>,
+    pub year: Option<i32>,
+    pub tmdb_id: Option<i32>,
+    pub imdb_id: Option<String>,
+    pub status: MovieStatus,
+    pub overview: Option<String>,
+    pub tagline: Option<String>,
+    pub runtime: Option<i32>,
+    pub genres: Vec<String>,
+    pub director: Option<String>,
+    pub cast_names: Vec<String>,
+    pub poster_url: Option<String>,
+    pub backdrop_url: Option<String>,
+    pub monitored: bool,
+    /// Whether a file exists for this movie
+    pub has_file: bool,
+    pub size_bytes: i64,
+    pub path: Option<String>,
+    /// Collection info
+    pub collection_id: Option<i32>,
+    pub collection_name: Option<String>,
+    pub collection_poster_url: Option<String>,
+    /// Ratings
+    pub tmdb_rating: Option<f64>,
+    pub tmdb_vote_count: Option<i32>,
+    pub certification: Option<String>,
+    pub release_date: Option<String>,
+    // Quality override settings (null = inherit from library)
+    pub allowed_resolutions_override: Option<Vec<String>>,
+    pub allowed_video_codecs_override: Option<Vec<String>>,
+    pub allowed_audio_formats_override: Option<Vec<String>>,
+    pub require_hdr_override: Option<bool>,
+    pub allowed_hdr_types_override: Option<Vec<String>>,
+    pub allowed_sources_override: Option<Vec<String>>,
+    pub release_group_blacklist_override: Option<Vec<String>>,
+    pub release_group_whitelist_override: Option<Vec<String>>,
+}
+
+/// Movie search result from TMDB
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct MovieSearchResult {
+    pub provider: String,
+    pub provider_id: i32,
+    pub title: String,
+    pub original_title: Option<String>,
+    pub year: Option<i32>,
+    pub overview: Option<String>,
+    pub poster_url: Option<String>,
+    pub backdrop_url: Option<String>,
+    pub imdb_id: Option<String>,
+    pub vote_average: Option<f64>,
+    pub popularity: Option<f64>,
+}
+
+/// Input for adding a movie to a library
+#[derive(Debug, InputObject)]
+pub struct AddMovieInput {
+    /// TMDB movie ID
+    pub tmdb_id: i32,
+    /// Whether to monitor for releases
+    pub monitored: Option<bool>,
+    /// Custom path within the library
+    pub path: Option<String>,
+}
+
+/// Input for updating a movie
+#[derive(Debug, InputObject)]
+pub struct UpdateMovieInput {
+    pub monitored: Option<bool>,
+    pub path: Option<String>,
+    // Quality override settings (null = inherit, Some([]) = override with any)
+    pub allowed_resolutions_override: Option<Option<Vec<String>>>,
+    pub allowed_video_codecs_override: Option<Option<Vec<String>>>,
+    pub allowed_audio_formats_override: Option<Option<Vec<String>>>,
+    pub require_hdr_override: Option<Option<bool>>,
+    pub allowed_hdr_types_override: Option<Option<Vec<String>>>,
+    pub allowed_sources_override: Option<Option<Vec<String>>>,
+    pub release_group_blacklist_override: Option<Option<Vec<String>>>,
+    pub release_group_whitelist_override: Option<Option<Vec<String>>>,
+}
+
+/// Result of movie mutation
+#[derive(Debug, SimpleObject)]
+pub struct MovieResult {
+    pub success: bool,
+    pub movie: Option<Movie>,
     pub error: Option<String>,
 }
 
@@ -1394,6 +1638,64 @@ pub struct UpdateQualityProfileInput {
 pub struct QualityProfileResult {
     pub success: bool,
     pub quality_profile: Option<QualityProfile>,
+    pub error: Option<String>,
+}
+
+// ============================================================================
+// Naming Pattern Types
+// ============================================================================
+
+/// A file naming pattern preset
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct NamingPattern {
+    /// Unique identifier
+    pub id: String,
+    /// Display name for the pattern
+    pub name: String,
+    /// The actual pattern string (e.g., "{show}/Season {season:02}/...")
+    pub pattern: String,
+    /// Human-readable description/example
+    pub description: Option<String>,
+    /// Whether this is the default pattern for new libraries of this type
+    pub is_default: bool,
+    /// Whether this is a built-in system pattern (cannot be deleted)
+    pub is_system: bool,
+    /// Library type this pattern is for (tv, movies, music, audiobooks, other)
+    pub library_type: Option<String>,
+}
+
+impl NamingPattern {
+    pub fn from_record(record: crate::db::NamingPatternRecord) -> Self {
+        Self {
+            id: record.id.to_string(),
+            name: record.name,
+            pattern: record.pattern,
+            description: record.description,
+            is_default: record.is_default,
+            is_system: record.is_system,
+            library_type: record.library_type,
+        }
+    }
+}
+
+/// Input for creating a custom naming pattern
+#[derive(Debug, InputObject)]
+pub struct CreateNamingPatternInput {
+    /// Display name for the pattern
+    pub name: String,
+    /// The pattern string
+    pub pattern: String,
+    /// Human-readable description
+    pub description: Option<String>,
+    /// Library type this pattern is for (tv, movies, music, audiobooks, other)
+    pub library_type: Option<String>,
+}
+
+/// Result of naming pattern mutation
+#[derive(Debug, SimpleObject)]
+pub struct NamingPatternResult {
+    pub success: bool,
+    pub naming_pattern: Option<NamingPattern>,
     pub error: Option<String>,
 }
 
@@ -1557,6 +1859,57 @@ pub struct LibraryFull {
     pub release_group_blacklist: Vec<String>,
     /// Whitelisted release groups (if set, only allow these).
     pub release_group_whitelist: Vec<String>,
+}
+
+impl LibraryFull {
+    /// Convert a LibraryRecord and LibraryStats from the database to a LibraryFull GraphQL type
+    pub fn from_record_with_stats(
+        r: crate::db::libraries::LibraryRecord,
+        stats: crate::db::LibraryStats,
+    ) -> Self {
+        Self {
+            id: r.id.to_string(),
+            name: r.name,
+            path: r.path,
+            library_type: match r.library_type.as_str() {
+                "movies" => LibraryType::Movies,
+                "tv" => LibraryType::Tv,
+                "music" => LibraryType::Music,
+                "audiobooks" => LibraryType::Audiobooks,
+                _ => LibraryType::Other,
+            },
+            icon: r.icon.unwrap_or_else(|| "folder".to_string()),
+            color: r.color.unwrap_or_else(|| "slate".to_string()),
+            auto_scan: r.auto_scan,
+            scan_interval_minutes: r.scan_interval_minutes,
+            watch_for_changes: r.watch_for_changes,
+            post_download_action: match r.post_download_action.as_str() {
+                "copy" => PostDownloadAction::Copy,
+                "hardlink" => PostDownloadAction::Hardlink,
+                _ => PostDownloadAction::Move,
+            },
+            organize_files: r.organize_files,
+            rename_style: r.rename_style,
+            naming_pattern: r.naming_pattern,
+            default_quality_profile_id: r.default_quality_profile_id.map(|id| id.to_string()),
+            auto_add_discovered: r.auto_add_discovered,
+            auto_download: r.auto_download,
+            auto_hunt: r.auto_hunt,
+            scanning: r.scanning,
+            item_count: stats.file_count.unwrap_or(0) as i32,
+            total_size_bytes: stats.total_size_bytes.unwrap_or(0),
+            show_count: stats.show_count.unwrap_or(0) as i32,
+            last_scanned_at: r.last_scanned_at.map(|dt| dt.to_rfc3339()),
+            allowed_resolutions: r.allowed_resolutions,
+            allowed_video_codecs: r.allowed_video_codecs,
+            allowed_audio_formats: r.allowed_audio_formats,
+            require_hdr: r.require_hdr,
+            allowed_hdr_types: r.allowed_hdr_types,
+            allowed_sources: r.allowed_sources,
+            release_group_blacklist: r.release_group_blacklist,
+            release_group_whitelist: r.release_group_whitelist,
+        }
+    }
 }
 
 /// Input for creating a library
@@ -1763,6 +2116,99 @@ pub struct LogEventSubscription {
 }
 
 // ============================================================================
+// Playback Session Types
+// ============================================================================
+
+/// A user's playback session (what they're currently watching)
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct PlaybackSession {
+    /// Session ID
+    pub id: String,
+    /// User ID
+    pub user_id: String,
+    /// Episode being played
+    pub episode_id: Option<String>,
+    /// Media file being played
+    pub media_file_id: Option<String>,
+    /// TV show ID
+    pub tv_show_id: Option<String>,
+    /// Current playback position in seconds
+    pub current_position: f64,
+    /// Total duration in seconds
+    pub duration: Option<f64>,
+    /// Volume level (0.0 - 1.0)
+    pub volume: f32,
+    /// Whether audio is muted
+    pub is_muted: bool,
+    /// Whether currently playing (vs paused)
+    pub is_playing: bool,
+    /// When playback started
+    pub started_at: String,
+    /// When position was last updated
+    pub last_updated_at: String,
+}
+
+impl PlaybackSession {
+    pub fn from_record(record: crate::db::PlaybackSessionRecord) -> Self {
+        Self {
+            id: record.id.to_string(),
+            user_id: record.user_id.to_string(),
+            episode_id: record.episode_id.map(|id| id.to_string()),
+            media_file_id: record.media_file_id.map(|id| id.to_string()),
+            tv_show_id: record.tv_show_id.map(|id| id.to_string()),
+            current_position: record.current_position,
+            duration: record.duration,
+            volume: record.volume,
+            is_muted: record.is_muted,
+            is_playing: record.is_playing,
+            started_at: record.started_at.to_string(),
+            last_updated_at: record.last_updated_at.to_string(),
+        }
+    }
+}
+
+/// Input for starting/updating playback
+#[derive(Debug, InputObject)]
+pub struct StartPlaybackInput {
+    /// Episode ID to play
+    pub episode_id: String,
+    /// Media file ID
+    pub media_file_id: String,
+    /// TV show ID
+    pub tv_show_id: String,
+    /// Starting position in seconds
+    pub start_position: Option<f64>,
+    /// Duration in seconds
+    pub duration: Option<f64>,
+}
+
+/// Input for updating playback position
+#[derive(Debug, InputObject)]
+pub struct UpdatePlaybackInput {
+    /// Current position in seconds
+    pub current_position: Option<f64>,
+    /// Duration in seconds (if known)
+    pub duration: Option<f64>,
+    /// Volume level
+    pub volume: Option<f32>,
+    /// Whether muted
+    pub is_muted: Option<bool>,
+    /// Whether playing
+    pub is_playing: Option<bool>,
+}
+
+/// Result of playback operations
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct PlaybackResult {
+    /// Whether the operation succeeded
+    pub success: bool,
+    /// The playback session
+    pub session: Option<PlaybackSession>,
+    /// Error message if failed
+    pub error: Option<String>,
+}
+
+// ============================================================================
 // Upcoming Episode Types (for home page)
 // ============================================================================
 
@@ -1916,6 +2362,10 @@ pub struct MediaFile {
     pub episode_id: Option<String>,
     /// Whether the file has been organized
     pub organized: bool,
+    /// Organization status: pending, organized, skipped, conflicted, error
+    pub organize_status: Option<String>,
+    /// Error or conflict details when organization fails
+    pub organize_error: Option<String>,
     /// When the file was added
     pub added_at: String,
 }
@@ -1942,9 +2392,329 @@ impl MediaFile {
             bitrate: record.bitrate,
             episode_id: record.episode_id.map(|id| id.to_string()),
             organized: record.organized,
+            organize_status: record.organize_status,
+            organize_error: record.organize_error,
             added_at: record.added_at.to_rfc3339(),
         }
     }
+}
+
+// ============================================================================
+// Media Analysis Types (FFmpeg)
+// ============================================================================
+
+/// Source type for subtitle tracks
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum SubtitleSourceType {
+    /// Embedded in the media container
+    Embedded,
+    /// External file alongside the media
+    External,
+    /// Downloaded from a subtitle service
+    Downloaded,
+}
+
+impl From<&str> for SubtitleSourceType {
+    fn from(s: &str) -> Self {
+        match s {
+            "embedded" => Self::Embedded,
+            "external" => Self::External,
+            "downloaded" => Self::Downloaded,
+            _ => Self::Embedded,
+        }
+    }
+}
+
+/// Subtitle record from the database
+#[derive(Debug, Clone, SimpleObject)]
+pub struct Subtitle {
+    /// Unique identifier
+    pub id: String,
+    /// Media file this subtitle belongs to
+    pub media_file_id: String,
+    /// Source type (embedded, external, downloaded)
+    pub source_type: SubtitleSourceType,
+    /// Stream index for embedded subtitles
+    pub stream_index: Option<i32>,
+    /// File path for external/downloaded subtitles
+    pub file_path: Option<String>,
+    /// Codec/format (srt, ass, pgs, etc.)
+    pub codec: Option<String>,
+    /// Language code (ISO 639-1)
+    pub language: Option<String>,
+    /// Stream title
+    pub title: Option<String>,
+    /// Whether this is the default track
+    pub is_default: bool,
+    /// Whether this is a forced subtitle track
+    pub is_forced: bool,
+    /// Whether this is for hearing impaired (SDH)
+    pub is_hearing_impaired: bool,
+    /// OpenSubtitles file ID if downloaded
+    pub opensubtitles_id: Option<String>,
+    /// When the subtitle was downloaded
+    pub downloaded_at: Option<String>,
+}
+
+impl Subtitle {
+    pub fn from_record(record: crate::db::SubtitleRecord) -> Self {
+        Self {
+            id: record.id.to_string(),
+            media_file_id: record.media_file_id.to_string(),
+            source_type: SubtitleSourceType::from(record.source_type.as_str()),
+            stream_index: record.stream_index,
+            file_path: record.file_path,
+            codec: record.codec,
+            language: record.language,
+            title: record.title,
+            is_default: record.is_default,
+            is_forced: record.is_forced,
+            is_hearing_impaired: record.is_hearing_impaired,
+            opensubtitles_id: record.opensubtitles_id,
+            downloaded_at: record.downloaded_at.map(|d| d.to_rfc3339()),
+        }
+    }
+}
+
+/// Video stream information from FFmpeg analysis
+#[derive(Debug, Clone, SimpleObject)]
+pub struct VideoStreamInfo {
+    /// Unique identifier
+    pub id: String,
+    /// Stream index
+    pub stream_index: i32,
+    /// Codec name (h264, hevc, av1, etc.)
+    pub codec: String,
+    /// Codec long name
+    pub codec_long_name: Option<String>,
+    /// Width in pixels
+    pub width: i32,
+    /// Height in pixels
+    pub height: i32,
+    /// Display aspect ratio
+    pub aspect_ratio: Option<String>,
+    /// Frame rate
+    pub frame_rate: Option<String>,
+    /// Bitrate in bps
+    pub bitrate: Option<i64>,
+    /// Pixel format
+    pub pixel_format: Option<String>,
+    /// HDR type (HDR10, Dolby Vision, HLG)
+    pub hdr_type: Option<String>,
+    /// Bit depth (8, 10, 12)
+    pub bit_depth: Option<i32>,
+    /// Language code
+    pub language: Option<String>,
+    /// Stream title
+    pub title: Option<String>,
+    /// Whether this is the default track
+    pub is_default: bool,
+}
+
+impl VideoStreamInfo {
+    pub fn from_record(record: crate::db::VideoStreamRecord) -> Self {
+        Self {
+            id: record.id.to_string(),
+            stream_index: record.stream_index,
+            codec: record.codec,
+            codec_long_name: record.codec_long_name,
+            width: record.width,
+            height: record.height,
+            aspect_ratio: record.aspect_ratio,
+            frame_rate: record.frame_rate,
+            bitrate: record.bitrate,
+            pixel_format: record.pixel_format,
+            hdr_type: record.hdr_type,
+            bit_depth: record.bit_depth,
+            language: record.language,
+            title: record.title,
+            is_default: record.is_default,
+        }
+    }
+}
+
+/// Audio stream information from FFmpeg analysis
+#[derive(Debug, Clone, SimpleObject)]
+pub struct AudioStreamInfo {
+    /// Unique identifier
+    pub id: String,
+    /// Stream index
+    pub stream_index: i32,
+    /// Codec name (aac, ac3, dts, flac, truehd, etc.)
+    pub codec: String,
+    /// Codec long name
+    pub codec_long_name: Option<String>,
+    /// Number of channels
+    pub channels: i32,
+    /// Channel layout (stereo, 5.1, 7.1, etc.)
+    pub channel_layout: Option<String>,
+    /// Sample rate in Hz
+    pub sample_rate: Option<i32>,
+    /// Bitrate in bps
+    pub bitrate: Option<i64>,
+    /// Bit depth
+    pub bit_depth: Option<i32>,
+    /// Language code
+    pub language: Option<String>,
+    /// Stream title
+    pub title: Option<String>,
+    /// Whether this is the default track
+    pub is_default: bool,
+    /// Whether this is a commentary track
+    pub is_commentary: bool,
+}
+
+impl AudioStreamInfo {
+    pub fn from_record(record: crate::db::AudioStreamRecord) -> Self {
+        Self {
+            id: record.id.to_string(),
+            stream_index: record.stream_index,
+            codec: record.codec,
+            codec_long_name: record.codec_long_name,
+            channels: record.channels,
+            channel_layout: record.channel_layout,
+            sample_rate: record.sample_rate,
+            bitrate: record.bitrate,
+            bit_depth: record.bit_depth,
+            language: record.language,
+            title: record.title,
+            is_default: record.is_default,
+            is_commentary: record.is_commentary,
+        }
+    }
+}
+
+/// Chapter information from media file
+#[derive(Debug, Clone, SimpleObject)]
+pub struct ChapterInfo {
+    /// Unique identifier
+    pub id: String,
+    /// Chapter index (0-based)
+    pub chapter_index: i32,
+    /// Start time in seconds
+    pub start_secs: f64,
+    /// End time in seconds
+    pub end_secs: f64,
+    /// Chapter title
+    pub title: Option<String>,
+}
+
+impl ChapterInfo {
+    pub fn from_record(record: crate::db::ChapterRecord) -> Self {
+        Self {
+            id: record.id.to_string(),
+            chapter_index: record.chapter_index,
+            start_secs: record.start_secs,
+            end_secs: record.end_secs,
+            title: record.title,
+        }
+    }
+}
+
+/// Detailed media file info including all streams
+#[derive(Debug, Clone)]
+pub struct MediaFileDetails {
+    /// Basic file info
+    pub file: MediaFile,
+    /// Video streams
+    pub video_streams: Vec<VideoStreamInfo>,
+    /// Audio streams
+    pub audio_streams: Vec<AudioStreamInfo>,
+    /// Subtitle tracks
+    pub subtitles: Vec<Subtitle>,
+    /// Chapters
+    pub chapters: Vec<ChapterInfo>,
+}
+
+#[Object]
+impl MediaFileDetails {
+    async fn id(&self) -> &str {
+        &self.file.id
+    }
+
+    async fn file(&self) -> &MediaFile {
+        &self.file
+    }
+
+    async fn video_streams(&self) -> &Vec<VideoStreamInfo> {
+        &self.video_streams
+    }
+
+    async fn audio_streams(&self) -> &Vec<AudioStreamInfo> {
+        &self.audio_streams
+    }
+
+    async fn subtitles(&self) -> &Vec<Subtitle> {
+        &self.subtitles
+    }
+
+    async fn chapters(&self) -> &Vec<ChapterInfo> {
+        &self.chapters
+    }
+}
+
+/// Subtitle settings for a library or show
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct SubtitleSettings {
+    /// Whether to auto-download missing subtitles
+    pub auto_download: bool,
+    /// Preferred subtitle languages (ISO 639-1 codes)
+    pub languages: Vec<String>,
+}
+
+/// Input for updating subtitle settings
+#[derive(Debug, Clone, InputObject)]
+pub struct SubtitleSettingsInput {
+    /// Whether to auto-download missing subtitles (null = inherit from parent)
+    pub auto_download: Option<bool>,
+    /// Preferred subtitle languages (null = inherit from parent)
+    pub languages: Option<Vec<String>>,
+}
+
+/// OpenSubtitles search result
+#[derive(Debug, Clone, SimpleObject)]
+pub struct SubtitleSearchResult {
+    /// Subtitle file ID (for download)
+    pub file_id: String,
+    /// Language code
+    pub language: Option<String>,
+    /// Release name
+    pub release: Option<String>,
+    /// Download count (popularity)
+    pub download_count: Option<i64>,
+    /// Whether it's for hearing impaired
+    pub hearing_impaired: bool,
+    /// File name
+    pub file_name: Option<String>,
+    /// Rating
+    pub rating: Option<f64>,
+}
+
+/// Input for searching subtitles
+#[derive(Debug, Clone, InputObject)]
+pub struct SearchSubtitlesInput {
+    /// Media file ID to search subtitles for
+    pub media_file_id: String,
+    /// Languages to search for (ISO 639-1 codes)
+    pub languages: Vec<String>,
+    /// Optional: IMDB ID for better matching
+    pub imdb_id: Option<String>,
+}
+
+/// Result of analyzing a media file
+#[derive(Debug, Clone, SimpleObject)]
+pub struct AnalyzeMediaFileResult {
+    pub success: bool,
+    pub error: Option<String>,
+    /// Number of video streams found
+    pub video_stream_count: Option<i32>,
+    /// Number of audio streams found
+    pub audio_stream_count: Option<i32>,
+    /// Number of subtitle streams found
+    pub subtitle_stream_count: Option<i32>,
+    /// Number of chapters found
+    pub chapter_count: Option<i32>,
 }
 
 // ============================================================================

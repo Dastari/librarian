@@ -8,6 +8,8 @@ import { Navbar } from '../components/Navbar'
 import { NotFound } from '../components/NotFound'
 import { ErrorLogToaster } from '../components/ErrorLogToaster'
 import { GraphQLErrorToaster } from '../components/GraphQLErrorToaster'
+import { PersistentPlayer } from '../components/PersistentPlayer'
+import { PlaybackProvider } from '../contexts/PlaybackContext'
 import type { AuthContext } from '../lib/auth-context'
 
 interface RouterContext {
@@ -70,17 +72,21 @@ function RootErrorComponent({ error, reset }: ErrorComponentProps) {
 
 function RootLayout() {
   return (
-    <div className="flex flex-col h-screen">
-      <main className="flex grow flex-col overflow-y-auto" style={{ scrollbarGutter: 'stable' }}>
-      <Navbar />
-        <Outlet />
-      </main>
+    <PlaybackProvider>
+      <div className="flex flex-col h-screen">
+        <main className="flex grow flex-col overflow-y-auto" style={{ scrollbarGutter: 'stable' }}>
+        <Navbar />
+          <Outlet />
+        </main>
 
-      {/* Global error log toaster - shows toast for backend errors */}
-      <ErrorLogToaster />
+        {/* Global error log toaster - shows toast for backend errors */}
+        <ErrorLogToaster />
 
-      {/* GraphQL error toaster - shows toast for GraphQL/network errors */}
-      <GraphQLErrorToaster />
+        {/* GraphQL error toaster - shows toast for GraphQL/network errors */}
+        <GraphQLErrorToaster />
+
+        {/* Persistent video player - shows when something is playing */}
+        <PersistentPlayer />
 
       {/* Dev tools - only in development */}
       {import.meta.env.DEV && (
@@ -96,6 +102,7 @@ function RootLayout() {
           ]}
         />
       )}
-    </div>
+      </div>
+    </PlaybackProvider>
   )
 }

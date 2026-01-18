@@ -4,7 +4,6 @@ import { Button, ButtonGroup } from '@heroui/button'
 import { Input } from '@heroui/input'
 import { Switch } from '@heroui/switch'
 import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
-import { Chip } from '@heroui/chip'
 import { Tooltip } from '@heroui/tooltip'
 import { Spinner } from '@heroui/spinner'
 import { Pagination } from '@heroui/pagination'
@@ -18,7 +17,6 @@ import type {
   DataTableColumn,
   DataTableGroup,
   RowAction,
-  FilterOption,
   ViewMode,
   SortDirection,
   ColumnSizing,
@@ -99,8 +97,6 @@ function getColumnStyle(
 }
 import {
   IconSearch,
-  IconFilter,
-  IconX,
   IconDotsVertical,
   IconTable,
   IconLayoutGrid,
@@ -180,49 +176,6 @@ function InlineRowActions<T>({ item, actions }: InlineRowActionsProps<T>) {
 }
 
 // ============================================================================
-// Filter Chips
-// ============================================================================
-
-interface FilterChipsProps {
-  options: FilterOption[]
-  value: string | null
-  onChange: (value: string | null) => void
-  allLabel?: string
-}
-
-function FilterChips({ options, value, onChange, allLabel = 'All' }: FilterChipsProps) {
-  return (
-    <ButtonGroup size="sm" variant="flat">
-      <Button
-        variant={value === null ? 'solid' : 'flat'}
-        color={value === null ? 'primary' : 'default'}
-        onPress={() => onChange(null)}
-      >
-        {allLabel}
-      </Button>
-      {options.map((option) => (
-        <Button
-          key={option.key}
-          variant={value === option.key ? 'solid' : 'flat'}
-          color={value === option.key ? option.color ?? 'primary' : 'default'}
-          onPress={() => onChange(option.key)}
-          className="gap-1"
-        >
-          {option.icon && <span>{option.icon}</span>}
-          <span>{option.label}</span>
-          {option.count !== undefined && (
-            <Chip size="sm" variant="flat" className="ml-1">
-              {option.count}
-            </Chip>
-          )}
-        </Button>
-      ))}
-    </ButtonGroup>
-  )
-}
-
-
-// ============================================================================
 // Table View Wrapper - Handles fill height with sticky header
 // ============================================================================
 
@@ -269,10 +222,7 @@ export function DataTable<T>({
   isRowSelectable,
   checkboxSelectionOnly = false,
 
-  // Filtering
-  filters = [],
-  filterValues: controlledFilterValues,
-  onFilterChange,
+  // Search
   searchFn,
   searchPlaceholder = 'Search...',
 
@@ -358,7 +308,6 @@ export function DataTable<T>({
   // Use controlled state or internal state
   const sortColumn = controlledSortColumn ?? tableState.sortColumn
   const sortDirection = controlledSortDirection ?? tableState.sortDirection
-  const filterValues = controlledFilterValues ?? tableState.filterValues
   const viewMode = controlledViewMode ?? tableState.viewMode
   const selectedKeys = controlledSelectedKeys ?? tableState.selectedKeys
   const pageSize = tableState.pageSize
@@ -410,8 +359,8 @@ export function DataTable<T>({
     maxWidth: maxColumnWidth,
   })
 
-  // Get search filter value
-  const searchTerm = (filterValues['_search'] as string) ?? ''
+  // Search term state (managed internally)
+  const [searchTerm, setSearchTerm] = useState('')
 
   // Sort descriptor for HeroUI Table
   const sortDescriptor: SortDescriptor | undefined = useMemo(() => {
@@ -437,32 +386,12 @@ export function DataTable<T>({
     [onSortChange, tableState]
   )
 
-  const handleFilterChange = useCallback(
-    (key: string, value: unknown) => {
-      const newValues = { ...filterValues, [key]: value }
-      if (onFilterChange) {
-        onFilterChange(newValues)
-      } else {
-        tableState.setFilterValue(key, value)
-      }
-    },
-    [filterValues, onFilterChange, tableState]
-  )
-
   const handleSearchChange = useCallback(
     (value: string) => {
-      handleFilterChange('_search', value)
+      setSearchTerm(value)
     },
-    [handleFilterChange]
+    []
   )
-
-  const handleClearFilters = useCallback(() => {
-    if (onFilterChange) {
-      onFilterChange({})
-    } else {
-      tableState.clearFilters()
-    }
-  }, [onFilterChange, tableState])
 
   const handleViewModeChange = useCallback(
     (mode: ViewMode) => {
@@ -492,7 +421,7 @@ export function DataTable<T>({
   // Data Processing
   // ============================================================================
 
-  const filteredData = useFilteredData(data, filters, filterValues, searchTerm, searchFn)
+  const filteredData = useFilteredData(data, searchTerm, searchFn)
   const baseSortedData = useSortedData(filteredData, columns, sortColumn, sortDirection, defaultSortFn)
 
   // Move pinned items to the top (after sorting)
@@ -570,15 +499,31 @@ export function DataTable<T>({
     return visible
   }, [columns, columnOrder])
 
-  // Check if there are active filters (excluding search)
-  const hasActiveFilters = useMemo(() => {
-    return Object.entries(filterValues).some(([key, value]) => {
-      if (key === '_search') return false
-      if (value === null || value === undefined || value === '') return false
-      if (Array.isArray(value) && value.length === 0) return false
-      return true
-    })
-  }, [filterValues])
+  // Check if all selectable items are selected (for header checkbox)
+  const allSelectableItems = useMemo(() => {
+    if (!isRowSelectable) return paginatedData
+    return paginatedData.filter(item => isRowSelectable(item))
+  }, [paginatedData, isRowSelectable])
+
+  const allSelected = allSelectableItems.length > 0 && 
+    allSelectableItems.every(item => isKeySelected(getRowKey(item)))
+  
+  const someSelected = allSelectableItems.some(item => isKeySelected(getRowKey(item))) && !allSelected
+
+  // Handle select all toggle for checkbox-only mode
+  const handleSelectAllToggle = useCallback((checked: boolean) => {
+    if (checked) {
+      // Select all selectable items
+      const newKeys = new Set(selectedKeys)
+      allSelectableItems.forEach(item => newKeys.add(getRowKey(item)))
+      handleSelectionChange(newKeys)
+    } else {
+      // Deselect all items on current page
+      const newKeys = new Set(selectedKeys)
+      paginatedData.forEach(item => newKeys.delete(getRowKey(item)))
+      handleSelectionChange(newKeys)
+    }
+  }, [selectedKeys, allSelectableItems, paginatedData, getRowKey, handleSelectionChange])
 
   // Grouped data for card view
   const groupedData: DataTableGroup<T>[] = useMemo(() => {
@@ -641,13 +586,18 @@ export function DataTable<T>({
 
       {/* Toolbar */}
       {!hideToolbar && (
-        <div className={`flex flex-col gap-4 shrink-0 ${fillHeight ? 'sticky top-0 z-20 bg-background pb-4' : ''} ${classNames.toolbar ?? ''}`}>
+        <div className={`flex flex-col gap-4 shrink-0 ${fillHeight ? 'sticky top-0 z-20 pb-4' : ''} ${classNames.toolbar ?? ''}`}>
           {/* Search, Actions, View Toggle Row */}
           <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
             {/* Search and custom toolbar content (start) */}
             <div className="flex gap-2 items-center w-full sm:w-auto grow">
               <Input
                 className="w-full sm:max-w-xs"
+                classNames={{
+                  mainWrapper: 'bg-content1 rounded-lg',
+                  inputWrapper: 'bg-content1',
+                }}
+                variant="flat"
                 placeholder={searchPlaceholder}
                 value={searchTerm}
                 onValueChange={handleSearchChange}
@@ -751,38 +701,10 @@ export function DataTable<T>({
             </div>
           </div>
 
-          {/* Filter chips and custom filter content */}
-          {(filters.some((f) => f.type === 'select' && f.position !== 'dropdown') || filterRowContent) && (
+          {/* Custom filter row content - callers supply their own filter UI */}
+          {filterRowContent && (
             <div className="flex flex-wrap gap-2 items-center">
-              <span className="text-sm text-default-500 flex items-center gap-1">
-                <IconFilter size={16} /> Filter:
-              </span>
-              {filters
-                .filter((f) => f.type === 'select' && f.position !== 'dropdown')
-                .map((filter) => (
-                  <FilterChips
-                    key={filter.key}
-                    options={filter.options ?? []}
-                    value={(filterValues[filter.key] as string) ?? null}
-                    onChange={(value) => handleFilterChange(filter.key, value)}
-                    allLabel={`All ${filter.label}`}
-                  />
-                ))}
-
-              {/* Custom filter row content */}
               {filterRowContent}
-
-              {(hasActiveFilters || searchTerm) && (
-                <Button
-                  size="sm"
-                  variant="light"
-                  color="danger"
-                  onPress={handleClearFilters}
-                  startContent={<IconX size={18} />}
-                >
-                  Clear
-                </Button>
-              )}
             </div>
           )}
         </div>
@@ -793,10 +715,10 @@ export function DataTable<T>({
         <TableViewWrapper fillHeight={fillHeight} className={classNames.tableContainer}>
           <Table
             aria-label={ariaLabel}
-            selectionMode={selectionMode === 'none' ? 'none' : selectionMode}
-            selectedKeys={selectedKeyStrings}
-            onSelectionChange={handleSelectionChange}
-            disabledKeys={disabledKeys as any}
+            selectionMode={selectionMode === 'none' || checkboxSelectionOnly ? 'none' : selectionMode}
+            selectedKeys={checkboxSelectionOnly ? undefined : selectedKeyStrings}
+            onSelectionChange={checkboxSelectionOnly ? undefined : handleSelectionChange}
+            disabledKeys={checkboxSelectionOnly ? undefined : disabledKeys as any}
             removeWrapper={removeWrapper}
             isStriped={isStriped}
             isCompact={isCompact}
@@ -804,16 +726,32 @@ export function DataTable<T>({
             onSortChange={handleTableSortChange}
             isHeaderSticky={fillHeight}
             classNames={{
-              base: `${fillHeight ? 'h-full' : ''} ${checkboxSelectionOnly ? 'checkbox-selection-only' : ''} w-full max-w-full ${resizingColumn ? 'select-none' : ''}`,
+              base: `${fillHeight ? 'h-full' : ''} w-full max-w-full ${resizingColumn ? 'select-none' : ''}`,
               wrapper: `${classNames.table ?? ''} ${fillHeight ? 'h-full overflow-auto' : ''} max-w-full`,
               table: 'table-fixed w-full',
-              th: `text-default-600 first:rounded-l-lg last:rounded-r-lg relative group ${selectionMode !== 'none' ? 'first:w-[50px] first:min-w-[50px] first:max-w-[50px]' : ''}`,
+              th: `text-default-600 first:rounded-l-lg last:rounded-r-lg relative group ${selectionMode !== 'none' && !checkboxSelectionOnly ? 'first:w-[50px] first:min-w-[50px] first:max-w-[50px]' : ''}`,
               thead: '',
-              td: `overflow-hidden ${selectionMode !== 'none' ? 'first:w-[50px] first:min-w-[50px] first:max-w-[50px]' : ''}`,
+              td: `overflow-hidden ${selectionMode !== 'none' && !checkboxSelectionOnly ? 'first:w-[50px] first:min-w-[50px] first:max-w-[50px]' : ''}`,
             }}
           >
             <TableHeader>
               {[
+                // Manual checkbox column when checkboxSelectionOnly is true
+                ...(checkboxSelectionOnly && selectionMode !== 'none'
+                  ? [
+                    <TableColumn
+                      key="_checkbox"
+                      style={{ width: 50, minWidth: 50, maxWidth: 50, flexGrow: 0, flexShrink: 0 }}
+                    >
+                      <Checkbox
+                        isSelected={allSelected}
+                        isIndeterminate={someSelected}
+                        onValueChange={handleSelectAllToggle}
+                        aria-label="Select all"
+                      />
+                    </TableColumn>,
+                  ]
+                  : []),
                 ...visibleColumns.map((column) => {
                   const sizing = parseColumnSizing(column)
                   const overrideWidth = columnWidths[column.key]
@@ -887,15 +825,15 @@ export function DataTable<T>({
                 emptyContent ?? (
                   <div className="py-8 text-center">
                     <p className="text-default-500">No records found</p>
-                    {(hasActiveFilters || searchTerm) && (
+                    {searchTerm && (
                       <Button
                         variant="light"
                         color="primary"
                         size="sm"
                         className="mt-2"
-                        onPress={handleClearFilters}
+                        onPress={() => handleSearchChange('')}
                       >
-                        Clear filters
+                        Clear search
                       </Button>
                     )}
                   </div>
@@ -913,6 +851,17 @@ export function DataTable<T>({
                   return (
                     <TableRow key={`${keyPrefix}-${skeletonId}`}>
                       {[
+                        // Checkbox column skeleton
+                        ...(checkboxSelectionOnly && selectionMode !== 'none'
+                          ? [
+                            <TableCell
+                              key="_checkbox"
+                              style={{ width: 50, minWidth: 50, maxWidth: 50, flexGrow: 0, flexShrink: 0 }}
+                            >
+                              <Skeleton className="w-4 h-4 rounded" />
+                            </TableCell>,
+                          ]
+                          : []),
                         ...visibleColumns.map((column) => {
                           const sizing = parseColumnSizing(column)
                           const overrideWidth = columnWidths[column.key]
@@ -946,19 +895,44 @@ export function DataTable<T>({
                   return (
                     <TableRow key="_sentinel" className="hover:bg-transparent data-[selected=true]:bg-transparent">
                       {[
-                        // First cell contains the sentinel observer (invisible, just for triggering)
-                        <TableCell key="_sentinel_observer" style={getColumnStyle(parseColumnSizing(visibleColumns[0]))}>
-                          <div ref={sentinelRef} className="h-px" />
-                        </TableCell>,
-                        // Empty cells for remaining columns
-                        ...visibleColumns.slice(1).map((column) => (
-                          <TableCell 
-                            key={`_sentinel_${column.key}`}
-                            style={getColumnStyle(parseColumnSizing(column))}
-                          >
-                            {''}
-                          </TableCell>
-                        )),
+                        // Empty checkbox cell if in checkbox-only mode
+                        ...(checkboxSelectionOnly && selectionMode !== 'none'
+                          ? [
+                            <TableCell
+                              key="_sentinel_checkbox"
+                              style={{ width: 50, minWidth: 50, maxWidth: 50, flexGrow: 0, flexShrink: 0 }}
+                            >
+                              <div ref={sentinelRef} className="h-px" />
+                            </TableCell>,
+                            // First data cell (no sentinel ref since it's in checkbox cell)
+                            <TableCell key={`_sentinel_${visibleColumns[0].key}`} style={getColumnStyle(parseColumnSizing(visibleColumns[0]))}>
+                              {''}
+                            </TableCell>,
+                            // Rest of the data columns
+                            ...visibleColumns.slice(1).map((column) => (
+                              <TableCell 
+                                key={`_sentinel_${column.key}`}
+                                style={getColumnStyle(parseColumnSizing(column))}
+                              >
+                                {''}
+                              </TableCell>
+                            )),
+                          ]
+                          : [
+                            // First cell contains the sentinel observer (invisible, just for triggering)
+                            <TableCell key="_sentinel_observer" style={getColumnStyle(parseColumnSizing(visibleColumns[0]))}>
+                              <div ref={sentinelRef} className="h-px" />
+                            </TableCell>,
+                            // Empty cells for remaining columns
+                            ...visibleColumns.slice(1).map((column) => (
+                              <TableCell 
+                                key={`_sentinel_${column.key}`}
+                                style={getColumnStyle(parseColumnSizing(column))}
+                              >
+                                {''}
+                              </TableCell>
+                            )),
+                          ]),
                         // Empty cell for actions column if present
                         ...(rowActions.length > 0
                           ? [
@@ -976,7 +950,35 @@ export function DataTable<T>({
                 }
                 
                 const index = paginatedData.indexOf(item)
+                const rowKey = getRowKey(item)
+                const isSelected = isKeySelected(rowKey)
+                const isSelectable = !isRowSelectable || isRowSelectable(item)
+                
                 const cells = [
+                  // Manual checkbox cell when checkboxSelectionOnly is true
+                  ...(checkboxSelectionOnly && selectionMode !== 'none'
+                    ? [
+                      <TableCell
+                        key="_checkbox"
+                        style={{ width: 50, minWidth: 50, maxWidth: 50, flexGrow: 0, flexShrink: 0 }}
+                      >
+                        <Checkbox
+                          isSelected={isSelected}
+                          isDisabled={!isSelectable}
+                          onValueChange={(checked) => {
+                            const newKeys = new Set(selectedKeys)
+                            if (checked) {
+                              newKeys.add(rowKey)
+                            } else {
+                              newKeys.delete(rowKey)
+                            }
+                            handleSelectionChange(newKeys)
+                          }}
+                          aria-label={`Select row ${rowKey}`}
+                        />
+                      </TableCell>,
+                    ]
+                    : []),
                   ...visibleColumns.map((column) => {
                     const sizing = parseColumnSizing(column)
                     const overrideWidth = columnWidths[column.key]
@@ -1007,7 +1009,7 @@ export function DataTable<T>({
                   )
                 }
                 return (
-                  <TableRow key={getRowKey(item)}>
+                  <TableRow key={rowKey}>
                     {cells}
                   </TableRow>
                 )
@@ -1025,15 +1027,15 @@ export function DataTable<T>({
               {emptyContent ?? (
                 <>
                   <p className="text-default-500">No records found</p>
-                  {(hasActiveFilters || searchTerm) && (
+                  {searchTerm && (
                     <Button
                       variant="light"
                       color="primary"
                       size="sm"
                       className="mt-2"
-                      onPress={handleClearFilters}
+                      onPress={() => handleSearchChange('')}
                     >
-                      Clear filters
+                      Clear search
                     </Button>
                   )}
                 </>
@@ -1104,15 +1106,15 @@ export function DataTable<T>({
               {emptyContent ?? (
                 <>
                   <p className="text-default-500">No records found</p>
-                  {(hasActiveFilters || searchTerm) && (
+                  {searchTerm && (
                     <Button
                       variant="light"
                       color="primary"
                       size="sm"
                       className="mt-2"
-                      onPress={handleClearFilters}
+                      onPress={() => handleSearchChange('')}
                     >
-                      Clear filters
+                      Clear search
                     </Button>
                   )}
                 </>
@@ -1127,7 +1129,7 @@ export function DataTable<T>({
                     {groupHeaderRenderer ? (
                       groupHeaderRenderer(group)
                     ) : (
-                      <div className="flex items-center gap-2 mb-3 sticky top-0 bg-background/95 backdrop-blur py-2 z-10">
+                      <div className="flex items-center gap-2 mb-3 sticky top-0 bg-background/95  backdrop-blur py-2 z-10">
                         <span className="text-xl font-bold text-primary">{group.label}</span>
                         <span className="text-sm text-default-400">
                           {group.items.length} item{group.items.length !== 1 ? 's' : ''}

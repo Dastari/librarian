@@ -74,7 +74,7 @@ export function LibraryShowsTab({ shows, onDeleteShow, onAddShow }: LibraryShows
         label: 'SHOW',
         sortable: true,
         render: (show) => (
-          <Link to={`/shows/${show.id}` as any} className="flex items-center gap-3 hover:opacity-80">
+          <Link to="/shows/$showId" params={{ showId: show.id }} className="flex items-center gap-3 hover:opacity-80">
             {show.posterUrl ? (
               <Image
                 src={show.posterUrl}

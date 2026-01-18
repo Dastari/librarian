@@ -1,34 +1,43 @@
 # Build stage
-FROM node:22-alpine as builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
 # Copy package files
-COPY package*.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
 # Install dependencies
-RUN npm ci
+RUN pnpm install --frozen-lockfile
 
 # Copy source code
 COPY . .
 
+# Build arguments for environment variables (set at build time)
+ARG VITE_API_URL
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_ANON_KEY
+
 # Build the application
-RUN npm run build
+RUN pnpm run build
 
-# Runtime stage
-FROM node:22-alpine
+# Production stage - nginx for serving static files
+FROM nginx:alpine
 
-WORKDIR /app
+# Copy custom nginx config
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Copy built application
-COPY --from=builder /app/.output ./.output
-COPY --from=builder /app/package*.json ./
-
-# Install production dependencies only
-RUN npm ci --omit=dev
+# Copy built static files
+COPY --from=builder /app/dist /usr/share/nginx/html
 
 # Expose port
-EXPOSE 3000
+EXPOSE 80
 
-# Run the application
-CMD ["node", ".output/server/index.mjs"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost/healthz || exit 1
+
+# Start nginx
+CMD ["nginx", "-g", "daemon off;"]

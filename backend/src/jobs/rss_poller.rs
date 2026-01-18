@@ -2,15 +2,20 @@
 //!
 //! This job:
 //! 1. Gets feeds that are due for polling
-//! 2. Fetches and parses each feed
+//! 2. Fetches and parses each feed (with bounded concurrency)
 //! 3. Stores new items in the database
 //! 4. Matches items to wanted episodes
 //! 5. Updates episode status to "available" when matched
+//!
+//! Uses bounded concurrency to prevent overwhelming external RSS servers.
 
 use anyhow::Result;
 use chrono::Datelike;
 use regex::Regex;
 use sqlx::PgPool;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
@@ -19,6 +24,12 @@ use crate::db::tv_shows::TvShowRecord;
 use crate::db::{CreateRssFeedItem, Database, RssFeedRecord};
 use crate::services::ParsedRssItem;
 use crate::services::RssService;
+
+/// Maximum concurrent feed fetches
+const MAX_CONCURRENT_FEEDS: usize = 5;
+
+/// Delay between feed fetch batches (ms)
+const FEED_BATCH_DELAY_MS: u64 = 200;
 
 /// Poll all RSS feeds that are due for polling
 pub async fn poll_feeds() -> Result<()> {
@@ -35,40 +46,82 @@ pub async fn poll_feeds() -> Result<()> {
 }
 
 /// Poll feeds with a provided database connection
+/// 
+/// Uses bounded concurrency to prevent overwhelming external RSS servers.
 pub async fn poll_feeds_with_db(db: &Database) -> Result<()> {
-    let rss_service = RssService::new();
+    let rss_service = Arc::new(RssService::new());
 
     // Get feeds that need polling
     let feeds = db.rss_feeds().list_due_for_poll().await?;
+    
+    if feeds.is_empty() {
+        debug!(job = "rss_poller", "No feeds due for polling");
+        return Ok(());
+    }
+    
     info!(
         job = "rss_poller",
         feed_count = feeds.len(),
+        max_concurrent = MAX_CONCURRENT_FEEDS,
         "Found feeds due for polling"
     );
 
-    for feed in feeds {
-        if let Err(e) = poll_single_feed(db, &rss_service, &feed).await {
-            error!(
-                job = "rss_poller",
-                feed_name = %feed.name,
-                feed_id = %feed.id,
-                error = %e,
-                "Failed to poll feed: {}",
-                feed.name
-            );
-            // Mark the feed as failed
-            if let Err(mark_err) = db
-                .rss_feeds()
-                .mark_poll_failure(feed.id, &e.to_string())
-                .await
-            {
-                error!(
-                    job = "rss_poller",
-                    feed_name = %feed.name,
-                    error = %mark_err,
-                    "Failed to mark feed poll failure"
-                );
+    // Semaphore to limit concurrent feed fetches
+    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_FEEDS));
+    
+    // Process feeds in chunks
+    let chunk_size = MAX_CONCURRENT_FEEDS;
+    
+    for chunk in feeds.chunks(chunk_size) {
+        let mut handles = Vec::with_capacity(chunk.len());
+        
+        for feed in chunk {
+            let db = db.clone();
+            let rss_service = rss_service.clone();
+            let semaphore = semaphore.clone();
+            let feed = feed.clone();
+            
+            let handle = tokio::spawn(async move {
+                let _permit = semaphore.acquire().await.expect("Semaphore closed");
+                
+                if let Err(e) = poll_single_feed(&db, &rss_service, &feed).await {
+                    error!(
+                        job = "rss_poller",
+                        feed_name = %feed.name,
+                        feed_id = %feed.id,
+                        error = %e,
+                        "Failed to poll feed: {}",
+                        feed.name
+                    );
+                    // Mark the feed as failed
+                    if let Err(mark_err) = db
+                        .rss_feeds()
+                        .mark_poll_failure(feed.id, &e.to_string())
+                        .await
+                    {
+                        error!(
+                            job = "rss_poller",
+                            feed_name = %feed.name,
+                            error = %mark_err,
+                            "Failed to mark feed poll failure"
+                        );
+                    }
+                }
+            });
+            
+            handles.push(handle);
+        }
+        
+        // Wait for all feeds in this chunk to complete
+        for handle in handles {
+            if let Err(e) = handle.await {
+                error!(job = "rss_poller", error = %e, "Feed poll task panicked");
             }
+        }
+        
+        // Small delay between chunks
+        if FEED_BATCH_DELAY_MS > 0 {
+            tokio::time::sleep(Duration::from_millis(FEED_BATCH_DELAY_MS)).await;
         }
     }
 

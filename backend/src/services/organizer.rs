@@ -12,6 +12,8 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::db::{Database, EpisodeRecord, MediaFileRecord, TvShowRecord};
+use crate::db::libraries::LibraryRecord;
+use super::file_utils::{is_video_file, sanitize_for_filename};
 
 /// Rename style options
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +113,9 @@ impl OrganizerService {
     }
 
     /// Generate the organized path for a media file
+    ///
+    /// If `naming_pattern` is provided, it will be used to generate the path.
+    /// Otherwise, falls back to the legacy `rename_style` behavior.
     pub fn generate_organized_path(
         &self,
         library_path: &str,
@@ -118,16 +123,26 @@ impl OrganizerService {
         episode: &EpisodeRecord,
         original_filename: &str,
         rename_style: RenameStyle,
+        naming_pattern: Option<&str>,
     ) -> PathBuf {
         let ext = Path::new(original_filename)
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("mkv");
 
+        // If naming pattern is provided, use it
+        if let Some(pattern) = naming_pattern {
+            if !pattern.is_empty() {
+                let relative_path = apply_naming_pattern(pattern, show, episode, ext);
+                return PathBuf::from(library_path).join(relative_path);
+            }
+        }
+
+        // Legacy behavior: use rename_style
         // Create show folder name: "Show Name (Year)" or just "Show Name"
         let show_folder = match show.year {
-            Some(year) => format!("{} ({})", sanitize_filename(&show.name), year),
-            None => sanitize_filename(&show.name),
+            Some(year) => format!("{} ({})", sanitize_for_filename(&show.name), year),
+            None => sanitize_for_filename(&show.name),
         };
 
         // Create season folder name: "Season 01"
@@ -140,11 +155,11 @@ impl OrganizerService {
                 let episode_title = episode
                     .title
                     .as_ref()
-                    .map(|t| format!(" - {}", sanitize_filename(t)))
+                    .map(|t| format!(" - {}", sanitize_for_filename(t)))
                     .unwrap_or_default();
                 format!(
                     "{} - S{:02}E{:02}{}.{}",
-                    sanitize_filename(&show.name),
+                    sanitize_for_filename(&show.name),
                     episode.season,
                     episode.episode,
                     episode_title,
@@ -157,13 +172,13 @@ impl OrganizerService {
                 let episode_title = episode
                     .title
                     .as_ref()
-                    .map(|t| format!(" - {}", sanitize_filename(t)))
+                    .map(|t| format!(" - {}", sanitize_for_filename(t)))
                     .unwrap_or_default();
 
                 if quality_info.is_empty() {
                     format!(
                         "{} - S{:02}E{:02}{}.{}",
-                        sanitize_filename(&show.name),
+                        sanitize_for_filename(&show.name),
                         episode.season,
                         episode.episode,
                         episode_title,
@@ -172,7 +187,7 @@ impl OrganizerService {
                 } else {
                     format!(
                         "{} - S{:02}E{:02}{} [{}].{}",
-                        sanitize_filename(&show.name),
+                        sanitize_for_filename(&show.name),
                         episode.season,
                         episode.episode,
                         episode_title,
@@ -202,6 +217,7 @@ impl OrganizerService {
         episode: &EpisodeRecord,
         library_path: &str,
         rename_style: RenameStyle,
+        naming_pattern: Option<&str>,
         action: &str,
         dry_run: bool,
     ) -> Result<OrganizeResult> {
@@ -217,6 +233,7 @@ impl OrganizerService {
             episode,
             original_filename,
             rename_style,
+            naming_pattern,
         );
 
         let new_path_str = new_path.to_string_lossy().to_string();
@@ -275,6 +292,90 @@ impl OrganizerService {
 
         let source_path = Path::new(&original_path);
 
+        // Check for conflicts - if target exists with different size, it's a conflict
+        if new_path.exists() {
+            let target_size = tokio::fs::metadata(&new_path)
+                .await
+                .map(|m| m.len() as i64)
+                .unwrap_or(0);
+            let source_size = file.size_bytes;
+
+            if target_size != source_size {
+                // Different file - conflict!
+                let error_msg = format!(
+                    "Target file exists with different size (source: {} bytes, target: {} bytes)",
+                    source_size, target_size
+                );
+                warn!(
+                    file_id = %file.id,
+                    source_path = %original_path,
+                    target_path = %new_path_str,
+                    source_size = source_size,
+                    target_size = target_size,
+                    "File conflict detected"
+                );
+
+                // Mark as conflicted in database
+                self.db
+                    .media_files()
+                    .mark_conflicted(file.id, &error_msg)
+                    .await?;
+
+                return Ok(OrganizeResult {
+                    file_id: file.id,
+                    original_path,
+                    new_path: new_path_str,
+                    success: false,
+                    error: Some(error_msg),
+                });
+            } else {
+                // Same size - assume it's the same file
+                // Check if another record already has this path (to avoid duplicate key violation)
+                if let Some(existing) = self.db.media_files().get_by_path(&new_path_str).await? {
+                    if existing.id != file.id {
+                        // Another record already has this path - this file is a duplicate
+                        // Delete this duplicate record and mark as skipped
+                        info!(
+                            file_id = %file.id,
+                            existing_file_id = %existing.id,
+                            path = %new_path_str,
+                            "Duplicate file detected, deleting duplicate record"
+                        );
+
+                        self.db.media_files().delete(file.id).await?;
+
+                        return Ok(OrganizeResult {
+                            file_id: file.id,
+                            original_path,
+                            new_path: new_path_str,
+                            success: true,
+                            error: None,
+                        });
+                    }
+                }
+
+                // Mark as organized without copying
+                info!(
+                    file_id = %file.id,
+                    path = %new_path_str,
+                    "Target file already exists with same size, marking as organized"
+                );
+
+                self.db
+                    .media_files()
+                    .mark_organized(file.id, &new_path_str, &original_path)
+                    .await?;
+
+                return Ok(OrganizeResult {
+                    file_id: file.id,
+                    original_path,
+                    new_path: new_path_str,
+                    success: true,
+                    error: None,
+                });
+            }
+        }
+
         // Perform file operation based on action
         let operation_result = match action {
             "move" => {
@@ -332,6 +433,28 @@ impl OrganizerService {
                 success: false,
                 error: Some(format!("Failed to {} file: {}", action, e)),
             });
+        }
+
+        // Check for duplicate path in database before updating
+        if let Some(existing) = self.db.media_files().get_by_path(&new_path_str).await? {
+            if existing.id != file.id {
+                // Another record has this path - delete this duplicate
+                info!(
+                    file_id = %file.id,
+                    existing_file_id = %existing.id,
+                    path = %new_path_str,
+                    "Duplicate file detected after organize, deleting duplicate record"
+                );
+                self.db.media_files().delete(file.id).await?;
+
+                return Ok(OrganizeResult {
+                    file_id: file.id,
+                    original_path,
+                    new_path: new_path_str,
+                    success: true,
+                    error: None,
+                });
+            }
         }
 
         // Update database
@@ -420,6 +543,7 @@ impl OrganizerService {
                     &episode,
                     &library.path,
                     rename_style,
+                    library.naming_pattern.as_deref(),
                     &action,
                     false,
                 )
@@ -448,8 +572,8 @@ impl OrganizerService {
 
         // Create show folder name
         let show_folder = match show.year {
-            Some(year) => format!("{} ({})", sanitize_filename(&show.name), year),
-            None => sanitize_filename(&show.name),
+            Some(year) => format!("{} ({})", sanitize_for_filename(&show.name), year),
+            None => sanitize_for_filename(&show.name),
         };
 
         let show_path = PathBuf::from(&library.path).join(&show_folder);
@@ -666,7 +790,7 @@ impl OrganizerService {
 
             // Generate the target path
             let target_path =
-                self.generate_organized_path(&library.path, &show, &ep, filename, rename_style);
+                self.generate_organized_path(&library.path, &show, &ep, filename, rename_style, library.naming_pattern.as_deref());
 
             // Create parent directories
             if let Some(parent) = target_path.parent()
@@ -810,6 +934,374 @@ impl OrganizerService {
             messages,
         })
     }
+
+    /// Consolidate a library by:
+    /// 1. Finding duplicate show folders (e.g., "Show" and "Show (2024)")
+    /// 2. Moving files from old folders to the correct folder structure
+    /// 3. Removing empty folders
+    /// 4. Updating database paths
+    pub async fn consolidate_library(&self, library_id: Uuid) -> Result<ConsolidateResult> {
+        let library = self
+            .db
+            .libraries()
+            .get_by_id(library_id)
+            .await?
+            .context("Library not found")?;
+
+        if library.library_type != "tv" {
+            return Ok(ConsolidateResult {
+                success: true,
+                folders_removed: 0,
+                files_moved: 0,
+                messages: vec!["Consolidation is only supported for TV libraries currently".to_string()],
+            });
+        }
+
+        let library_path = Path::new(&library.path);
+        let mut folders_removed = 0;
+        let mut files_moved = 0;
+        let mut messages = Vec::new();
+
+        // Get all shows in this library
+        let shows = self.db.tv_shows().list_by_library(library_id).await?;
+
+        for show in &shows {
+            // Determine the correct folder name for this show
+            let correct_folder_name = match show.year {
+                Some(year) => format!("{} ({})", sanitize_for_filename(&show.name), year),
+                None => sanitize_for_filename(&show.name),
+            };
+            let correct_folder_path = library_path.join(&correct_folder_name);
+
+            // Look for other folders that might contain this show's files
+            // (old naming conventions, without year, etc.)
+            let show_name_sanitized = sanitize_for_filename(&show.name);
+            let show_name_lower = show_name_sanitized.to_lowercase();
+
+            // Read library directory to find potential duplicate folders
+            let mut entries = match tokio::fs::read_dir(library_path).await {
+                Ok(e) => e,
+                Err(e) => {
+                    messages.push(format!("Could not read library directory: {}", e));
+                    continue;
+                }
+            };
+
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let entry_path = entry.path();
+                if !entry_path.is_dir() {
+                    continue;
+                }
+
+                let folder_name = entry_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+
+                // Skip if this IS the correct folder
+                if folder_name == correct_folder_name {
+                    continue;
+                }
+
+                // Check if this folder might be for the same show
+                // (starts with show name, possibly missing year)
+                let folder_lower = folder_name.to_lowercase();
+                let is_potential_match = folder_lower == show_name_lower
+                    || folder_lower.starts_with(&format!("{} (", show_name_lower))
+                    || folder_lower.starts_with(&format!("{}_", show_name_lower));
+
+                if !is_potential_match {
+                    continue;
+                }
+
+                info!(
+                    show = %show.name,
+                    old_folder = folder_name,
+                    correct_folder = %correct_folder_name,
+                    "Found potential duplicate folder"
+                );
+
+                // Move files from old folder to correct folder
+                let moved = self
+                    .move_folder_contents(&entry_path, &correct_folder_path, &mut messages)
+                    .await?;
+                files_moved += moved;
+
+                // Try to remove the old folder if empty
+                if self.remove_empty_folder(&entry_path, &mut messages).await? {
+                    folders_removed += 1;
+                }
+            }
+        }
+
+        // Also scan for orphaned files in the library root and move them
+        let moved_from_root = self
+            .organize_root_files(&library, &shows, &mut messages)
+            .await?;
+        files_moved += moved_from_root;
+
+        // Update media file paths in database
+        let updated = self.update_media_file_paths(library_id).await?;
+        if updated > 0 {
+            messages.push(format!("Updated {} media file paths in database", updated));
+        }
+
+        Ok(ConsolidateResult {
+            success: true,
+            folders_removed,
+            files_moved,
+            messages,
+        })
+    }
+
+    /// Move contents of one folder to another, preserving season structure
+    async fn move_folder_contents(
+        &self,
+        source: &Path,
+        dest: &Path,
+        messages: &mut Vec<String>,
+    ) -> Result<i32> {
+        let mut moved_count = 0;
+
+        // Create destination if it doesn't exist
+        if !dest.exists() {
+            tokio::fs::create_dir_all(dest).await?;
+        }
+
+        let mut entries = tokio::fs::read_dir(source).await?;
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let entry_path = entry.path();
+            let entry_name = entry_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+
+            let dest_path = dest.join(entry_name);
+
+            if entry_path.is_dir() {
+                // Recursively move directory contents (e.g., Season folders)
+                let sub_moved = Box::pin(self.move_folder_contents(&entry_path, &dest_path, messages)).await?;
+                moved_count += sub_moved;
+
+                // Try to remove the now-empty source directory
+                self.remove_empty_folder(&entry_path, messages).await.ok();
+            } else if entry_path.is_file() {
+                // Move file
+                if dest_path.exists() {
+                    messages.push(format!(
+                        "Skipping {}: already exists at destination",
+                        entry_name
+                    ));
+                    continue;
+                }
+
+                match tokio::fs::rename(&entry_path, &dest_path).await {
+                    Ok(_) => {
+                        messages.push(format!("Moved: {} -> {}", 
+                            entry_path.display(),
+                            dest_path.display()
+                        ));
+                        moved_count += 1;
+                    }
+                    Err(e) => {
+                        // If rename fails (cross-device), try copy + delete
+                        match tokio::fs::copy(&entry_path, &dest_path).await {
+                            Ok(_) => {
+                                tokio::fs::remove_file(&entry_path).await.ok();
+                                messages.push(format!("Moved: {} -> {}",
+                                    entry_path.display(),
+                                    dest_path.display()
+                                ));
+                                moved_count += 1;
+                            }
+                            Err(copy_err) => {
+                                messages.push(format!(
+                                    "Failed to move {}: rename={}, copy={}",
+                                    entry_name, e, copy_err
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(moved_count)
+    }
+
+    /// Remove an empty folder (and any empty parent folders up to library root)
+    async fn remove_empty_folder(&self, path: &Path, messages: &mut Vec<String>) -> Result<bool> {
+        // Check if folder is empty
+        let mut entries = tokio::fs::read_dir(path).await?;
+        if entries.next_entry().await?.is_some() {
+            return Ok(false); // Not empty
+        }
+
+        match tokio::fs::remove_dir(path).await {
+            Ok(_) => {
+                messages.push(format!("Removed empty folder: {}", path.display()));
+                Ok(true)
+            }
+            Err(e) => {
+                messages.push(format!("Could not remove folder {}: {}", path.display(), e));
+                Ok(false)
+            }
+        }
+    }
+
+    /// Organize any loose video files in the library root
+    async fn organize_root_files(
+        &self,
+        library: &LibraryRecord,
+        shows: &[TvShowRecord],
+        messages: &mut Vec<String>,
+    ) -> Result<i32> {
+        let library_path = Path::new(&library.path);
+        let mut moved_count = 0;
+
+        let mut entries = match tokio::fs::read_dir(library_path).await {
+            Ok(e) => e,
+            Err(_) => return Ok(0),
+        };
+
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let entry_path = entry.path();
+            if !entry_path.is_file() {
+                continue;
+            }
+
+            let filename = entry_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+
+            if !is_video_file(filename) {
+                continue;
+            }
+
+            // Parse the filename
+            let parsed = crate::services::filename_parser::parse_episode(filename);
+            
+            let Some(ref show_name) = parsed.show_name else {
+                continue;
+            };
+            let Some(season) = parsed.season else {
+                continue;
+            };
+
+            // Find matching show
+            let show_name_lower = show_name.to_lowercase();
+            let matching_show = shows.iter().find(|s| {
+                s.name.to_lowercase() == show_name_lower
+                    || sanitize_for_filename(&s.name).to_lowercase() == show_name_lower
+            });
+
+            let Some(show) = matching_show else {
+                continue;
+            };
+
+            // Determine target path
+            let show_folder = match show.year {
+                Some(year) => format!("{} ({})", sanitize_for_filename(&show.name), year),
+                None => sanitize_for_filename(&show.name),
+            };
+            let season_folder = format!("Season {:02}", season);
+            let target_dir = library_path.join(&show_folder).join(&season_folder);
+            let target_path = target_dir.join(filename);
+
+            if target_path.exists() {
+                continue;
+            }
+
+            // Create target directory and move file
+            tokio::fs::create_dir_all(&target_dir).await.ok();
+            
+            match tokio::fs::rename(&entry_path, &target_path).await {
+                Ok(_) => {
+                    messages.push(format!("Moved root file: {} -> {}/{}/{}",
+                        filename, show_folder, season_folder, filename
+                    ));
+                    moved_count += 1;
+                }
+                Err(_) => {
+                    // Try copy + delete
+                    if tokio::fs::copy(&entry_path, &target_path).await.is_ok() {
+                        tokio::fs::remove_file(&entry_path).await.ok();
+                        messages.push(format!("Moved root file: {} -> {}/{}/{}",
+                            filename, show_folder, season_folder, filename
+                        ));
+                        moved_count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(moved_count)
+    }
+
+    /// Update media file paths in database to match actual file locations
+    async fn update_media_file_paths(&self, library_id: Uuid) -> Result<i32> {
+        let library = self.db.libraries().get_by_id(library_id).await?;
+        let Some(lib) = library else {
+            return Ok(0);
+        };
+
+        let media_files = self.db.media_files().list_by_library(library_id).await?;
+        let mut updated_count = 0;
+
+        for file in media_files {
+            let current_path = Path::new(&file.path);
+            
+            // Check if file exists at current path
+            if current_path.exists() {
+                continue;
+            }
+
+            // Try to find the file by name in the library
+            let filename = current_path
+                .file_name()
+                .and_then(|n| n.to_str());
+
+            let Some(name) = filename else {
+                continue;
+            };
+
+            // Search for file in library
+            if let Some(new_path) = find_file_in_directory(&lib.path, name).await {
+                // Update database
+                if self.db.media_files().update_path(file.id, &new_path).await.is_ok() {
+                    updated_count += 1;
+                }
+            }
+        }
+
+        Ok(updated_count)
+    }
+}
+
+/// Result of library consolidation
+#[derive(Debug, Clone)]
+pub struct ConsolidateResult {
+    pub success: bool,
+    pub folders_removed: i32,
+    pub files_moved: i32,
+    pub messages: Vec<String>,
+}
+
+/// Find a file by name within a directory tree
+async fn find_file_in_directory(dir: &str, filename: &str) -> Option<String> {
+    use walkdir::WalkDir;
+    
+    for entry in WalkDir::new(dir).max_depth(5).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name == filename {
+                    return Some(entry.path().to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// File information for organizing
@@ -826,27 +1318,6 @@ pub struct OrganizeTorrentResult {
     pub organized_count: i32,
     pub failed_count: i32,
     pub messages: Vec<String>,
-}
-
-/// Check if a file is a video file
-fn is_video_file(path: &str) -> bool {
-    let video_extensions = [
-        ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".ts", ".m2ts",
-    ];
-    let lower = path.to_lowercase();
-    video_extensions.iter().any(|ext| lower.ends_with(ext))
-}
-
-/// Sanitize a string for use as a filename
-fn sanitize_filename(name: &str) -> String {
-    name.chars()
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            _ => c,
-        })
-        .collect::<String>()
-        .trim()
-        .to_string()
 }
 
 /// Extract quality information from a filename
@@ -916,15 +1387,97 @@ fn extract_release_group(filename: &str) -> Option<String> {
     None
 }
 
+/// Apply a naming pattern to generate a file path
+///
+/// Supported variables:
+/// - `{show}` - TV show name
+/// - `{season}` - Season number (raw)
+/// - `{season:02}` - Season number zero-padded to 2 digits
+/// - `{episode}` - Episode number (raw)
+/// - `{episode:02}` - Episode number zero-padded to 2 digits
+/// - `{title}` - Episode title
+/// - `{ext}` - File extension (without dot)
+/// - `{year}` - Show premiere year
+///
+/// Example pattern: `{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}`
+pub fn apply_naming_pattern(
+    pattern: &str,
+    show: &TvShowRecord,
+    episode: &EpisodeRecord,
+    extension: &str,
+) -> PathBuf {
+    use regex::Regex;
+
+    let mut result = pattern.to_string();
+
+    // Replace {show} with sanitized show name
+    result = result.replace("{show}", &sanitize_for_filename(&show.name));
+
+    // Replace {year} with show year
+    let year_str = show.year.map(|y| y.to_string()).unwrap_or_default();
+    result = result.replace("{year}", &year_str);
+
+    // Replace {title} with sanitized episode title
+    let title = episode
+        .title
+        .as_ref()
+        .map(|t| sanitize_for_filename(t))
+        .unwrap_or_else(|| format!("Episode {}", episode.episode));
+    result = result.replace("{title}", &title);
+
+    // Replace {ext} with extension (without leading dot)
+    let ext = extension.trim_start_matches('.');
+    result = result.replace("{ext}", ext);
+
+    // Replace season with format specifier: {season:02} -> zero-padded, {season} -> raw
+    let season_re = Regex::new(r"\{season(?::(\d+))?\}").unwrap();
+    result = season_re
+        .replace_all(&result, |caps: &regex::Captures| {
+            if let Some(width) = caps.get(1) {
+                let w: usize = width.as_str().parse().unwrap_or(2);
+                format!("{:0>width$}", episode.season, width = w)
+            } else {
+                episode.season.to_string()
+            }
+        })
+        .to_string();
+
+    // Replace episode with format specifier: {episode:02} -> zero-padded, {episode} -> raw
+    let episode_re = Regex::new(r"\{episode(?::(\d+))?\}").unwrap();
+    result = episode_re
+        .replace_all(&result, |caps: &regex::Captures| {
+            if let Some(width) = caps.get(1) {
+                let w: usize = width.as_str().parse().unwrap_or(2);
+                format!("{:0>width$}", episode.episode, width = w)
+            } else {
+                episode.episode.to_string()
+            }
+        })
+        .to_string();
+
+    PathBuf::from(result)
+}
+
+/// Default naming pattern used when library doesn't have one set
+pub const DEFAULT_NAMING_PATTERN: &str =
+    "{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}";
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_sanitize_filename() {
-        assert_eq!(sanitize_filename("Show: Name"), "Show_ Name");
-        assert_eq!(sanitize_filename("What/If?"), "What_If_");
-        assert_eq!(sanitize_filename("Normal Name"), "Normal Name");
+    fn test_sanitize_for_filename() {
+        // sanitize_filename crate removes invalid characters
+        let result = sanitize_for_filename("Show: Name");
+        assert!(!result.contains(':'), "Should not contain colon");
+        
+        let result = sanitize_for_filename("What/If?");
+        assert!(!result.contains('/'), "Should not contain slash");
+        assert!(!result.contains('?'), "Should not contain question mark");
+        
+        // Normal names should be unchanged
+        assert_eq!(sanitize_for_filename("Normal Name"), "Normal Name");
     }
 
     #[test]
@@ -936,6 +1489,92 @@ mod tests {
         assert_eq!(
             extract_quality_info("Show.S01E01.720p.x264-FLEET"),
             "720p x264 FLEET"
+        );
+    }
+
+    #[test]
+    fn test_apply_naming_pattern() {
+        use crate::db::{EpisodeRecord, TvShowRecord};
+        use uuid::Uuid;
+
+        let show = TvShowRecord {
+            id: Uuid::new_v4(),
+            library_id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            name: "Breaking Bad".to_string(),
+            sort_name: None,
+            year: Some(2008),
+            status: "Ended".to_string(),
+            tvmaze_id: None,
+            tmdb_id: None,
+            tvdb_id: None,
+            imdb_id: None,
+            overview: None,
+            network: None,
+            runtime: None,
+            genres: vec![],
+            poster_url: None,
+            backdrop_url: None,
+            monitored: true,
+            monitor_type: "all".to_string(),
+            quality_profile_id: None,
+            path: None,
+            auto_download_override: None,
+            backfill_existing: false,
+            organize_files_override: None,
+            rename_style_override: None,
+            auto_hunt_override: None,
+            episode_count: None,
+            episode_file_count: None,
+            size_bytes: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            allowed_resolutions_override: None,
+            allowed_video_codecs_override: None,
+            allowed_audio_formats_override: None,
+            require_hdr_override: None,
+            allowed_hdr_types_override: None,
+            allowed_sources_override: None,
+            release_group_blacklist_override: None,
+            release_group_whitelist_override: None,
+        };
+
+        let episode = EpisodeRecord {
+            id: Uuid::new_v4(),
+            tv_show_id: show.id,
+            season: 1,
+            episode: 5,
+            absolute_number: None,
+            title: Some("Gray Matter".to_string()),
+            overview: None,
+            air_date: None,
+            runtime: None,
+            tvmaze_id: None,
+            tmdb_id: None,
+            tvdb_id: None,
+            status: "downloaded".to_string(),
+            torrent_link: None,
+            torrent_link_added_at: None,
+            matched_rss_item_id: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let result = apply_naming_pattern(DEFAULT_NAMING_PATTERN, &show, &episode, "mkv");
+        assert_eq!(
+            result.to_string_lossy(),
+            "Breaking Bad/Season 01/Breaking Bad - S01E05 - Gray Matter.mkv"
+        );
+
+        // Test with no episode title
+        let episode_no_title = EpisodeRecord {
+            title: None,
+            ..episode.clone()
+        };
+        let result = apply_naming_pattern(DEFAULT_NAMING_PATTERN, &show, &episode_no_title, "mkv");
+        assert_eq!(
+            result.to_string_lossy(),
+            "Breaking Bad/Season 01/Breaking Bad - S01E05 - Episode 5.mkv"
         );
     }
 }

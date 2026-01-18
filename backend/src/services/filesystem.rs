@@ -384,7 +384,7 @@ impl FilesystemService {
     }
 
     /// Create a directory
-    pub async fn create_directory(&self, path: &str, user_id: Uuid) -> Result<String> {
+    pub async fn create_directory(&self, path: &str, _user_id: Uuid) -> Result<String> {
         // For create, we allow creating directories at any location for now
         // (used for library folder selection, not file management)
         let path_buf = PathBuf::from(path);

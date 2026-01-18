@@ -21,12 +21,18 @@ pub struct TorrentRecord {
     pub downloaded_bytes: i64,
     pub uploaded_bytes: i64,
     pub save_path: String,
-    pub media_item_id: Option<Uuid>,
-    pub subscription_id: Option<Uuid>,
+    pub download_path: Option<String>,
+    pub source_url: Option<String>,
     pub library_id: Option<Uuid>,
     pub episode_id: Option<Uuid>,
-    pub download_path: Option<String>,
+    pub movie_id: Option<Uuid>,
+    pub track_id: Option<Uuid>,
+    pub album_id: Option<Uuid>,
+    pub audiobook_id: Option<Uuid>,
+    pub source_feed_id: Option<Uuid>,
     pub post_process_status: Option<String>,
+    pub post_process_error: Option<String>,
+    pub processed_at: Option<OffsetDateTime>,
     pub added_at: OffsetDateTime,
     pub completed_at: Option<OffsetDateTime>,
 }
@@ -192,8 +198,9 @@ impl TorrentRepository {
             r#"
             SELECT id, user_id, info_hash, magnet_uri, name, state, progress,
                    total_bytes, downloaded_bytes, uploaded_bytes, save_path,
-                   media_item_id, subscription_id, library_id, episode_id,
-                   download_path, post_process_status, added_at, completed_at
+                   download_path, source_url, library_id, episode_id, movie_id,
+                   track_id, album_id, audiobook_id, source_feed_id,
+                   post_process_status, post_process_error, processed_at, added_at, completed_at
             FROM torrents 
             WHERE state = 'seeding' 
               AND completed_at IS NOT NULL
@@ -217,6 +224,19 @@ impl TorrentRepository {
         Ok(())
     }
 
+    /// Link torrent to a library
+    pub async fn link_to_library(&self, info_hash: &str, library_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE torrents SET library_id = $2, post_process_status = 'pending' WHERE info_hash = $1"
+        )
+        .bind(info_hash)
+        .bind(library_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// Link torrent to an episode
     pub async fn link_to_episode(&self, info_hash: &str, episode_id: Uuid) -> Result<()> {
         sqlx::query(
@@ -224,6 +244,58 @@ impl TorrentRepository {
         )
         .bind(info_hash)
         .bind(episode_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Link torrent to a movie
+    pub async fn link_to_movie(&self, info_hash: &str, movie_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE torrents SET movie_id = $2, post_process_status = 'pending' WHERE info_hash = $1"
+        )
+        .bind(info_hash)
+        .bind(movie_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Link torrent to an album
+    pub async fn link_to_album(&self, info_hash: &str, album_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE torrents SET album_id = $2, post_process_status = 'pending' WHERE info_hash = $1"
+        )
+        .bind(info_hash)
+        .bind(album_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Link torrent to a track
+    pub async fn link_to_track(&self, info_hash: &str, track_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE torrents SET track_id = $2, post_process_status = 'pending' WHERE info_hash = $1"
+        )
+        .bind(info_hash)
+        .bind(track_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Link torrent to an audiobook
+    pub async fn link_to_audiobook(&self, info_hash: &str, audiobook_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE torrents SET audiobook_id = $2, post_process_status = 'pending' WHERE info_hash = $1"
+        )
+        .bind(info_hash)
+        .bind(audiobook_id)
         .execute(&self.pool)
         .await?;
 

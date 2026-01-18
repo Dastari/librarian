@@ -157,6 +157,33 @@ impl TvShowRepository {
         Ok(records)
     }
 
+    /// Get all TV shows for a user (across all libraries)
+    pub async fn list_by_user(&self, user_id: Uuid) -> Result<Vec<TvShowRecord>> {
+        let records = sqlx::query_as::<_, TvShowRecord>(
+            r#"
+            SELECT id, library_id, user_id, name, sort_name, year, status,
+                   tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
+                   runtime, genres, poster_url, backdrop_url, monitored,
+                   monitor_type, quality_profile_id, path,
+                   auto_download_override, backfill_existing,
+                   organize_files_override, rename_style_override, auto_hunt_override,
+                   episode_count, episode_file_count, size_bytes, created_at, updated_at,
+                   allowed_resolutions_override, allowed_video_codecs_override,
+                   allowed_audio_formats_override, require_hdr_override,
+                   allowed_hdr_types_override, allowed_sources_override,
+                   release_group_blacklist_override, release_group_whitelist_override
+            FROM tv_shows
+            WHERE user_id = $1
+            ORDER BY name
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(records)
+    }
+
     /// Get all monitored TV shows for a user
     pub async fn list_monitored_by_user(&self, user_id: Uuid) -> Result<Vec<TvShowRecord>> {
         let records = sqlx::query_as::<_, TvShowRecord>(
@@ -384,7 +411,54 @@ impl TvShowRepository {
     }
 
     /// Update a TV show
+    /// 
+    /// For nullable override fields (Option<Option<T>>):
+    /// - None (outer) = don't update the field
+    /// - Some(None) = set the field to NULL (inherit from library)
+    /// - Some(Some(value)) = set the field to the value
     pub async fn update(&self, id: Uuid, input: UpdateTvShow) -> Result<Option<TvShowRecord>> {
+        // For Option<Option<T>> fields, we need to distinguish between:
+        // - "don't update" (outer None) 
+        // - "set to NULL" (Some(None))
+        // We use CASE expressions with boolean flags to handle this.
+        
+        // Extract the "should update" flags and flattened values for nullable override fields
+        let update_auto_download = input.auto_download_override.is_some();
+        let auto_download_value = input.auto_download_override.flatten();
+        
+        let update_organize_files = input.organize_files_override.is_some();
+        let organize_files_value = input.organize_files_override.flatten();
+        
+        let update_rename_style = input.rename_style_override.is_some();
+        let rename_style_value = input.rename_style_override.flatten();
+        
+        let update_auto_hunt = input.auto_hunt_override.is_some();
+        let auto_hunt_value = input.auto_hunt_override.flatten();
+        
+        let update_resolutions = input.allowed_resolutions_override.is_some();
+        let resolutions_value = input.allowed_resolutions_override.flatten();
+        
+        let update_codecs = input.allowed_video_codecs_override.is_some();
+        let codecs_value = input.allowed_video_codecs_override.flatten();
+        
+        let update_audio = input.allowed_audio_formats_override.is_some();
+        let audio_value = input.allowed_audio_formats_override.flatten();
+        
+        let update_require_hdr = input.require_hdr_override.is_some();
+        let require_hdr_value = input.require_hdr_override.flatten();
+        
+        let update_hdr_types = input.allowed_hdr_types_override.is_some();
+        let hdr_types_value = input.allowed_hdr_types_override.flatten();
+        
+        let update_sources = input.allowed_sources_override.is_some();
+        let sources_value = input.allowed_sources_override.flatten();
+        
+        let update_blacklist = input.release_group_blacklist_override.is_some();
+        let blacklist_value = input.release_group_blacklist_override.flatten();
+        
+        let update_whitelist = input.release_group_whitelist_override.is_some();
+        let whitelist_value = input.release_group_whitelist_override.flatten();
+        
         let record = sqlx::query_as::<_, TvShowRecord>(
             r#"
             UPDATE tv_shows SET
@@ -402,19 +476,20 @@ impl TvShowRepository {
                 monitor_type = COALESCE($13, monitor_type),
                 quality_profile_id = COALESCE($14, quality_profile_id),
                 path = COALESCE($15, path),
-                auto_download_override = COALESCE($16, auto_download_override),
-                backfill_existing = COALESCE($17, backfill_existing),
-                organize_files_override = COALESCE($18, organize_files_override),
-                rename_style_override = COALESCE($19, rename_style_override),
-                auto_hunt_override = COALESCE($20, auto_hunt_override),
-                allowed_resolutions_override = COALESCE($21, allowed_resolutions_override),
-                allowed_video_codecs_override = COALESCE($22, allowed_video_codecs_override),
-                allowed_audio_formats_override = COALESCE($23, allowed_audio_formats_override),
-                require_hdr_override = COALESCE($24, require_hdr_override),
-                allowed_hdr_types_override = COALESCE($25, allowed_hdr_types_override),
-                allowed_sources_override = COALESCE($26, allowed_sources_override),
-                release_group_blacklist_override = COALESCE($27, release_group_blacklist_override),
-                release_group_whitelist_override = COALESCE($28, release_group_whitelist_override),
+                -- Nullable override fields use CASE to allow setting to NULL
+                auto_download_override = CASE WHEN $16 THEN $17 ELSE auto_download_override END,
+                backfill_existing = COALESCE($18, backfill_existing),
+                organize_files_override = CASE WHEN $19 THEN $20 ELSE organize_files_override END,
+                rename_style_override = CASE WHEN $21 THEN $22 ELSE rename_style_override END,
+                auto_hunt_override = CASE WHEN $23 THEN $24 ELSE auto_hunt_override END,
+                allowed_resolutions_override = CASE WHEN $25 THEN $26 ELSE allowed_resolutions_override END,
+                allowed_video_codecs_override = CASE WHEN $27 THEN $28 ELSE allowed_video_codecs_override END,
+                allowed_audio_formats_override = CASE WHEN $29 THEN $30 ELSE allowed_audio_formats_override END,
+                require_hdr_override = CASE WHEN $31 THEN $32 ELSE require_hdr_override END,
+                allowed_hdr_types_override = CASE WHEN $33 THEN $34 ELSE allowed_hdr_types_override END,
+                allowed_sources_override = CASE WHEN $35 THEN $36 ELSE allowed_sources_override END,
+                release_group_blacklist_override = CASE WHEN $37 THEN $38 ELSE release_group_blacklist_override END,
+                release_group_whitelist_override = CASE WHEN $39 THEN $40 ELSE release_group_whitelist_override END,
                 updated_at = NOW()
             WHERE id = $1
             RETURNING id, library_id, user_id, name, sort_name, year, status,
@@ -430,34 +505,46 @@ impl TvShowRepository {
                       release_group_blacklist_override, release_group_whitelist_override
             "#,
         )
-        .bind(id)
-        .bind(&input.name)
-        .bind(&input.sort_name)
-        .bind(input.year)
-        .bind(&input.status)
-        .bind(&input.overview)
-        .bind(&input.network)
-        .bind(input.runtime)
-        .bind(&input.genres)
-        .bind(&input.poster_url)
-        .bind(&input.backdrop_url)
-        .bind(input.monitored)
-        .bind(&input.monitor_type)
-        .bind(input.quality_profile_id)
-        .bind(&input.path)
-        .bind(input.auto_download_override)
-        .bind(input.backfill_existing)
-        .bind(input.organize_files_override)
-        .bind(&input.rename_style_override)
-        .bind(input.auto_hunt_override)
-        .bind(&input.allowed_resolutions_override)
-        .bind(&input.allowed_video_codecs_override)
-        .bind(&input.allowed_audio_formats_override)
-        .bind(input.require_hdr_override)
-        .bind(&input.allowed_hdr_types_override)
-        .bind(&input.allowed_sources_override)
-        .bind(&input.release_group_blacklist_override)
-        .bind(&input.release_group_whitelist_override)
+        .bind(id)                           // $1
+        .bind(&input.name)                  // $2
+        .bind(&input.sort_name)             // $3
+        .bind(input.year)                   // $4
+        .bind(&input.status)                // $5
+        .bind(&input.overview)              // $6
+        .bind(&input.network)               // $7
+        .bind(input.runtime)                // $8
+        .bind(&input.genres)                // $9
+        .bind(&input.poster_url)            // $10
+        .bind(&input.backdrop_url)          // $11
+        .bind(input.monitored)              // $12
+        .bind(&input.monitor_type)          // $13
+        .bind(input.quality_profile_id)     // $14
+        .bind(&input.path)                  // $15
+        .bind(update_auto_download)         // $16 - flag
+        .bind(auto_download_value)          // $17 - value
+        .bind(input.backfill_existing)      // $18
+        .bind(update_organize_files)        // $19 - flag
+        .bind(organize_files_value)         // $20 - value
+        .bind(update_rename_style)          // $21 - flag
+        .bind(&rename_style_value)          // $22 - value
+        .bind(update_auto_hunt)             // $23 - flag
+        .bind(auto_hunt_value)              // $24 - value
+        .bind(update_resolutions)           // $25 - flag
+        .bind(&resolutions_value)           // $26 - value
+        .bind(update_codecs)                // $27 - flag
+        .bind(&codecs_value)                // $28 - value
+        .bind(update_audio)                 // $29 - flag
+        .bind(&audio_value)                 // $30 - value
+        .bind(update_require_hdr)           // $31 - flag
+        .bind(require_hdr_value)            // $32 - value
+        .bind(update_hdr_types)             // $33 - flag
+        .bind(&hdr_types_value)             // $34 - value
+        .bind(update_sources)               // $35 - flag
+        .bind(&sources_value)               // $36 - value
+        .bind(update_blacklist)             // $37 - flag
+        .bind(&blacklist_value)             // $38 - value
+        .bind(update_whitelist)             // $39 - flag
+        .bind(&whitelist_value)             // $40 - value
         .fetch_optional(&self.pool)
         .await?;
 

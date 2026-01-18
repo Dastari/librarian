@@ -23,7 +23,10 @@ use super::types::{
     AddTorrentInput,
     AddTorrentResult,
     AddTvShowInput,
+    AnalyzeMediaFileResult,
     AppSetting,
+    AudioStreamInfo,
+    ChapterInfo,
     // Cast types
     AddCastDeviceInput,
     CastDevice,
@@ -36,13 +39,17 @@ use super::types::{
     UpdateCastDeviceInput,
     UpdateCastSettingsInput,
     ClearLogsResult,
+    // Playback types
+    PlaybackSession,
+    PlaybackResult,
+    StartPlaybackInput,
+    UpdatePlaybackInput,
     // Filesystem types
     BrowseDirectoryInput,
     BrowseDirectoryResult,
     CopyFilesInput,
     CreateDirectoryInput,
     DeleteFilesInput,
-    DirectoryChangeEvent,
     FileEntry,
     FileOperationResult,
     MoveFilesInput,
@@ -70,6 +77,8 @@ use super::types::{
     IndexerTestResult,
     IndexerTypeInfo,
     Library,
+    LibraryChangedEvent,
+    LibraryChangeType,
     LibraryFull,
     LibraryResult,
     LibraryType,
@@ -82,7 +91,18 @@ use super::types::{
     MediaFile,
     MediaItem,
     MonitorType,
+    // Movie types
+    Movie,
+    MovieResult,
+    MovieSearchResult,
+    MovieStatus,
+    AddMovieInput,
+    UpdateMovieInput,
     MutationResult,
+    // Naming pattern types
+    CreateNamingPatternInput,
+    NamingPattern,
+    NamingPatternResult,
     OrganizeTorrentResult,
     PaginatedLogResult,
     ParseAndIdentifyMediaResult,
@@ -95,11 +115,23 @@ use super::types::{
     RssFeedTestResult,
     RssItem,
     ScanStatus,
+    ConsolidateLibraryResult,
     SearchResult,
+    // Subtitle types
+    MediaFileDetails,
+    SearchSubtitlesInput,
+    Subtitle,
+    SubtitleSearchResult as GqlSubtitleSearchResult,
+    SubtitleSettings,
+    SubtitleSettingsInput,
+    SubtitleSourceType,
+    VideoStreamInfo,
     // Security types
     SecuritySettings,
     SecuritySettingsResult,
     SettingsResult,
+    // Schedule cache
+    RefreshScheduleResult,
     StreamInfo,
     Subscription,
     SubscriptionResult,
@@ -128,6 +160,56 @@ use super::types::{
     format_bytes,
 };
 
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Convert a MovieRecord from the database to a GraphQL Movie type
+fn movie_record_to_graphql(r: crate::db::MovieRecord) -> Movie {
+    Movie {
+        id: r.id.to_string(),
+        library_id: r.library_id.to_string(),
+        title: r.title,
+        sort_title: r.sort_title,
+        original_title: r.original_title,
+        year: r.year,
+        tmdb_id: r.tmdb_id,
+        imdb_id: r.imdb_id,
+        status: r
+            .status
+            .as_deref()
+            .map(MovieStatus::from)
+            .unwrap_or_default(),
+        overview: r.overview,
+        tagline: r.tagline,
+        runtime: r.runtime,
+        genres: r.genres,
+        director: r.director,
+        cast_names: r.cast_names,
+        poster_url: r.poster_url,
+        backdrop_url: r.backdrop_url,
+        monitored: r.monitored,
+        has_file: r.has_file,
+        size_bytes: r.size_bytes.unwrap_or(0),
+        path: r.path,
+        collection_id: r.collection_id,
+        collection_name: r.collection_name,
+        collection_poster_url: r.collection_poster_url,
+        tmdb_rating: r.tmdb_rating.and_then(|d| d.to_string().parse::<f64>().ok()),
+        tmdb_vote_count: r.tmdb_vote_count,
+        certification: r.certification,
+        release_date: r.release_date.map(|d| d.to_string()),
+        allowed_resolutions_override: r.allowed_resolutions_override,
+        allowed_video_codecs_override: r.allowed_video_codecs_override,
+        allowed_audio_formats_override: r.allowed_audio_formats_override,
+        require_hdr_override: r.require_hdr_override,
+        allowed_hdr_types_override: r.allowed_hdr_types_override,
+        allowed_sources_override: r.allowed_sources_override,
+        release_group_blacklist_override: r.release_group_blacklist_override,
+        release_group_whitelist_override: r.release_group_whitelist_override,
+    }
+}
+
 /// The GraphQL schema type
 pub type LibrarianSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
 
@@ -141,13 +223,17 @@ pub fn build_schema(
     db: Database,
     log_broadcast: Option<tokio::sync::broadcast::Sender<LogEvent>>,
 ) -> LibrarianSchema {
+    // Create library events broadcast channel
+    let (library_tx, _) = tokio::sync::broadcast::channel::<LibraryChangedEvent>(100);
+
     let mut schema = Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
         .data(torrent_service)
         .data(metadata_service)
         .data(scanner_service)
         .data(cast_service)
         .data(filesystem_service)
-        .data(db);
+        .data(db)
+        .data(library_tx);
 
     // Add log broadcast sender if provided
     if let Some(sender) = log_broadcast {
@@ -217,49 +303,7 @@ impl QueryRoot {
                 }
             };
 
-            libraries.push(LibraryFull {
-                id: r.id.to_string(),
-                name: r.name,
-                path: r.path,
-                library_type: match r.library_type.as_str() {
-                    "movies" => LibraryType::Movies,
-                    "tv" => LibraryType::Tv,
-                    "music" => LibraryType::Music,
-                    "audiobooks" => LibraryType::Audiobooks,
-                    _ => LibraryType::Other,
-                },
-                icon: r.icon.unwrap_or_else(|| "folder".to_string()),
-                color: r.color.unwrap_or_else(|| "slate".to_string()),
-                auto_scan: r.auto_scan,
-                scan_interval_minutes: r.scan_interval_minutes,
-                watch_for_changes: r.watch_for_changes,
-                post_download_action: match r.post_download_action.as_str() {
-                    "move" => PostDownloadAction::Move,
-                    "hardlink" => PostDownloadAction::Hardlink,
-                    _ => PostDownloadAction::Copy,
-                },
-                organize_files: r.organize_files,
-                rename_style: r.rename_style.clone(),
-                naming_pattern: r.naming_pattern,
-                default_quality_profile_id: r.default_quality_profile_id.map(|id| id.to_string()),
-                auto_add_discovered: r.auto_add_discovered,
-                auto_download: r.auto_download,
-                auto_hunt: r.auto_hunt,
-                scanning: r.scanning,
-                item_count: stats.file_count.unwrap_or(0) as i32,
-                total_size_bytes: stats.total_size_bytes.unwrap_or(0),
-                show_count: stats.show_count.unwrap_or(0) as i32,
-                last_scanned_at: r.last_scanned_at.map(|t| t.to_rfc3339()),
-                // Inline quality settings
-                allowed_resolutions: r.allowed_resolutions,
-                allowed_video_codecs: r.allowed_video_codecs,
-                allowed_audio_formats: r.allowed_audio_formats,
-                require_hdr: r.require_hdr,
-                allowed_hdr_types: r.allowed_hdr_types,
-                allowed_sources: r.allowed_sources,
-                release_group_blacklist: r.release_group_blacklist,
-                release_group_whitelist: r.release_group_whitelist,
-            });
+            libraries.push(LibraryFull::from_record_with_stats(r, stats));
         }
 
         Ok(libraries)
@@ -282,50 +326,7 @@ impl QueryRoot {
 
         if let Some(r) = record {
             let stats = db.libraries().get_stats(r.id).await.unwrap_or_default();
-
-            Ok(Some(LibraryFull {
-                id: r.id.to_string(),
-                name: r.name,
-                path: r.path,
-                library_type: match r.library_type.as_str() {
-                    "movies" => LibraryType::Movies,
-                    "tv" => LibraryType::Tv,
-                    "music" => LibraryType::Music,
-                    "audiobooks" => LibraryType::Audiobooks,
-                    _ => LibraryType::Other,
-                },
-                icon: r.icon.unwrap_or_else(|| "folder".to_string()),
-                color: r.color.unwrap_or_else(|| "slate".to_string()),
-                auto_scan: r.auto_scan,
-                scan_interval_minutes: r.scan_interval_minutes,
-                watch_for_changes: r.watch_for_changes,
-                post_download_action: match r.post_download_action.as_str() {
-                    "move" => PostDownloadAction::Move,
-                    "hardlink" => PostDownloadAction::Hardlink,
-                    _ => PostDownloadAction::Copy,
-                },
-                organize_files: r.organize_files,
-                rename_style: r.rename_style.clone(),
-                naming_pattern: r.naming_pattern,
-                default_quality_profile_id: r.default_quality_profile_id.map(|id| id.to_string()),
-                auto_add_discovered: r.auto_add_discovered,
-                auto_download: r.auto_download,
-                auto_hunt: r.auto_hunt,
-                scanning: r.scanning,
-                item_count: stats.file_count.unwrap_or(0) as i32,
-                total_size_bytes: stats.total_size_bytes.unwrap_or(0),
-                show_count: stats.show_count.unwrap_or(0) as i32,
-                last_scanned_at: r.last_scanned_at.map(|t| t.to_rfc3339()),
-                // Inline quality settings
-                allowed_resolutions: r.allowed_resolutions,
-                allowed_video_codecs: r.allowed_video_codecs,
-                allowed_audio_formats: r.allowed_audio_formats,
-                require_hdr: r.require_hdr,
-                allowed_hdr_types: r.allowed_hdr_types,
-                allowed_sources: r.allowed_sources,
-                release_group_blacklist: r.release_group_blacklist,
-                release_group_whitelist: r.release_group_whitelist,
-            }))
+            Ok(Some(LibraryFull::from_record_with_stats(r, stats)))
         } else {
             Ok(None)
         }
@@ -334,6 +335,22 @@ impl QueryRoot {
     // ------------------------------------------------------------------------
     // TV Shows
     // ------------------------------------------------------------------------
+
+    /// Get all TV shows for the current user (across all libraries)
+    async fn all_tv_shows(&self, ctx: &Context<'_>) -> Result<Vec<TvShow>> {
+        let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let user_id = Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        let records = db
+            .tv_shows()
+            .list_by_user(user_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(records.into_iter().map(TvShow::from).collect())
+    }
 
     /// Get all TV shows in a library
     async fn tv_shows(&self, ctx: &Context<'_>, library_id: String) -> Result<Vec<TvShow>> {
@@ -348,58 +365,7 @@ impl QueryRoot {
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        Ok(records
-            .into_iter()
-            .map(|r| TvShow {
-                id: r.id.to_string(),
-                library_id: r.library_id.to_string(),
-                name: r.name,
-                sort_name: r.sort_name,
-                year: r.year,
-                status: match r.status.as_str() {
-                    "continuing" | "Running" => TvShowStatus::Continuing,
-                    "ended" | "Ended" => TvShowStatus::Ended,
-                    "upcoming" => TvShowStatus::Upcoming,
-                    "cancelled" => TvShowStatus::Cancelled,
-                    _ => TvShowStatus::Unknown,
-                },
-                tvmaze_id: r.tvmaze_id,
-                tmdb_id: r.tmdb_id,
-                tvdb_id: r.tvdb_id,
-                imdb_id: r.imdb_id,
-                overview: r.overview,
-                network: r.network,
-                runtime: r.runtime,
-                genres: r.genres,
-                poster_url: r.poster_url,
-                backdrop_url: r.backdrop_url,
-                monitored: r.monitored,
-                monitor_type: match r.monitor_type.as_str() {
-                    "all" => MonitorType::All,
-                    "future" => MonitorType::Future,
-                    _ => MonitorType::None,
-                },
-                quality_profile_id: r.quality_profile_id.map(|id| id.to_string()),
-                path: r.path,
-                auto_download_override: r.auto_download_override,
-                backfill_existing: r.backfill_existing,
-                organize_files_override: r.organize_files_override,
-                rename_style_override: r.rename_style_override,
-                auto_hunt_override: r.auto_hunt_override,
-                episode_count: r.episode_count.unwrap_or(0),
-                episode_file_count: r.episode_file_count.unwrap_or(0),
-                size_bytes: r.size_bytes.unwrap_or(0),
-                // Quality override settings
-                allowed_resolutions_override: r.allowed_resolutions_override,
-                allowed_video_codecs_override: r.allowed_video_codecs_override,
-                allowed_audio_formats_override: r.allowed_audio_formats_override,
-                require_hdr_override: r.require_hdr_override,
-                allowed_hdr_types_override: r.allowed_hdr_types_override,
-                allowed_sources_override: r.allowed_sources_override,
-                release_group_blacklist_override: r.release_group_blacklist_override,
-                release_group_whitelist_override: r.release_group_whitelist_override,
-            })
-            .collect())
+        Ok(records.into_iter().map(TvShow::from).collect())
     }
 
     /// Get a specific TV show by ID
@@ -415,55 +381,7 @@ impl QueryRoot {
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        Ok(record.map(|r| TvShow {
-            id: r.id.to_string(),
-            library_id: r.library_id.to_string(),
-            name: r.name,
-            sort_name: r.sort_name,
-            year: r.year,
-            status: match r.status.as_str() {
-                "continuing" | "Running" => TvShowStatus::Continuing,
-                "ended" | "Ended" => TvShowStatus::Ended,
-                "upcoming" => TvShowStatus::Upcoming,
-                "cancelled" => TvShowStatus::Cancelled,
-                _ => TvShowStatus::Unknown,
-            },
-            tvmaze_id: r.tvmaze_id,
-            tmdb_id: r.tmdb_id,
-            tvdb_id: r.tvdb_id,
-            imdb_id: r.imdb_id,
-            overview: r.overview,
-            network: r.network,
-            runtime: r.runtime,
-            genres: r.genres,
-            poster_url: r.poster_url,
-            backdrop_url: r.backdrop_url,
-            monitored: r.monitored,
-            monitor_type: match r.monitor_type.as_str() {
-                "all" => MonitorType::All,
-                "future" => MonitorType::Future,
-                _ => MonitorType::None,
-            },
-            quality_profile_id: r.quality_profile_id.map(|id| id.to_string()),
-            path: r.path,
-            auto_download_override: r.auto_download_override,
-            backfill_existing: r.backfill_existing,
-            organize_files_override: r.organize_files_override,
-            rename_style_override: r.rename_style_override,
-            auto_hunt_override: r.auto_hunt_override,
-            episode_count: r.episode_count.unwrap_or(0),
-            episode_file_count: r.episode_file_count.unwrap_or(0),
-            size_bytes: r.size_bytes.unwrap_or(0),
-            // Quality override settings
-            allowed_resolutions_override: r.allowed_resolutions_override,
-            allowed_video_codecs_override: r.allowed_video_codecs_override,
-            allowed_audio_formats_override: r.allowed_audio_formats_override,
-            require_hdr_override: r.require_hdr_override,
-            allowed_hdr_types_override: r.allowed_hdr_types_override,
-            allowed_sources_override: r.allowed_sources_override,
-            release_group_blacklist_override: r.release_group_blacklist_override,
-            release_group_whitelist_override: r.release_group_whitelist_override,
-        }))
+        Ok(record.map(TvShow::from))
     }
 
     /// Search for TV shows from metadata providers
@@ -536,6 +454,97 @@ impl QueryRoot {
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         Ok(count as i32)
+    }
+
+    // ------------------------------------------------------------------------
+    // Movies
+    // ------------------------------------------------------------------------
+
+    /// Get all movies for the current user (across all libraries)
+    async fn all_movies(&self, ctx: &Context<'_>) -> Result<Vec<Movie>> {
+        let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let user_id = Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        let records = db
+            .movies()
+            .list_by_user(user_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(records.into_iter().map(movie_record_to_graphql).collect())
+    }
+
+    /// Get all movies in a library
+    async fn movies(&self, ctx: &Context<'_>, library_id: String) -> Result<Vec<Movie>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        let records = db
+            .movies()
+            .list_by_library(lib_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(records.into_iter().map(movie_record_to_graphql).collect())
+    }
+
+    /// Get a specific movie by ID
+    async fn movie(&self, ctx: &Context<'_>, id: String) -> Result<Option<Movie>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let movie_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid movie ID: {}", e)))?;
+
+        let record = db
+            .movies()
+            .get_by_id(movie_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(record.map(movie_record_to_graphql))
+    }
+
+    /// Search for movies on TMDB
+    async fn search_movies(
+        &self,
+        ctx: &Context<'_>,
+        query: String,
+        year: Option<i32>,
+    ) -> Result<Vec<MovieSearchResult>> {
+        let _user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        if !metadata.has_tmdb() {
+            return Err(async_graphql::Error::new(
+                "TMDB API key not configured. Add tmdb_api_key to settings.",
+            ));
+        }
+
+        let results = metadata
+            .search_movies(&query, year)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(results
+            .into_iter()
+            .map(|m| MovieSearchResult {
+                provider: "tmdb".to_string(),
+                provider_id: m.provider_id as i32,
+                title: m.title,
+                original_title: m.original_title,
+                year: m.year,
+                overview: m.overview,
+                poster_url: m.poster_url,
+                backdrop_url: m.backdrop_url,
+                imdb_id: m.imdb_id,
+                vote_average: m.vote_average,
+                popularity: m.popularity,
+            })
+            .collect())
     }
 
     // ------------------------------------------------------------------------
@@ -653,6 +662,124 @@ impl QueryRoot {
     }
 
     // ------------------------------------------------------------------------
+    // Subtitles and Media Analysis
+    // ------------------------------------------------------------------------
+
+    /// Get all subtitles for a media file
+    async fn subtitles_for_media_file(
+        &self,
+        ctx: &Context<'_>,
+        media_file_id: String,
+    ) -> Result<Vec<Subtitle>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let file_id = Uuid::parse_str(&media_file_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid media file ID: {}", e)))?;
+
+        let records = db
+            .subtitles()
+            .list_by_media_file(file_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(records.into_iter().map(Subtitle::from_record).collect())
+    }
+
+    /// Get all subtitles for an episode (via linked media file)
+    async fn subtitles_for_episode(
+        &self,
+        ctx: &Context<'_>,
+        episode_id: String,
+    ) -> Result<Vec<Subtitle>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let ep_id = Uuid::parse_str(&episode_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid episode ID: {}", e)))?;
+
+        let records = db
+            .subtitles()
+            .list_by_episode(ep_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(records.into_iter().map(Subtitle::from_record).collect())
+    }
+
+    /// Get detailed media file information including all streams
+    async fn media_file_details(
+        &self,
+        ctx: &Context<'_>,
+        media_file_id: String,
+    ) -> Result<Option<MediaFileDetails>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let file_id = Uuid::parse_str(&media_file_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid media file ID: {}", e)))?;
+
+        let file = match db.media_files().get_by_id(file_id).await {
+            Ok(Some(f)) => f,
+            Ok(None) => return Ok(None),
+            Err(e) => return Err(async_graphql::Error::new(e.to_string())),
+        };
+
+        let video_streams = db
+            .streams()
+            .list_video_streams(file_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let audio_streams = db
+            .streams()
+            .list_audio_streams(file_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let subtitles = db
+            .subtitles()
+            .list_by_media_file(file_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let chapters = db
+            .streams()
+            .list_chapters(file_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(Some(MediaFileDetails {
+            file: MediaFile::from_record(file),
+            video_streams: video_streams.into_iter().map(VideoStreamInfo::from_record).collect(),
+            audio_streams: audio_streams.into_iter().map(AudioStreamInfo::from_record).collect(),
+            subtitles: subtitles.into_iter().map(Subtitle::from_record).collect(),
+            chapters: chapters.into_iter().map(ChapterInfo::from_record).collect(),
+        }))
+    }
+
+    /// Get subtitle settings for a library
+    async fn library_subtitle_settings(
+        &self,
+        ctx: &Context<'_>,
+        library_id: String,
+    ) -> Result<SubtitleSettings> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        let library = db
+            .libraries()
+            .get_by_id(lib_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            .ok_or_else(|| async_graphql::Error::new("Library not found"))?;
+
+        Ok(SubtitleSettings {
+            auto_download: library.auto_download_subtitles.unwrap_or(false),
+            languages: library.preferred_subtitle_languages.unwrap_or_default(),
+        })
+    }
+
+    // ------------------------------------------------------------------------
     // Quality Profiles
     // ------------------------------------------------------------------------
 
@@ -728,6 +855,43 @@ impl QueryRoot {
             release_group_blacklist: r.release_group_blacklist,
             upgrade_until: r.upgrade_until,
         }))
+    }
+
+    // ------------------------------------------------------------------------
+    // Naming Patterns
+    // ------------------------------------------------------------------------
+
+    /// Get all naming pattern presets
+    async fn naming_patterns(&self, ctx: &Context<'_>) -> Result<Vec<NamingPattern>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let records = db
+            .naming_patterns()
+            .list_all()
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(records
+            .into_iter()
+            .map(NamingPattern::from_record)
+            .collect())
+    }
+
+    /// Get a specific naming pattern by ID
+    async fn naming_pattern(&self, ctx: &Context<'_>, id: String) -> Result<Option<NamingPattern>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let pattern_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid pattern ID: {}", e)))?;
+
+        let record = db
+            .naming_patterns()
+            .get_by_id(pattern_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(record.map(NamingPattern::from_record))
     }
 
     // ------------------------------------------------------------------------
@@ -989,6 +1153,26 @@ impl QueryRoot {
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         Ok(settings.map(CastSettings::from_record))
+    }
+
+    // ------------------------------------------------------------------------
+    // Playback Sessions
+    // ------------------------------------------------------------------------
+
+    /// Get the current user's active playback session
+    async fn playback_session(&self, ctx: &Context<'_>) -> Result<Option<PlaybackSession>> {
+        let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let user_id = Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        let session = db
+            .playback()
+            .get_active_session(user_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(session.map(PlaybackSession::from_record))
     }
 
     // ------------------------------------------------------------------------
@@ -1321,33 +1505,39 @@ impl QueryRoot {
 
         Ok(schedule
             .into_iter()
-            .map(|entry| UpcomingEpisode {
-                tvmaze_id: entry.id as i32,
-                name: entry.name,
-                season: entry.season as i32,
-                episode: entry.number as i32,
-                air_date: entry.airdate.unwrap_or_default(),
-                air_time: entry.airtime,
-                air_stamp: entry.air_stamp,
-                runtime: entry.runtime.map(|r| r as i32),
-                summary: entry.summary.map(|s| {
-                    // Strip HTML tags from summary
-                    let re = regex::Regex::new(r"<[^>]+>").unwrap();
-                    re.replace_all(&s, "").trim().to_string()
-                }),
-                episode_image_url: entry.image.as_ref().and_then(|i| i.medium.clone()),
-                show: UpcomingEpisodeShow {
-                    tvmaze_id: entry.show.id as i32,
-                    name: entry.show.name,
-                    network: entry
-                        .show
-                        .network
-                        .as_ref()
-                        .map(|n| n.name.clone())
-                        .or_else(|| entry.show.web_channel.as_ref().map(|w| w.name.clone())),
-                    poster_url: entry.show.image.as_ref().and_then(|i| i.medium.clone()),
-                    genres: entry.show.genres,
-                },
+            .filter_map(|entry| {
+                // Skip entries without season/episode numbers (specials)
+                let season = entry.season?;
+                let episode = entry.number?;
+
+                Some(UpcomingEpisode {
+                    tvmaze_id: entry.id as i32,
+                    name: entry.name,
+                    season: season as i32,
+                    episode: episode as i32,
+                    air_date: entry.airdate.unwrap_or_default(),
+                    air_time: entry.airtime,
+                    air_stamp: entry.air_stamp,
+                    runtime: entry.runtime.map(|r| r as i32),
+                    summary: entry.summary.map(|s| {
+                        // Strip HTML tags from summary
+                        let re = regex::Regex::new(r"<[^>]+>").unwrap();
+                        re.replace_all(&s, "").trim().to_string()
+                    }),
+                    episode_image_url: entry.image.as_ref().and_then(|i| i.medium.clone()),
+                    show: UpcomingEpisodeShow {
+                        tvmaze_id: entry.show.id as i32,
+                        name: entry.show.name,
+                        network: entry
+                            .show
+                            .network
+                            .as_ref()
+                            .map(|n| n.name.clone())
+                            .or_else(|| entry.show.web_channel.as_ref().map(|w| w.name.clone())),
+                        poster_url: entry.show.image.as_ref().and_then(|i| i.medium.clone()),
+                        genres: entry.show.genres,
+                    },
+                })
             })
             .collect())
     }
@@ -1692,6 +1882,230 @@ impl QueryRoot {
             error: validation.error,
         })
     }
+
+    // ------------------------------------------------------------------------
+    // Indexer Search
+    // ------------------------------------------------------------------------
+
+    /// Search indexers for torrents
+    async fn search_indexers(
+        &self,
+        ctx: &Context<'_>,
+        input: IndexerSearchInput,
+    ) -> Result<IndexerSearchResultSet> {
+        let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let user_id = Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        let start = std::time::Instant::now();
+
+        // Get indexers to search
+        let indexer_ids: Option<Vec<Uuid>> = input.indexer_ids.as_ref().map(|ids| {
+            ids.iter()
+                .filter_map(|id| Uuid::parse_str(id).ok())
+                .collect()
+        });
+
+        let configs = if let Some(ref ids) = indexer_ids {
+            let all_configs = db
+                .indexers()
+                .list_enabled_by_user(user_id)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            all_configs
+                .into_iter()
+                .filter(|c| ids.contains(&c.id))
+                .collect()
+        } else {
+            db.indexers()
+                .list_enabled_by_user(user_id)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?
+        };
+
+        // Get encryption key from database
+        let encryption_key = db
+            .settings()
+            .get_or_create_indexer_encryption_key()
+            .await
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to get encryption key: {}", e))
+            })?;
+        let encryption =
+            crate::indexer::encryption::CredentialEncryption::from_base64_key(&encryption_key)
+                .map_err(|e| async_graphql::Error::new(format!("Encryption error: {}", e)))?;
+
+        // Build query
+        use crate::indexer::{QueryType, TorznabQuery};
+        let query = TorznabQuery {
+            query_type: if input.season.is_some() || input.episode.is_some() {
+                QueryType::TvSearch
+            } else if input.imdb_id.is_some() {
+                QueryType::MovieSearch
+            } else {
+                QueryType::Search
+            },
+            search_term: Some(input.query.clone()),
+            categories: input.categories.unwrap_or_default(),
+            season: input.season,
+            episode: input.episode,
+            imdb_id: input.imdb_id,
+            limit: input.limit,
+            cache: true,
+            ..Default::default()
+        };
+
+        let mut results: Vec<IndexerSearchResultItem> = Vec::new();
+        let mut total_releases = 0;
+
+        // Search each indexer
+        for config in configs {
+            let indexer_start = std::time::Instant::now();
+
+            // Get and decrypt credentials
+            let credentials = match db.indexers().get_credentials(config.id).await {
+                Ok(c) => c,
+                Err(e) => {
+                    results.push(IndexerSearchResultItem {
+                        indexer_id: config.id.to_string(),
+                        indexer_name: config.name.clone(),
+                        releases: vec![],
+                        elapsed_ms: indexer_start.elapsed().as_millis() as i64,
+                        from_cache: false,
+                        error: Some(format!("Failed to get credentials: {}", e)),
+                    });
+                    continue;
+                }
+            };
+
+            let settings = db
+                .indexers()
+                .get_settings(config.id)
+                .await
+                .unwrap_or_default();
+
+            let mut decrypted_creds: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            for cred in credentials {
+                if let Ok(value) = encryption.decrypt(&cred.encrypted_value, &cred.nonce) {
+                    decrypted_creds.insert(cred.credential_type, value);
+                }
+            }
+
+            let settings_map: std::collections::HashMap<String, String> = settings
+                .into_iter()
+                .map(|s| (s.setting_key, s.setting_value))
+                .collect();
+
+            // Create and search indexer
+            match config.indexer_type.as_str() {
+                "iptorrents" => {
+                    use crate::indexer::Indexer;
+                    use crate::indexer::definitions::iptorrents::IPTorrentsIndexer;
+
+                    let cookie = decrypted_creds.get("cookie").cloned().unwrap_or_default();
+                    let user_agent = decrypted_creds
+                        .get("user_agent")
+                        .cloned()
+                        .unwrap_or_default();
+
+                    let indexer = match IPTorrentsIndexer::new(
+                        config.id.to_string(),
+                        config.name.clone(),
+                        config.site_url.clone(),
+                        &cookie,
+                        &user_agent,
+                        settings_map,
+                    ) {
+                        Ok(idx) => idx,
+                        Err(e) => {
+                            results.push(IndexerSearchResultItem {
+                                indexer_id: config.id.to_string(),
+                                indexer_name: config.name,
+                                releases: vec![],
+                                elapsed_ms: indexer_start.elapsed().as_millis() as i64,
+                                from_cache: false,
+                                error: Some(format!("Failed to create indexer: {}", e)),
+                            });
+                            continue;
+                        }
+                    };
+
+                    match indexer.search(&query).await {
+                        Ok(releases) => {
+                            let _ = db.indexers().record_success(config.id).await;
+
+                            let torrent_releases: Vec<TorrentRelease> = releases
+                                .iter()
+                                .map(|r| TorrentRelease {
+                                    title: r.title.clone(),
+                                    guid: r.guid.clone(),
+                                    link: r.link.clone(),
+                                    magnet_uri: r.magnet_uri.clone(),
+                                    info_hash: r.info_hash.clone(),
+                                    details: r.details.clone(),
+                                    publish_date: r.publish_date.to_rfc3339(),
+                                    categories: r.categories.clone(),
+                                    size: r.size,
+                                    size_formatted: r.size.map(|s| format_bytes(s as u64)),
+                                    seeders: r.seeders,
+                                    leechers: r.leechers(),
+                                    peers: r.peers,
+                                    grabs: r.grabs,
+                                    is_freeleech: r.is_freeleech(),
+                                    imdb_id: r.imdb.map(|id| format!("tt{:07}", id)),
+                                    poster: r.poster.clone(),
+                                    description: r.description.clone(),
+                                    indexer_id: Some(config.id.to_string()),
+                                    indexer_name: Some(config.name.clone()),
+                                })
+                                .collect();
+
+                            total_releases += torrent_releases.len() as i32;
+
+                            results.push(IndexerSearchResultItem {
+                                indexer_id: config.id.to_string(),
+                                indexer_name: config.name,
+                                releases: torrent_releases,
+                                elapsed_ms: indexer_start.elapsed().as_millis() as i64,
+                                from_cache: false,
+                                error: None,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = db.indexers().record_error(config.id, &e.to_string()).await;
+
+                            results.push(IndexerSearchResultItem {
+                                indexer_id: config.id.to_string(),
+                                indexer_name: config.name,
+                                releases: vec![],
+                                elapsed_ms: indexer_start.elapsed().as_millis() as i64,
+                                from_cache: false,
+                                error: Some(e.to_string()),
+                            });
+                        }
+                    }
+                }
+                _ => {
+                    results.push(IndexerSearchResultItem {
+                        indexer_id: config.id.to_string(),
+                        indexer_name: config.name,
+                        releases: vec![],
+                        elapsed_ms: indexer_start.elapsed().as_millis() as i64,
+                        from_cache: false,
+                        error: Some(format!("Unsupported indexer type: {}", config.indexer_type)),
+                    });
+                }
+            }
+        }
+
+        Ok(IndexerSearchResultSet {
+            indexers: results,
+            total_releases,
+            total_elapsed_ms: start.elapsed().as_millis() as i64,
+        })
+    }
 }
 
 // ============================================================================
@@ -1796,21 +2210,50 @@ impl MutationRoot {
             record.name
         );
 
+        // Spawn initial scan in background (same pattern as scan_library mutation)
+        let library_id = record.id;
+        let library_name = record.name.clone();
+        let scanner = ctx.data_unchecked::<Arc<ScannerService>>().clone();
+        let db_clone = db.clone();
+        tokio::spawn(async move {
+            tracing::info!(library_id = %library_id, library_name = %library_name, "Starting initial library scan");
+            if let Err(e) = scanner.scan_library(library_id).await {
+                tracing::error!(library_id = %library_id, error = %e, "Initial library scan failed");
+                if let Err(reset_err) = db_clone.libraries().set_scanning(library_id, false).await {
+                    tracing::error!(library_id = %library_id, error = %reset_err, "Failed to reset scanning state");
+                }
+            }
+        });
+
+        let library = Library {
+            id: record.id.to_string(),
+            name: record.name,
+            path: record.path,
+            library_type: input.library_type,
+            icon: record.icon.unwrap_or_else(|| "folder".to_string()),
+            color: record.color.unwrap_or_else(|| "slate".to_string()),
+            auto_scan: record.auto_scan,
+            scan_interval_hours: record.scan_interval_minutes / 60,
+            item_count: 0,
+            total_size_bytes: 0,
+            last_scanned_at: None,
+        };
+
+        // Emit library created event
+        if let Ok(library_tx) =
+            ctx.data::<tokio::sync::broadcast::Sender<LibraryChangedEvent>>()
+        {
+            let _ = library_tx.send(LibraryChangedEvent {
+                change_type: LibraryChangeType::Created,
+                library_id: library.id.clone(),
+                library_name: Some(library.name.clone()),
+                library: Some(library.clone()),
+            });
+        }
+
         Ok(LibraryResult {
             success: true,
-            library: Some(Library {
-                id: record.id.to_string(),
-                name: record.name,
-                path: record.path,
-                library_type: input.library_type,
-                icon: record.icon.unwrap_or_else(|| "folder".to_string()),
-                color: record.color.unwrap_or_else(|| "slate".to_string()),
-                auto_scan: record.auto_scan,
-                scan_interval_hours: record.scan_interval_minutes / 60,
-                item_count: 0,
-                total_size_bytes: 0,
-                last_scanned_at: None,
-            }),
+            library: Some(library),
             error: None,
         })
     }
@@ -1873,27 +2316,41 @@ impl MutationRoot {
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         if let Some(record) = result {
+            let library = Library {
+                id: record.id.to_string(),
+                name: record.name,
+                path: record.path,
+                library_type: match record.library_type.as_str() {
+                    "movies" => LibraryType::Movies,
+                    "tv" => LibraryType::Tv,
+                    "music" => LibraryType::Music,
+                    "audiobooks" => LibraryType::Audiobooks,
+                    _ => LibraryType::Other,
+                },
+                icon: record.icon.unwrap_or_else(|| "folder".to_string()),
+                color: record.color.unwrap_or_else(|| "slate".to_string()),
+                auto_scan: record.auto_scan,
+                scan_interval_hours: record.scan_interval_minutes / 60,
+                item_count: 0,
+                total_size_bytes: 0,
+                last_scanned_at: record.last_scanned_at.map(|t| t.to_rfc3339()),
+            };
+
+            // Emit library updated event
+            if let Ok(library_tx) =
+                ctx.data::<tokio::sync::broadcast::Sender<LibraryChangedEvent>>()
+            {
+                let _ = library_tx.send(LibraryChangedEvent {
+                    change_type: LibraryChangeType::Updated,
+                    library_id: library.id.clone(),
+                    library_name: Some(library.name.clone()),
+                    library: Some(library.clone()),
+                });
+            }
+
             Ok(LibraryResult {
                 success: true,
-                library: Some(Library {
-                    id: record.id.to_string(),
-                    name: record.name,
-                    path: record.path,
-                    library_type: match record.library_type.as_str() {
-                        "movies" => LibraryType::Movies,
-                        "tv" => LibraryType::Tv,
-                        "music" => LibraryType::Music,
-                        "audiobooks" => LibraryType::Audiobooks,
-                        _ => LibraryType::Other,
-                    },
-                    icon: record.icon.unwrap_or_else(|| "folder".to_string()),
-                    color: record.color.unwrap_or_else(|| "slate".to_string()),
-                    auto_scan: record.auto_scan,
-                    scan_interval_hours: record.scan_interval_minutes / 60,
-                    item_count: 0,
-                    total_size_bytes: 0,
-                    last_scanned_at: record.last_scanned_at.map(|t| t.to_rfc3339()),
-                }),
+                library: Some(library),
                 error: None,
             })
         } else {
@@ -1912,11 +2369,34 @@ impl MutationRoot {
         let lib_id = Uuid::parse_str(&id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
 
+        // Get library name before deleting for the event
+        let library_name = db
+            .libraries()
+            .get_by_id(lib_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|lib| lib.name);
+
         let deleted = db
             .libraries()
             .delete(lib_id)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        // Emit library deleted event
+        if deleted {
+            if let Ok(library_tx) =
+                ctx.data::<tokio::sync::broadcast::Sender<LibraryChangedEvent>>()
+            {
+                let _ = library_tx.send(LibraryChangedEvent {
+                    change_type: LibraryChangeType::Deleted,
+                    library_id: id.clone(),
+                    library_name,
+                    library: None,
+                });
+            }
+        }
 
         Ok(MutationResult {
             success: deleted,
@@ -1955,6 +2435,234 @@ impl MutationRoot {
             library_id: id,
             status: "started".to_string(),
             message: Some("Scan has been started".to_string()),
+        })
+    }
+
+    /// Consolidate library folders - merge duplicate show folders, update paths
+    /// This is useful after changing naming conventions to clean up old folder structures
+    async fn consolidate_library(&self, ctx: &Context<'_>, id: String) -> Result<ConsolidateLibraryResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let library_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        tracing::info!(library_id = %id, "Consolidation requested for library");
+
+        let organizer = crate::services::OrganizerService::new(db.clone());
+        
+        match organizer.consolidate_library(library_id).await {
+            Ok(result) => {
+                tracing::info!(
+                    library_id = %id,
+                    folders_removed = result.folders_removed,
+                    files_moved = result.files_moved,
+                    "Library consolidation complete"
+                );
+                Ok(ConsolidateLibraryResult {
+                    success: result.success,
+                    folders_removed: result.folders_removed,
+                    files_moved: result.files_moved,
+                    messages: result.messages,
+                })
+            }
+            Err(e) => {
+                tracing::error!(library_id = %id, error = %e, "Library consolidation failed");
+                Ok(ConsolidateLibraryResult {
+                    success: false,
+                    folders_removed: 0,
+                    files_moved: 0,
+                    messages: vec![format!("Consolidation failed: {}", e)],
+                })
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Subtitles and Media Analysis
+    // ------------------------------------------------------------------------
+
+    /// Update subtitle settings for a library
+    async fn update_library_subtitle_settings(
+        &self,
+        ctx: &Context<'_>,
+        library_id: String,
+        input: SubtitleSettingsInput,
+    ) -> Result<MutationResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        // Update library subtitle settings
+        sqlx::query(
+            r#"
+            UPDATE libraries SET
+                auto_download_subtitles = COALESCE($2, auto_download_subtitles),
+                preferred_subtitle_languages = COALESCE($3, preferred_subtitle_languages),
+                updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(lib_id)
+        .bind(input.auto_download)
+        .bind(input.languages.as_ref())
+        .execute(db.pool())
+        .await
+        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        tracing::info!(library_id = %library_id, "Updated library subtitle settings");
+
+        Ok(MutationResult {
+            success: true,
+            error: None,
+        })
+    }
+
+    /// Update subtitle settings for a TV show (override library settings)
+    async fn update_show_subtitle_settings(
+        &self,
+        ctx: &Context<'_>,
+        show_id: String,
+        input: SubtitleSettingsInput,
+    ) -> Result<MutationResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let show_uuid = Uuid::parse_str(&show_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid show ID: {}", e)))?;
+
+        // Build the override JSON
+        let override_json = serde_json::json!({
+            "auto_download": input.auto_download,
+            "languages": input.languages,
+        });
+
+        sqlx::query(
+            r#"
+            UPDATE tv_shows SET
+                subtitle_settings_override = $2,
+                updated_at = NOW()
+            WHERE id = $1
+            "#,
+        )
+        .bind(show_uuid)
+        .bind(&override_json)
+        .execute(db.pool())
+        .await
+        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        tracing::info!(show_id = %show_id, "Updated show subtitle settings");
+
+        Ok(MutationResult {
+            success: true,
+            error: None,
+        })
+    }
+
+    /// Analyze a media file with FFmpeg to extract stream information
+    async fn analyze_media_file(
+        &self,
+        ctx: &Context<'_>,
+        media_file_id: String,
+    ) -> Result<AnalyzeMediaFileResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let file_id = Uuid::parse_str(&media_file_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid media file ID: {}", e)))?;
+
+        // Get the media file
+        let file = db
+            .media_files()
+            .get_by_id(file_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            .ok_or_else(|| async_graphql::Error::new("Media file not found"))?;
+
+        // Run FFmpeg analysis
+        let ffmpeg = crate::services::FfmpegService::new();
+        let analysis = match ffmpeg.analyze(std::path::Path::new(&file.path)).await {
+            Ok(a) => a,
+            Err(e) => {
+                return Ok(AnalyzeMediaFileResult {
+                    success: false,
+                    error: Some(format!("FFmpeg analysis failed: {}", e)),
+                    video_stream_count: None,
+                    audio_stream_count: None,
+                    subtitle_stream_count: None,
+                    chapter_count: None,
+                });
+            }
+        };
+
+        // Store the analysis results
+        // This is a simplified version - the full implementation is in queues.rs
+        let video_count = analysis.video_streams.len() as i32;
+        let audio_count = analysis.audio_streams.len() as i32;
+        let subtitle_count = analysis.subtitle_streams.len() as i32;
+        let chapter_count = analysis.chapters.len() as i32;
+
+        tracing::info!(
+            media_file_id = %media_file_id,
+            video_streams = video_count,
+            audio_streams = audio_count,
+            subtitle_streams = subtitle_count,
+            chapters = chapter_count,
+            "Media file analyzed"
+        );
+
+        Ok(AnalyzeMediaFileResult {
+            success: true,
+            error: None,
+            video_stream_count: Some(video_count),
+            audio_stream_count: Some(audio_count),
+            subtitle_stream_count: Some(subtitle_count),
+            chapter_count: Some(chapter_count),
+        })
+    }
+
+    /// Delete a subtitle (external or downloaded only)
+    async fn delete_subtitle(
+        &self,
+        ctx: &Context<'_>,
+        subtitle_id: String,
+    ) -> Result<MutationResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let sub_id = Uuid::parse_str(&subtitle_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid subtitle ID: {}", e)))?;
+
+        // Get the subtitle first to check its type
+        let subtitle = db
+            .subtitles()
+            .get_by_id(sub_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            .ok_or_else(|| async_graphql::Error::new("Subtitle not found"))?;
+
+        // Can only delete external or downloaded subtitles, not embedded
+        if subtitle.source_type == "embedded" {
+            return Ok(MutationResult {
+                success: false,
+                error: Some("Cannot delete embedded subtitles".to_string()),
+            });
+        }
+
+        // Delete the file if it's external or downloaded
+        if let Some(ref file_path) = subtitle.file_path {
+            if let Err(e) = tokio::fs::remove_file(file_path).await {
+                tracing::warn!(path = %file_path, error = %e, "Failed to delete subtitle file");
+            }
+        }
+
+        // Delete from database
+        db.subtitles()
+            .delete(sub_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(MutationResult {
+            success: true,
+            error: None,
         })
     }
 
@@ -2444,6 +3152,139 @@ impl MutationRoot {
     }
 
     // ------------------------------------------------------------------------
+    // Movies
+    // ------------------------------------------------------------------------
+
+    /// Add a movie to a library
+    async fn add_movie(
+        &self,
+        ctx: &Context<'_>,
+        library_id: String,
+        input: AddMovieInput,
+    ) -> Result<MovieResult> {
+        let user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+        let user_id = Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        if !metadata.has_tmdb() {
+            return Ok(MovieResult {
+                success: false,
+                movie: None,
+                error: Some("TMDB API key not configured".to_string()),
+            });
+        }
+
+        match metadata
+            .add_movie_from_provider(crate::services::AddMovieOptions {
+                provider: crate::services::MetadataProvider::Tmdb,
+                provider_id: input.tmdb_id as u32,
+                library_id: lib_id,
+                user_id,
+                monitored: input.monitored.unwrap_or(true),
+                path: input.path,
+            })
+            .await
+        {
+            Ok(record) => {
+                tracing::info!(
+                    user_id = %user.user_id,
+                    movie_title = %record.title,
+                    movie_id = %record.id,
+                    library_id = %lib_id,
+                    "User added movie: {}",
+                    record.title
+                );
+
+                Ok(MovieResult {
+                    success: true,
+                    movie: Some(movie_record_to_graphql(record)),
+                    error: None,
+                })
+            }
+            Err(e) => Ok(MovieResult {
+                success: false,
+                movie: None,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    /// Update a movie
+    async fn update_movie(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+        input: UpdateMovieInput,
+    ) -> Result<MovieResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let movie_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid movie ID: {}", e)))?;
+
+        // Build update
+        let update = crate::db::UpdateMovie {
+            monitored: input.monitored,
+            path: input.path,
+            allowed_resolutions_override: input.allowed_resolutions_override.flatten(),
+            allowed_video_codecs_override: input.allowed_video_codecs_override.flatten(),
+            allowed_audio_formats_override: input.allowed_audio_formats_override.flatten(),
+            require_hdr_override: input.require_hdr_override.flatten(),
+            allowed_hdr_types_override: input.allowed_hdr_types_override.flatten(),
+            allowed_sources_override: input.allowed_sources_override.flatten(),
+            release_group_blacklist_override: input.release_group_blacklist_override.flatten(),
+            release_group_whitelist_override: input.release_group_whitelist_override.flatten(),
+            ..Default::default()
+        };
+
+        match db.movies().update(movie_id, update).await {
+            Ok(Some(record)) => Ok(MovieResult {
+                success: true,
+                movie: Some(movie_record_to_graphql(record)),
+                error: None,
+            }),
+            Ok(None) => Ok(MovieResult {
+                success: false,
+                movie: None,
+                error: Some("Movie not found".to_string()),
+            }),
+            Err(e) => Ok(MovieResult {
+                success: false,
+                movie: None,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    /// Delete a movie from a library
+    async fn delete_movie(&self, ctx: &Context<'_>, id: String) -> Result<MutationResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let movie_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid movie ID: {}", e)))?;
+
+        match db.movies().delete(movie_id).await {
+            Ok(true) => Ok(MutationResult {
+                success: true,
+                error: None,
+            }),
+            Ok(false) => Ok(MutationResult {
+                success: false,
+                error: Some("Movie not found".to_string()),
+            }),
+            Err(e) => Ok(MutationResult {
+                success: false,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    // ------------------------------------------------------------------------
     // Quality Profiles
     // ------------------------------------------------------------------------
 
@@ -2597,6 +3438,87 @@ impl MutationRoot {
                 None
             } else {
                 Some("Quality profile not found".to_string())
+            },
+        })
+    }
+
+    // ------------------------------------------------------------------------
+    // Naming Patterns
+    // ------------------------------------------------------------------------
+
+    /// Create a custom naming pattern
+    async fn create_naming_pattern(
+        &self,
+        ctx: &Context<'_>,
+        input: CreateNamingPatternInput,
+    ) -> Result<NamingPatternResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let record = db
+            .naming_patterns()
+            .create(crate::db::CreateNamingPattern {
+                name: input.name,
+                pattern: input.pattern,
+                description: input.description,
+                library_type: input.library_type.unwrap_or_else(|| "tv".to_string()),
+            })
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(NamingPatternResult {
+            success: true,
+            naming_pattern: Some(NamingPattern::from_record(record)),
+            error: None,
+        })
+    }
+
+    /// Delete a custom naming pattern (system patterns cannot be deleted)
+    async fn delete_naming_pattern(&self, ctx: &Context<'_>, id: String) -> Result<MutationResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let pattern_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid pattern ID: {}", e)))?;
+
+        let deleted = db
+            .naming_patterns()
+            .delete(pattern_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(MutationResult {
+            success: deleted,
+            error: if deleted {
+                None
+            } else {
+                Some("Pattern not found or is a system pattern".to_string())
+            },
+        })
+    }
+
+    /// Set a naming pattern as the default
+    async fn set_default_naming_pattern(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+    ) -> Result<MutationResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let pattern_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid pattern ID: {}", e)))?;
+
+        let updated = db
+            .naming_patterns()
+            .set_default(pattern_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(MutationResult {
+            success: updated,
+            error: if updated {
+                None
+            } else {
+                Some("Pattern not found".to_string())
             },
         })
     }
@@ -3322,6 +4244,117 @@ impl MutationRoot {
     }
 
     // ------------------------------------------------------------------------
+    // Playback Sessions
+    // ------------------------------------------------------------------------
+
+    /// Start or resume playback of an episode
+    async fn start_playback(
+        &self,
+        ctx: &Context<'_>,
+        input: StartPlaybackInput,
+    ) -> Result<PlaybackResult> {
+        let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let user_id = Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+        let episode_id = Uuid::parse_str(&input.episode_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid episode ID: {}", e)))?;
+        let media_file_id = Uuid::parse_str(&input.media_file_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid media file ID: {}", e)))?;
+        let tv_show_id = Uuid::parse_str(&input.tv_show_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid TV show ID: {}", e)))?;
+
+        let db_input = crate::db::UpsertPlaybackSession {
+            user_id,
+            episode_id: Some(episode_id),
+            media_file_id: Some(media_file_id),
+            tv_show_id: Some(tv_show_id),
+            current_position: input.start_position.unwrap_or(0.0),
+            duration: input.duration,
+            volume: 1.0,
+            is_muted: false,
+            is_playing: true,
+        };
+
+        match db.playback().upsert_session(db_input).await {
+            Ok(session) => Ok(PlaybackResult {
+                success: true,
+                session: Some(PlaybackSession::from_record(session)),
+                error: None,
+            }),
+            Err(e) => Ok(PlaybackResult {
+                success: false,
+                session: None,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    /// Update playback position/state
+    async fn update_playback(
+        &self,
+        ctx: &Context<'_>,
+        input: UpdatePlaybackInput,
+    ) -> Result<PlaybackResult> {
+        let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let user_id = Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        let db_input = crate::db::UpdatePlaybackPosition {
+            current_position: input.current_position,
+            duration: input.duration,
+            volume: input.volume,
+            is_muted: input.is_muted,
+            is_playing: input.is_playing,
+        };
+
+        match db.playback().update_position(user_id, db_input).await {
+            Ok(Some(session)) => Ok(PlaybackResult {
+                success: true,
+                session: Some(PlaybackSession::from_record(session)),
+                error: None,
+            }),
+            Ok(None) => Ok(PlaybackResult {
+                success: false,
+                session: None,
+                error: Some("No active playback session".to_string()),
+            }),
+            Err(e) => Ok(PlaybackResult {
+                success: false,
+                session: None,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    /// Stop playback (mark session as completed)
+    async fn stop_playback(&self, ctx: &Context<'_>) -> Result<PlaybackResult> {
+        let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let user_id = Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        match db.playback().complete_session(user_id).await {
+            Ok(Some(session)) => Ok(PlaybackResult {
+                success: true,
+                session: Some(PlaybackSession::from_record(session)),
+                error: None,
+            }),
+            Ok(None) => Ok(PlaybackResult {
+                success: true,
+                session: None,
+                error: None, // No active session is not an error
+            }),
+            Err(e) => Ok(PlaybackResult {
+                success: false,
+                session: None,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    // ------------------------------------------------------------------------
     // Torrents
     // ------------------------------------------------------------------------
 
@@ -3333,6 +4366,7 @@ impl MutationRoot {
     ) -> Result<AddTorrentResult> {
         let user = ctx.auth_user()?;
         let service = ctx.data_unchecked::<Arc<TorrentService>>();
+        let db = ctx.data_unchecked::<Database>();
 
         // Parse user_id for database persistence
         let user_id = Uuid::parse_str(&user.user_id).ok();
@@ -3341,7 +4375,85 @@ impl MutationRoot {
             // Magnet links go through add_magnet
             service.add_magnet(&magnet, user_id).await
         } else if let Some(url) = input.url {
-            // URLs (to .torrent files or magnet links) go through add_torrent_url
+            // If indexer_id is provided, download the .torrent file with authentication
+            if let Some(ref indexer_id_str) = input.indexer_id {
+                if let Ok(indexer_id) = Uuid::parse_str(indexer_id_str) {
+                    // Get indexer config and credentials
+                    if let Ok(Some(config)) = db.indexers().get(indexer_id).await {
+                        if let Ok(credentials) = db.indexers().get_credentials(indexer_id).await {
+                            // Get encryption key
+                            if let Ok(encryption_key) = db.settings().get_or_create_indexer_encryption_key().await {
+                                if let Ok(encryption) = crate::indexer::encryption::CredentialEncryption::from_base64_key(&encryption_key) {
+                                    // Decrypt credentials
+                                    let mut decrypted_creds: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+                                    for cred in credentials {
+                                        if let Ok(value) = encryption.decrypt(&cred.encrypted_value, &cred.nonce) {
+                                            decrypted_creds.insert(cred.credential_type, value);
+                                        }
+                                    }
+
+                                    // Download .torrent file with authentication
+                                    let torrent_bytes = download_torrent_file_authenticated(
+                                        &url,
+                                        &config.indexer_type,
+                                        &decrypted_creds,
+                                    ).await;
+
+                                    match torrent_bytes {
+                                        Ok(bytes) => {
+                                            // Add torrent from bytes
+                                            return match service.add_torrent_bytes(&bytes, user_id).await {
+                                                Ok(info) => {
+                                                    tracing::info!(
+                                                        user_id = %user.user_id,
+                                                        torrent_id = info.id,
+                                                        torrent_name = %info.name,
+                                                        "User added torrent from authenticated download"
+                                                    );
+
+                                                    // Link to library/episode/movie
+                                                    let info_hash = &info.info_hash;
+                                                    if let Some(ref library_id_str) = input.library_id {
+                                                        if let Ok(lib_id) = Uuid::parse_str(library_id_str) {
+                                                            let _ = db.torrents().link_to_library(info_hash, lib_id).await;
+                                                        }
+                                                    }
+                                                    if let Some(ref episode_id_str) = input.episode_id {
+                                                        if let Ok(ep_id) = Uuid::parse_str(episode_id_str) {
+                                                            let _ = db.torrents().link_to_episode(info_hash, ep_id).await;
+                                                        }
+                                                    }
+                                                    if let Some(ref movie_id_str) = input.movie_id {
+                                                        if let Ok(movie_id) = Uuid::parse_str(movie_id_str) {
+                                                            let _ = db.torrents().link_to_movie(info_hash, movie_id).await;
+                                                        }
+                                                    }
+
+                                                    Ok(AddTorrentResult {
+                                                        success: true,
+                                                        torrent: Some(info.into()),
+                                                        error: None,
+                                                    })
+                                                }
+                                                Err(e) => Ok(AddTorrentResult {
+                                                    success: false,
+                                                    torrent: None,
+                                                    error: Some(e.to_string()),
+                                                }),
+                                            };
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(error = %e, "Failed to download .torrent file with auth, falling back to unauthenticated");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fall back to unauthenticated download
             service.add_torrent_url(&url, user_id).await
         } else {
             return Ok(AddTorrentResult {
@@ -3361,6 +4473,97 @@ impl MutationRoot {
                     "User added torrent: {}",
                     info.name
                 );
+
+                // Link torrent to library/episode/movie if specified (use info_hash)
+                let info_hash = &info.info_hash;
+
+                // Link to library
+                if let Some(ref library_id_str) = input.library_id {
+                    if let Ok(lib_id) = Uuid::parse_str(library_id_str) {
+                        let _ = db.torrents().link_to_library(info_hash, lib_id).await;
+                        tracing::debug!(torrent_id = info.id, library_id = %lib_id, "Linked torrent to library");
+                    }
+                }
+
+                // Link to episode
+                if let Some(ref episode_id_str) = input.episode_id {
+                    if let Ok(ep_id) = Uuid::parse_str(episode_id_str) {
+                        let _ = db.torrents().link_to_episode(info_hash, ep_id).await;
+                        tracing::debug!(torrent_id = info.id, episode_id = %ep_id, "Linked torrent to episode");
+                    }
+                }
+
+                // Link to movie
+                if let Some(ref movie_id_str) = input.movie_id {
+                    if let Ok(movie_id) = Uuid::parse_str(movie_id_str) {
+                        let _ = db.torrents().link_to_movie(info_hash, movie_id).await;
+                        tracing::debug!(torrent_id = info.id, movie_id = %movie_id, "Linked torrent to movie");
+                    }
+                }
+
+                // Auto-match to episode if library provided but no specific episode/movie
+                if input.episode_id.is_none() && input.movie_id.is_none() {
+                    tracing::debug!(
+                        library_id = ?input.library_id,
+                        torrent_name = %info.name,
+                        "Attempting auto-match for torrent"
+                    );
+                    if let Some(ref library_id_str) = input.library_id {
+                        if let Ok(lib_id) = Uuid::parse_str(library_id_str) {
+                            // Try to match torrent name to an episode
+                            if let Ok(Some(library)) = db.libraries().get_by_id(lib_id).await {
+                                tracing::debug!(library_type = %library.library_type, "Found library");
+                                if library.library_type == "tv" {
+                                    // Parse the torrent name
+                                    let parsed = crate::services::filename_parser::parse_episode(&info.name);
+                                    tracing::debug!(
+                                        show_name = ?parsed.show_name,
+                                        season = ?parsed.season,
+                                        episode = ?parsed.episode,
+                                        "Parsed torrent name"
+                                    );
+                                    if let Some(ref show_name) = parsed.show_name {
+                                        if let (Some(season), Some(episode)) = (parsed.season, parsed.episode) {
+                                            // Find matching show in library
+                                            match db.tv_shows().find_by_name_in_library(lib_id, show_name).await {
+                                                Ok(Some(tv_show)) => {
+                                                    tracing::debug!(show_id = %tv_show.id, "Found matching show");
+                                                    // Find matching episode
+                                                    match db.episodes().get_by_show_season_episode(tv_show.id, season as i32, episode as i32).await {
+                                                        Ok(Some(ep)) => {
+                                                            let _ = db.torrents().link_to_episode(info_hash, ep.id).await;
+                                                            let _ = db.episodes().mark_downloading(ep.id).await;
+                                                            tracing::info!(
+                                                                torrent_name = %info.name,
+                                                                show_name = %tv_show.name,
+                                                                season = season,
+                                                                episode = episode,
+                                                                "Auto-matched torrent to episode"
+                                                            );
+                                                        }
+                                                        Ok(None) => {
+                                                            tracing::debug!(season = season, episode = episode, "Episode not found");
+                                                        }
+                                                        Err(e) => {
+                                                            tracing::warn!(error = %e, "Failed to find episode");
+                                                        }
+                                                    }
+                                                }
+                                                Ok(None) => {
+                                                    tracing::debug!(show_name = %show_name, "Show not found in library");
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!(error = %e, "Failed to find show");
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Ok(AddTorrentResult {
                     success: true,
                     torrent: Some(info.into()),
@@ -3598,6 +4801,70 @@ impl MutationRoot {
             success: true,
             error: None,
         })
+    }
+
+    /// Set a generic app setting by key
+    ///
+    /// This allows setting arbitrary key-value pairs in the app_settings table.
+    /// The category is extracted from the key (e.g., "metadata.tmdb_api_key" → "metadata").
+    async fn set_setting(
+        &self,
+        ctx: &Context<'_>,
+        key: String,
+        value: String,
+    ) -> Result<SettingsResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let settings = db.settings();
+
+        // Extract category from key (use first part before dot, or "general")
+        let category = key.split('.').next().unwrap_or("general").to_string();
+
+        settings
+            .set_with_category(&key, &value, &category, None)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        tracing::debug!(key = %key, "Updated app setting");
+
+        Ok(SettingsResult {
+            success: true,
+            error: None,
+        })
+    }
+
+    // ------------------------------------------------------------------------
+    // Schedule Cache
+    // ------------------------------------------------------------------------
+
+    /// Refresh the TV schedule cache
+    ///
+    /// Forces a refresh of the TV schedule cache from TVMaze.
+    /// This is normally done automatically every 6 hours.
+    async fn refresh_schedule_cache(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(default = 14, desc = "Number of days to fetch")] days: i32,
+        #[graphql(desc = "Country code (e.g., 'US', 'GB')")] country: Option<String>,
+    ) -> Result<RefreshScheduleResult> {
+        let _user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        match metadata
+            .refresh_schedule_cache(days as u32, country.as_deref())
+            .await
+        {
+            Ok(count) => Ok(RefreshScheduleResult {
+                success: true,
+                entries_updated: count as i32,
+                error: None,
+            }),
+            Err(e) => Ok(RefreshScheduleResult {
+                success: false,
+                entries_updated: 0,
+                error: Some(e.to_string()),
+            }),
+        }
     }
 
     // ------------------------------------------------------------------------
@@ -4312,226 +5579,6 @@ impl MutationRoot {
         }
     }
 
-    /// Search indexers for torrents
-    async fn search_indexers(
-        &self,
-        ctx: &Context<'_>,
-        input: IndexerSearchInput,
-    ) -> Result<IndexerSearchResultSet> {
-        let user = ctx.auth_user()?;
-        let db = ctx.data_unchecked::<Database>();
-        let user_id = Uuid::parse_str(&user.user_id)
-            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
-
-        let start = std::time::Instant::now();
-
-        // Get indexers to search
-        let indexer_ids: Option<Vec<Uuid>> = input.indexer_ids.as_ref().map(|ids| {
-            ids.iter()
-                .filter_map(|id| Uuid::parse_str(id).ok())
-                .collect()
-        });
-
-        let configs = if let Some(ref ids) = indexer_ids {
-            let all_configs = db
-                .indexers()
-                .list_enabled_by_user(user_id)
-                .await
-                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-            all_configs
-                .into_iter()
-                .filter(|c| ids.contains(&c.id))
-                .collect()
-        } else {
-            db.indexers()
-                .list_enabled_by_user(user_id)
-                .await
-                .map_err(|e| async_graphql::Error::new(e.to_string()))?
-        };
-
-        // Get encryption key from database
-        let encryption_key = db
-            .settings()
-            .get_or_create_indexer_encryption_key()
-            .await
-            .map_err(|e| {
-                async_graphql::Error::new(format!("Failed to get encryption key: {}", e))
-            })?;
-        let encryption =
-            crate::indexer::encryption::CredentialEncryption::from_base64_key(&encryption_key)
-                .map_err(|e| async_graphql::Error::new(format!("Encryption error: {}", e)))?;
-
-        // Build query
-        use crate::indexer::{QueryType, TorznabQuery};
-        let query = TorznabQuery {
-            query_type: if input.season.is_some() || input.episode.is_some() {
-                QueryType::TvSearch
-            } else if input.imdb_id.is_some() {
-                QueryType::MovieSearch
-            } else {
-                QueryType::Search
-            },
-            search_term: Some(input.query.clone()),
-            categories: input.categories.unwrap_or_default(),
-            season: input.season,
-            episode: input.episode,
-            imdb_id: input.imdb_id,
-            limit: input.limit,
-            cache: true,
-            ..Default::default()
-        };
-
-        let mut results: Vec<IndexerSearchResultItem> = Vec::new();
-        let mut total_releases = 0;
-
-        // Search each indexer
-        for config in configs {
-            let indexer_start = std::time::Instant::now();
-
-            // Get and decrypt credentials
-            let credentials = match db.indexers().get_credentials(config.id).await {
-                Ok(c) => c,
-                Err(e) => {
-                    results.push(IndexerSearchResultItem {
-                        indexer_id: config.id.to_string(),
-                        indexer_name: config.name.clone(),
-                        releases: vec![],
-                        elapsed_ms: indexer_start.elapsed().as_millis() as i64,
-                        from_cache: false,
-                        error: Some(format!("Failed to get credentials: {}", e)),
-                    });
-                    continue;
-                }
-            };
-
-            let settings = db
-                .indexers()
-                .get_settings(config.id)
-                .await
-                .unwrap_or_default();
-
-            let mut decrypted_creds: std::collections::HashMap<String, String> =
-                std::collections::HashMap::new();
-            for cred in credentials {
-                if let Ok(value) = encryption.decrypt(&cred.encrypted_value, &cred.nonce) {
-                    decrypted_creds.insert(cred.credential_type, value);
-                }
-            }
-
-            let settings_map: std::collections::HashMap<String, String> = settings
-                .into_iter()
-                .map(|s| (s.setting_key, s.setting_value))
-                .collect();
-
-            // Create and search indexer
-            match config.indexer_type.as_str() {
-                "iptorrents" => {
-                    use crate::indexer::Indexer;
-                    use crate::indexer::definitions::iptorrents::IPTorrentsIndexer;
-
-                    let cookie = decrypted_creds.get("cookie").cloned().unwrap_or_default();
-                    let user_agent = decrypted_creds
-                        .get("user_agent")
-                        .cloned()
-                        .unwrap_or_default();
-
-                    let indexer = match IPTorrentsIndexer::new(
-                        config.id.to_string(),
-                        config.name.clone(),
-                        config.site_url.clone(),
-                        &cookie,
-                        &user_agent,
-                        settings_map,
-                    ) {
-                        Ok(idx) => idx,
-                        Err(e) => {
-                            results.push(IndexerSearchResultItem {
-                                indexer_id: config.id.to_string(),
-                                indexer_name: config.name,
-                                releases: vec![],
-                                elapsed_ms: indexer_start.elapsed().as_millis() as i64,
-                                from_cache: false,
-                                error: Some(format!("Failed to create indexer: {}", e)),
-                            });
-                            continue;
-                        }
-                    };
-
-                    match indexer.search(&query).await {
-                        Ok(releases) => {
-                            let _ = db.indexers().record_success(config.id).await;
-
-                            let torrent_releases: Vec<TorrentRelease> = releases
-                                .iter()
-                                .map(|r| TorrentRelease {
-                                    title: r.title.clone(),
-                                    guid: r.guid.clone(),
-                                    link: r.link.clone(),
-                                    magnet_uri: r.magnet_uri.clone(),
-                                    info_hash: r.info_hash.clone(),
-                                    details: r.details.clone(),
-                                    publish_date: r.publish_date.to_rfc3339(),
-                                    categories: r.categories.clone(),
-                                    size: r.size,
-                                    size_formatted: r.size.map(|s| format_bytes(s as u64)),
-                                    seeders: r.seeders,
-                                    leechers: r.leechers(),
-                                    peers: r.peers,
-                                    grabs: r.grabs,
-                                    is_freeleech: r.is_freeleech(),
-                                    imdb_id: r.imdb.map(|id| format!("tt{:07}", id)),
-                                    poster: r.poster.clone(),
-                                    description: r.description.clone(),
-                                    indexer_id: Some(config.id.to_string()),
-                                    indexer_name: Some(config.name.clone()),
-                                })
-                                .collect();
-
-                            total_releases += torrent_releases.len() as i32;
-
-                            results.push(IndexerSearchResultItem {
-                                indexer_id: config.id.to_string(),
-                                indexer_name: config.name,
-                                releases: torrent_releases,
-                                elapsed_ms: indexer_start.elapsed().as_millis() as i64,
-                                from_cache: false,
-                                error: None,
-                            });
-                        }
-                        Err(e) => {
-                            let _ = db.indexers().record_error(config.id, &e.to_string()).await;
-
-                            results.push(IndexerSearchResultItem {
-                                indexer_id: config.id.to_string(),
-                                indexer_name: config.name,
-                                releases: vec![],
-                                elapsed_ms: indexer_start.elapsed().as_millis() as i64,
-                                from_cache: false,
-                                error: Some(e.to_string()),
-                            });
-                        }
-                    }
-                }
-                _ => {
-                    results.push(IndexerSearchResultItem {
-                        indexer_id: config.id.to_string(),
-                        indexer_name: config.name,
-                        releases: vec![],
-                        elapsed_ms: indexer_start.elapsed().as_millis() as i64,
-                        from_cache: false,
-                        error: Some(format!("Unsupported indexer type: {}", config.indexer_type)),
-                    });
-                }
-            }
-        }
-
-        Ok(IndexerSearchResultSet {
-            indexers: results,
-            total_releases,
-            total_elapsed_ms: start.elapsed().as_millis() as i64,
-        })
-    }
-
     // ========================================================================
     // Security Settings Mutations
     // ========================================================================
@@ -4807,4 +5854,79 @@ impl MutationRoot {
             }),
         }
     }
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Download a .torrent file from a private tracker with authentication
+async fn download_torrent_file_authenticated(
+    url: &str,
+    indexer_type: &str,
+    credentials: &std::collections::HashMap<String, String>,
+) -> anyhow::Result<Vec<u8>> {
+    use anyhow::Context;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .context("Failed to create HTTP client")?;
+
+    let mut request = client.get(url);
+
+    // Add authentication based on indexer type
+    match indexer_type {
+        "iptorrents" => {
+            // IPTorrents uses cookie-based authentication
+            if let Some(cookie) = credentials.get("cookie") {
+                request = request.header("Cookie", cookie);
+            }
+            if let Some(user_agent) = credentials.get("user_agent") {
+                request = request.header("User-Agent", user_agent);
+            } else {
+                // Default user agent if not provided
+                request = request.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+            }
+        }
+        _ => {
+            // Generic: try cookie auth if available
+            if let Some(cookie) = credentials.get("cookie") {
+                request = request.header("Cookie", cookie);
+            }
+            if let Some(api_key) = credentials.get("api_key") {
+                // Some indexers use API key as query param
+                request = request.query(&[("apikey", api_key)]);
+            }
+        }
+    }
+
+    let response = request
+        .send()
+        .await
+        .context("Failed to send request")?;
+
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "Failed to download .torrent file: HTTP {}",
+            response.status()
+        );
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .context("Failed to read response body")?;
+
+    // Verify it's actually a torrent file (starts with "d" for bencoded dict)
+    if bytes.is_empty() || bytes[0] != b'd' {
+        // Check if it might be an HTML error page
+        let preview = String::from_utf8_lossy(&bytes[..std::cmp::min(200, bytes.len())]);
+        if preview.contains("<!DOCTYPE") || preview.contains("<html") {
+            anyhow::bail!("Received HTML instead of torrent file - authentication may have failed");
+        }
+        anyhow::bail!("Downloaded file does not appear to be a valid torrent");
+    }
+
+    Ok(bytes.to_vec())
 }

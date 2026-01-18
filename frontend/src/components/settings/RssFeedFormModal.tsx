@@ -56,15 +56,25 @@ export function AddRssFeedModal({
         <ModalBody className="gap-4">
           <Input
             label="Feed Name"
+            labelPlacement="inside"
+            variant="flat"
             placeholder="My Torrent Feed"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            classNames={{
+              label: 'text-sm font-medium text-primary!',
+            }}
           />
           <Input
             label="Feed URL"
+            labelPlacement="inside"
+            variant="flat"
             placeholder="https://example.com/rss"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
+            classNames={{
+              label: 'text-sm font-medium text-primary!',
+            }}
           />
           <div className="flex justify-between items-center">
             <div>
@@ -78,11 +88,17 @@ export function AddRssFeedModal({
           <Input
             type="number"
             label="Poll Interval (minutes)"
+            labelPlacement="inside"
+            variant="flat"
             placeholder="15"
+            description="How often to check for new items (5-1440 minutes)"
             value={pollInterval.toString()}
             onChange={(e) => setPollInterval(parseInt(e.target.value) || 15)}
             min={5}
             max={1440}
+            classNames={{
+              label: 'text-sm font-medium text-primary!',
+            }}
           />
         </ModalBody>
         <ModalFooter>
@@ -149,15 +165,25 @@ export function EditRssFeedModal({
         <ModalBody className="gap-4">
           <Input
             label="Feed Name"
+            labelPlacement="inside"
+            variant="flat"
             placeholder="My Torrent Feed"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            classNames={{
+              label: 'text-sm font-medium text-primary!',
+            }}
           />
           <Input
             label="Feed URL"
+            labelPlacement="inside"
+            variant="flat"
             placeholder="https://example.com/rss"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
+            classNames={{
+              label: 'text-sm font-medium text-primary!',
+            }}
           />
           <div className="flex justify-between items-center">
             <div>
@@ -169,11 +195,17 @@ export function EditRssFeedModal({
           <Input
             type="number"
             label="Poll Interval (minutes)"
+            labelPlacement="inside"
+            variant="flat"
             placeholder="15"
+            description="How often to check for new items (5-1440 minutes)"
             value={pollInterval.toString()}
             onChange={(e) => setPollInterval(parseInt(e.target.value) || 15)}
             min={5}
             max={1440}
+            classNames={{
+              label: 'text-sm font-medium text-primary!',
+            }}
           />
         </ModalBody>
         <ModalFooter>

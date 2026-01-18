@@ -1,6 +1,5 @@
 import { Card, CardHeader, CardBody } from '@heroui/card'
 import { Checkbox, CheckboxGroup } from '@heroui/checkbox'
-import { Divider } from '@heroui/divider'
 import { Switch } from '@heroui/switch'
 import { Input } from '@heroui/input'
 import { IconVideo, IconMusic, IconSun, IconDeviceTv, IconUsers } from '@tabler/icons-react'
@@ -144,6 +143,8 @@ export interface QualitySettingsCardProps {
   title?: string
   /** Description for the card */
   description?: string
+  /** If true, render without the Card wrapper (for use inside modals) */
+  noCard?: boolean
 }
 
 export function QualitySettingsCard({
@@ -153,205 +154,217 @@ export function QualitySettingsCard({
   isInheriting = false,
   onInheritChange,
   title = 'Quality Filters',
-  description = 'Configure which releases to accept. Empty = accept any.',
+  description,
+  noCard = false,
 }: QualitySettingsCardProps) {
   const isDisabled = isOverrideMode && isInheriting
 
-  return (
-    <Card className="bg-content2  ">
-      <CardHeader className="flex flex-col items-start gap-1">
-        <div className="flex items-center gap-2 w-full justify-between">
-          <div>
-            <h3 className="font-semibold">{title}</h3>
-            <p className="text-small text-default-500">{description}</p>
-          </div>
-          {isOverrideMode && onInheritChange && (
-            <Switch
-              isSelected={!isInheriting}
-              onValueChange={(val) => onInheritChange(!val)}
-              size="sm"
-            >
-              Override
-            </Switch>
-          )}
-        </div>
-      </CardHeader>
-      <CardBody className={`space-y-6 ${isDisabled ? 'opacity-50 pointer-events-none' : ''}`}>
-        {/* Resolution */}
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <IconDeviceTv size={18} className="text-blue-400" />
-            <span className="text-sm font-medium">Resolution</span>
-            {settings.allowedResolutions.length === 0 && (
-              <span className="text-xs text-default-400">(Any)</span>
-            )}
-          </div>
-          <CheckboxGroup
-            orientation="horizontal"
-            value={settings.allowedResolutions}
-            onValueChange={(val) => onChange({ ...settings, allowedResolutions: val })}
-            classNames={{ wrapper: 'gap-3 flex-wrap' }}
-          >
-            {RESOLUTION_OPTIONS.map((opt) => (
-              <Checkbox key={opt.value} value={opt.value} size="sm">
-                {opt.label}
-              </Checkbox>
-            ))}
-          </CheckboxGroup>
-        </div>
+  const header = (
+    <div className="flex items-center gap-2 w-full justify-between">
+      <div>
+        <h3 className="font-semibold">{title}</h3>
+        {description && <p className="text-small text-default-500">{description}</p>}
+      </div>
+      {isOverrideMode && onInheritChange && (
+        <Switch
+          isSelected={!isInheriting}
+          onValueChange={(val) => onInheritChange(!val)}
+          size="sm"
+        >
+          Override
+        </Switch>
+      )}
+    </div>
+  )
 
-        <Divider />
+  const content = (
+    <div className={`flex flex-col gap-6 ${isDisabled ? 'opacity-50 pointer-events-none' : ''}`}>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+        {/* Resolution */}
+        <CheckboxGroup
+          label={
+            <div className="flex items-center gap-2">
+              <IconDeviceTv size={16} className="text-blue-400" />
+              <span className="text-sm font-medium">Resolution</span>
+              {settings.allowedResolutions.length === 0 && (
+                <span className="text-xs text-default-400">(Any)</span>
+              )}
+            </div>
+          }
+          value={settings.allowedResolutions}
+          onValueChange={(val) => onChange({ ...settings, allowedResolutions: val })}
+          classNames={{ wrapper: 'gap-1.5 mt-2' }}
+        >
+          {RESOLUTION_OPTIONS.map((opt) => (
+            <Checkbox key={opt.value} value={opt.value} size="sm">
+              {opt.label}
+            </Checkbox>
+          ))}
+        </CheckboxGroup>
 
         {/* Video Codec */}
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <IconVideo size={18} className="text-purple-400" />
-            <span className="text-sm font-medium">Video Codec</span>
-            {settings.allowedVideoCodecs.length === 0 && (
-              <span className="text-xs text-default-400">(Any)</span>
-            )}
-          </div>
-          <CheckboxGroup
-            orientation="horizontal"
-            value={settings.allowedVideoCodecs}
-            onValueChange={(val) => onChange({ ...settings, allowedVideoCodecs: val })}
-            classNames={{ wrapper: 'gap-3 flex-wrap' }}
-          >
-            {VIDEO_CODEC_OPTIONS.map((opt) => (
-              <Checkbox key={opt.value} value={opt.value} size="sm">
-                {opt.label}
-              </Checkbox>
-            ))}
-          </CheckboxGroup>
-        </div>
-
-        <Divider />
+        <CheckboxGroup
+          label={
+            <div className="flex items-center gap-2">
+              <IconVideo size={16} className="text-purple-400" />
+              <span className="text-sm font-medium">Video Codec</span>
+              {settings.allowedVideoCodecs.length === 0 && (
+                <span className="text-xs text-default-400">(Any)</span>
+              )}
+            </div>
+          }
+          value={settings.allowedVideoCodecs}
+          onValueChange={(val) => onChange({ ...settings, allowedVideoCodecs: val })}
+          classNames={{ wrapper: 'gap-1.5 mt-2' }}
+        >
+          {VIDEO_CODEC_OPTIONS.map((opt) => (
+            <Checkbox key={opt.value} value={opt.value} size="sm">
+              {opt.label}
+            </Checkbox>
+          ))}
+        </CheckboxGroup>
 
         {/* Audio Format */}
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <IconMusic size={18} className="text-green-400" />
-            <span className="text-sm font-medium">Audio Format</span>
-            {settings.allowedAudioFormats.length === 0 && (
-              <span className="text-xs text-default-400">(Any)</span>
-            )}
-          </div>
-          <CheckboxGroup
-            orientation="horizontal"
-            value={settings.allowedAudioFormats}
-            onValueChange={(val) => onChange({ ...settings, allowedAudioFormats: val })}
-            classNames={{ wrapper: 'gap-3 flex-wrap' }}
-          >
-            {AUDIO_FORMAT_OPTIONS.map((opt) => (
-              <Checkbox key={opt.value} value={opt.value} size="sm">
-                {opt.label}
-              </Checkbox>
-            ))}
-          </CheckboxGroup>
-        </div>
-
-        <Divider />
-
-        {/* HDR Settings */}
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <IconSun size={18} className="text-amber-400" />
-            <span className="text-sm font-medium">HDR</span>
-          </div>
-          <div className="flex flex-col gap-3">
-            <Switch
-              isSelected={settings.requireHdr}
-              onValueChange={(val) => onChange({ ...settings, requireHdr: val })}
-              size="sm"
-            >
-              Require HDR
-            </Switch>
-            {settings.requireHdr && (
-              <div className="ml-6">
-                <p className="text-xs text-default-400 mb-2">
-                  Allowed HDR Types (empty = any HDR)
-                </p>
-                <CheckboxGroup
-                  orientation="horizontal"
-                  value={settings.allowedHdrTypes}
-                  onValueChange={(val) => onChange({ ...settings, allowedHdrTypes: val })}
-                  classNames={{ wrapper: 'gap-3 flex-wrap' }}
-                >
-                  {HDR_TYPE_OPTIONS.map((opt) => (
-                    <Checkbox key={opt.value} value={opt.value} size="sm">
-                      {opt.label}
-                    </Checkbox>
-                  ))}
-                </CheckboxGroup>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <Divider />
+        <CheckboxGroup
+          label={
+            <div className="flex items-center gap-2">
+              <IconMusic size={16} className="text-green-400" />
+              <span className="text-sm font-medium">Audio Format</span>
+              {settings.allowedAudioFormats.length === 0 && (
+                <span className="text-xs text-default-400">(Any)</span>
+              )}
+            </div>
+          }
+          value={settings.allowedAudioFormats}
+          onValueChange={(val) => onChange({ ...settings, allowedAudioFormats: val })}
+          classNames={{ wrapper: 'gap-1.5 mt-2' }}
+        >
+          {AUDIO_FORMAT_OPTIONS.map((opt) => (
+            <Checkbox key={opt.value} value={opt.value} size="sm">
+              {opt.label}
+            </Checkbox>
+          ))}
+        </CheckboxGroup>
 
         {/* Source */}
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <IconDeviceTv size={18} className="text-cyan-400" />
-            <span className="text-sm font-medium">Source / Release Type</span>
-            {settings.allowedSources.length === 0 && (
-              <span className="text-xs text-default-400">(Any)</span>
-            )}
+        <CheckboxGroup
+          label={
+            <div className="flex items-center gap-2">
+              <IconDeviceTv size={16} className="text-cyan-400" />
+              <span className="text-sm font-medium">Source</span>
+              {settings.allowedSources.length === 0 && (
+                <span className="text-xs text-default-400">(Any)</span>
+              )}
+            </div>
+          }
+          value={settings.allowedSources}
+          onValueChange={(val) => onChange({ ...settings, allowedSources: val })}
+          classNames={{ wrapper: 'gap-1.5 mt-2' }}
+        >
+          {SOURCE_OPTIONS.map((opt) => (
+            <Checkbox key={opt.value} value={opt.value} size="sm">
+              {opt.label}
+            </Checkbox>
+          ))}
+        </CheckboxGroup>
+
+        {/* HDR Settings */}
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <IconSun size={16} className="text-amber-400" />
+            <span className="text-sm font-medium">HDR</span>
           </div>
-          <CheckboxGroup
-            orientation="horizontal"
-            value={settings.allowedSources}
-            onValueChange={(val) => onChange({ ...settings, allowedSources: val })}
-            classNames={{ wrapper: 'gap-3 flex-wrap' }}
+          <Switch
+            isSelected={settings.requireHdr}
+            onValueChange={(val) => onChange({ ...settings, requireHdr: val })}
+            size="sm"
           >
-            {SOURCE_OPTIONS.map((opt) => (
-              <Checkbox key={opt.value} value={opt.value} size="sm">
-                {opt.label}
-              </Checkbox>
-            ))}
-          </CheckboxGroup>
-        </div>
-
-        <Divider />
-
-        {/* Release Groups */}
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <IconUsers size={18} className="text-default-400" />
-            <span className="text-sm font-medium">Release Groups</span>
-          </div>
-          <div className="flex flex-col gap-4">
-            <Input
-              label="Blacklist"
-              placeholder="e.g., YIFY, EVO (comma-separated)"
+            Require HDR
+          </Switch>
+          {settings.requireHdr && (
+            <CheckboxGroup
+              value={settings.allowedHdrTypes}
+              onValueChange={(val) => onChange({ ...settings, allowedHdrTypes: val })}
+              classNames={{ wrapper: 'gap-1.5 ml-1' }}
               size="sm"
-              value={settings.releaseGroupBlacklist.join(', ')}
-              onChange={(e) => {
-                const groups = e.target.value
-                  .split(',')
-                  .map((g) => g.trim())
-                  .filter((g) => g.length > 0)
-                onChange({ ...settings, releaseGroupBlacklist: groups })
-              }}
-              description="Block releases from these groups"
-            />
-            <Input
-              label="Whitelist"
-              placeholder="e.g., NTb, FLUX (comma-separated)"
-              size="sm"
-              value={settings.releaseGroupWhitelist.join(', ')}
-              onChange={(e) => {
-                const groups = e.target.value
-                  .split(',')
-                  .map((g) => g.trim())
-                  .filter((g) => g.length > 0)
-                onChange({ ...settings, releaseGroupWhitelist: groups })
-              }}
-              description="Only allow releases from these groups (leave empty for any)"
-            />
-          </div>
+              description="Empty = any HDR type"
+            >
+              {HDR_TYPE_OPTIONS.map((opt) => (
+                <Checkbox key={opt.value} value={opt.value} size="sm">
+                  {opt.label}
+                </Checkbox>
+              ))}
+            </CheckboxGroup>
+          )}
         </div>
+      </div>
+
+      {/* Release Groups - full width row */}
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <IconUsers size={16} className="text-default-400" />
+          <span className="text-sm font-medium">Release Groups</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Input
+            label="Blacklist"
+            labelPlacement="inside"
+            variant="flat"
+            placeholder="e.g., YIFY, EVO (comma-separated)"
+            description="Release groups to reject"
+            size="sm"
+            value={settings.releaseGroupBlacklist.join(', ')}
+            onChange={(e) => {
+              const groups = e.target.value
+                .split(',')
+                .map((g) => g.trim())
+                .filter((g) => g.length > 0)
+              onChange({ ...settings, releaseGroupBlacklist: groups })
+            }}
+            classNames={{
+              label: 'text-sm font-medium text-primary!',
+            }}
+          />
+          <Input
+            label="Whitelist"
+            labelPlacement="inside"
+            variant="flat"
+            placeholder="e.g., NTb, FLUX (comma-separated)"
+            description="Release groups to prefer"
+            size="sm"
+            value={settings.releaseGroupWhitelist.join(', ')}
+            onChange={(e) => {
+              const groups = e.target.value
+                .split(',')
+                .map((g) => g.trim())
+                .filter((g) => g.length > 0)
+              onChange({ ...settings, releaseGroupWhitelist: groups })
+            }}
+            classNames={{
+              label: 'text-sm font-medium text-primary!',
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  )
+
+  if (noCard) {
+    return (
+      <div className="flex flex-col gap-4">
+        {header}
+        {content}
+      </div>
+    )
+  }
+
+  return (
+    <Card className="bg-content1">
+      <CardHeader className="flex flex-col items-start gap-1">
+        {header}
+      </CardHeader>
+      <CardBody>
+        {content}
       </CardBody>
     </Card>
   )

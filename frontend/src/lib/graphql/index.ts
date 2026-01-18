@@ -45,6 +45,8 @@ export type {
   PostDownloadAction,
   Library,
   LibraryResult,
+  LibraryChangeType,
+  LibraryChangedEvent,
   CreateLibraryInput,
   UpdateLibraryInput,
   // TV Show
@@ -58,8 +60,19 @@ export type {
   AddTvShowInput,
   UpdateTvShowInput,
   DownloadEpisodeResult,
+  // Movie
+  MovieStatus,
+  Movie,
+  MovieSearchResult,
+  MovieResult,
+  AddMovieInput,
+  UpdateMovieInput,
   // Quality Profile
   QualityProfile,
+  // Naming Patterns
+  NamingPattern,
+  CreateNamingPatternInput,
+  NamingPatternResult,
   // RSS Feed
   RssFeed,
   RssFeedResult,
@@ -102,6 +115,17 @@ export type {
   CastDeviceResult,
   CastSessionResult,
   CastSettingsResult,
+  // Playback Session Types
+  PlaybackSession,
+  StartPlaybackInput,
+  UpdatePlaybackInput,
+  PlaybackResult,
+  // Indexer Search Types
+  IndexerSearchInput,
+  IndexerSearchResultSet,
+  IndexerSearchResultItem,
+  TorrentRelease,
+  IndexerConfig,
 } from './types';
 
 // Constants
@@ -115,12 +139,19 @@ export {
   TORRENT_SETTINGS_QUERY,
   LIBRARIES_QUERY,
   LIBRARY_QUERY,
+  ALL_TV_SHOWS_QUERY,
   TV_SHOWS_QUERY,
   TV_SHOW_QUERY,
   SEARCH_TV_SHOWS_QUERY,
+  // Movie Queries
+  ALL_MOVIES_QUERY,
+  MOVIES_QUERY,
+  MOVIE_QUERY,
+  SEARCH_MOVIES_QUERY,
   EPISODES_QUERY,
   WANTED_EPISODES_QUERY,
   QUALITY_PROFILES_QUERY,
+  NAMING_PATTERNS_QUERY,
   RSS_FEEDS_QUERY,
   PARSE_AND_IDENTIFY_QUERY,
   LOGS_QUERY,
@@ -141,6 +172,11 @@ export {
   BROWSE_DIRECTORY_QUERY,
   QUICK_PATHS_QUERY,
   VALIDATE_PATH_QUERY,
+  // Playback Queries
+  PLAYBACK_SESSION_QUERY,
+  // Indexer Search Queries
+  SEARCH_INDEXERS_QUERY,
+  INDEXER_CONFIGS_QUERY,
 } from './queries';
 
 // Mutations
@@ -155,16 +191,25 @@ export {
   UPDATE_LIBRARY_MUTATION,
   DELETE_LIBRARY_MUTATION,
   SCAN_LIBRARY_MUTATION,
+  CONSOLIDATE_LIBRARY_MUTATION,
   ADD_TV_SHOW_MUTATION,
   DELETE_TV_SHOW_MUTATION,
   REFRESH_TV_SHOW_MUTATION,
   UPDATE_TV_SHOW_MUTATION,
+  // Movie Mutations
+  ADD_MOVIE_MUTATION,
+  UPDATE_MOVIE_MUTATION,
+  DELETE_MOVIE_MUTATION,
   CREATE_RSS_FEED_MUTATION,
   UPDATE_RSS_FEED_MUTATION,
   DELETE_RSS_FEED_MUTATION,
   TEST_RSS_FEED_MUTATION,
   POLL_RSS_FEED_MUTATION,
   DOWNLOAD_EPISODE_MUTATION,
+  // Naming Pattern Mutations
+  CREATE_NAMING_PATTERN_MUTATION,
+  DELETE_NAMING_PATTERN_MUTATION,
+  SET_DEFAULT_NAMING_PATTERN_MUTATION,
   CLEAR_ALL_LOGS_MUTATION,
   CLEAR_OLD_LOGS_MUTATION,
   INITIALIZE_ENCRYPTION_KEY_MUTATION,
@@ -188,6 +233,10 @@ export {
   COPY_FILES_MUTATION,
   MOVE_FILES_MUTATION,
   RENAME_FILE_MUTATION,
+  // Playback Mutations
+  START_PLAYBACK_MUTATION,
+  UPDATE_PLAYBACK_MUTATION,
+  STOP_PLAYBACK_MUTATION,
 } from './mutations';
 
 // Subscriptions
@@ -198,6 +247,8 @@ export {
   TORRENT_REMOVED_SUBSCRIPTION,
   LOG_EVENTS_SUBSCRIPTION,
   ERROR_LOGS_SUBSCRIPTION,
+  // Library Subscriptions
+  LIBRARY_CHANGED_SUBSCRIPTION,
   // Filesystem Subscriptions
   DIRECTORY_CONTENTS_CHANGED_SUBSCRIPTION,
 } from './subscriptions';

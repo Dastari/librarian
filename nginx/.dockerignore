@@ -1,0 +1,5 @@
+# SSL certificates should be mounted at runtime
+ssl/
+
+# Documentation
+*.md

@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Button } from '@heroui/button'
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
+import { Button, ButtonGroup } from '@heroui/button'
 import { Chip } from '@heroui/chip'
 import { Skeleton } from '@heroui/skeleton'
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from '@heroui/modal'
@@ -26,11 +26,9 @@ import { sanitizeError } from '../../lib/format'
 import {
   DataTable,
   type DataTableColumn,
-  type DataTableFilter,
-  type FilterOption,
   type RowAction,
 } from '../../components/data-table'
-import { IconEye, IconRefresh } from '@tabler/icons-react'
+import { IconEye, IconRefresh, IconFilter } from '@tabler/icons-react'
 
 export const Route = createFileRoute('/settings/logs')({
   component: LogsSettingsPage,
@@ -108,6 +106,9 @@ function LogsSettingsPage() {
   // Source filter
   const [sources, setSources] = useState<string[]>([])
   const [selectedSource, setSelectedSource] = useState<string>('')
+  
+  // Level filter (managed locally)
+  const [levelFilter, setLevelFilter] = useState<LogLevel | null>(null)
 
   // Pagination
   const pageSize = 50
@@ -323,6 +324,12 @@ function LogsSettingsPage() {
     }
     return counts
   }, [logs])
+  
+  // Filter logs by level
+  const filteredLogs = useMemo(() => {
+    if (!levelFilter) return logs
+    return logs.filter((log) => log.level === levelFilter)
+  }, [logs, levelFilter])
 
   // Column definitions with skeleton support
   const columns: DataTableColumn<LogEntry>[] = useMemo(
@@ -394,35 +401,14 @@ function LogsSettingsPage() {
     []
   )
 
-  // Filter options with counts
-  const levelFilterOptions: FilterOption[] = useMemo(
-    () => [
-      { key: 'ERROR', label: 'Error', icon: '🔴', color: 'danger', count: levelCounts['ERROR'] || 0 },
-      { key: 'WARN', label: 'Warn', icon: '🟡', color: 'warning', count: levelCounts['WARN'] || 0 },
-      { key: 'INFO', label: 'Info', icon: '🔵', color: 'primary', count: levelCounts['INFO'] || 0 },
-      { key: 'DEBUG', label: 'Debug', icon: '⚪', color: 'default', count: levelCounts['DEBUG'] || 0 },
-      { key: 'TRACE', label: 'Trace', icon: '⚪', color: 'default', count: levelCounts['TRACE'] || 0 },
-    ],
-    [levelCounts]
-  )
-
-  // Filter definitions
-  const filters: DataTableFilter<LogEntry>[] = useMemo(
-    () => [
-      {
-        key: 'level',
-        label: 'Level',
-        type: 'select',
-        options: levelFilterOptions,
-        filterFn: (log, value) => {
-          if (!value) return true
-          return log.level === value
-        },
-        position: 'toolbar',
-      },
-    ],
-    [levelFilterOptions]
-  )
+  // Level filter options
+  const levelFilterOptions: { key: LogLevel; label: string; color: 'danger' | 'warning' | 'primary' | 'default' }[] = [
+    { key: 'ERROR', label: 'Error', color: 'danger' },
+    { key: 'WARN', label: 'Warn', color: 'warning' },
+    { key: 'INFO', label: 'Info', color: 'primary' },
+    { key: 'DEBUG', label: 'Debug', color: 'default' },
+    { key: 'TRACE', label: 'Trace', color: 'default' },
+  ]
 
   // Row actions - view icon button
   const rowActions: RowAction<LogEntry>[] = useMemo(
@@ -449,25 +435,61 @@ function LogsSettingsPage() {
     )
   }
 
-  // Filter row content - Source filter alongside level filter chips
-  const filterRowContent = (
-    <Select
-      size="sm"
-      placeholder="All Sources"
-      aria-label="Filter by source"
-      className="w-52"
-      selectedKeys={selectedSource ? [selectedSource] : []}
-      onSelectionChange={(keys) => {
-        const selected = Array.from(keys)[0] as string
-        setSelectedSource(selected || '')
-      }}
-    >
-      {sources.map((source) => (
-        <SelectItem key={source}>
-          {simplifyTarget(source)}
-        </SelectItem>
-      ))}
-    </Select>
+  // Filter row content - Level filter chips and source dropdown
+  const filterRowContent: ReactNode = useMemo(
+    () => (
+      <>
+        <span className="text-sm text-default-500 flex items-center gap-1">
+          <IconFilter size={16} /> Filter:
+        </span>
+        <ButtonGroup size="sm" variant="solid">
+          <Button
+            variant={levelFilter === null ? 'solid' : 'flat'}
+            color={levelFilter === null ? 'primary' : 'default'}
+            onPress={() => setLevelFilter(null)}
+          >
+            All
+          </Button>
+          {levelFilterOptions.map((option) => {
+            const count = levelCounts[option.key] || 0
+            return (
+              <Button
+                key={option.key}
+                variant={levelFilter === option.key ? 'solid' : 'flat'}
+                color={levelFilter === option.key ? option.color : 'default'}
+                onPress={() => setLevelFilter(levelFilter === option.key ? null : option.key)}
+                className="gap-1"
+              >
+                <span>{option.label}</span>
+                {count > 0 && (
+                  <Chip size="sm" variant="flat" className="ml-1">
+                    {count}
+                  </Chip>
+                )}
+              </Button>
+            )
+          })}
+        </ButtonGroup>
+        <Select
+          size="sm"
+          placeholder="All Sources"
+          aria-label="Filter by source"
+          className="w-52"
+          selectedKeys={selectedSource ? [selectedSource] : []}
+          onSelectionChange={(keys) => {
+            const selected = Array.from(keys)[0] as string
+            setSelectedSource(selected || '')
+          }}
+        >
+          {sources.map((source) => (
+            <SelectItem key={source}>
+              {simplifyTarget(source)}
+            </SelectItem>
+          ))}
+        </Select>
+      </>
+    ),
+    [levelFilter, levelCounts, selectedSource, sources]
   )
 
   // Toolbar content - actions on the right side of the search bar
@@ -528,13 +550,12 @@ function LogsSettingsPage() {
       {/* Logs Table */}
       <DataTable
         stateKey="settings-logs"
-        data={logs}
+        data={filteredLogs}
         columns={columns}
         getRowKey={(log) => log.id}
         isLoading={isLoading}
         skeletonRowCount={15}
         selectionMode="multiple"
-        filters={filters}
         searchFn={searchFn}
         searchPlaceholder="Search logs..."
         defaultSortColumn="timestamp"

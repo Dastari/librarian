@@ -7,7 +7,6 @@ import { Image } from '@heroui/image'
 import { Skeleton } from '@heroui/skeleton'
 import { Accordion, AccordionItem } from '@heroui/accordion'
 import { Breadcrumbs, BreadcrumbItem } from '@heroui/breadcrumbs'
-import { Switch } from '@heroui/switch'
 import { useDisclosure } from '@heroui/modal'
 import { addToast } from '@heroui/toast'
 import { useDataReactivity } from '../../hooks/useSubscription'
@@ -31,9 +30,18 @@ import {
 } from '../../lib/graphql'
 import { formatBytes, formatDate } from '../../lib/format'
 import { DataTable, type DataTableColumn, type RowAction } from '../../components/data-table'
-import { IconDownload, IconDeviceTv, IconClipboard, IconPlayerPlay } from '@tabler/icons-react'
+import { IconDownload, IconDeviceTv, IconClipboard, IconPlayerPlay, IconRefresh, IconSearch, IconSettings, IconTrash } from '@tabler/icons-react'
+import { Tooltip } from '@heroui/tooltip'
 import { DeleteShowModal, ShowSettingsModal, type ShowSettingsInput } from '../../components/shows'
-import { EpisodeStatusChip } from '../../components/shared'
+import { 
+  EpisodeStatusChip,
+  AutoDownloadBadge,
+  AutoHuntBadge,
+  FileOrganizationBadge,
+  MonitoredBadge,
+  QualityFilterBadge,
+} from '../../components/shared'
+import { usePlaybackContext } from '../../contexts/PlaybackContext'
 
 export const Route = createFileRoute('/shows/$showId')({
   beforeLoad: ({ context, location }) => {
@@ -112,10 +120,30 @@ interface EpisodeTableProps {
   seasonNumber: number
   downloadingEpisodes: Set<string>
   onDownload: (episodeId: string) => void
+  onPlay: (episode: Episode) => void
+  onSearch: (episode: Episode) => void
 }
 
-function EpisodeTable({ episodes, seasonNumber, downloadingEpisodes, onDownload }: EpisodeTableProps) {
+function EpisodeTable({ episodes, seasonNumber, downloadingEpisodes, onDownload, onPlay, onSearch }: EpisodeTableProps) {
   const rowActions = useMemo<RowAction<Episode>[]>(() => [
+    {
+      key: 'play',
+      label: 'Play',
+      icon: <IconPlayerPlay size={16} />,
+      color: 'success',
+      inDropdown: false,
+      isVisible: (ep) => ep.status === 'DOWNLOADED' && !!ep.mediaFileId,
+      onAction: (ep) => onPlay(ep),
+    },
+    {
+      key: 'search',
+      label: 'Search for Episode',
+      icon: <IconSearch size={16} />,
+      color: 'default',
+      inDropdown: false,
+      isVisible: (ep) => ep.status === 'MISSING' || ep.status === 'WANTED',
+      onAction: (ep) => onSearch(ep),
+    },
     {
       key: 'download',
       label: 'Download Episode',
@@ -126,7 +154,7 @@ function EpisodeTable({ episodes, seasonNumber, downloadingEpisodes, onDownload 
       isDisabled: (ep) => downloadingEpisodes.has(ep.id),
       onAction: (ep) => onDownload(ep.id),
     },
-  ], [downloadingEpisodes, onDownload])
+  ], [downloadingEpisodes, onDownload, onPlay, onSearch])
 
   return (
     <DataTable
@@ -159,6 +187,7 @@ function ShowDetailPage() {
   const [togglingAutoDownload, setTogglingAutoDownload] = useState(false)
   const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure()
   const { isOpen: isSettingsOpen, onOpen: onSettingsOpen, onClose: onSettingsClose } = useDisclosure()
+  const { startPlayback, setCurrentEpisode, setCurrentShow } = usePlaybackContext()
 
   // Track if initial load is done to avoid showing spinner on background refreshes
   const initialLoadDone = useRef(false)
@@ -336,7 +365,7 @@ function ShowDetailPage() {
       })
 
       onDeleteClose()
-      navigate({ to: `/libraries/${show?.libraryId}` as any })
+      navigate({ to: '/libraries/$libraryId', params: { libraryId: show?.libraryId || '' } })
     } catch (err) {
       console.error('Failed to delete show:', err)
       addToast({
@@ -390,6 +419,39 @@ function ShowDetailPage() {
       setSavingSettings(false)
     }
   }
+
+  const handlePlay = useCallback(async (episode: Episode) => {
+    if (episode.mediaFileId && show) {
+      // Set metadata for the persistent player
+      setCurrentEpisode(episode)
+      setCurrentShow(show)
+      // Start playback (this will trigger the persistent player)
+      await startPlayback({
+        episodeId: episode.id,
+        mediaFileId: episode.mediaFileId,
+        tvShowId: show.id,
+      }, episode, show)
+    }
+  }, [show, startPlayback, setCurrentEpisode, setCurrentShow])
+
+  // Navigate to hunt page with pre-filled query for missing episode
+  const handleSearchEpisode = useCallback((episode: Episode) => {
+    if (!show) return
+    
+    // Build search query: "Show Name S01E05"
+    const seasonPadded = String(episode.season).padStart(2, '0')
+    const episodePadded = String(episode.episode).padStart(2, '0')
+    const searchQuery = `${show.name} S${seasonPadded}E${episodePadded}`
+    
+    // Navigate to hunt page with query params
+    navigate({
+      to: '/hunt',
+      search: {
+        q: searchQuery,
+        type: 'tv',
+      },
+    })
+  }, [show, navigate])
 
   const handleToggleAutoDownload = async (enabled: boolean) => {
     setTogglingAutoDownload(true)
@@ -454,10 +516,12 @@ function ShowDetailPage() {
       .sort((a, b) => a.season - b.season)
   }, [episodes])
 
-  // Calculate totals
-  const totalEpisodes = episodes.length
-  const downloadedEpisodes = episodes.filter((e) => e.status === 'DOWNLOADED').length
-  const missingEpisodes = episodes.filter((e) => e.status === 'MISSING' || e.status === 'WANTED').length
+  // Calculate totals (memoized to avoid recalculating on every render)
+  const { totalEpisodes, downloadedEpisodes, missingEpisodes } = useMemo(() => ({
+    totalEpisodes: episodes.length,
+    downloadedEpisodes: episodes.filter((e) => e.status === 'DOWNLOADED').length,
+    missingEpisodes: episodes.filter((e) => e.status === 'MISSING' || e.status === 'WANTED').length,
+  }), [episodes])
 
   // Loading skeleton for show detail page
   if (loading) {
@@ -489,20 +553,6 @@ function ShowDetailPage() {
             </div>
           </div>
         </div>
-
-        {/* Settings Summary Skeleton */}
-        <Card className="bg-content1 mb-8">
-          <CardBody>
-            <div className="flex items-center justify-between">
-              <Skeleton className="w-32 h-6 rounded" />
-              <div className="flex gap-4">
-                <Skeleton className="w-24 h-4 rounded" />
-                <Skeleton className="w-24 h-4 rounded" />
-                <Skeleton className="w-24 h-4 rounded" />
-              </div>
-            </div>
-          </CardBody>
-        </Card>
 
         {/* Seasons Skeleton */}
         <div className="space-y-4">
@@ -561,12 +611,48 @@ function ShowDetailPage() {
             <BreadcrumbItem isCurrent>{show.name}</BreadcrumbItem>
           </Breadcrumbs>
 
-          <h1 className="text-3xl font-bold mb-2">
-            {show.name}
-            {show.year && (
-              <span className="text-default-500 ml-2">({show.year})</span>
-            )}
-          </h1>
+          <div className="flex items-start justify-between gap-4 mb-2">
+            <h1 className="text-3xl font-bold">
+              {show.name}
+              {show.year && (
+                <span className="text-default-500 ml-2">({show.year})</span>
+              )}
+            </h1>
+            <div className="flex items-center gap-1 shrink-0">
+              <Tooltip content="Refresh Metadata">
+                <Button
+                  isIconOnly
+                  variant="light"
+                  size="sm"
+                  onPress={handleRefresh}
+                  isLoading={refreshing}
+                >
+                  <IconRefresh size={18} />
+                </Button>
+              </Tooltip>
+              <Tooltip content="Settings">
+                <Button
+                  isIconOnly
+                  variant="light"
+                  size="sm"
+                  onPress={onSettingsOpen}
+                >
+                  <IconSettings size={18} />
+                </Button>
+              </Tooltip>
+              <Tooltip content="Delete Show">
+                <Button
+                  isIconOnly
+                  variant="light"
+                  size="sm"
+                  color="danger"
+                  onPress={onDeleteOpen}
+                >
+                  <IconTrash size={18} />
+                </Button>
+              </Tooltip>
+            </div>
+          </div>
 
           <div className="flex flex-wrap gap-2 mb-4">
             <Chip
@@ -580,11 +666,6 @@ function ShowDetailPage() {
             {show.network && (
               <Chip size="sm" variant="flat">
                 {show.network}
-              </Chip>
-            )}
-            {show.monitored && (
-              <Chip size="sm" color="primary" variant="flat">
-                Monitored
               </Chip>
             )}
           </div>
@@ -612,141 +693,80 @@ function ShowDetailPage() {
             )}
           </div>
 
-          <div className="flex gap-2 flex-wrap">
-            <Button
-              color="primary"
-              variant="flat"
-              size="sm"
-              onPress={handleRefresh}
-              isLoading={refreshing}
-            >
-              Refresh Metadata
-            </Button>
-            <Button
-              variant="flat"
-              size="sm"
-              onPress={onSettingsOpen}
-            >
-              Settings
-            </Button>
-            <Button
-              color="danger"
-              variant="flat"
-              size="sm"
-              onPress={onDeleteOpen}
-            >
-              Delete
-            </Button>
+          {/* Settings Badges - inline with show details */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Auto Download Badge */}
+            {(() => {
+              const isInherited = show.autoDownloadOverride === null
+              const effectiveValue = isInherited ? (library?.autoDownload ?? false) : show.autoDownloadOverride
+              const isEnabled = effectiveValue === true
+              
+              return (
+                <AutoDownloadBadge
+                  isInherited={isInherited}
+                  isEnabled={isEnabled}
+                  isLoading={togglingAutoDownload}
+                  onClick={() => handleToggleAutoDownload(!effectiveValue)}
+                />
+              )
+            })()}
+
+            {/* File Organization Badge */}
+            {(() => {
+              const isInherited = show.organizeFilesOverride === null
+              const effectiveValue = isInherited ? (library?.organizeFiles ?? false) : show.organizeFilesOverride
+              const isEnabled = effectiveValue === true
+              
+              return (
+                <FileOrganizationBadge
+                  isInherited={isInherited}
+                  isEnabled={isEnabled}
+                />
+              )
+            })()}
+
+            {/* Auto Hunt Badge */}
+            {(() => {
+              const isInherited = show.autoHuntOverride === null
+              const effectiveValue = isInherited ? (library?.autoHunt ?? false) : show.autoHuntOverride
+              const isEnabled = effectiveValue === true
+              
+              return (
+                <AutoHuntBadge
+                  isInherited={isInherited}
+                  isEnabled={isEnabled}
+                />
+              )
+            })()}
+
+            {/* Monitored Badge */}
+            <MonitoredBadge monitorType={show.monitorType} />
+
+            {/* Quality Filter Badge */}
+            {(() => {
+              const isInherited = show.allowedResolutionsOverride === null
+              const resolutions = isInherited 
+                ? (library?.allowedResolutions || [])
+                : (show.allowedResolutionsOverride || [])
+              const codecs = isInherited
+                ? (library?.allowedVideoCodecs || [])
+                : (show.allowedVideoCodecsOverride || [])
+              const requireHdr = isInherited
+                ? (library?.requireHdr || false)
+                : (show.requireHdrOverride || false)
+
+              return (
+                <QualityFilterBadge
+                  resolutions={resolutions}
+                  codecs={codecs}
+                  requireHdr={requireHdr}
+                  isInherited={isInherited}
+                />
+              )
+            })()}
           </div>
         </div>
       </div>
-
-      {/* Show Settings Summary */}
-      <Card className="bg-content1 mb-8">
-        <CardBody className="gap-4">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <Switch
-                isSelected={show.autoDownloadOverride === true}
-                isDisabled={togglingAutoDownload}
-                onValueChange={handleToggleAutoDownload}
-                size="sm"
-              >
-                <span className="text-sm font-medium">Auto Download</span>
-              </Switch>
-              {show.autoDownloadOverride === null && (
-                <Chip size="sm" variant="flat" className="text-xs">
-                  Inheriting from library
-                </Chip>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-3 text-sm text-default-500">
-              <div className="flex items-center gap-1">
-                <span className="text-default-400">Organization:</span>
-                <span className="font-medium text-foreground">
-                  {show.organizeFilesOverride === null
-                    ? 'Inherit'
-                    : show.organizeFilesOverride
-                    ? 'Enabled'
-                    : 'Disabled'}
-                </span>
-              </div>
-              <span className="text-default-300">•</span>
-              <div className="flex items-center gap-1">
-                <span className="text-default-400">Rename:</span>
-                <span className="font-medium text-foreground">
-                  {show.renameStyleOverride === null
-                    ? 'Inherit'
-                    : show.renameStyleOverride === 'none'
-                    ? 'Keep Original'
-                    : show.renameStyleOverride === 'clean'
-                    ? 'Clean'
-                    : 'With Quality'}
-                </span>
-              </div>
-              <span className="text-default-300">•</span>
-              <div className="flex items-center gap-1">
-                <span className="text-default-400">Monitor:</span>
-                <span className="font-medium text-foreground">
-                  {show.monitorType === 'ALL' ? 'All Episodes' : show.monitorType === 'FUTURE' ? 'Future Only' : show.monitorType}
-                </span>
-              </div>
-              <span className="text-default-300">•</span>
-              <div className="flex items-center gap-1">
-                <span className="text-default-400">Quality:</span>
-                <span className="font-medium text-foreground">
-                  {(() => {
-                    // Check if show is overriding quality settings
-                    const isOverriding = show.allowedResolutionsOverride !== null
-                    
-                    // Get effective quality settings
-                    const resolutions = isOverriding 
-                      ? (show.allowedResolutionsOverride || [])
-                      : (library?.allowedResolutions || [])
-                    const codecs = isOverriding
-                      ? (show.allowedVideoCodecsOverride || [])
-                      : (library?.allowedVideoCodecs || [])
-                    const requireHdr = isOverriding
-                      ? (show.requireHdrOverride || false)
-                      : (library?.requireHdr || false)
-                    
-                    // Build summary
-                    const parts: string[] = []
-                    
-                    if (resolutions.length > 0) {
-                      // Show resolutions nicely
-                      if (resolutions.includes('2160p')) parts.push('4K')
-                      else if (resolutions.includes('1080p')) parts.push('1080p')
-                      else if (resolutions.includes('720p')) parts.push('720p')
-                      else parts.push(resolutions.join('/'))
-                    }
-                    
-                    if (codecs.length > 0) {
-                      parts.push(codecs.map(c => c.toUpperCase()).join('/'))
-                    }
-                    
-                    if (requireHdr) {
-                      parts.push('HDR')
-                    }
-                    
-                    return parts.length > 0 ? parts.join(' • ') : 'Any'
-                  })()}
-                </span>
-                {show.allowedResolutionsOverride === null && (library?.allowedResolutions?.length || library?.allowedVideoCodecs?.length || library?.requireHdr) && (
-                  <Chip size="sm" variant="flat" className="text-xs ml-1">
-                    Library
-                  </Chip>
-                )}
-                {show.allowedResolutionsOverride !== null && (
-                  <Chip size="sm" variant="flat" color="secondary" className="text-xs ml-1">
-                    Custom
-                  </Chip>
-                )}
-              </div>
-            </div>
-          </div>
-        </CardBody>
-      </Card>
 
       {/* Seasons & Episodes */}
       <div className="space-y-4">
@@ -811,6 +831,8 @@ function ShowDetailPage() {
                   seasonNumber={seasonData.season}
                   downloadingEpisodes={downloadingEpisodes}
                   onDownload={handleDownloadEpisode}
+                  onPlay={handlePlay}
+                  onSearch={handleSearchEpisode}
                 />
               </AccordionItem>
             ))}
@@ -835,6 +857,7 @@ function ShowDetailPage() {
         onSave={handleSaveSettings}
         isLoading={savingSettings}
       />
+
     </div>
   )
 }

@@ -6,9 +6,14 @@ pub mod indexers;
 pub mod libraries;
 pub mod logs;
 pub mod media_files;
+pub mod movies;
+pub mod naming_patterns;
+pub mod playback;
 pub mod quality_profiles;
 pub mod rss_feeds;
+pub mod schedule;
 pub mod settings;
+pub mod subtitles;
 pub mod torrents;
 pub mod tv_shows;
 
@@ -25,11 +30,20 @@ pub use indexers::{CreateIndexerConfig, IndexerRepository, UpdateIndexerConfig, 
 pub use libraries::{CreateLibrary, LibraryRepository, LibraryStats, UpdateLibrary};
 pub use logs::{CreateLog, LogFilter, LogsRepository};
 pub use media_files::{CreateMediaFile, MediaFileRecord, MediaFileRepository};
+pub use movies::{CreateMovie, MovieCollectionRecord, MovieRecord, MovieRepository, UpdateMovie};
+pub use naming_patterns::{CreateNamingPattern, NamingPatternRecord, NamingPatternRepository};
+pub use playback::{PlaybackRepository, PlaybackSessionRecord, UpdatePlaybackPosition, UpsertPlaybackSession};
 pub use quality_profiles::{CreateQualityProfile, QualityProfileRepository, UpdateQualityProfile};
+pub use schedule::{ScheduleCacheRecord, ScheduleRepository, ScheduleSyncStateRecord, UpsertScheduleEntry};
 pub use rss_feeds::{
     CreateRssFeed, CreateRssFeedItem, RssFeedRecord, RssFeedRepository, UpdateRssFeed,
 };
 pub use settings::SettingsRepository;
+pub use subtitles::{
+    AudioStreamRecord, ChapterRecord, CreateDownloadedSubtitle, CreateEmbeddedSubtitle,
+    CreateExternalSubtitle, StreamRepository, SubtitleRecord, SubtitleRepository,
+    SubtitleSourceType, VideoStreamRecord,
+};
 pub use torrents::{CreateTorrent, TorrentRecord, TorrentRepository};
 pub use tv_shows::{CreateTvShow, TvShowRecord, TvShowRepository, UpdateTvShow};
 
@@ -45,14 +59,52 @@ impl Database {
         Self { pool }
     }
 
+    /// Get the maximum connection pool size from environment or default
+    fn get_max_connections() -> u32 {
+        std::env::var("DATABASE_MAX_CONNECTIONS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10)
+    }
+
     /// Create a new database connection pool
     pub async fn connect(url: &str) -> Result<Self> {
+        let max_connections = Self::get_max_connections();
         let pool = PgPoolOptions::new()
-            .max_connections(10)
+            .max_connections(max_connections)
             .connect(url)
             .await?;
 
         Ok(Self { pool })
+    }
+
+    /// Create a new database connection pool with retry logic
+    /// Retries every `retry_interval` until successful
+    pub async fn connect_with_retry(
+        url: &str,
+        retry_interval: std::time::Duration,
+    ) -> Self {
+        let max_connections = Self::get_max_connections();
+        loop {
+            match PgPoolOptions::new()
+                .max_connections(max_connections)
+                .acquire_timeout(std::time::Duration::from_secs(10))
+                .connect(url)
+                .await
+            {
+                Ok(pool) => {
+                    return Self { pool };
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Database connection failed: {}. Retrying in {} seconds...",
+                        e,
+                        retry_interval.as_secs()
+                    );
+                    tokio::time::sleep(retry_interval).await;
+                }
+            }
+        }
     }
 
     /// Get the connection pool
@@ -100,6 +152,11 @@ impl Database {
         MediaFileRepository::new(self.pool.clone())
     }
 
+    /// Get a movies repository
+    pub fn movies(&self) -> MovieRepository {
+        MovieRepository::new(self.pool.clone())
+    }
+
     /// Get a logs repository
     pub fn logs(&self) -> LogsRepository {
         LogsRepository::new(self.pool.clone())
@@ -113,6 +170,31 @@ impl Database {
     /// Get a cast repository
     pub fn cast(&self) -> CastRepository {
         CastRepository::new(self.pool.clone())
+    }
+
+    /// Get a playback repository
+    pub fn playback(&self) -> PlaybackRepository {
+        PlaybackRepository::new(self.pool.clone())
+    }
+
+    /// Get a schedule cache repository
+    pub fn schedule(&self) -> ScheduleRepository {
+        ScheduleRepository::new(self.pool.clone())
+    }
+
+    /// Get a subtitle repository
+    pub fn subtitles(&self) -> SubtitleRepository {
+        SubtitleRepository::new(self.pool.clone())
+    }
+
+    /// Get a stream repository (video/audio streams, chapters)
+    pub fn streams(&self) -> StreamRepository {
+        StreamRepository::new(self.pool.clone())
+    }
+
+    /// Get a naming patterns repository
+    pub fn naming_patterns(&self) -> NamingPatternRepository {
+        NamingPatternRepository::new(self.pool.clone())
     }
 
     /// Run database migrations

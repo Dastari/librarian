@@ -76,6 +76,33 @@ export const ERROR_LOGS_SUBSCRIPTION = `
 `;
 
 // ============================================================================
+// Library Subscriptions
+// ============================================================================
+
+export const LIBRARY_CHANGED_SUBSCRIPTION = `
+  subscription LibraryChanged {
+    libraryChanged {
+      changeType
+      libraryId
+      libraryName
+      library {
+        id
+        name
+        path
+        libraryType
+        icon
+        color
+        autoScan
+        scanIntervalHours
+        itemCount
+        totalSizeBytes
+        lastScannedAt
+      }
+    }
+  }
+`;
+
+// ============================================================================
 // Filesystem Subscriptions
 // ============================================================================
 

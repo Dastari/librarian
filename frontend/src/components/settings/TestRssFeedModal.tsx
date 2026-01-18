@@ -58,24 +58,31 @@ export function TestRssFeedModal({
       <ModalContent>
         <ModalHeader>Test RSS Feed</ModalHeader>
         <ModalBody className="gap-4">
-          <div className="flex gap-2">
-            <Input
-              label="Feed URL"
-              placeholder="https://example.com/rss"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              className="flex-1"
-            />
-            <Button
-              color="primary"
-              onPress={handleTest}
-              isLoading={isTesting}
-              isDisabled={!url}
-              className="self-end"
-            >
-              Test
-            </Button>
-          </div>
+          <Input
+            label="Feed URL"
+            labelPlacement="inside"
+            variant="flat"
+            placeholder="https://example.com/rss"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            className="flex-1"
+            classNames={{
+              label: 'text-sm font-medium text-primary!',
+            }}
+            endContent={
+              <Button
+                size="sm"
+                variant="light"
+                color="primary"
+                className="font-semibold"
+                onPress={handleTest}
+                isLoading={isTesting}
+                isDisabled={!url}
+              >
+                Test
+              </Button>
+            }
+          />
 
           {isTesting && (
             <div className="flex justify-center py-8">

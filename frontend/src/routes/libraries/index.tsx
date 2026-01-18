@@ -7,8 +7,7 @@ import { Skeleton } from '@heroui/skeleton'
 import { Tooltip } from '@heroui/tooltip'
 import { addToast } from '@heroui/toast'
 import { ConfirmModal } from '../../components/ConfirmModal'
-import { useDataReactivity } from '../../hooks/useSubscription'
-import { AddLibraryModal, EditLibraryModal, LibraryGridCard } from '../../components/library'
+import { AddLibraryModal, LibraryGridCard } from '../../components/library'
 import { IconPlus } from '@tabler/icons-react'
 import { RouteError } from '../../components/RouteError'
 import { sanitizeError } from '../../lib/format'
@@ -17,13 +16,13 @@ import {
   LIBRARIES_QUERY,
   TV_SHOWS_QUERY,
   CREATE_LIBRARY_MUTATION,
-  UPDATE_LIBRARY_MUTATION,
   SCAN_LIBRARY_MUTATION,
   DELETE_LIBRARY_MUTATION,
+  LIBRARY_CHANGED_SUBSCRIPTION,
   type Library,
   type TvShow,
   type CreateLibraryInput,
-  type UpdateLibraryInput,
+  type LibraryChangedEvent,
 } from '../../lib/graphql'
 
 export const Route = createFileRoute('/libraries/')({
@@ -44,11 +43,9 @@ export const Route = createFileRoute('/libraries/')({
 
 function LibrariesPage() {
   const { isOpen: isAddOpen, onOpen: onAddOpen, onClose: onAddClose } = useDisclosure()
-  const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure()
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
   const [libraries, setLibraries] = useState<Library[]>([])
   const [showsByLibrary, setShowsByLibrary] = useState<Record<string, TvShow[]>>({})
-  const [editingLibrary, setEditingLibrary] = useState<Library | null>(null)
   const [libraryToDelete, setLibraryToDelete] = useState<{ id: string; name: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
@@ -113,15 +110,44 @@ function LibrariesPage() {
     fetchLibraries()
   }, [fetchLibraries])
 
-  // Subscribe to data changes for live updates
-  useDataReactivity(
-    () => {
-      if (initialLoadDone.current) {
-        fetchLibraries(true)
-      }
-    },
-    { onTorrentComplete: true, periodicInterval: 60000, onFocus: true }
-  )
+  // Subscribe to library changes for real-time updates
+  useEffect(() => {
+    const subscription = graphqlClient
+      .subscription<{ libraryChanged: LibraryChangedEvent }>(
+        LIBRARY_CHANGED_SUBSCRIPTION,
+        {}
+      )
+      .subscribe({
+        next: (result) => {
+          if (result.data?.libraryChanged) {
+            const event = result.data.libraryChanged
+
+            switch (event.changeType) {
+              case 'CREATED':
+                // Add new library to the list
+                if (event.library) {
+                  setLibraries((prev) => [...prev, event.library!])
+                }
+                break
+              case 'UPDATED':
+                // Update the library in the list
+                if (event.library) {
+                  setLibraries((prev) =>
+                    prev.map((lib) => (lib.id === event.libraryId ? event.library! : lib))
+                  )
+                }
+                break
+              case 'DELETED':
+                // Remove the library from the list
+                setLibraries((prev) => prev.filter((lib) => lib.id !== event.libraryId))
+                break
+            }
+          }
+        },
+      })
+
+    return () => subscription.unsubscribe()
+  }, [])
 
   // Skeleton card for loading state
   const SkeletonLibraryCard = () => (
@@ -241,57 +267,6 @@ function LibrariesPage() {
     onConfirmClose()
   }
 
-  const handleEdit = (libraryId: string) => {
-    const library = libraries.find((l) => l.id === libraryId)
-    if (library) {
-      setEditingLibrary(library)
-      onEditOpen()
-    }
-  }
-
-  const handleUpdateLibrary = async (id: string, input: UpdateLibraryInput) => {
-    try {
-      setActionLoading(true)
-      const { data, error } = await graphqlClient
-        .mutation<{
-          updateLibrary: {
-            success: boolean
-            library: Library | null
-            error: string | null
-          }
-        }>(UPDATE_LIBRARY_MUTATION, { id, input })
-        .toPromise()
-
-      if (error || !data?.updateLibrary.success) {
-        const errorMsg = data?.updateLibrary.error || error?.message || 'Unknown error'
-        addToast({
-          title: 'Error',
-          description: `Failed to update library: ${errorMsg}`,
-          color: 'danger',
-        })
-        return
-      }
-
-      addToast({
-        title: 'Success',
-        description: `Library "${input.name || editingLibrary?.name}" updated`,
-        color: 'success',
-      })
-
-      // Refresh libraries
-      await fetchLibraries()
-    } catch (err) {
-      console.error('Failed to update library:', err)
-      addToast({
-        title: 'Error',
-        description: 'Failed to update library',
-        color: 'danger',
-      })
-    } finally {
-      setActionLoading(false)
-    }
-  }
-
   return (
     <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header with title and add button */}
@@ -338,7 +313,6 @@ function LibrariesPage() {
               library={library}
               shows={showsByLibrary[library.id] || []}
               onScan={() => handleScan(library.id, library.name)}
-              onEdit={() => handleEdit(library.id)}
               onDelete={() => handleDeleteClick(library.id, library.name)}
             />
           ))}
@@ -361,14 +335,6 @@ function LibrariesPage() {
         isOpen={isAddOpen}
         onClose={onAddClose}
         onAdd={handleAddLibrary}
-        isLoading={actionLoading}
-      />
-
-      <EditLibraryModal
-        isOpen={isEditOpen}
-        onClose={onEditClose}
-        library={editingLibrary}
-        onSave={handleUpdateLibrary}
         isLoading={actionLoading}
       />
     </div>

@@ -81,14 +81,21 @@ alwaysApply: true
 | GraphQL Types | `backend/src/graphql/types.rs` |
 | GraphQL Subscriptions | `backend/src/graphql/subscriptions.rs` |
 | Torrent Service | `backend/src/services/torrent.rs` |
+| Organizer Service | `backend/src/services/organizer.rs` |
+| Download Monitor Job | `backend/src/jobs/download_monitor.rs` |
+| Filename Parser | `backend/src/services/filename_parser.rs` |
 | Database Connection | `backend/src/db/mod.rs` |
 | Settings Repository | `backend/src/db/settings.rs` |
 | Indexer Trait | `backend/src/indexer/mod.rs` |
 | Indexer Manager | `backend/src/indexer/manager.rs` |
 | IPTorrents Indexer | `backend/src/indexer/definitions/iptorrents.rs` |
 | Indexer DB Repository | `backend/src/db/indexers.rs` |
-| Frontend GraphQL | `frontend/src/lib/graphql.ts` |
+| Frontend GraphQL | `frontend/src/lib/graphql/` |
 | Frontend Routes | `frontend/src/routes/` |
+| Hunt Page | `frontend/src/routes/hunt.tsx` |
+| Search Modal | `frontend/src/components/SearchModal.tsx` |
+| Add to Library Modal | `frontend/src/components/search/AddToLibraryModal.tsx` |
+| Library Detail Page | `frontend/src/routes/libraries/$libraryId.tsx` |
 | Indexers Settings Page | `frontend/src/routes/settings/indexers.tsx` |
 
 ## Naming Conventions
