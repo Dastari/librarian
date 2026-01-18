@@ -14,15 +14,16 @@ import {
   ADD_TV_SHOW_MUTATION,
   type TvShow,
   type TvShowSearchResult,
-  type QualityProfile,
   type MonitorType,
 } from '../../lib/graphql'
+import { IconDeviceTv } from '@tabler/icons-react'
+import { sanitizeError } from '../../lib/format'
+
 
 export interface AddShowModalProps {
   isOpen: boolean
   onClose: () => void
   libraryId: string
-  qualityProfiles: QualityProfile[]
   onAdded: () => void
 }
 
@@ -30,7 +31,6 @@ export function AddShowModal({
   isOpen,
   onClose,
   libraryId,
-  qualityProfiles,
   onAdded,
 }: AddShowModalProps) {
   const [searchQuery, setSearchQuery] = useState('')
@@ -39,7 +39,6 @@ export function AddShowModal({
   const [adding, setAdding] = useState(false)
   const [selectedShow, setSelectedShow] = useState<TvShowSearchResult | null>(null)
   const [monitorType, setMonitorType] = useState<MonitorType>('ALL')
-  const [qualityProfileId, setQualityProfileId] = useState<string>('')
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return
@@ -55,7 +54,7 @@ export function AddShowModal({
       if (error) {
         addToast({
           title: 'Error',
-          description: `Search failed: ${error.message}`,
+          description: sanitizeError(error),
           color: 'danger',
         })
         return
@@ -87,7 +86,6 @@ export function AddShowModal({
             provider: selectedShow.provider,
             providerId: selectedShow.providerId,
             monitorType,
-            qualityProfileId: qualityProfileId || undefined,
           },
         })
         .toPromise()
@@ -95,7 +93,7 @@ export function AddShowModal({
       if (error || !data?.addTvShow.success) {
         addToast({
           title: 'Error',
-          description: data?.addTvShow.error || 'Failed to add show',
+          description: sanitizeError(data?.addTvShow.error || 'Failed to add show'),
           color: 'danger',
         })
         return
@@ -171,7 +169,7 @@ export function AddShowModal({
                             />
                           ) : (
                             <div className="w-full aspect-[2/3] bg-default-200 flex items-center justify-center rounded-sm">
-                              📺
+                              <IconDeviceTv size={16} className="text-blue-400" />
                             </div>
                           )}
                         </div>
@@ -220,8 +218,8 @@ export function AddShowModal({
                         radius="md"
                       />
                     ) : (
-                      <div className="w-full aspect-[2/3] bg-default-200 flex items-center justify-center rounded-md text-2xl">
-                        📺
+                      <div className="w-full aspect-[2/3] bg-default-200 flex items-center justify-center rounded-md">
+                        <IconDeviceTv size={32} className="text-blue-400" />
                       </div>
                     )}
                   </div>
@@ -264,20 +262,9 @@ export function AddShowModal({
                 </SelectItem>
               </Select>
 
-              {qualityProfiles.length > 0 && (
-                <Select
-                  label="Quality Profile"
-                  selectedKeys={qualityProfileId ? [qualityProfileId] : []}
-                  onChange={(e) => setQualityProfileId(e.target.value)}
-                  description="Leave empty to use library default"
-                >
-                  {qualityProfiles.map((profile) => (
-                    <SelectItem key={profile.id} textValue={profile.name}>
-                      {profile.name}
-                    </SelectItem>
-                  ))}
-                </Select>
-              )}
+              <p className="text-xs text-default-400">
+                Quality settings will be inherited from the library. You can customize them after adding the show.
+              </p>
 
               <Button
                 variant="flat"

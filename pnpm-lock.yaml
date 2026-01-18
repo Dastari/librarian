@@ -1,0 +1,22 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@tabler/icons':
+        specifier: ^3.36.1
+        version: 3.36.1
+
+packages:
+
+  '@tabler/icons@3.36.1':
+    resolution: {integrity: sha512-f4Jg3Fof/Vru5ioix/UO4GX+sdDsF9wQo47FbtvG+utIYYVQ/QVAC0QYgcBbAjQGfbdOh2CCf0BgiFOF9Ixtjw==}
+
+snapshots:
+
+  '@tabler/icons@3.36.1': {}

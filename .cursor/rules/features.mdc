@@ -168,12 +168,59 @@ pending → running → completed
            failed (retries up to max_attempts)
 ```
 
-## Planned Features
+## Torrent Indexers
 
-### Prowlarr Integration
-- Connect to Prowlarr for torrent indexer management
-- Search across multiple indexers
-- Auto-grab releases based on quality profiles
+### Native Indexer System
+The indexer system provides Jackett-like functionality natively in Rust:
+- **No external dependencies** - indexers are built into the backend
+- **GraphQL management** - all configuration via GraphQL API
+- **Torznab compatibility** - exposes `/api/torznab/{id}` for external tools
+- **Encrypted credentials** - cookies/passwords stored encrypted in database
+
+### Supported Indexers
+- **IPTorrents** - Private tracker with cookie-based auth
+- **Cardigann** (planned) - YAML-based generic indexer definitions
+
+### Indexer Configuration
+```graphql
+# Create an indexer
+mutation {
+  createIndexer(input: {
+    name: "My IPTorrents"
+    indexerType: "iptorrents"
+    credentials: { cookie: "uid=...; pass=..." }
+  }) { success indexer { id } }
+}
+
+# Search across indexers
+query {
+  searchIndexers(query: "show name", indexerIds: [...]) {
+    results { title size seeders link }
+  }
+}
+```
+
+### Security
+- Encryption key stored in `app_settings` table (auto-generated on first use)
+- Credentials encrypted with AES-256-GCM
+- Changing the encryption key invalidates all stored credentials
+
+### Integration with Auto Hunt
+The indexer system is designed to power the **Auto Hunt** feature:
+1. Library/show has "Auto Hunt" enabled with quality profile
+2. System detects wanted episodes (missing or upgradeable)
+3. Searches enabled indexers for matching releases
+4. Filters by quality/format/audio preferences from quality profile
+5. Automatically adds matching torrents to download queue
+6. Post-download processing organizes files into library
+
+### UI Location
+- **Settings → Indexers** - Configure indexer sources
+- Enable/disable indexers with toggle switch
+- Test connection to verify credentials
+- Global search box to test queries across all enabled indexers
+
+## Planned Features
 
 ### Notifications
 - Push notifications for:

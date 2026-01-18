@@ -7,24 +7,16 @@ import { Switch } from '@heroui/switch'
 import { Divider } from '@heroui/divider'
 import { addToast } from '@heroui/toast'
 import { FolderBrowserInput } from '../FolderBrowserInput'
-import type { Library, LibraryType, PostDownloadAction, UpdateLibraryInput, QualityProfile } from '../../lib/graphql'
-
-const LIBRARY_TYPES = [
-  { value: 'MOVIES', label: 'Movies', icon: '🎬', color: 'purple' },
-  { value: 'TV', label: 'TV Shows', icon: '📺', color: 'blue' },
-  { value: 'MUSIC', label: 'Music', icon: '🎵', color: 'green' },
-  { value: 'AUDIOBOOKS', label: 'Audiobooks', icon: '🎧', color: 'orange' },
-  { value: 'OTHER', label: 'Other', icon: '📁', color: 'slate' },
-] as const
+import { QualitySettingsCard, type QualitySettings } from '../settings'
+import { LIBRARY_TYPES, type Library, type LibraryType, type PostDownloadAction, type UpdateLibraryInput } from '../../lib/graphql'
 
 interface LibrarySettingsTabProps {
   library: Library
-  qualityProfiles: QualityProfile[]
   onSave: (input: UpdateLibraryInput) => Promise<void>
   isLoading: boolean
 }
 
-export function LibrarySettingsTab({ library, qualityProfiles, onSave, isLoading }: LibrarySettingsTabProps) {
+export function LibrarySettingsTab({ library, onSave, isLoading }: LibrarySettingsTabProps) {
   const [name, setName] = useState(library.name)
   const [path, setPath] = useState(library.path)
   const [libraryType] = useState<LibraryType>(library.libraryType)
@@ -38,6 +30,18 @@ export function LibrarySettingsTab({ library, qualityProfiles, onSave, isLoading
   const [autoHunt, setAutoHunt] = useState(library.autoHunt)
   const [defaultQualityProfileId, setDefaultQualityProfileId] = useState<string | null>(library.defaultQualityProfileId)
   const [hasChanges, setHasChanges] = useState(false)
+  
+  // Quality settings
+  const [qualitySettings, setQualitySettings] = useState<QualitySettings>({
+    allowedResolutions: library.allowedResolutions || [],
+    allowedVideoCodecs: library.allowedVideoCodecs || [],
+    allowedAudioFormats: library.allowedAudioFormats || [],
+    requireHdr: library.requireHdr || false,
+    allowedHdrTypes: library.allowedHdrTypes || [],
+    allowedSources: library.allowedSources || [],
+    releaseGroupBlacklist: library.releaseGroupBlacklist || [],
+    releaseGroupWhitelist: library.releaseGroupWhitelist || [],
+  })
 
   // Reset form when library changes
   useEffect(() => {
@@ -52,11 +56,34 @@ export function LibrarySettingsTab({ library, qualityProfiles, onSave, isLoading
     setAutoDownload(library.autoDownload)
     setAutoHunt(library.autoHunt)
     setDefaultQualityProfileId(library.defaultQualityProfileId)
+    setQualitySettings({
+      allowedResolutions: library.allowedResolutions || [],
+      allowedVideoCodecs: library.allowedVideoCodecs || [],
+      allowedAudioFormats: library.allowedAudioFormats || [],
+      requireHdr: library.requireHdr || false,
+      allowedHdrTypes: library.allowedHdrTypes || [],
+      allowedSources: library.allowedSources || [],
+      releaseGroupBlacklist: library.releaseGroupBlacklist || [],
+      releaseGroupWhitelist: library.releaseGroupWhitelist || [],
+    })
     setHasChanges(false)
   }, [library])
 
   // Track changes
   useEffect(() => {
+    const arraysEqual = (a: string[], b: string[]) => 
+      a.length === b.length && a.every((v, i) => v === b[i])
+    
+    const qualityChanged = 
+      !arraysEqual(qualitySettings.allowedResolutions, library.allowedResolutions || []) ||
+      !arraysEqual(qualitySettings.allowedVideoCodecs, library.allowedVideoCodecs || []) ||
+      !arraysEqual(qualitySettings.allowedAudioFormats, library.allowedAudioFormats || []) ||
+      qualitySettings.requireHdr !== (library.requireHdr || false) ||
+      !arraysEqual(qualitySettings.allowedHdrTypes, library.allowedHdrTypes || []) ||
+      !arraysEqual(qualitySettings.allowedSources, library.allowedSources || []) ||
+      !arraysEqual(qualitySettings.releaseGroupBlacklist, library.releaseGroupBlacklist || []) ||
+      !arraysEqual(qualitySettings.releaseGroupWhitelist, library.releaseGroupWhitelist || [])
+    
     const changed =
       name !== library.name ||
       path !== library.path ||
@@ -68,9 +95,10 @@ export function LibrarySettingsTab({ library, qualityProfiles, onSave, isLoading
       autoAddDiscovered !== library.autoAddDiscovered ||
       autoDownload !== library.autoDownload ||
       autoHunt !== library.autoHunt ||
-      defaultQualityProfileId !== library.defaultQualityProfileId
+      defaultQualityProfileId !== library.defaultQualityProfileId ||
+      qualityChanged
     setHasChanges(changed)
-  }, [name, path, autoScan, scanInterval, watchForChanges, postDownloadAction, organizeFiles, autoAddDiscovered, autoDownload, autoHunt, defaultQualityProfileId, library])
+  }, [name, path, autoScan, scanInterval, watchForChanges, postDownloadAction, organizeFiles, autoAddDiscovered, autoDownload, autoHunt, defaultQualityProfileId, qualitySettings, library])
 
   const handleSubmit = async () => {
     if (!name || !path) {
@@ -94,6 +122,15 @@ export function LibrarySettingsTab({ library, qualityProfiles, onSave, isLoading
       autoDownload,
       autoHunt,
       defaultQualityProfileId,
+      // Quality settings
+      allowedResolutions: qualitySettings.allowedResolutions,
+      allowedVideoCodecs: qualitySettings.allowedVideoCodecs,
+      allowedAudioFormats: qualitySettings.allowedAudioFormats,
+      requireHdr: qualitySettings.requireHdr,
+      allowedHdrTypes: qualitySettings.allowedHdrTypes,
+      allowedSources: qualitySettings.allowedSources,
+      releaseGroupBlacklist: qualitySettings.releaseGroupBlacklist,
+      releaseGroupWhitelist: qualitySettings.releaseGroupWhitelist,
     })
   }
 
@@ -109,6 +146,16 @@ export function LibrarySettingsTab({ library, qualityProfiles, onSave, isLoading
     setAutoDownload(library.autoDownload)
     setAutoHunt(library.autoHunt)
     setDefaultQualityProfileId(library.defaultQualityProfileId)
+    setQualitySettings({
+      allowedResolutions: library.allowedResolutions || [],
+      allowedVideoCodecs: library.allowedVideoCodecs || [],
+      allowedAudioFormats: library.allowedAudioFormats || [],
+      requireHdr: library.requireHdr || false,
+      allowedHdrTypes: library.allowedHdrTypes || [],
+      allowedSources: library.allowedSources || [],
+      releaseGroupBlacklist: library.releaseGroupBlacklist || [],
+      releaseGroupWhitelist: library.releaseGroupWhitelist || [],
+    })
   }
 
 
@@ -151,8 +198,10 @@ export function LibrarySettingsTab({ library, qualityProfiles, onSave, isLoading
           >
             {LIBRARY_TYPES.map((type) => (
               <SelectItem key={type.value} textValue={type.label}>
-                <span className="mr-2">{type.icon}</span>
-                {type.label}
+                <div className="flex items-center gap-2">
+                  <type.Icon className="w-4 h-4" />
+                  {type.label}
+                </div>
               </SelectItem>
             ))}
           </Select>
@@ -204,37 +253,12 @@ export function LibrarySettingsTab({ library, qualityProfiles, onSave, isLoading
       </Card>
 
       {/* Quality Settings */}
-      <Card>
-        <CardHeader>
-          <h3 className="font-semibold">Quality</h3>
-        </CardHeader>
-        <CardBody className="space-y-4">
-          <Select
-            label="Default Quality Profile"
-            selectedKeys={defaultQualityProfileId ? [defaultQualityProfileId] : []}
-            onChange={(e) =>
-              setDefaultQualityProfileId(e.target.value || null)
-            }
-            description="Quality profile used for new shows added to this library"
-            placeholder="Select a quality profile"
-          >
-            {qualityProfiles.map((profile) => (
-              <SelectItem key={profile.id} textValue={profile.name}>
-                <div className="flex flex-col">
-                  <span>{profile.name}</span>
-                  <span className="text-xs text-default-400">
-                    {[
-                      profile.preferredResolution,
-                      profile.preferredCodec,
-                      profile.requireHdr && 'HDR',
-                    ].filter(Boolean).join(' • ') || 'Any quality'}
-                  </span>
-                </div>
-              </SelectItem>
-            ))}
-          </Select>
-        </CardBody>
-      </Card>
+      <QualitySettingsCard
+        settings={qualitySettings}
+        onChange={setQualitySettings}
+        title="Quality Filters"
+        description="Configure which releases to accept. Empty = accept any."
+      />
 
       {/* Automation Settings */}
       <Card>

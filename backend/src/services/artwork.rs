@@ -91,7 +91,10 @@ impl ArtworkService {
         };
 
         // Download the image bytes
-        let bytes = response.bytes().await.context("Failed to read image bytes")?;
+        let bytes = response
+            .bytes()
+            .await
+            .context("Failed to read image bytes")?;
 
         // Generate a hash-based filename for deduplication
         let mut hasher = Sha256::new();
@@ -144,7 +147,10 @@ impl ArtworkService {
     ) -> Option<String> {
         let url = source_url?;
 
-        match self.cache_image(url, artwork_type, entity_type, entity_id).await {
+        match self
+            .cache_image(url, artwork_type, entity_type, entity_id)
+            .await
+        {
             Ok(cached_url) => Some(cached_url),
             Err(e) => {
                 warn!(

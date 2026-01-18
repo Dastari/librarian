@@ -44,7 +44,10 @@ impl Transcoder {
             .args(["-f", "hls"])
             .args(["-hls_time", "4"])
             .args(["-hls_playlist_type", "event"])
-            .args(["-hls_segment_filename", &format!("{}/segment_%03d.ts", output_dir)])
+            .args([
+                "-hls_segment_filename",
+                &format!("{}/segment_%03d.ts", output_dir),
+            ])
             .arg(&playlist_path)
             .stdout(Stdio::null())
             .stderr(Stdio::piped());

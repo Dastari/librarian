@@ -19,11 +19,13 @@
 - **Backend**: Rust (Axum + Tokio), background workers, job queue
 - **Identity & DB**: Supabase (Postgres + Auth + Storage) running locally via Docker
 - **Torrent Engine**: `librqbit` (native Rust, embedded)
-- **Indexer Management**: RSS feeds (direct URLs) + future Prowlarr/Jackett support
+- **Indexer Management**: Native indexer system (Jackett-like) + RSS feeds
 - **Transcoding/Packaging**: FFmpeg/FFprobe → HLS (m3u8 + TS/MP4 segments)
 - **Casting**:
-  - **Chromecast**: Google Cast Web Sender SDK in frontend (cast HLS URL)
-  - **AirPlay**: native Safari AirPlay support on the `<video>` element
+  - **Chromecast/Google Cast**: Native CASTV2 protocol via rust_cast + mdns-sd discovery
+  - **Media Streaming**: HTTP with Range headers for seeking, direct play when compatible
+  - **Transcoding**: On-demand FFmpeg transcoding for incompatible formats
+  - **AirPlay**: Native Safari AirPlay support on the `<video>` element
 - **File Watching / Library Scanner**: Rust watcher (inotify) + periodic full scan
 - **Object Storage**: Supabase Storage for posters/backdrops/fanart
 
@@ -180,6 +182,7 @@ Torrent Completes
 - **Archives**: `unrar` crate + `sevenz-rust` or shell out to `7z`/`unrar`
 - **Renaming**: `regex`, `sanitize-filename`
 - **Transcoding**: spawn `ffmpeg`; parse streams via `ffprobe` JSON
+- **Casting**: `rust_cast` for CASTV2 protocol, `mdns-sd` for device discovery
 - **AI Matching** (optional): `async-openai` crate for filename identification
 - **Observability**: `tracing`, `tracing-subscriber`, optional OpenTelemetry exporter
 
@@ -210,6 +213,99 @@ The RSS poller will:
 2. Extract show name, season, episode, quality info
 3. Match against wanted episodes in monitored shows
 4. Apply quality filters before downloading
+
+### Torrent Indexers (Native)
+
+Native Jackett-like indexer system built into the backend:
+
+**Architecture:**
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          TORRENT INDEXER SYSTEM                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  GraphQL API │     │  Torznab API │     │  Auto Hunt   │
+│  (Settings)  │     │  (External)  │     │  (Jobs)      │
+└──────┬───────┘     └──────┬───────┘     └──────┬───────┘
+       │                    │                    │
+       └────────────────────┼────────────────────┘
+                            ▼
+              ┌──────────────────────────┐
+              │    IndexerManager        │
+              │  (Instance Cache)        │
+              └────────────┬─────────────┘
+                           │
+       ┌───────────────────┼───────────────────┐
+       ▼                   ▼                   ▼
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│ IPTorrents  │    │ Cardigann   │    │  (Future)   │
+│  Indexer    │    │  (YAML)     │    │  Indexers   │
+└─────────────┘    └─────────────┘    └─────────────┘
+       │                   │                   │
+       └───────────────────┼───────────────────┘
+                           ▼
+              ┌──────────────────────────┐
+              │   HTTP Request + HTML    │
+              │   Parsing (scraper)      │
+              └──────────────────────────┘
+```
+
+**Supported Indexers:**
+- **IPTorrents**: Private tracker, cookie-based authentication, HTML scraping
+- **Cardigann (planned)**: YAML-based definitions for generic tracker support
+
+**Key Features:**
+- Credentials encrypted with AES-256-GCM (key stored in database)
+- Torznab-compatible API at `/api/torznab/{indexer_id}` for external tools
+- GraphQL API for all management (no REST for config)
+- Rate limiting and request throttling
+
+**Database Tables:**
+- `indexer_configs`: Indexer instances (name, type, enabled)
+- `indexer_credentials`: Encrypted credentials (cookie, api_key, etc.)
+- `indexer_settings`: Per-indexer settings
+- `indexer_search_cache`: Cached search results (TTL-based)
+
+### Auto Hunt System
+
+Automatic torrent hunting for wanted episodes:
+
+**Flow:**
+```
+1. Episode marked as "wanted" (missing or upgrade desired)
+          │
+          ▼
+2. Auto Hunt job runs (configurable interval)
+          │
+          ▼
+3. Query enabled indexers for episode
+   - Search term: "Show Name S01E05"
+   - Apply category filters (TV)
+          │
+          ▼
+4. Filter results by quality profile
+   - Resolution (4K > 1080p > 720p)
+   - Codec (x265 > x264)
+   - Source (BluRay > WEB-DL > HDTV)
+   - Size limits
+   - Minimum seeders
+          │
+          ▼
+5. Select best matching release
+          │
+          ▼
+6. Add to download queue automatically
+          │
+          ▼
+7. Post-download processing organizes file
+```
+
+**Configuration (per library/show):**
+- `auto_hunt_enabled`: Enable automatic searching
+- `quality_profile_id`: Quality requirements
+- `hunt_interval_minutes`: How often to search
+- `max_results_per_search`: Limit API calls
 
 ---
 

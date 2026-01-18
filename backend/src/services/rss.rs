@@ -28,6 +28,8 @@ pub struct ParsedRssItem {
     pub parsed_resolution: Option<String>,
     pub parsed_codec: Option<String>,
     pub parsed_source: Option<String>,
+    pub parsed_audio: Option<String>,
+    pub parsed_hdr: Option<String>,
     // Hashes for deduplication
     pub link_hash: String,
     pub title_hash: String,
@@ -62,10 +64,7 @@ impl RssService {
             .context("Failed to fetch RSS feed")?;
 
         if !response.status().is_success() {
-            anyhow::bail!(
-                "RSS feed returned error status: {}",
-                response.status()
-            );
+            anyhow::bail!("RSS feed returned error status: {}", response.status());
         }
 
         let content = response
@@ -78,8 +77,8 @@ impl RssService {
 
     /// Parse RSS XML content into items
     pub fn parse_feed(&self, content: &str) -> Result<Vec<ParsedRssItem>> {
-        use quick_xml::events::Event;
         use quick_xml::Reader;
+        use quick_xml::events::Event;
 
         let mut reader = Reader::from_str(content);
         reader.config_mut().trim_text(true);
@@ -106,36 +105,35 @@ impl RssService {
                     if tag_name == "item" {
                         in_item = false;
                         if let Some(builder) = current_item.take()
-                            && let Some(item) = self.build_item(builder) {
-                                items.push(item);
-                            }
+                            && let Some(item) = self.build_item(builder)
+                        {
+                            items.push(item);
+                        }
                     }
                     current_tag.clear();
                 }
                 Ok(Event::Text(ref e)) => {
-                    if in_item
-                        && let Some(ref mut builder) = current_item {
-                            let text = e.unescape().unwrap_or_default().to_string();
-                            match current_tag.as_str() {
-                                "title" => builder.title = Some(text),
-                                "link" => builder.link = Some(text),
-                                "guid" => builder.guid = Some(text),
-                                "pubDate" => builder.pub_date = Some(text),
-                                "description" => builder.description = Some(text),
-                                _ => {}
-                            }
+                    if in_item && let Some(ref mut builder) = current_item {
+                        let text = e.unescape().unwrap_or_default().to_string();
+                        match current_tag.as_str() {
+                            "title" => builder.title = Some(text),
+                            "link" => builder.link = Some(text),
+                            "guid" => builder.guid = Some(text),
+                            "pubDate" => builder.pub_date = Some(text),
+                            "description" => builder.description = Some(text),
+                            _ => {}
                         }
+                    }
                 }
                 Ok(Event::CData(ref e)) => {
-                    if in_item
-                        && let Some(ref mut builder) = current_item {
-                            let text = String::from_utf8_lossy(e.as_ref()).to_string();
-                            match current_tag.as_str() {
-                                "title" => builder.title = Some(text),
-                                "description" => builder.description = Some(text),
-                                _ => {}
-                            }
+                    if in_item && let Some(ref mut builder) = current_item {
+                        let text = String::from_utf8_lossy(e.as_ref()).to_string();
+                        match current_tag.as_str() {
+                            "title" => builder.title = Some(text),
+                            "description" => builder.description = Some(text),
+                            _ => {}
                         }
+                    }
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => {
@@ -178,6 +176,8 @@ impl RssService {
             parsed_resolution: parsed_quality.resolution,
             parsed_codec: parsed_quality.codec,
             parsed_source: parsed_quality.source,
+            parsed_audio: parsed_quality.audio,
+            parsed_hdr: parsed_quality.hdr,
             link_hash,
             title_hash,
         })

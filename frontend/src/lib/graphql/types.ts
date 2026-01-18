@@ -1,3 +1,12 @@
+import type { TablerIcon } from '@tabler/icons-react';
+import {
+  IconMovie,
+  IconDeviceTv,
+  IconMusic,
+  IconHeadphones,
+  IconFolder,
+} from '@tabler/icons-react';
+
 // ============================================================================
 // Library Type Helpers
 // ============================================================================
@@ -6,17 +15,17 @@
 export interface LibraryTypeInfo {
   value: LibraryType;
   label: string;
-  icon: string;
+  Icon: TablerIcon;
   color: string;
 }
 
 /** Available library types with display info */
 export const LIBRARY_TYPES: LibraryTypeInfo[] = [
-  { value: 'MOVIES', label: 'Movies', icon: '🎬', color: 'purple' },
-  { value: 'TV', label: 'TV Shows', icon: '📺', color: 'blue' },
-  { value: 'MUSIC', label: 'Music', icon: '🎵', color: 'green' },
-  { value: 'AUDIOBOOKS', label: 'Audiobooks', icon: '🎧', color: 'orange' },
-  { value: 'OTHER', label: 'Other', icon: '📁', color: 'slate' },
+  { value: 'MOVIES', label: 'Movies', Icon: IconMovie, color: 'purple' },
+  { value: 'TV', label: 'TV Shows', Icon: IconDeviceTv, color: 'blue' },
+  { value: 'MUSIC', label: 'Music', Icon: IconMusic, color: 'green' },
+  { value: 'AUDIOBOOKS', label: 'Audiobooks', Icon: IconHeadphones, color: 'orange' },
+  { value: 'OTHER', label: 'Other', Icon: IconFolder, color: 'slate' },
 ];
 
 /** Get display info for a library type */
@@ -183,8 +192,11 @@ export interface FileEntry {
   path: string;
   isDir: boolean;
   size: number;
+  sizeFormatted: string;
   readable: boolean;
   writable: boolean;
+  mimeType: string | null;
+  modifiedAt: string | null;
 }
 
 export interface QuickPath {
@@ -192,6 +204,16 @@ export interface QuickPath {
   path: string;
 }
 
+export interface BrowseDirectoryResult {
+  currentPath: string;
+  parentPath: string | null;
+  entries: FileEntry[];
+  quickPaths: QuickPath[];
+  isLibraryPath: boolean;
+  libraryId: string | null;
+}
+
+// Alias for backward compatibility with FolderBrowserInput
 export interface BrowseResponse {
   currentPath: string;
   parentPath: string | null;
@@ -199,7 +221,63 @@ export interface BrowseResponse {
   quickPaths: QuickPath[];
 }
 
-// Raw response types from the backend (snake_case)
+export interface BrowseDirectoryInput {
+  path?: string | null;
+  dirsOnly?: boolean | null;
+  showHidden?: boolean | null;
+}
+
+export interface FileOperationResult {
+  success: boolean;
+  error: string | null;
+  affectedCount: number;
+  messages: string[];
+  path: string | null;
+}
+
+export interface CreateDirectoryInput {
+  path: string;
+}
+
+export interface DeleteFilesInput {
+  paths: string[];
+  recursive?: boolean | null;
+}
+
+export interface CopyFilesInput {
+  sources: string[];
+  destination: string;
+  overwrite?: boolean | null;
+}
+
+export interface MoveFilesInput {
+  sources: string[];
+  destination: string;
+  overwrite?: boolean | null;
+}
+
+export interface RenameFileInput {
+  path: string;
+  newName: string;
+}
+
+export interface DirectoryChangeEvent {
+  path: string;
+  changeType: 'created' | 'modified' | 'deleted' | 'renamed';
+  name: string | null;
+  newName: string | null;
+  timestamp: string;
+}
+
+export interface PathValidationResult {
+  isValid: boolean;
+  isLibraryPath: boolean;
+  libraryId: string | null;
+  libraryName: string | null;
+  error: string | null;
+}
+
+// Raw response types from the backend (snake_case) - kept for legacy REST API
 export interface RawFileEntry {
   name: string;
   path: string;
@@ -248,6 +326,23 @@ export interface Library {
   totalSizeBytes: number;
   showCount: number;
   lastScannedAt: string | null;
+  // Inline quality settings (empty = any)
+  /** Allowed resolutions: 2160p, 1080p, 720p, 480p. Empty = any. */
+  allowedResolutions: string[];
+  /** Allowed video codecs: hevc, h264, av1, xvid. Empty = any. */
+  allowedVideoCodecs: string[];
+  /** Allowed audio formats: atmos, truehd, dtshd, dts, dd51, aac. Empty = any. */
+  allowedAudioFormats: string[];
+  /** If true, only accept releases with HDR. */
+  requireHdr: boolean;
+  /** Allowed HDR types: hdr10, hdr10plus, dolbyvision, hlg. Empty with requireHdr=true = any HDR. */
+  allowedHdrTypes: string[];
+  /** Allowed sources: webdl, webrip, bluray, hdtv. Empty = any. */
+  allowedSources: string[];
+  /** Blacklisted release groups. */
+  releaseGroupBlacklist: string[];
+  /** Whitelisted release groups (if set, only allow these). */
+  releaseGroupWhitelist: string[];
 }
 
 export interface LibraryResult {
@@ -270,6 +365,15 @@ export interface CreateLibraryInput {
   namingPattern?: string;
   defaultQualityProfileId?: string;
   autoAddDiscovered?: boolean;
+  // Inline quality settings
+  allowedResolutions?: string[];
+  allowedVideoCodecs?: string[];
+  allowedAudioFormats?: string[];
+  requireHdr?: boolean;
+  allowedHdrTypes?: string[];
+  allowedSources?: string[];
+  releaseGroupBlacklist?: string[];
+  releaseGroupWhitelist?: string[];
 }
 
 export interface UpdateLibraryInput {
@@ -287,6 +391,15 @@ export interface UpdateLibraryInput {
   autoAddDiscovered?: boolean;
   autoDownload?: boolean;
   autoHunt?: boolean;
+  // Inline quality settings
+  allowedResolutions?: string[];
+  allowedVideoCodecs?: string[];
+  allowedAudioFormats?: string[];
+  requireHdr?: boolean;
+  allowedHdrTypes?: string[];
+  allowedSources?: string[];
+  releaseGroupBlacklist?: string[];
+  releaseGroupWhitelist?: string[];
 }
 
 // ============================================================================
@@ -331,6 +444,23 @@ export interface TvShow {
   episodeCount: number;
   episodeFileCount: number;
   sizeBytes: number;
+  // Quality override settings (null = inherit from library)
+  /** Override allowed resolutions (null = inherit) */
+  allowedResolutionsOverride: string[] | null;
+  /** Override allowed video codecs (null = inherit) */
+  allowedVideoCodecsOverride: string[] | null;
+  /** Override allowed audio formats (null = inherit) */
+  allowedAudioFormatsOverride: string[] | null;
+  /** Override HDR requirement (null = inherit) */
+  requireHdrOverride: boolean | null;
+  /** Override allowed HDR types (null = inherit) */
+  allowedHdrTypesOverride: string[] | null;
+  /** Override allowed sources (null = inherit) */
+  allowedSourcesOverride: string[] | null;
+  /** Override release group blacklist (null = inherit) */
+  releaseGroupBlacklistOverride: string[] | null;
+  /** Override release group whitelist (null = inherit) */
+  releaseGroupWhitelistOverride: string[] | null;
 }
 
 export interface TvShowSearchResult {
@@ -365,6 +495,8 @@ export interface Episode {
   torrentLink: string | null;
   /** When the torrent link was found in RSS */
   torrentLinkAddedAt: string | null;
+  /** Media file ID if episode has been downloaded (for playback) */
+  mediaFileId: string | null;
 }
 
 export interface TvShowResult {
@@ -400,6 +532,50 @@ export interface UpdateTvShowInput {
   organizeFilesOverride?: boolean | null;
   /** Override library rename_style (null = inherit) */
   renameStyleOverride?: string | null;
+  // Quality override settings (null = inherit, [] = any)
+  /** Override allowed resolutions (null = inherit) */
+  allowedResolutionsOverride?: string[] | null;
+  /** Override allowed video codecs (null = inherit) */
+  allowedVideoCodecsOverride?: string[] | null;
+  /** Override allowed audio formats (null = inherit) */
+  allowedAudioFormatsOverride?: string[] | null;
+  /** Override HDR requirement (null = inherit) */
+  requireHdrOverride?: boolean | null;
+  /** Override allowed HDR types (null = inherit) */
+  allowedHdrTypesOverride?: string[] | null;
+  /** Override allowed sources (null = inherit) */
+  allowedSourcesOverride?: string[] | null;
+  /** Override release group blacklist (null = inherit) */
+  releaseGroupBlacklistOverride?: string[] | null;
+  /** Override release group whitelist (null = inherit) */
+  releaseGroupWhitelistOverride?: string[] | null;
+}
+
+// ============================================================================
+// Media File Types
+// ============================================================================
+
+export interface MediaFile {
+  id: string;
+  libraryId: string;
+  path: string;
+  relativePath: string | null;
+  originalName: string | null;
+  sizeBytes: number;
+  sizeFormatted: string;
+  container: string | null;
+  videoCodec: string | null;
+  audioCodec: string | null;
+  resolution: string | null;
+  isHdr: boolean | null;
+  hdrType: string | null;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  bitrate: number | null;
+  episodeId: string | null;
+  organized: boolean;
+  addedAt: string;
 }
 
 // ============================================================================
@@ -610,4 +786,284 @@ export interface LibraryUpcomingEpisode {
   airDate: string;
   status: EpisodeStatus;
   show: LibraryUpcomingShow;
+}
+
+// ============================================================================
+// Indexer Types
+// ============================================================================
+
+/** An indexer configuration */
+export interface IndexerConfig {
+  id: string;
+  indexerType: string;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  siteUrl: string | null;
+  isHealthy: boolean;
+  lastError: string | null;
+  errorCount: number;
+  lastSuccessAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  capabilities: IndexerCapabilities;
+}
+
+/** Indexer capabilities */
+export interface IndexerCapabilities {
+  supportsSearch: boolean;
+  supportsTvSearch: boolean;
+  supportsMovieSearch: boolean;
+  supportsMusicSearch: boolean;
+  supportsBookSearch: boolean;
+  supportsImdbSearch: boolean;
+  supportsTvdbSearch: boolean;
+}
+
+/** Information about an available indexer type */
+export interface IndexerTypeInfo {
+  id: string;
+  name: string;
+  description: string;
+  trackerType: string;
+  language: string;
+  siteLink: string;
+  requiredCredentials: string[];
+  isNative: boolean;
+}
+
+/** A setting definition for an indexer */
+export interface IndexerSettingDefinition {
+  key: string;
+  label: string;
+  settingType: 'text' | 'password' | 'checkbox' | 'select';
+  defaultValue: string | null;
+  options: IndexerSettingOption[] | null;
+}
+
+/** An option for a select setting */
+export interface IndexerSettingOption {
+  value: string;
+  label: string;
+}
+
+/** Input for creating an indexer */
+export interface CreateIndexerInput {
+  indexerType: string;
+  name: string;
+  siteUrl?: string | null;
+  credentials: IndexerCredentialInput[];
+  settings: IndexerSettingInput[];
+}
+
+/** Input for updating an indexer */
+export interface UpdateIndexerInput {
+  name?: string | null;
+  enabled?: boolean | null;
+  priority?: number | null;
+  siteUrl?: string | null;
+  credentials?: IndexerCredentialInput[] | null;
+  settings?: IndexerSettingInput[] | null;
+}
+
+/** Input for a credential */
+export interface IndexerCredentialInput {
+  credentialType: string;
+  value: string;
+}
+
+/** Input for a setting */
+export interface IndexerSettingInput {
+  key: string;
+  value: string;
+}
+
+/** Result of an indexer mutation */
+export interface IndexerResult {
+  success: boolean;
+  error: string | null;
+  indexer: IndexerConfig | null;
+}
+
+/** Result of testing an indexer */
+export interface IndexerTestResult {
+  success: boolean;
+  error: string | null;
+  releasesFound: number | null;
+  elapsedMs: number | null;
+}
+
+/** Input for searching indexers */
+export interface IndexerSearchInput {
+  query: string;
+  indexerIds?: string[] | null;
+  categories?: number[] | null;
+  season?: number | null;
+  episode?: string | null;
+  imdbId?: string | null;
+  limit?: number | null;
+}
+
+/** Result of an indexer search */
+export interface IndexerSearchResultSet {
+  indexers: IndexerSearchResultItem[];
+  totalReleases: number;
+  totalElapsedMs: number;
+}
+
+/** Search results from a single indexer */
+export interface IndexerSearchResultItem {
+  indexerId: string;
+  indexerName: string;
+  releases: TorrentRelease[];
+  elapsedMs: number;
+  fromCache: boolean;
+  error: string | null;
+}
+
+/** A torrent release from an indexer search */
+export interface TorrentRelease {
+  title: string;
+  guid: string;
+  link: string | null;
+  magnetUri: string | null;
+  infoHash: string | null;
+  details: string | null;
+  publishDate: string;
+  categories: number[];
+  size: number | null;
+  sizeFormatted: string | null;
+  seeders: number | null;
+  leechers: number | null;
+  peers: number | null;
+  grabs: number | null;
+  isFreeleech: boolean;
+  imdbId: string | null;
+  poster: string | null;
+  description: string | null;
+  indexerId: string | null;
+  indexerName: string | null;
+}
+
+// ============================================================================
+// Security Settings Types
+// ============================================================================
+
+/** Security settings */
+export interface SecuritySettings {
+  encryptionKeySet: boolean;
+  encryptionKeyPreview: string | null;
+  encryptionKeyLastModified: string | null;
+}
+
+/** Result of security settings operation */
+export interface SecuritySettingsResult {
+  success: boolean;
+  error: string | null;
+  settings: SecuritySettings | null;
+}
+
+/** Input for generating encryption key */
+export interface GenerateEncryptionKeyInput {
+  confirmInvalidation: boolean;
+}
+
+// ============================================================================
+// Cast Types (Chromecast / Media Casting)
+// ============================================================================
+
+/** Cast device types */
+export type CastDeviceType = 'CHROMECAST' | 'CHROMECAST_AUDIO' | 'GOOGLE_HOME' | 'GOOGLE_NEST_HUB' | 'ANDROID_TV' | 'UNKNOWN';
+
+/** Cast player states */
+export type CastPlayerState = 'IDLE' | 'BUFFERING' | 'PLAYING' | 'PAUSED';
+
+/** A discovered or saved cast device */
+export interface CastDevice {
+  id: string;
+  name: string;
+  address: string;
+  port: number;
+  model: string | null;
+  deviceType: CastDeviceType;
+  isFavorite: boolean;
+  isManual: boolean;
+  isConnected: boolean;
+  lastSeenAt: string | null;
+}
+
+/** An active cast session */
+export interface CastSession {
+  id: string;
+  deviceId: string | null;
+  deviceName: string | null;
+  mediaFileId: string | null;
+  episodeId: string | null;
+  streamUrl: string;
+  playerState: CastPlayerState;
+  currentTime: number;
+  duration: number | null;
+  volume: number;
+  isMuted: boolean;
+  startedAt: string;
+}
+
+/** Cast settings (global configuration) */
+export interface CastSettings {
+  autoDiscoveryEnabled: boolean;
+  discoveryIntervalSeconds: number;
+  defaultVolume: number;
+  transcodeIncompatible: boolean;
+  preferredQuality: string | null;
+}
+
+/** Input for adding a cast device manually */
+export interface AddCastDeviceInput {
+  address: string;
+  port?: number;
+  name?: string;
+}
+
+/** Input for updating a cast device */
+export interface UpdateCastDeviceInput {
+  name?: string;
+  isFavorite?: boolean;
+}
+
+/** Input for casting media to a device */
+export interface CastMediaInput {
+  deviceId: string;
+  mediaFileId: string;
+  episodeId?: string;
+  startPosition?: number;
+}
+
+/** Input for updating cast settings */
+export interface UpdateCastSettingsInput {
+  autoDiscoveryEnabled?: boolean;
+  discoveryIntervalSeconds?: number;
+  defaultVolume?: number;
+  transcodeIncompatible?: boolean;
+  preferredQuality?: string;
+}
+
+/** Result of a cast device mutation */
+export interface CastDeviceResult {
+  success: boolean;
+  device: CastDevice | null;
+  error: string | null;
+}
+
+/** Result of a cast session mutation */
+export interface CastSessionResult {
+  success: boolean;
+  session: CastSession | null;
+  error: string | null;
+}
+
+/** Result of cast settings mutation */
+export interface CastSettingsResult {
+  success: boolean;
+  settings: CastSettings | null;
+  error: string | null;
 }

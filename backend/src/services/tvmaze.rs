@@ -351,15 +351,19 @@ impl TvMazeClient {
     }
 
     /// Get TV schedule for a specific date
-    /// 
+    ///
     /// Returns all episodes airing on the given date.
     /// If no date is provided, defaults to today.
-    pub async fn get_schedule(&self, date: Option<&str>, country: Option<&str>) -> Result<Vec<TvMazeScheduleEntry>> {
+    pub async fn get_schedule(
+        &self,
+        date: Option<&str>,
+        country: Option<&str>,
+    ) -> Result<Vec<TvMazeScheduleEntry>> {
         info!(date = ?date, country = ?country, "Fetching TV schedule from TVMaze");
 
         let url = format!("{}/schedule", self.base_url);
         let mut query_params: Vec<(&str, &str)> = Vec::new();
-        
+
         if let Some(d) = date {
             query_params.push(("date", d));
         }
@@ -392,9 +396,13 @@ impl TvMazeClient {
     }
 
     /// Get upcoming episodes for the next N days
-    /// 
+    ///
     /// Fetches schedules for multiple days and combines them.
-    pub async fn get_upcoming_schedule(&self, days: u32, country: Option<&str>) -> Result<Vec<TvMazeScheduleEntry>> {
+    pub async fn get_upcoming_schedule(
+        &self,
+        days: u32,
+        country: Option<&str>,
+    ) -> Result<Vec<TvMazeScheduleEntry>> {
         info!(days = days, country = ?country, "Fetching upcoming TV schedule from TVMaze");
 
         let today = chrono::Utc::now().date_naive();
@@ -403,7 +411,7 @@ impl TvMazeClient {
         for day_offset in 0..days {
             let date = today + chrono::Duration::days(day_offset as i64);
             let date_str = date.format("%Y-%m-%d").to_string();
-            
+
             match self.get_schedule(Some(&date_str), country).await {
                 Ok(episodes) => {
                     all_episodes.extend(episodes);
@@ -414,12 +422,15 @@ impl TvMazeClient {
             }
         }
 
-        debug!(count = all_episodes.len(), "TVMaze returned total upcoming episodes");
+        debug!(
+            count = all_episodes.len(),
+            "TVMaze returned total upcoming episodes"
+        );
         Ok(all_episodes)
     }
 
     /// Get web channel schedule (streaming services)
-    /// 
+    ///
     /// Returns episodes from streaming platforms like Netflix, Hulu, etc.
     #[allow(dead_code)]
     pub async fn get_web_schedule(&self, date: Option<&str>) -> Result<Vec<TvMazeScheduleEntry>> {
@@ -427,7 +438,7 @@ impl TvMazeClient {
 
         let url = format!("{}/schedule/web", self.base_url);
         let mut query_params: Vec<(&str, &str)> = Vec::new();
-        
+
         if let Some(d) = date {
             query_params.push(("date", d));
         }
@@ -452,7 +463,10 @@ impl TvMazeClient {
             .await
             .context("Failed to parse TVMaze web schedule")?;
 
-        debug!(count = schedule.len(), "TVMaze web schedule returned episodes");
+        debug!(
+            count = schedule.len(),
+            "TVMaze web schedule returned episodes"
+        );
         Ok(schedule)
     }
 }
@@ -466,9 +480,9 @@ impl Default for TvMazeClient {
 impl TvMazeShow {
     /// Get the premiere year from the premiered date
     pub fn premiere_year(&self) -> Option<i32> {
-        self.premiered.as_ref().and_then(|p| {
-            p.split('-').next().and_then(|y| y.parse().ok())
-        })
+        self.premiered
+            .as_ref()
+            .and_then(|p| p.split('-').next().and_then(|y| y.parse().ok()))
     }
 
     /// Get the network name
@@ -513,9 +527,9 @@ impl TvMazeEpisode {
     /// Parse air date to NaiveDate - for future date-based matching
     #[allow(dead_code)]
     pub fn air_date(&self) -> Option<chrono::NaiveDate> {
-        self.airdate.as_ref().and_then(|d| {
-            chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()
-        })
+        self.airdate
+            .as_ref()
+            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
     }
 
     /// Get clean summary (strip HTML tags)

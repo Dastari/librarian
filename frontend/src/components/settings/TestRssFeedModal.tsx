@@ -7,6 +7,8 @@ import { Chip } from '@heroui/chip'
 import { Divider } from '@heroui/divider'
 import { Spinner } from '@heroui/spinner'
 import type { RssFeedTestResult } from '../../lib/graphql'
+import { sanitizeError } from '../../lib/format'
+import { IconCheck } from '@tabler/icons-react'
 
 export interface TestRssFeedModalProps {
   isOpen: boolean
@@ -44,7 +46,7 @@ export function TestRssFeedModal({
         success: false,
         itemCount: 0,
         sampleItems: [],
-        error: (e as Error).message,
+        error: sanitizeError(e),
       })
     } finally {
       setIsTesting(false)
@@ -86,8 +88,8 @@ export function TestRssFeedModal({
               <CardBody>
                 {testResult.success ? (
                   <div>
-                    <p className="font-medium text-success mb-2">
-                      ✓ Feed parsed successfully - {testResult.itemCount} items found
+                    <p className="font-medium text-success mb-2 flex items-center gap-1">
+                      <IconCheck size={16} className="text-green-400" /> Feed parsed successfully - {testResult.itemCount} items found
                     </p>
                     <Divider className="my-3" />
                     <p className="text-sm text-default-500 mb-2">Sample items:</p>

@@ -1,6 +1,7 @@
 import { useRouter, type ErrorComponentProps } from '@tanstack/react-router'
 import { Button } from '@heroui/button'
 import { Card, CardBody } from '@heroui/card'
+import { IconAlertTriangle } from '@tabler/icons-react'
 
 /**
  * A reusable error component for route-level errors.
@@ -13,8 +14,8 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
     <div className="flex items-center justify-center p-6 w-full">
       <Card className="max-w-lg w-full">
         <CardBody className="text-center space-y-4">
-          <div className="text-5xl">⚠️</div>
-          <h1 className="text-xl font-bold text-danger">Error loading page</h1>
+          <IconAlertTriangle size={48} className="text-danger-400 mx-auto" />
+          <h1 className="text-xl font-bold text-danger">Something went wrong</h1>
           <p className="text-default-500">
             {error instanceof Error ? error.message : 'An unexpected error occurred'}
           </p>

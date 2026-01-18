@@ -19,7 +19,7 @@
 //! ```
 
 use async_graphql::{Context, ErrorExtensions, Result};
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
 
 /// User context extracted from JWT, available in GraphQL resolvers
@@ -58,10 +58,10 @@ impl AuthToken {
 pub fn verify_token(token: &str) -> Result<AuthUser> {
     let jwt_secret = std::env::var("JWT_SECRET")
         .map_err(|_| async_graphql::Error::new("JWT_SECRET not configured"))?;
-    
+
     // Trim any whitespace/newlines from the secret
     let jwt_secret = jwt_secret.trim();
-    
+
     tracing::debug!("JWT_SECRET length: {}", jwt_secret.len());
     tracing::debug!("Token length: {}", token.len());
 
@@ -115,9 +115,9 @@ impl<'a> AuthExt for Context<'a> {
 }
 
 /// Guard that requires authentication for GraphQL operations.
-/// 
+///
 /// Use with `#[graphql(guard = "AuthGuard")]` on queries, mutations, or subscriptions.
-/// 
+///
 /// # Example
 /// ```ignore
 /// #[graphql(guard = "AuthGuard")]
@@ -136,7 +136,7 @@ impl async_graphql::Guard for AuthGuard {
 }
 
 /// Guard that requires a specific role for GraphQL operations.
-/// 
+///
 /// Use with `#[graphql(guard = "RoleGuard::new(\"admin\")")]` on queries, mutations, or subscriptions.
 pub struct RoleGuard {
     pub role: String,
@@ -150,15 +150,12 @@ impl RoleGuard {
 
 impl async_graphql::Guard for RoleGuard {
     fn check(&self, ctx: &Context<'_>) -> impl std::future::Future<Output = Result<()>> + Send {
-        let result = ctx.auth_user().and_then(|user| {
-            match &user.role {
-                Some(r) if r == &self.role => Ok(()),
-                _ => Err(async_graphql::Error::new(format!(
-                    "Role '{}' required",
-                    self.role
-                ))
-                .extend_with(|_, e| e.set("code", "FORBIDDEN"))),
-            }
+        let result = ctx.auth_user().and_then(|user| match &user.role {
+            Some(r) if r == &self.role => Ok(()),
+            _ => Err(
+                async_graphql::Error::new(format!("Role '{}' required", self.role))
+                    .extend_with(|_, e| e.set("code", "FORBIDDEN")),
+            ),
         });
         async move { result }
     }

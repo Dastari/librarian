@@ -18,15 +18,16 @@ import {
   type FileEntry,
   type QuickPath,
 } from '../../lib/graphql'
+import { sanitizeError } from '../../lib/format'
 import { formatBytes } from '../../lib/format'
-import { CopyIcon, MoveIcon, DeleteIcon, MatchIcon, InfoIcon, RefreshIcon } from '../icons'
+import { IconCopy, IconArrowRight, IconTrash, IconSearch, IconInfoCircle, IconRefresh, IconFolder, IconFolderOpen, IconMovie, IconFile, IconPhoto } from '@tabler/icons-react'
 
 // ============================================================================
 // Utility Functions
 // ============================================================================
 
-function getFileIcon(filename: string, isDir: boolean): string {
-  if (isDir) return '📁'
+function getFileIcon(filename: string, isDir: boolean): React.ReactNode {
+  if (isDir) return <IconFolder size={20} className="text-amber-400" />
   const ext = filename.split('.').pop()?.toLowerCase()
   switch (ext) {
     case 'mkv':
@@ -36,23 +37,23 @@ function getFileIcon(filename: string, isDir: boolean): string {
     case 'wmv':
     case 'webm':
     case 'm4v':
-      return '🎬'
+      return <IconMovie size={20} className="text-purple-400" />
     case 'srt':
     case 'sub':
     case 'ass':
     case 'vtt':
-      return '💬'
+      return <IconFile size={20} className="text-default-400" />
     case 'nfo':
     case 'txt':
-      return '📝'
+      return <IconFile size={20} className="text-default-400" />
     case 'jpg':
     case 'jpeg':
     case 'png':
     case 'gif':
     case 'webp':
-      return '🖼️'
+      return <IconPhoto size={20} className="text-green-400" />
     default:
-      return '📄'
+      return <IconFile size={20} className="text-default-400" />
   }
 }
 
@@ -93,7 +94,7 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
       console.error('Failed to browse directory:', err)
       addToast({
         title: 'Error',
-        description: err instanceof Error ? err.message : 'Failed to load directory contents',
+        description: sanitizeError(err),
         color: 'danger',
       })
     } finally {
@@ -132,6 +133,9 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
         readable: true,
         writable: false,
         size: 0,
+        sizeFormatted: '-',
+        mimeType: null,
+        modifiedAt: null,
       }
       return [parentEntry, ...sorted]
     }
@@ -208,7 +212,7 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
               `}
               isDisabled={!entry.isDir || !entry.readable}
             >
-              <span className="text-lg flex-shrink-0">{icon}</span>
+              <span className="flex-shrink-0">{icon}</span>
               <span className="flex-1 truncate">{entry.name}</span>
             </Button>
           )
@@ -285,25 +289,25 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
       {
         key: 'copy',
         label: 'Copy',
-        icon: <CopyIcon />,
+        icon: <IconCopy size={16} />,
         onAction: (items) => handleCopy(items.map((e) => e.path)),
       },
       {
         key: 'move',
         label: 'Move',
-        icon: <MoveIcon />,
+        icon: <IconArrowRight size={16} />,
         onAction: (items) => handleMove(items.map((e) => e.path)),
       },
       {
         key: 'match',
         label: 'Match',
-        icon: <MatchIcon />,
+        icon: <IconSearch size={16} />,
         onAction: (items) => handleMatch(items.map((e) => e.path)),
       },
       {
         key: 'delete',
         label: 'Delete',
-        icon: <DeleteIcon />,
+        icon: <IconTrash size={16} className="text-red-400" />,
         color: 'danger',
         isDestructive: true,
         onAction: (items) => handleDeleteClick(items.map((e) => e.path)),
@@ -321,7 +325,7 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
       {
         key: 'copy',
         label: 'Copy',
-        icon: <CopyIcon />,
+        icon: <IconCopy size={16} />,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
         onAction: (entry) => handleCopy([entry.path]),
@@ -329,7 +333,7 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
       {
         key: 'move',
         label: 'Move',
-        icon: <MoveIcon />,
+        icon: <IconArrowRight size={16} />,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
         onAction: (entry) => handleMove([entry.path]),
@@ -337,7 +341,7 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
       {
         key: 'match',
         label: 'Match to Show',
-        icon: <MatchIcon />,
+        icon: <IconSearch size={16} />,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
         onAction: (entry) => handleMatch([entry.path]),
@@ -345,7 +349,7 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
       {
         key: 'properties',
         label: 'Properties',
-        icon: <InfoIcon />,
+        icon: <IconInfoCircle size={16} />,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
         onAction: handleProperties,
@@ -353,7 +357,7 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
       {
         key: 'delete',
         label: 'Delete',
-        icon: <DeleteIcon />,
+        icon: <IconTrash size={16} className="text-red-400" />,
         isDestructive: true,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
@@ -404,7 +408,7 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
             variant="flat"
             isLoading={loading}
             onPress={() => fetchDirectory(currentPath)}
-            startContent={<RefreshIcon />}
+            startContent={<IconRefresh size={16} />}
           >
             Refresh
           </Button>
@@ -458,7 +462,7 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
           emptyContent={
             entries.length === 0 && !parentPath ? (
               <div className="px-4 py-8 text-center">
-                <span className="text-4xl mb-3 block">📂</span>
+                <IconFolderOpen size={40} className="mb-3 mx-auto text-amber-400" />
                 <p className="text-default-400">This directory is empty</p>
               </div>
             ) : entries.length === 0 ? (

@@ -95,7 +95,11 @@ impl EpisodeRepository {
     }
 
     /// Get episodes for a specific season
-    pub async fn list_by_season(&self, tv_show_id: Uuid, season: i32) -> Result<Vec<EpisodeRecord>> {
+    pub async fn list_by_season(
+        &self,
+        tv_show_id: Uuid,
+        season: i32,
+    ) -> Result<Vec<EpisodeRecord>> {
         let records = sqlx::query_as::<_, EpisodeRecord>(
             r#"
             SELECT id, tv_show_id, season, episode, absolute_number, title,
@@ -423,10 +427,14 @@ impl EpisodeRepository {
     }
 
     /// Get upcoming episodes for a user across all libraries
-    /// 
+    ///
     /// Returns episodes with air_date between today and today + days,
     /// ordered by air date ascending.
-    pub async fn list_upcoming_by_user(&self, user_id: Uuid, days: i32) -> Result<Vec<UpcomingEpisodeRecord>> {
+    pub async fn list_upcoming_by_user(
+        &self,
+        user_id: Uuid,
+        days: i32,
+    ) -> Result<Vec<UpcomingEpisodeRecord>> {
         let records = sqlx::query_as::<_, UpcomingEpisodeRecord>(
             r#"
             SELECT 

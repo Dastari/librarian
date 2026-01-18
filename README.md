@@ -172,8 +172,8 @@ The backend exposes a single **GraphQL API** for all operations, with WebSocket 
 | `/graphql` | GraphQL API (GET for playground, POST for operations) |
 | `/graphql/ws` | WebSocket endpoint for GraphQL subscriptions |
 | `/api/torrents/upload` | Torrent file upload (REST - multipart form) |
-| `/api/filesystem/browse` | Filesystem browser (REST) |
-| `/api/filesystem/mkdir` | Create directory (REST) |
+| `/api/torznab/{id}` | Torznab API for external tools (Sonarr, Radarr) |
+| `/api/media/stream/{id}` | Media streaming endpoint |
 
 #### Authentication
 
@@ -253,6 +253,61 @@ subscription {
     id
     name
     infoHash
+  }
+}
+```
+
+**Browse filesystem:**
+```graphql
+query {
+  browseDirectory(input: { path: "/data/media", dirsOnly: false }) {
+    currentPath
+    parentPath
+    entries {
+      name
+      path
+      isDir
+      sizeFormatted
+      readable
+      writable
+    }
+    quickPaths {
+      name
+      path
+    }
+    isLibraryPath
+    libraryId
+  }
+}
+```
+
+**File operations (copy/move/delete):**
+```graphql
+mutation {
+  copyFiles(input: { 
+    sources: ["/data/media/movie.mkv"],
+    destination: "/data/movies/",
+    overwrite: false
+  }) {
+    success
+    affectedCount
+    messages
+    error
+  }
+}
+```
+
+Note: File operations (copy, move, delete, rename) are protected and only work on files/directories inside valid library paths.
+
+**Directory change subscription:**
+```graphql
+subscription {
+  directoryContentsChanged(path: "/data/media") {
+    path
+    changeType
+    name
+    newName
+    timestamp
   }
 }
 ```

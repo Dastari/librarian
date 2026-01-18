@@ -158,6 +158,14 @@ export const LIBRARY_QUERY = `
       totalSizeBytes
       showCount
       lastScannedAt
+      allowedResolutions
+      allowedVideoCodecs
+      allowedAudioFormats
+      requireHdr
+      allowedHdrTypes
+      allowedSources
+      releaseGroupBlacklist
+      releaseGroupWhitelist
     }
   }
 `;
@@ -227,6 +235,14 @@ export const TV_SHOW_QUERY = `
       episodeCount
       episodeFileCount
       sizeBytes
+      allowedResolutionsOverride
+      allowedVideoCodecsOverride
+      allowedAudioFormatsOverride
+      requireHdrOverride
+      allowedHdrTypesOverride
+      allowedSourcesOverride
+      releaseGroupBlacklistOverride
+      releaseGroupWhitelistOverride
     }
   }
 `;
@@ -265,6 +281,7 @@ export const EPISODES_QUERY = `
       tvmazeId
       tmdbId
       tvdbId
+      mediaFileId
     }
   }
 `;
@@ -457,6 +474,196 @@ export const LIBRARY_UPCOMING_EPISODES_QUERY = `
         posterUrl
         libraryId
       }
+    }
+  }
+`;
+
+// ============================================================================
+// Media File Queries
+// ============================================================================
+
+export const UNMATCHED_FILES_QUERY = `
+  query UnmatchedFiles($libraryId: String!) {
+    unmatchedFiles(libraryId: $libraryId) {
+      id
+      libraryId
+      path
+      relativePath
+      originalName
+      sizeBytes
+      sizeFormatted
+      container
+      videoCodec
+      audioCodec
+      resolution
+      isHdr
+      hdrType
+      width
+      height
+      duration
+      bitrate
+      episodeId
+      organized
+      addedAt
+    }
+  }
+`;
+
+export const UNMATCHED_FILES_COUNT_QUERY = `
+  query UnmatchedFilesCount($libraryId: String!) {
+    unmatchedFilesCount(libraryId: $libraryId)
+  }
+`;
+
+// ============================================================================
+// Security Settings Queries
+// ============================================================================
+
+export const SECURITY_SETTINGS_QUERY = `
+  query SecuritySettings {
+    securitySettings {
+      encryptionKeySet
+      encryptionKeyPreview
+      encryptionKeyLastModified
+    }
+  }
+`;
+
+// ============================================================================
+// Cast Queries
+// ============================================================================
+
+export const CAST_DEVICES_QUERY = `
+  query CastDevices {
+    castDevices {
+      id
+      name
+      address
+      port
+      model
+      deviceType
+      isFavorite
+      isManual
+      isConnected
+      lastSeenAt
+    }
+  }
+`;
+
+export const CAST_DEVICE_QUERY = `
+  query CastDevice($id: ID!) {
+    castDevice(id: $id) {
+      id
+      name
+      address
+      port
+      model
+      deviceType
+      isFavorite
+      isManual
+      isConnected
+      lastSeenAt
+    }
+  }
+`;
+
+export const CAST_SESSIONS_QUERY = `
+  query CastSessions {
+    castSessions {
+      id
+      deviceId
+      deviceName
+      mediaFileId
+      episodeId
+      streamUrl
+      playerState
+      currentTime
+      duration
+      volume
+      isMuted
+      startedAt
+    }
+  }
+`;
+
+export const CAST_SESSION_QUERY = `
+  query CastSession($id: ID!) {
+    castSession(id: $id) {
+      id
+      deviceId
+      deviceName
+      mediaFileId
+      episodeId
+      streamUrl
+      playerState
+      currentTime
+      duration
+      volume
+      isMuted
+      startedAt
+    }
+  }
+`;
+
+export const CAST_SETTINGS_QUERY = `
+  query CastSettings {
+    castSettings {
+      autoDiscoveryEnabled
+      discoveryIntervalSeconds
+      defaultVolume
+      transcodeIncompatible
+      preferredQuality
+    }
+  }
+`;
+
+// ============================================================================
+// Filesystem Queries
+// ============================================================================
+
+export const BROWSE_DIRECTORY_QUERY = `
+  query BrowseDirectory($input: BrowseDirectoryInput) {
+    browseDirectory(input: $input) {
+      currentPath
+      parentPath
+      entries {
+        name
+        path
+        isDir
+        size
+        sizeFormatted
+        readable
+        writable
+        mimeType
+        modifiedAt
+      }
+      quickPaths {
+        name
+        path
+      }
+      isLibraryPath
+      libraryId
+    }
+  }
+`;
+
+export const QUICK_PATHS_QUERY = `
+  query QuickPaths {
+    quickPaths {
+      name
+      path
+    }
+  }
+`;
+
+export const VALIDATE_PATH_QUERY = `
+  query ValidatePath($path: String!) {
+    validatePath(path: $path) {
+      isValid
+      isLibraryPath
+      libraryId
+      libraryName
+      error
     }
   }
 `;

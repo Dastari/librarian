@@ -9,8 +9,9 @@ import { addToast } from '@heroui/toast'
 import { ConfirmModal } from '../../components/ConfirmModal'
 import { useDataReactivity } from '../../hooks/useSubscription'
 import { AddLibraryModal, EditLibraryModal, LibraryGridCard } from '../../components/library'
-import { PlusIcon } from '../../components/icons'
+import { IconPlus } from '@tabler/icons-react'
 import { RouteError } from '../../components/RouteError'
+import { sanitizeError } from '../../lib/format'
 import {
   graphqlClient,
   LIBRARIES_QUERY,
@@ -185,7 +186,7 @@ function LibrariesPage() {
       if (error) {
         addToast({
           title: 'Error',
-          description: `Failed to start scan: ${error.message}`,
+          description: sanitizeError(error),
           color: 'danger',
         })
         return
@@ -219,7 +220,7 @@ function LibrariesPage() {
       if (error || !data?.deleteLibrary.success) {
         addToast({
           title: 'Error',
-          description: data?.deleteLibrary.error || 'Failed to delete library',
+          description: sanitizeError(data?.deleteLibrary.error || 'Failed to delete library'),
           color: 'danger',
         })
         onConfirmClose()
@@ -301,7 +302,7 @@ function LibrariesPage() {
         </div>
         <Tooltip content="Add Library">
           <Button isIconOnly color="primary" size="sm" onPress={onAddOpen}>
-            <PlusIcon />
+            <IconPlus size={16} />
           </Button>
         </Tooltip>
       </div>

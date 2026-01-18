@@ -20,7 +20,10 @@ pub async fn process_available_episodes(
     pool: PgPool,
     torrent_service: Arc<TorrentService>,
 ) -> Result<()> {
-    info!(job = "auto_download", "Starting auto-download job: checking for available episodes");
+    info!(
+        job = "auto_download",
+        "Starting auto-download job: checking for available episodes"
+    );
 
     let db = Database::new(pool);
 
@@ -28,7 +31,10 @@ pub async fn process_available_episodes(
     let available_episodes = db.episodes().list_available().await?;
 
     if available_episodes.is_empty() {
-        debug!(job = "auto_download", "No available episodes found to download");
+        debug!(
+            job = "auto_download",
+            "No available episodes found to download"
+        );
         return Ok(());
     }
 
@@ -136,7 +142,11 @@ pub async fn process_available_episodes(
                 );
 
                 // Link torrent to episode for post-processing
-                if let Err(e) = db.torrents().link_to_episode(&torrent_info.info_hash, episode.id).await {
+                if let Err(e) = db
+                    .torrents()
+                    .link_to_episode(&torrent_info.info_hash, episode.id)
+                    .await
+                {
                     error!(
                         job = "auto_download",
                         show_name = %show.name,
@@ -179,7 +189,9 @@ pub async fn process_available_episodes(
         skipped = skipped,
         failed = failed,
         "Auto-download job complete: {} started, {} skipped (disabled), {} failed",
-        downloaded, skipped, failed
+        downloaded,
+        skipped,
+        failed
     );
 
     Ok(())
@@ -267,7 +279,11 @@ pub async fn download_available_for_show(
                 );
 
                 // Link torrent to episode for post-processing
-                if let Err(e) = db.torrents().link_to_episode(&torrent_info.info_hash, episode.id).await {
+                if let Err(e) = db
+                    .torrents()
+                    .link_to_episode(&torrent_info.info_hash, episode.id)
+                    .await
+                {
                     error!("Failed to link torrent to episode: {:?}", e);
                 }
 
@@ -301,9 +317,9 @@ pub async fn check_and_download() -> Result<()> {
     // This is a placeholder - the actual implementation should receive
     // the torrent service from the job scheduler context
     info!("Auto-download check triggered (scheduler mode)");
-    
+
     // For now, just log - the full implementation requires access to TorrentService
     // which should be passed from the main application
-    
+
     Ok(())
 }

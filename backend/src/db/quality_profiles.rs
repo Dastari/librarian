@@ -152,7 +152,11 @@ impl QualityProfileRepository {
     }
 
     /// Update a quality profile
-    pub async fn update(&self, id: Uuid, input: UpdateQualityProfile) -> Result<Option<QualityProfileRecord>> {
+    pub async fn update(
+        &self,
+        id: Uuid,
+        input: UpdateQualityProfile,
+    ) -> Result<Option<QualityProfileRecord>> {
         let record = sqlx::query_as::<_, QualityProfileRecord>(
             r#"
             UPDATE quality_profiles SET
@@ -222,7 +226,11 @@ impl QualityProfileRepository {
                 preferred_codec: Some("hevc".to_string()),
                 preferred_audio: Some("atmos".to_string()),
                 require_hdr: true,
-                hdr_types: vec!["hdr10".to_string(), "hdr10plus".to_string(), "dolbyvision".to_string()],
+                hdr_types: vec![
+                    "hdr10".to_string(),
+                    "hdr10plus".to_string(),
+                    "dolbyvision".to_string(),
+                ],
                 preferred_language: Some("en".to_string()),
                 max_size_gb: None,
                 min_seeders: Some(1),
@@ -301,10 +309,11 @@ impl QualityProfileRepository {
 
     /// Check if user has any quality profiles
     pub async fn has_profiles(&self, user_id: Uuid) -> Result<bool> {
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM quality_profiles WHERE user_id = $1")
-            .bind(user_id)
-            .fetch_one(&self.pool)
-            .await?;
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM quality_profiles WHERE user_id = $1")
+                .bind(user_id)
+                .fetch_one(&self.pool)
+                .await?;
 
         Ok(count.0 > 0)
     }

@@ -67,7 +67,7 @@ impl OrganizerService {
     }
 
     /// Get effective organize settings for a show (considering overrides)
-    /// 
+    ///
     /// Returns (organize_files, rename_style, post_download_action)
     /// - organize_files: Whether to organize files into folders
     /// - rename_style: How to rename files (None, Clean, PreserveInfo)
@@ -81,7 +81,7 @@ impl OrganizerService {
     }
 
     /// Get full organize settings for a show including post_download_action
-    /// 
+    ///
     /// Returns (organize_files, rename_style, post_download_action)
     pub async fn get_full_organize_settings(
         &self,
@@ -190,7 +190,7 @@ impl OrganizerService {
     }
 
     /// Organize a single media file
-    /// 
+    ///
     /// `action` specifies how to handle the file:
     /// - "copy": Copy file to new location, keep original (for seeding)
     /// - "move": Move file to new location, delete original
@@ -256,21 +256,22 @@ impl OrganizerService {
 
         // Create parent directories
         if let Some(parent) = new_path.parent()
-            && let Err(e) = tokio::fs::create_dir_all(parent).await {
-                error!(
-                    file_id = %file.id,
-                    path = %parent.display(),
-                    error = %e,
-                    "Failed to create directory"
-                );
-                return Ok(OrganizeResult {
-                    file_id: file.id,
-                    original_path,
-                    new_path: new_path_str,
-                    success: false,
-                    error: Some(format!("Failed to create directory: {}", e)),
-                });
-            }
+            && let Err(e) = tokio::fs::create_dir_all(parent).await
+        {
+            error!(
+                file_id = %file.id,
+                path = %parent.display(),
+                error = %e,
+                "Failed to create directory"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: false,
+                error: Some(format!("Failed to create directory: {}", e)),
+            });
+        }
 
         let source_path = Path::new(&original_path);
 
@@ -404,7 +405,8 @@ impl OrganizerService {
                 }
             };
 
-            let (organize_files, rename_style, action) = self.get_full_organize_settings(&show).await?;
+            let (organize_files, rename_style, action) =
+                self.get_full_organize_settings(&show).await?;
 
             if !organize_files {
                 debug!(file_id = %file.id, show_id = %show.id, "Show has organize_files disabled");
@@ -412,7 +414,15 @@ impl OrganizerService {
             }
 
             let result = self
-                .organize_file(&file, &show, &episode, &library.path, rename_style, &action, false)
+                .organize_file(
+                    &file,
+                    &show,
+                    &episode,
+                    &library.path,
+                    rename_style,
+                    &action,
+                    false,
+                )
                 .await?;
             results.push(result);
         }
@@ -483,14 +493,14 @@ impl OrganizerService {
     }
 
     /// Organize files from a completed torrent
-    /// 
+    ///
     /// This method:
     /// 1. Gets the torrent files from the torrent service
     /// 2. Parses filenames to identify show/episode
     /// 3. Matches to existing shows or creates new entries
     /// 4. Copies/moves/symlinks files based on library settings
     /// 5. Creates folder structure as needed
-    /// 
+    ///
     /// Returns details about what was organized
     pub async fn organize_torrent(
         &self,
@@ -561,7 +571,13 @@ impl OrganizerService {
             // Skip non-video files
             if !is_video_file(&file_info.path) {
                 debug!(path = %file_info.path, "Skipping non-video file");
-                messages.push(format!("Skipped non-video: {}", Path::new(&file_info.path).file_name().and_then(|n| n.to_str()).unwrap_or(&file_info.path)));
+                messages.push(format!(
+                    "Skipped non-video: {}",
+                    Path::new(&file_info.path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(&file_info.path)
+                ));
                 continue;
             }
 
@@ -569,7 +585,7 @@ impl OrganizerService {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or(&file_info.path);
-            
+
             // Check if file exists
             let source_path = Path::new(&file_info.path);
             if !source_path.exists() {
@@ -600,7 +616,9 @@ impl OrganizerService {
             };
 
             // Try to find an existing show in this library
-            let existing_show = self.db.tv_shows()
+            let existing_show = self
+                .db
+                .tv_shows()
                 .find_by_name_in_library(library.id, &show_name)
                 .await?;
 
@@ -617,7 +635,9 @@ impl OrganizerService {
             };
 
             // Find the episode
-            let episode_record = self.db.episodes()
+            let episode_record = self
+                .db
+                .episodes()
                 .get_by_show_season_episode(show.id, season, episode)
                 .await?;
 
@@ -645,21 +665,21 @@ impl OrganizerService {
             }
 
             // Generate the target path
-            let target_path = self.generate_organized_path(
-                &library.path,
-                &show,
-                &ep,
-                filename,
-                rename_style,
-            );
+            let target_path =
+                self.generate_organized_path(&library.path, &show, &ep, filename, rename_style);
 
             // Create parent directories
             if let Some(parent) = target_path.parent()
-                && let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    messages.push(format!("Failed to create directory {}: {}", parent.display(), e));
-                    failed_count += 1;
-                    continue;
-                }
+                && let Err(e) = tokio::fs::create_dir_all(parent).await
+            {
+                messages.push(format!(
+                    "Failed to create directory {}: {}",
+                    parent.display(),
+                    e
+                ));
+                failed_count += 1;
+                continue;
+            }
 
             let source_path = Path::new(&file_info.path);
             let target_path_str = target_path.to_string_lossy().to_string();
@@ -706,42 +726,55 @@ impl OrganizerService {
                 Ok(_) => {
                     // Create or update media file record
                     let existing_file = self.db.media_files().get_by_path(&target_path_str).await?;
-                    
+
                     if existing_file.is_none() {
-                        let size = tokio::fs::metadata(&target_path).await
+                        let size = tokio::fs::metadata(&target_path)
+                            .await
                             .map(|m| m.len() as i64)
                             .unwrap_or(file_info.size as i64);
 
-                        self.db.media_files().create(crate::db::CreateMediaFile {
-                            library_id: library.id,
-                            path: target_path_str.clone(),
-                            size_bytes: size,
-                            container: target_path.extension()
-                                .and_then(|e| e.to_str())
-                                .map(|s| s.to_lowercase()),
-                            video_codec: parsed.codec.clone(),
-                            audio_codec: parsed.audio.clone(),
-                            width: None,
-                            height: None,
-                            duration: None,
-                            bitrate: None,
-                            file_hash: None,
-                            episode_id: Some(ep.id),
-                            relative_path: target_path.strip_prefix(&library.path)
-                                .ok()
-                                .map(|p| p.to_string_lossy().to_string()),
-                            original_name: Some(filename.to_string()),
-                            resolution: parsed.resolution.clone(),
-                            is_hdr: parsed.hdr.is_some().then_some(true),
-                            hdr_type: parsed.hdr.clone(),
-                        }).await?;
+                        self.db
+                            .media_files()
+                            .create(crate::db::CreateMediaFile {
+                                library_id: library.id,
+                                path: target_path_str.clone(),
+                                size_bytes: size,
+                                container: target_path
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .map(|s| s.to_lowercase()),
+                                video_codec: parsed.codec.clone(),
+                                audio_codec: parsed.audio.clone(),
+                                width: None,
+                                height: None,
+                                duration: None,
+                                bitrate: None,
+                                file_hash: None,
+                                episode_id: Some(ep.id),
+                                relative_path: target_path
+                                    .strip_prefix(&library.path)
+                                    .ok()
+                                    .map(|p| p.to_string_lossy().to_string()),
+                                original_name: Some(filename.to_string()),
+                                resolution: parsed.resolution.clone(),
+                                is_hdr: parsed.hdr.is_some().then_some(true),
+                                hdr_type: parsed.hdr.clone(),
+                            })
+                            .await?;
                     }
 
                     // Mark episode as downloaded
-                    self.db.episodes().update_status(ep.id, "downloaded").await?;
+                    self.db
+                        .episodes()
+                        .update_status(ep.id, "downloaded")
+                        .await?;
 
                     // Update torrent record to link to episode if not already linked
-                    self.db.torrents().link_to_episode(torrent_info_hash, ep.id).await.ok();
+                    self.db
+                        .torrents()
+                        .link_to_episode(torrent_info_hash, ep.id)
+                        .await
+                        .ok();
 
                     // Update show stats
                     self.db.tv_shows().update_stats(show.id).await?;
@@ -750,7 +783,10 @@ impl OrganizerService {
                     messages.push(format!(
                         "Organized: {} -> {}",
                         filename,
-                        target_path.file_name().and_then(|n| n.to_str()).unwrap_or("?")
+                        target_path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("?")
                     ));
                 }
                 Err(e) => {
@@ -761,7 +797,11 @@ impl OrganizerService {
         }
 
         // Mark torrent as processed
-        self.db.torrents().mark_processed(torrent_info_hash).await.ok();
+        self.db
+            .torrents()
+            .mark_processed(torrent_info_hash)
+            .await
+            .ok();
 
         Ok(OrganizeTorrentResult {
             success: organized_count > 0 || failed_count == 0,

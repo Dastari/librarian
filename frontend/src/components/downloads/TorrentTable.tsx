@@ -16,7 +16,7 @@ import {
 } from '../data-table'
 import type { Torrent } from '../../lib/graphql'
 import { formatBytes, formatSpeed, formatEta, formatRelativeTime } from '../../lib/format'
-import { PlayIcon, PauseIcon, DeleteIcon, PlusIcon, InfoIcon, FolderIcon } from '../icons'
+import { IconPlayerPlay, IconPlayerPause, IconTrash, IconPlus, IconInfoCircle, IconFolder, IconArrowDown, IconArrowUp } from '@tabler/icons-react'
 import { TorrentCard, TORRENT_STATE_INFO } from './TorrentCard'
 
 // ============================================================================
@@ -151,16 +151,16 @@ export function TorrentTable({
           <div className="flex flex-col gap-0.5 text-xs tabular-nums">
             {(torrent.state === 'DOWNLOADING' || torrent.state === 'SEEDING') && (
               <>
-                <span className="text-primary">
-                  ⬇️ {torrent.downloadSpeedFormatted || formatSpeed(torrent.downloadSpeed)}
+                <span className="text-primary flex items-center gap-1">
+                  <IconArrowDown size={12} className="text-blue-400" /> {torrent.downloadSpeedFormatted || formatSpeed(torrent.downloadSpeed)}
                 </span>
-                <span className="text-success">
-                  ⬆️ {torrent.uploadSpeedFormatted || formatSpeed(torrent.uploadSpeed)}
+                <span className="text-success flex items-center gap-1">
+                  <IconArrowUp size={12} className="text-green-400" /> {torrent.uploadSpeedFormatted || formatSpeed(torrent.uploadSpeed)}
                 </span>
               </>
             )}
             {torrent.peers > 0 ? (
-              <span className="text-default-400">👥 {torrent.peers} peers</span>
+              <span className="text-default-400">{torrent.peers} peers</span>
             ) : (
               <span className="text-default-400">&nbsp;</span>
             )}
@@ -225,12 +225,12 @@ export function TorrentTable({
   // Filter options with counts
   const stateFilterOptions: FilterOption[] = useMemo(
     () => [
-      { key: 'DOWNLOADING', label: 'Downloading', icon: '⬇️', color: 'primary', count: stateCounts['DOWNLOADING'] || 0 },
-      { key: 'SEEDING', label: 'Seeding', icon: '⬆️', color: 'success', count: stateCounts['SEEDING'] || 0 },
-      { key: 'PAUSED', label: 'Paused', icon: '⏸️', color: 'warning', count: stateCounts['PAUSED'] || 0 },
-      { key: 'CHECKING', label: 'Checking', icon: '🔍', color: 'secondary', count: stateCounts['CHECKING'] || 0 },
-      { key: 'QUEUED', label: 'Queued', icon: '⏳', color: 'default', count: stateCounts['QUEUED'] || 0 },
-      { key: 'ERROR', label: 'Error', icon: '❌', color: 'danger', count: stateCounts['ERROR'] || 0 },
+      { key: 'DOWNLOADING', label: 'Downloading', color: 'primary', count: stateCounts['DOWNLOADING'] || 0 },
+      { key: 'SEEDING', label: 'Seeding', color: 'success', count: stateCounts['SEEDING'] || 0 },
+      { key: 'PAUSED', label: 'Paused', color: 'warning', count: stateCounts['PAUSED'] || 0 },
+      { key: 'CHECKING', label: 'Checking', color: 'secondary', count: stateCounts['CHECKING'] || 0 },
+      { key: 'QUEUED', label: 'Queued', color: 'default', count: stateCounts['QUEUED'] || 0 },
+      { key: 'ERROR', label: 'Error', color: 'danger', count: stateCounts['ERROR'] || 0 },
     ],
     [stateCounts]
   )
@@ -259,21 +259,21 @@ export function TorrentTable({
       {
         key: 'resume',
         label: 'Resume',
-        icon: <PlayIcon />,
+        icon: <IconPlayerPlay size={16} className="text-green-400" />,
         color: 'success',
         onAction: (items) => onBulkResume(items.map((t) => t.id)),
       },
       {
         key: 'pause',
         label: 'Pause',
-        icon: <PauseIcon />,
+        icon: <IconPlayerPause size={16} className="text-amber-400" />,
         color: 'warning',
         onAction: (items) => onBulkPause(items.map((t) => t.id)),
       },
       {
         key: 'remove',
         label: 'Remove',
-        icon: <DeleteIcon />,
+        icon: <IconTrash size={16} className="text-red-400" />,
         color: 'danger',
         isDestructive: true,
         confirm: true,
@@ -290,7 +290,7 @@ export function TorrentTable({
       {
         key: 'resume',
         label: 'Resume',
-        icon: <PlayIcon />,
+        icon: <IconPlayerPlay size={16} className="text-green-400" />,
         color: 'success',
         inDropdown: false,
         isVisible: (torrent) => torrent.state === 'PAUSED',
@@ -299,7 +299,7 @@ export function TorrentTable({
       {
         key: 'pause',
         label: 'Pause',
-        icon: <PauseIcon />,
+        icon: <IconPlayerPause size={16} className="text-amber-400" />,
         color: 'warning',
         inDropdown: false,
         isVisible: (torrent) => torrent.state === 'DOWNLOADING' || torrent.state === 'SEEDING',
@@ -308,14 +308,14 @@ export function TorrentTable({
       {
         key: 'info',
         label: 'Info',
-        icon: <InfoIcon />,
+        icon: <IconInfoCircle size={16} />,
         inDropdown: true,
         onAction: (torrent) => onInfo(torrent.id),
       },
       {
         key: 'organize',
         label: 'Organize',
-        icon: <FolderIcon />,
+        icon: <IconFolder size={16} className="text-amber-400" />,
         inDropdown: true,
         isVisible: (torrent) => torrent.state === 'SEEDING' || torrent.progress >= 1,
         onAction: (torrent) => onOrganize(torrent.id),
@@ -323,7 +323,7 @@ export function TorrentTable({
       {
         key: 'remove',
         label: 'Remove',
-        icon: <DeleteIcon />,
+        icon: <IconTrash size={16} className="text-red-400" />,
         isDestructive: true,
         inDropdown: true,
         onAction: (torrent) => {
@@ -390,7 +390,7 @@ export function TorrentTable({
       toolbarContent={
         <Tooltip content="Add Torrent">
           <Button isIconOnly color="primary" size="sm" onPress={onAddClick}>
-            <PlusIcon />
+            <IconPlus size={16} />
           </Button>
         </Tooltip>
       }

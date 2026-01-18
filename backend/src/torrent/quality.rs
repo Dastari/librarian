@@ -27,13 +27,15 @@ impl QualityProfile {
     pub fn matches(&self, release_title: &str, size_mb: u64) -> bool {
         // Check size constraints
         if let Some(min) = self.min_size_mb
-            && size_mb < min {
-                return false;
-            }
+            && size_mb < min
+        {
+            return false;
+        }
         if let Some(max) = self.max_size_mb
-            && size_mb > max {
-                return false;
-            }
+            && size_mb > max
+        {
+            return false;
+        }
 
         let title_lower = release_title.to_lowercase();
 
@@ -97,9 +99,10 @@ impl QualityProfile {
         let title_lower = title.to_lowercase();
         for (pattern, resolution) in patterns {
             if let Ok(re) = Regex::new(pattern)
-                && re.is_match(&title_lower) {
-                    return Some(resolution.to_string());
-                }
+                && re.is_match(&title_lower)
+            {
+                return Some(resolution.to_string());
+            }
         }
 
         None
@@ -136,8 +139,17 @@ mod tests {
 
     #[test]
     fn test_parse_resolution() {
-        assert_eq!(QualityProfile::parse_resolution("Show.S01E01.1080p.mkv"), Some("1080p".to_string()));
-        assert_eq!(QualityProfile::parse_resolution("Show.S01E01.720p.mkv"), Some("720p".to_string()));
-        assert_eq!(QualityProfile::parse_resolution("Show.S01E01.2160p.UHD.mkv"), Some("2160p".to_string()));
+        assert_eq!(
+            QualityProfile::parse_resolution("Show.S01E01.1080p.mkv"),
+            Some("1080p".to_string())
+        );
+        assert_eq!(
+            QualityProfile::parse_resolution("Show.S01E01.720p.mkv"),
+            Some("720p".to_string())
+        );
+        assert_eq!(
+            QualityProfile::parse_resolution("Show.S01E01.2160p.UHD.mkv"),
+            Some("2160p".to_string())
+        );
     }
 }

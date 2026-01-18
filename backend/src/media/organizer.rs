@@ -75,11 +75,12 @@ impl MediaOrganizer {
 
         for pattern in patterns {
             if let Ok(re) = Regex::new(pattern)
-                && let Some(caps) = re.captures(filename) {
-                    let season: i32 = caps.get(1)?.as_str().parse().ok()?;
-                    let episode: i32 = caps.get(2)?.as_str().parse().ok()?;
-                    return Some((season, episode));
-                }
+                && let Some(caps) = re.captures(filename)
+            {
+                let season: i32 = caps.get(1)?.as_str().parse().ok()?;
+                let episode: i32 = caps.get(2)?.as_str().parse().ok()?;
+                return Some((season, episode));
+            }
         }
 
         None
@@ -105,13 +106,25 @@ mod tests {
 
     #[test]
     fn test_parse_episode_sxxexx() {
-        assert_eq!(MediaOrganizer::parse_episode_info("Show.S01E05.mkv"), Some((1, 5)));
-        assert_eq!(MediaOrganizer::parse_episode_info("Show.S12E23.mkv"), Some((12, 23)));
+        assert_eq!(
+            MediaOrganizer::parse_episode_info("Show.S01E05.mkv"),
+            Some((1, 5))
+        );
+        assert_eq!(
+            MediaOrganizer::parse_episode_info("Show.S12E23.mkv"),
+            Some((12, 23))
+        );
     }
 
     #[test]
     fn test_parse_episode_xformat() {
-        assert_eq!(MediaOrganizer::parse_episode_info("Show.1x05.mkv"), Some((1, 5)));
-        assert_eq!(MediaOrganizer::parse_episode_info("Show.12X23.mkv"), Some((12, 23)));
+        assert_eq!(
+            MediaOrganizer::parse_episode_info("Show.1x05.mkv"),
+            Some((1, 5))
+        );
+        assert_eq!(
+            MediaOrganizer::parse_episode_info("Show.12X23.mkv"),
+            Some((12, 23))
+        );
     }
 }

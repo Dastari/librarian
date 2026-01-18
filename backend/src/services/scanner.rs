@@ -2,7 +2,7 @@
 //!
 //! Walks library directories to discover media files, parse filenames,
 //! identify TV shows, and update the database.
-//! 
+//!
 //! After scanning, if the library has `organize_files` enabled, the scanner
 //! will automatically organize files into the proper folder structure
 //! (Show Name/Season XX/) and optionally rename them based on the rename_style.
@@ -17,10 +17,10 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-use crate::db::{CreateEpisode, CreateMediaFile, Database};
 use super::filename_parser::{self, ParsedEpisode};
 use super::metadata::{AddTvShowOptions, MetadataProvider, MetadataService};
 use super::organizer::OrganizerService;
+use crate::db::{CreateEpisode, CreateMediaFile, Database};
 
 /// Video file extensions we recognize
 const VIDEO_EXTENSIONS: &[&str] = &[
@@ -63,7 +63,11 @@ impl ScannerService {
     /// Create a new scanner service
     pub fn new(db: Database, metadata_service: Arc<MetadataService>) -> Self {
         let (progress_tx, _) = broadcast::channel(100);
-        Self { db, metadata_service, progress_tx }
+        Self {
+            db,
+            metadata_service,
+            progress_tx,
+        }
     }
 
     /// Subscribe to scan progress updates - for GraphQL subscriptions
@@ -75,7 +79,9 @@ impl ScannerService {
     /// Scan a specific library
     pub async fn scan_library(&self, library_id: Uuid) -> Result<ScanProgress> {
         // Get library info
-        let library = self.db.libraries()
+        let library = self
+            .db
+            .libraries()
             .get_by_id(library_id)
             .await?
             .context("Library not found")?;
@@ -101,8 +107,8 @@ impl ScannerService {
         self.db.libraries().set_scanning(library_id, true).await?;
 
         info!(
-            library_id = %library_id, 
-            path = %library.path, 
+            library_id = %library_id,
+            path = %library.path,
             library_type = %library.library_type,
             auto_add_discovered = library.auto_add_discovered,
             "Starting library scan"
@@ -129,7 +135,7 @@ impl ScannerService {
 
         // First pass: collect all video files
         let mut video_files: Vec<DiscoveredFile> = Vec::new();
-        
+
         for entry in WalkDir::new(library_path)
             .follow_links(true)
             .into_iter()
@@ -138,26 +144,29 @@ impl ScannerService {
             let path = entry.path();
             if path.is_file()
                 && let Some(ext) = path.extension().and_then(|e| e.to_str())
-                    && VIDEO_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
-                        let path_str = path.to_string_lossy().to_string();
-                        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                        let filename = path.file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let parsed = filename_parser::parse_episode(&filename);
-                        let relative_path = path.strip_prefix(library_path)
-                            .map(|p| p.to_string_lossy().to_string())
-                            .ok();
+                && VIDEO_EXTENSIONS.contains(&ext.to_lowercase().as_str())
+            {
+                let path_str = path.to_string_lossy().to_string();
+                let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                let filename = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                let parsed = filename_parser::parse_episode(&filename);
+                let relative_path = path
+                    .strip_prefix(library_path)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .ok();
 
-                        video_files.push(DiscoveredFile {
-                            path: path_str,
-                            size,
-                            filename,
-                            parsed,
-                            relative_path,
-                        });
-                    }
+                video_files.push(DiscoveredFile {
+                    path: path_str,
+                    size,
+                    filename,
+                    parsed,
+                    relative_path,
+                });
+            }
         }
 
         let total_files = video_files.len() as i32;
@@ -184,20 +193,19 @@ impl ScannerService {
 
         // If auto-add is enabled for a TV library, group files by show name and process
         if is_tv_library && auto_add {
-            progress = self.process_tv_library_with_auto_add(
-                library_id,
-                library.user_id,
-                video_files,
-                progress,
-            ).await?;
+            progress = self
+                .process_tv_library_with_auto_add(
+                    library_id,
+                    library.user_id,
+                    video_files,
+                    progress,
+                )
+                .await?;
         } else {
             // Simple processing - just add files without show matching
-            progress = self.process_files_simple(
-                library_id,
-                &library.path,
-                video_files,
-                progress,
-            ).await?;
+            progress = self
+                .process_files_simple(library_id, &library.path, video_files, progress)
+                .await?;
         }
 
         // Note: File removal is handled in process_* methods
@@ -245,18 +253,22 @@ impl ScannerService {
     ) -> Result<ScanProgress> {
         // Group files by parsed show name
         let mut files_by_show: HashMap<String, Vec<DiscoveredFile>> = HashMap::new();
-        
+
         for file in files {
             if let Some(ref show_name) = file.parsed.show_name {
                 let normalized = show_name.to_lowercase();
                 files_by_show.entry(normalized).or_default().push(file);
             } else {
                 // No show name parsed, add without linking
-                self.add_unlinked_file(library_id, &file, &mut progress).await?;
+                self.add_unlinked_file(library_id, &file, &mut progress)
+                    .await?;
             }
         }
 
-        info!(show_groups = files_by_show.len(), "Grouped files by show name");
+        info!(
+            show_groups = files_by_show.len(),
+            "Grouped files by show name"
+        );
 
         // Process each show group
         for (_normalized_name, show_files) in files_by_show {
@@ -271,12 +283,10 @@ impl ScannerService {
             info!(show_name = %show_name, file_count = show_files.len(), "Processing show group");
 
             // Try to find or create the TV show
-            let tv_show_id = match self.find_or_create_tv_show(
-                library_id,
-                user_id,
-                &show_name,
-                year,
-            ).await {
+            let tv_show_id = match self
+                .find_or_create_tv_show(library_id, user_id, &show_name, year)
+                .await
+            {
                 Ok(Some((id, is_new))) => {
                     if is_new {
                         progress.shows_added += 1;
@@ -287,14 +297,16 @@ impl ScannerService {
                     warn!(show_name = %show_name, "Could not find show in metadata providers");
                     // Add files without linking
                     for file in show_files {
-                        self.add_unlinked_file(library_id, &file, &mut progress).await?;
+                        self.add_unlinked_file(library_id, &file, &mut progress)
+                            .await?;
                     }
                     continue;
                 }
                 Err(e) => {
                     error!(show_name = %show_name, error = %e, "Error finding/creating show");
                     for file in show_files {
-                        self.add_unlinked_file(library_id, &file, &mut progress).await?;
+                        self.add_unlinked_file(library_id, &file, &mut progress)
+                            .await?;
                     }
                     continue;
                 }
@@ -314,22 +326,31 @@ impl ScannerService {
                 if let Some(existing_file) = media_files_repo.get_by_path(&file.path).await? {
                     // File exists - check if it needs to be linked to an episode
                     if existing_file.episode_id.is_none() {
-                        if let (Some(season), Some(episode)) = (file.parsed.season, file.parsed.episode)
-                            && let Ok(Some(ep_id)) = self.find_or_create_episode(tv_show_id, season as i32, episode as i32).await {
-                                // Link the existing file to the episode
-                                if let Err(e) = media_files_repo.link_to_episode(existing_file.id, ep_id).await {
-                                    warn!(error = %e, "Failed to link existing file to episode");
-                                } else {
-                                    info!(path = %file.path, season = season, episode = episode, "Linked existing file to episode");
-                                    progress.episodes_linked += 1;
-                                    
-                                    // Mark episode as downloaded
-                                    let episodes_repo = self.db.episodes();
-                                    if let Err(e) = episodes_repo.mark_downloaded(ep_id, existing_file.id).await {
-                                        warn!(error = %e, "Failed to mark episode as downloaded");
-                                    }
+                        if let (Some(season), Some(episode)) =
+                            (file.parsed.season, file.parsed.episode)
+                            && let Ok(Some(ep_id)) = self
+                                .find_or_create_episode(tv_show_id, season as i32, episode as i32)
+                                .await
+                        {
+                            // Link the existing file to the episode
+                            if let Err(e) = media_files_repo
+                                .link_to_episode(existing_file.id, ep_id)
+                                .await
+                            {
+                                warn!(error = %e, "Failed to link existing file to episode");
+                            } else {
+                                info!(path = %file.path, season = season, episode = episode, "Linked existing file to episode");
+                                progress.episodes_linked += 1;
+
+                                // Mark episode as downloaded
+                                let episodes_repo = self.db.episodes();
+                                if let Err(e) =
+                                    episodes_repo.mark_downloaded(ep_id, existing_file.id).await
+                                {
+                                    warn!(error = %e, "Failed to mark episode as downloaded");
                                 }
                             }
+                        }
                     } else {
                         debug!(path = %file.path, "File already linked to episode, skipping");
                     }
@@ -337,8 +358,13 @@ impl ScannerService {
                 }
 
                 // Try to link to an episode
-                let episode_id = if let (Some(season), Some(episode)) = (file.parsed.season, file.parsed.episode) {
-                    match self.find_or_create_episode(tv_show_id, season as i32, episode as i32).await {
+                let episode_id = if let (Some(season), Some(episode)) =
+                    (file.parsed.season, file.parsed.episode)
+                {
+                    match self
+                        .find_or_create_episode(tv_show_id, season as i32, episode as i32)
+                        .await
+                    {
                         Ok(Some(ep_id)) => {
                             progress.episodes_linked += 1;
                             Some(ep_id)
@@ -354,7 +380,8 @@ impl ScannerService {
                 };
 
                 // Create media file record
-                self.create_media_file(library_id, &file, episode_id, &mut progress).await?;
+                self.create_media_file(library_id, &file, episode_id, &mut progress)
+                    .await?;
             }
 
             // Update show stats after processing all files
@@ -390,7 +417,8 @@ impl ScannerService {
                 continue;
             }
 
-            self.create_media_file(library_id, &file, None, &mut progress).await?;
+            self.create_media_file(library_id, &file, None, &mut progress)
+                .await?;
         }
 
         Ok(progress)
@@ -412,7 +440,8 @@ impl ScannerService {
             return Ok(());
         }
 
-        self.create_media_file(library_id, file, None, progress).await
+        self.create_media_file(library_id, file, None, progress)
+            .await
     }
 
     /// Create a media file record
@@ -469,7 +498,7 @@ impl ScannerService {
     }
 
     /// Find or create a TV show, returns (show_id, is_new)
-    /// 
+    ///
     /// This method searches for a show by name, checks if it already exists
     /// in the library, and if not, creates it using the unified
     /// `add_tv_show_from_provider` method from the metadata service.
@@ -490,7 +519,7 @@ impl ScannerService {
 
         // Search for the show using metadata service
         let mut search_results = self.metadata_service.search_shows(&query).await?;
-        
+
         if search_results.is_empty() {
             // Try without year
             search_results = self.metadata_service.search_shows(show_name).await?;
@@ -501,22 +530,23 @@ impl ScannerService {
 
         // Get the best match
         let best_match = &search_results[0];
-        
+
         // Check if we already have this show in the library
         if best_match.provider == MetadataProvider::TvMaze
             && let Some(existing) = tv_shows_repo
                 .get_by_tvmaze_id(library_id, best_match.provider_id as i32)
                 .await?
-            {
-                info!(show_name = %existing.name, "Show already exists in library");
-                return Ok(Some((existing.id, false)));
-            }
+        {
+            info!(show_name = %existing.name, "Show already exists in library");
+            return Ok(Some((existing.id, false)));
+        }
 
         // Use the unified add_tv_show_from_provider method which handles:
         // - Creating the TV show record with normalized status
         // - Fetching and creating all episodes
         // - Updating show statistics
-        let tv_show = self.metadata_service
+        let tv_show = self
+            .metadata_service
             .add_tv_show_from_provider(AddTvShowOptions {
                 provider: best_match.provider,
                 provider_id: best_match.provider_id,
@@ -558,20 +588,22 @@ impl ScannerService {
             "Episode not found, creating placeholder"
         );
 
-        let ep = episodes_repo.create(CreateEpisode {
-            tv_show_id,
-            season,
-            episode,
-            absolute_number: None,
-            title: None,
-            overview: None,
-            air_date: None,
-            runtime: None,
-            tvmaze_id: None,
-            tmdb_id: None,
-            tvdb_id: None,
-            status: Some("downloaded".to_string()), // We have the file
-        }).await?;
+        let ep = episodes_repo
+            .create(CreateEpisode {
+                tv_show_id,
+                season,
+                episode,
+                absolute_number: None,
+                title: None,
+                overview: None,
+                air_date: None,
+                runtime: None,
+                tvmaze_id: None,
+                tmdb_id: None,
+                tvdb_id: None,
+                status: Some("downloaded".to_string()), // We have the file
+            })
+            .await?;
 
         Ok(Some(ep.id))
     }
@@ -596,14 +628,16 @@ impl ScannerService {
     /// Scan all libraries (for scheduled job)
     pub async fn scan_all_libraries(&self) -> Result<()> {
         let pool = self.db.pool();
-        
-        let library_ids: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM libraries WHERE auto_scan = true"
-        )
-        .fetch_all(pool)
-        .await?;
 
-        info!(count = library_ids.len(), "Scanning libraries with auto_scan enabled");
+        let library_ids: Vec<Uuid> =
+            sqlx::query_scalar("SELECT id FROM libraries WHERE auto_scan = true")
+                .fetch_all(pool)
+                .await?;
+
+        info!(
+            count = library_ids.len(),
+            "Scanning libraries with auto_scan enabled"
+        );
 
         for library_id in library_ids {
             if let Err(e) = self.scan_library(library_id).await {
@@ -615,7 +649,7 @@ impl ScannerService {
     }
 
     /// Organize library files into proper folder structure
-    /// 
+    ///
     /// This method:
     /// 1. Gets all unorganized files linked to episodes
     /// 2. For each file, checks if the show has organize_files enabled (respecting overrides)
@@ -624,23 +658,24 @@ impl ScannerService {
     /// 5. Optionally renames the file based on rename_style setting
     async fn organize_library_files(&self, library_id: Uuid) -> Result<()> {
         let organizer = OrganizerService::new(self.db.clone());
-        
+
         // Get all shows in this library that have episodes with unorganized files
         let shows = self.db.tv_shows().list_by_library(library_id).await?;
-        
+
         for show in shows {
             // Check if this show should be organized (respecting overrides)
-            let (organize_enabled, _rename_style) = organizer.get_show_organize_settings(&show).await?;
-            
+            let (organize_enabled, _rename_style) =
+                organizer.get_show_organize_settings(&show).await?;
+
             if !organize_enabled {
                 debug!(
-                    show_id = %show.id, 
-                    show_name = %show.name, 
+                    show_id = %show.id,
+                    show_name = %show.name,
                     "Show has organize_files disabled (via override), skipping"
                 );
                 continue;
             }
-            
+
             // Create folder structure for this show
             if let Err(e) = organizer.create_show_folders(show.id).await {
                 warn!(
@@ -651,13 +686,13 @@ impl ScannerService {
                 continue;
             }
         }
-        
+
         // Now organize all unorganized files
         let results = organizer.organize_library(library_id).await?;
-        
+
         let success_count = results.iter().filter(|r| r.success).count();
         let error_count = results.iter().filter(|r| !r.success).count();
-        
+
         if !results.is_empty() {
             info!(
                 library_id = %library_id,
@@ -667,12 +702,15 @@ impl ScannerService {
                 "Library organization complete"
             );
         }
-        
+
         Ok(())
     }
 }
 
 /// Create a shared scanner service
-pub fn create_scanner_service(db: Database, metadata_service: Arc<MetadataService>) -> Arc<ScannerService> {
+pub fn create_scanner_service(
+    db: Database,
+    metadata_service: Arc<MetadataService>,
+) -> Arc<ScannerService> {
     Arc::new(ScannerService::new(db, metadata_service))
 }

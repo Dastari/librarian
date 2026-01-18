@@ -1,6 +1,5 @@
 import { useMemo, useState, useCallback } from 'react'
 import { Button, ButtonGroup } from '@heroui/button'
-import { Card, CardBody } from '@heroui/card'
 import { Chip } from '@heroui/chip'
 import { Image } from '@heroui/image'
 import { Link } from '@tanstack/react-router'
@@ -12,7 +11,7 @@ import {
 } from '../data-table'
 import type { TvShow } from '../../lib/graphql'
 import { formatBytes } from '../../lib/format'
-import { PlusIcon, DeleteIcon, ViewIcon } from '../icons'
+import { IconPlus, IconTrash, IconEye, IconDeviceTv } from '@tabler/icons-react'
 import { TvShowCard } from './TvShowCard'
 
 // ============================================================================
@@ -84,7 +83,7 @@ export function LibraryShowsTab({ shows, onDeleteShow, onAddShow }: LibraryShows
               />
             ) : (
               <div className="w-10 h-14 bg-default-200 rounded flex items-center justify-center">
-                <span className="text-lg">📺</span>
+                <IconDeviceTv size={20} className="text-blue-400" />
               </div>
             )}
             <div>
@@ -171,7 +170,7 @@ export function LibraryShowsTab({ shows, onDeleteShow, onAddShow }: LibraryShows
       {
         key: 'view',
         label: 'View',
-        icon: <ViewIcon />,
+        icon: <IconEye size={16} />,
         inDropdown: true,
         onAction: () => {
           // Navigation is handled by the Link component in the column
@@ -180,7 +179,7 @@ export function LibraryShowsTab({ shows, onDeleteShow, onAddShow }: LibraryShows
       {
         key: 'delete',
         label: 'Delete',
-        icon: <DeleteIcon />,
+        icon: <IconTrash size={16} className="text-red-400" />,
         isDestructive: true,
         inDropdown: true,
         onAction: (show) => onDeleteShow(show.id, show.name),
@@ -278,7 +277,7 @@ export function LibraryShowsTab({ shows, onDeleteShow, onAddShow }: LibraryShows
           fillHeight
           toolbarContent={
             <Button color="primary" size="sm" onPress={onAddShow} isIconOnly>
-              <PlusIcon />
+              <IconPlus size={16} />
             </Button>
           }
           toolbarContentPosition="end"

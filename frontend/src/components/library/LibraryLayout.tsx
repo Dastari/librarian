@@ -2,13 +2,16 @@ import type { ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { Card, CardBody } from '@heroui/card'
 import { Button } from '@heroui/button'
+import type { TablerIcon } from '@tabler/icons-react'
+import { IconDeviceTv, IconFileSearch, IconFolder, IconSettings } from '@tabler/icons-react'
 
 export type LibraryTab = 'shows' | 'unmatched' | 'browser' | 'settings'
 
 interface LibraryTabConfig {
   key: LibraryTab
   label: string
-  icon: string
+  Icon: TablerIcon
+  iconColor: string
   description: string
   position?: 'top' | 'bottom'
   path: string // relative path for the tab
@@ -18,7 +21,8 @@ const libraryTabs: LibraryTabConfig[] = [
   {
     key: 'shows',
     label: 'Shows',
-    icon: '📺',
+    Icon: IconDeviceTv,
+    iconColor: 'text-blue-400',
     description: 'TV shows in library',
     position: 'top',
     path: 'shows',
@@ -26,7 +30,8 @@ const libraryTabs: LibraryTabConfig[] = [
   {
     key: 'unmatched',
     label: 'Unmatched Files',
-    icon: '❓',
+    Icon: IconFileSearch,
+    iconColor: 'text-amber-400',
     description: 'Files without matches',
     position: 'top',
     path: 'unmatched',
@@ -34,7 +39,8 @@ const libraryTabs: LibraryTabConfig[] = [
   {
     key: 'browser',
     label: 'File Browser',
-    icon: '📁',
+    Icon: IconFolder,
+    iconColor: 'text-amber-400',
     description: 'Browse library files',
     position: 'top',
     path: 'browser',
@@ -42,7 +48,8 @@ const libraryTabs: LibraryTabConfig[] = [
   {
     key: 'settings',
     label: 'Settings',
-    icon: '⚙️',
+    Icon: IconSettings,
+    iconColor: 'text-default-400',
     description: 'Library configuration',
     position: 'bottom',
     path: 'settings',
@@ -73,7 +80,7 @@ export function LibraryLayout({ activeTab, libraryId, children }: LibraryLayoutP
           ${isActive ? 'shadow-md' : ''}
         `}
       >
-        <span className="text-xl">{tab.icon}</span>
+        <tab.Icon className={`w-5 h-5 ${isActive ? '' : tab.iconColor}`} />
         <div className="flex flex-col min-w-0 items-start">
           <span className="font-medium text-sm">{tab.label}</span>
           <span

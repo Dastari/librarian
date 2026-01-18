@@ -11,8 +11,8 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::artwork::{ArtworkService, ArtworkType};
-use super::cache::{create_cache, SharedCache};
-use super::filename_parser::{parse_episode, ParsedEpisode};
+use super::cache::{SharedCache, create_cache};
+use super::filename_parser::{ParsedEpisode, parse_episode};
 use super::tvmaze::{TvMazeClient, TvMazeEpisode, TvMazeScheduleEntry, TvMazeShow};
 use crate::db::{CreateEpisode, CreateTvShow, Database, TvShowRecord};
 
@@ -194,14 +194,22 @@ impl MetadataService {
         // TODO: Add TheTVDB search if configured
 
         // Sort by score
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         debug!(count = results.len(), "Found shows");
         Ok(results)
     }
 
     /// Get show details from a provider
-    pub async fn get_show(&self, provider: MetadataProvider, provider_id: u32) -> Result<ShowDetails> {
+    pub async fn get_show(
+        &self,
+        provider: MetadataProvider,
+        provider_id: u32,
+    ) -> Result<ShowDetails> {
         info!(provider = ?provider, id = provider_id, "Fetching show details");
 
         match provider {
@@ -221,13 +229,20 @@ impl MetadataService {
     }
 
     /// Get episodes for a show from a provider
-    pub async fn get_episodes(&self, provider: MetadataProvider, provider_id: u32) -> Result<Vec<EpisodeDetails>> {
+    pub async fn get_episodes(
+        &self,
+        provider: MetadataProvider,
+        provider_id: u32,
+    ) -> Result<Vec<EpisodeDetails>> {
         info!(provider = ?provider, id = provider_id, "Fetching episodes");
 
         match provider {
             MetadataProvider::TvMaze => {
                 let episodes = self.tvmaze.get_episodes(provider_id).await?;
-                Ok(episodes.iter().map(|e| self.tvmaze_episode_to_details(e)).collect())
+                Ok(episodes
+                    .iter()
+                    .map(|e| self.tvmaze_episode_to_details(e))
+                    .collect())
             }
             MetadataProvider::Tmdb => {
                 anyhow::bail!("TMDB not yet implemented")
@@ -262,7 +277,7 @@ impl MetadataService {
     }
 
     /// Get upcoming TV schedule from TVMaze (cached)
-    /// 
+    ///
     /// Fetches episodes airing in the next N days from TVMaze.
     /// Results are cached for 30 minutes to reduce API calls.
     /// Optionally filter by country code (e.g., "US", "GB").
@@ -273,29 +288,29 @@ impl MetadataService {
     ) -> Result<Vec<TvMazeScheduleEntry>> {
         // Create a cache key based on parameters
         let cache_key = format!("schedule:{}:{}", days, country.unwrap_or("all"));
-        
+
         // Check cache first
         if let Some(cached) = self.schedule_cache.get(&cache_key) {
             debug!(cache_key = %cache_key, "Returning cached TVMaze schedule");
             return Ok(cached);
         }
-        
+
         // Fetch from TVMaze
         info!(days = days, country = ?country, "Fetching fresh TVMaze schedule");
         let schedule = self.tvmaze.get_upcoming_schedule(days, country).await?;
-        
+
         // Cache the result
         self.schedule_cache.set(cache_key, schedule.clone());
-        
+
         Ok(schedule)
     }
 
     /// Add a TV show from a metadata provider to a library.
-    /// 
+    ///
     /// This is the single code path for creating TV shows, used by both:
     /// - The addTvShow GraphQL mutation (manual add)
     /// - The scanner service (automatic discovery)
-    /// 
+    ///
     /// It handles:
     /// 1. Fetching show details from the provider
     /// 2. Caching artwork to Supabase storage
@@ -317,38 +332,42 @@ impl MetadataService {
         let show_details = self.get_show(options.provider, options.provider_id).await?;
 
         // Cache artwork to Supabase storage if artwork service is available
-        let (cached_poster_url, cached_backdrop_url) = if let Some(ref artwork_service) = self.artwork_service {
-            let entity_id = format!("{}_{}", options.provider_id, options.library_id);
-            
-            let poster_url = artwork_service
-                .cache_image_optional(
-                    show_details.poster_url.as_deref(),
-                    ArtworkType::Poster,
-                    "show",
-                    &entity_id,
-                )
-                .await;
-            
-            let backdrop_url = artwork_service
-                .cache_image_optional(
-                    show_details.backdrop_url.as_deref(),
-                    ArtworkType::Backdrop,
-                    "show",
-                    &entity_id,
-                )
-                .await;
+        let (cached_poster_url, cached_backdrop_url) =
+            if let Some(ref artwork_service) = self.artwork_service {
+                let entity_id = format!("{}_{}", options.provider_id, options.library_id);
 
-            info!(
-                poster_cached = poster_url.is_some(),
-                backdrop_cached = backdrop_url.is_some(),
-                "Artwork caching completed"
-            );
+                let poster_url = artwork_service
+                    .cache_image_optional(
+                        show_details.poster_url.as_deref(),
+                        ArtworkType::Poster,
+                        "show",
+                        &entity_id,
+                    )
+                    .await;
 
-            (poster_url, backdrop_url)
-        } else {
-            // No artwork service, use original URLs
-            (show_details.poster_url.clone(), show_details.backdrop_url.clone())
-        };
+                let backdrop_url = artwork_service
+                    .cache_image_optional(
+                        show_details.backdrop_url.as_deref(),
+                        ArtworkType::Backdrop,
+                        "show",
+                        &entity_id,
+                    )
+                    .await;
+
+                info!(
+                    poster_cached = poster_url.is_some(),
+                    backdrop_cached = backdrop_url.is_some(),
+                    "Artwork caching completed"
+                );
+
+                (poster_url, backdrop_url)
+            } else {
+                // No artwork service, use original URLs
+                (
+                    show_details.poster_url.clone(),
+                    show_details.backdrop_url.clone(),
+                )
+            };
 
         // Create the TV show in the database
         let tv_shows_repo = self.db.tv_shows();
@@ -378,11 +397,20 @@ impl MetadataService {
                 monitor_type: options.monitor_type.clone(),
                 quality_profile_id: options.quality_profile_id,
                 path: options.path.clone(),
-                auto_download_override: None,      // Inherit from library
-                backfill_existing: true,           // Default to true for new shows
-                organize_files_override: None,     // Inherit from library
-                rename_style_override: None,       // Inherit from library
-                auto_hunt_override: None,          // Inherit from library
+                auto_download_override: None,  // Inherit from library
+                backfill_existing: true,       // Default to true for new shows
+                organize_files_override: None, // Inherit from library
+                rename_style_override: None,   // Inherit from library
+                auto_hunt_override: None,      // Inherit from library
+                // Quality override settings - inherit from library by default
+                allowed_resolutions_override: None,
+                allowed_video_codecs_override: None,
+                allowed_audio_formats_override: None,
+                require_hdr_override: None,
+                allowed_hdr_types_override: None,
+                allowed_sources_override: None,
+                release_group_blacklist_override: None,
+                release_group_whitelist_override: None,
             })
             .await?;
 
@@ -394,7 +422,10 @@ impl MetadataService {
         );
 
         // Fetch and create episodes
-        match self.get_episodes(options.provider, options.provider_id).await {
+        match self
+            .get_episodes(options.provider, options.provider_id)
+            .await
+        {
             Ok(episodes) => {
                 let episodes_repo = self.db.episodes();
                 let mut created_count = 0;
@@ -480,7 +511,7 @@ impl MetadataService {
     }
 
     /// Backfill episode availability from cached RSS feed items
-    /// 
+    ///
     /// When a show is added to the library, check if we have any cached RSS items
     /// that match this show's episodes and mark them as "available".
     async fn backfill_episodes_from_rss_cache(
@@ -490,7 +521,8 @@ impl MetadataService {
         use crate::db::episodes::EpisodeRecord;
 
         // Normalize the show name for matching
-        let normalized_name = tv_show.name
+        let normalized_name = tv_show
+            .name
             .to_lowercase()
             .replace(['.', '-', '_'], " ")
             .split_whitespace()
@@ -540,7 +572,7 @@ impl MetadataService {
 
         // Get all seasons for this show to handle year-based season mapping
         let seasons: Vec<(i32,)> = sqlx::query_as(
-            "SELECT DISTINCT season FROM episodes WHERE tv_show_id = $1 ORDER BY season"
+            "SELECT DISTINCT season FROM episodes WHERE tv_show_id = $1 ORDER BY season",
         )
         .bind(tv_show.id)
         .fetch_all(self.db.pool())
@@ -566,7 +598,7 @@ impl MetadataService {
                 // Strategy: Map scene season to year-based season
                 if scene_season > 0 && scene_season <= season_numbers.len() as i32 {
                     let target_year_season = season_numbers[(scene_season - 1) as usize];
-                    
+
                     // Get episodes for that season and pick the nth one
                     let eps: Vec<EpisodeRecord> = sqlx::query_as(
                         r#"
@@ -586,7 +618,8 @@ impl MetadataService {
                 }
             } else {
                 // Standard matching: exact season/episode
-                self.db.episodes()
+                self.db
+                    .episodes()
                     .get_by_show_season_episode(tv_show.id, scene_season, scene_episode)
                     .await?
             };
@@ -594,7 +627,9 @@ impl MetadataService {
             if let Some(ep) = matched_episode {
                 // Only update if episode is wanted/missing
                 if ep.status == "missing" || ep.status == "wanted" {
-                    if let Err(e) = self.db.episodes()
+                    if let Err(e) = self
+                        .db
+                        .episodes()
                         .mark_available(ep.id, &torrent_link, Some(rss_item_id))
                         .await
                     {
@@ -657,7 +692,10 @@ impl MetadataService {
 
 /// Create a sharable metadata service - use create_metadata_service_with_artwork instead
 #[allow(dead_code)]
-pub fn create_metadata_service(db: Database, config: MetadataServiceConfig) -> Arc<MetadataService> {
+pub fn create_metadata_service(
+    db: Database,
+    config: MetadataServiceConfig,
+) -> Arc<MetadataService> {
     Arc::new(MetadataService::new(db, config))
 }
 
@@ -667,13 +705,17 @@ pub fn create_metadata_service_with_artwork(
     config: MetadataServiceConfig,
     artwork_service: Arc<ArtworkService>,
 ) -> Arc<MetadataService> {
-    Arc::new(MetadataService::new_with_artwork(db, config, artwork_service))
+    Arc::new(MetadataService::new_with_artwork(
+        db,
+        config,
+        artwork_service,
+    ))
 }
 
 /// Normalize show status from metadata providers to database-compatible values.
-/// 
+///
 /// Database constraint allows: 'continuing', 'ended', 'upcoming', 'cancelled', 'unknown'
-/// 
+///
 /// This function maps various provider-specific status strings to these values:
 /// - "Running" (TVMaze) → "continuing"
 /// - "Ended" → "ended"  
@@ -688,6 +730,7 @@ pub fn normalize_show_status(status: Option<&str>) -> Option<String> {
             "cancelled" | "canceled" => "cancelled",
             "to be determined" | "tbd" | "in development" | "upcoming" => "upcoming",
             _ => "unknown",
-        }.to_string()
+        }
+        .to_string()
     })
 }

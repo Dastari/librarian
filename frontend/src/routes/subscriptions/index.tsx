@@ -17,6 +17,7 @@ import { useDataReactivity } from '../../hooks/useSubscription'
 import { DataTable } from '../../components/data-table'
 import type { DataTableColumn, CardRendererProps, FilterOption } from '../../components/data-table/types'
 import { RouteError } from '../../components/RouteError'
+import { IconDeviceTv } from '@tabler/icons-react'
 
 export const Route = createFileRoute('/subscriptions/')({
   beforeLoad: ({ context, location }) => {
@@ -162,7 +163,7 @@ function SubscriptionsPage() {
                   />
                 ) : (
                   <div className="w-12 h-18 rounded-md bg-default-200 flex items-center justify-center">
-                    <span className="text-2xl">📺</span>
+                    <IconDeviceTv size={24} className="text-blue-400" />
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
@@ -226,7 +227,7 @@ function SubscriptionsPage() {
     () => (
       <Card className="bg-content1">
         <CardBody className="text-center py-12">
-          <span className="text-5xl mb-4 block">📺</span>
+          <IconDeviceTv size={48} className="mx-auto mb-4 text-blue-400" />
           <p className="text-lg text-default-600 mb-2">No TV shows yet</p>
           <p className="text-sm text-default-400 mb-4">
             Add shows to your TV libraries to start monitoring for new episodes.

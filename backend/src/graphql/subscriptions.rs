@@ -8,15 +8,18 @@ use std::sync::Arc;
 use async_graphql::{Context, Subscription};
 use futures::Stream;
 use tokio::sync::broadcast;
-use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 
-use crate::services::{LogEvent, TorrentEvent, TorrentService};
+use crate::services::{
+    CastDevicesEvent, CastService, CastSessionEvent, DirectoryChangeEvent as ServiceDirectoryChangeEvent,
+    FilesystemService, LogEvent, TorrentEvent, TorrentService,
+};
 
 use super::auth::AuthGuard;
 use super::types::{
-    LogEventSubscription, LogLevel, TorrentAddedEvent, TorrentCompletedEvent, TorrentProgress,
-    TorrentRemovedEvent, TorrentState,
+    CastDevice, CastPlayerState, CastSession, DirectoryChangeEvent, LogEventSubscription, LogLevel,
+    TorrentAddedEvent, TorrentCompletedEvent, TorrentProgress, TorrentRemovedEvent, TorrentState,
 };
 
 pub struct SubscriptionRoot;
@@ -74,7 +77,11 @@ impl SubscriptionRoot {
 
         BroadcastStream::new(receiver).filter_map(|result| {
             result.ok().and_then(|event| match event {
-                TorrentEvent::Added { id, name, info_hash } => Some(TorrentAddedEvent {
+                TorrentEvent::Added {
+                    id,
+                    name,
+                    info_hash,
+                } => Some(TorrentAddedEvent {
                     id: id as i32,
                     name,
                     info_hash,
@@ -95,7 +102,11 @@ impl SubscriptionRoot {
 
         BroadcastStream::new(receiver).filter_map(|result| {
             result.ok().and_then(|event| match event {
-                TorrentEvent::Completed { id, info_hash, name } => Some(TorrentCompletedEvent {
+                TorrentEvent::Completed {
+                    id,
+                    info_hash,
+                    name,
+                } => Some(TorrentCompletedEvent {
                     id: id as i32,
                     name,
                     info_hash,
@@ -171,9 +182,13 @@ impl SubscriptionRoot {
     async fn log_events<'ctx>(
         &self,
         ctx: &Context<'ctx>,
-        #[graphql(desc = "Only receive logs of these levels (defaults to all)")] levels: Option<Vec<LogLevel>>,
+        #[graphql(desc = "Only receive logs of these levels (defaults to all)")] levels: Option<
+            Vec<LogLevel>,
+        >,
     ) -> impl Stream<Item = LogEventSubscription> + 'ctx {
-        let receiver = ctx.data_unchecked::<broadcast::Sender<LogEvent>>().subscribe();
+        let receiver = ctx
+            .data_unchecked::<broadcast::Sender<LogEvent>>()
+            .subscribe();
 
         let level_filter: Option<Vec<String>> = levels.map(|ls| {
             ls.into_iter()
@@ -191,9 +206,10 @@ impl SubscriptionRoot {
             result.ok().and_then(|event| {
                 // Filter by level if specified
                 if let Some(ref levels) = level_filter
-                    && !levels.contains(&event.level) {
-                        return None;
-                    }
+                    && !levels.contains(&event.level)
+                {
+                    return None;
+                }
 
                 Some(LogEventSubscription {
                     timestamp: event.timestamp,
@@ -213,7 +229,9 @@ impl SubscriptionRoot {
         &self,
         ctx: &Context<'ctx>,
     ) -> impl Stream<Item = LogEventSubscription> + 'ctx {
-        let receiver = ctx.data_unchecked::<broadcast::Sender<LogEvent>>().subscribe();
+        let receiver = ctx
+            .data_unchecked::<broadcast::Sender<LogEvent>>()
+            .subscribe();
 
         BroadcastStream::new(receiver).filter_map(|result| {
             result.ok().and_then(|event| {
@@ -229,6 +247,115 @@ impl SubscriptionRoot {
                     message: event.message,
                     fields: event.fields,
                     span_name: event.span_name,
+                })
+            })
+        })
+    }
+
+    // ------------------------------------------------------------------------
+    // Cast Subscriptions
+    // ------------------------------------------------------------------------
+
+    /// Subscribe to cast session updates (playback state, position, volume)
+    #[graphql(guard = "AuthGuard")]
+    async fn cast_session_updated<'ctx>(
+        &self,
+        ctx: &Context<'ctx>,
+        #[graphql(desc = "Filter to a specific session ID")] session_id: Option<String>,
+    ) -> impl Stream<Item = CastSession> + 'ctx {
+        let cast_service = ctx.data_unchecked::<Arc<CastService>>();
+        let receiver = cast_service.subscribe_sessions();
+
+        let filter_id = session_id.and_then(|id| uuid::Uuid::parse_str(&id).ok());
+
+        BroadcastStream::new(receiver).filter_map(move |result| {
+            result.ok().and_then(|event: CastSessionEvent| {
+                // Filter by session_id if provided
+                if let Some(filter) = filter_id {
+                    if event.session_id != filter {
+                        return None;
+                    }
+                }
+
+                Some(CastSession {
+                    id: event.session_id.to_string(),
+                    device_id: Some(event.device_id.to_string()),
+                    device_name: None, // Would need async lookup
+                    media_file_id: None,
+                    episode_id: None,
+                    stream_url: String::new(),
+                    player_state: match event.player_state {
+                        crate::services::CastPlayerState::Idle => CastPlayerState::Idle,
+                        crate::services::CastPlayerState::Buffering => CastPlayerState::Buffering,
+                        crate::services::CastPlayerState::Playing => CastPlayerState::Playing,
+                        crate::services::CastPlayerState::Paused => CastPlayerState::Paused,
+                    },
+                    current_position: event.current_position,
+                    duration: event.duration,
+                    volume: event.volume,
+                    is_muted: event.is_muted,
+                    started_at: String::new(),
+                })
+            })
+        })
+    }
+
+    /// Subscribe to cast device availability changes
+    #[graphql(guard = "AuthGuard")]
+    async fn cast_devices_changed<'ctx>(
+        &self,
+        ctx: &Context<'ctx>,
+    ) -> impl Stream<Item = Vec<CastDevice>> + 'ctx {
+        let cast_service = ctx.data_unchecked::<Arc<CastService>>();
+        let receiver = cast_service.subscribe_devices();
+
+        BroadcastStream::new(receiver).filter_map(|result| {
+            result.ok().map(|event: CastDevicesEvent| {
+                event
+                    .devices
+                    .into_iter()
+                    .map(|d| CastDevice::from_record(d, false))
+                    .collect()
+            })
+        })
+    }
+
+    // ------------------------------------------------------------------------
+    // Filesystem Subscriptions
+    // ------------------------------------------------------------------------
+
+    /// Subscribe to directory content changes
+    ///
+    /// Receives events when files/directories are created, modified, deleted, or renamed.
+    /// Optionally filter to changes in a specific directory path.
+    #[graphql(guard = "AuthGuard")]
+    async fn directory_contents_changed<'ctx>(
+        &self,
+        ctx: &Context<'ctx>,
+        #[graphql(desc = "Filter to changes in this directory path (optional)")] path: Option<
+            String,
+        >,
+    ) -> impl Stream<Item = DirectoryChangeEvent> + 'ctx {
+        let fs_service = ctx.data_unchecked::<Arc<FilesystemService>>();
+        let receiver = fs_service.subscribe();
+
+        let filter_path = path;
+
+        BroadcastStream::new(receiver).filter_map(move |result| {
+            result.ok().and_then(|event: ServiceDirectoryChangeEvent| {
+                // Filter by path if specified
+                if let Some(ref filter) = filter_path {
+                    if !event.path.starts_with(filter) {
+                        return None;
+                    }
+                }
+
+                Some(DirectoryChangeEvent {
+                    path: event.path,
+                    change_type: event.change_type,
+                    name: event.name,
+                    new_name: event.new_name,
+                    timestamp: event.timestamp.to_rfc3339(),
                 })
             })
         })

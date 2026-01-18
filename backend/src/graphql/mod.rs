@@ -10,5 +10,5 @@ mod schema;
 mod subscriptions;
 mod types;
 
-pub use auth::{verify_token, AuthGuard, AuthUser, RoleGuard};
-pub use schema::{build_schema, LibrarianSchema};
+pub use auth::{AuthUser, verify_token};
+pub use schema::{LibrarianSchema, build_schema};

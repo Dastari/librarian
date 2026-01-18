@@ -23,6 +23,8 @@ import {
   type RssFeedTestResult,
 } from '../../lib/graphql'
 import { usePeriodicRefresh, useFocusRefresh } from '../../hooks/useSubscription'
+import { IconRefresh, IconPlayerPause, IconPlayerPlay, IconPencil, IconTrash, IconTestPipe, IconBulb } from '@tabler/icons-react'
+import { sanitizeError } from '../../lib/format'
 import {
   AddRssFeedModal,
   EditRssFeedModal,
@@ -72,7 +74,7 @@ function RssSettingsPage() {
       if (result.error && !isBackgroundRefresh) {
         addToast({
           title: 'Error',
-          description: result.error.message,
+          description: sanitizeError(result.error),
           color: 'danger',
         })
       }
@@ -80,7 +82,7 @@ function RssSettingsPage() {
       if (!isBackgroundRefresh) {
         addToast({
           title: 'Error',
-          description: (e as Error).message,
+          description: sanitizeError(e),
           color: 'danger',
         })
       }
@@ -140,14 +142,14 @@ function RssSettingsPage() {
       } else {
         addToast({
           title: 'Error',
-          description: result.data?.createRssFeed.error || 'Failed to add feed',
+          description: sanitizeError(result.data?.createRssFeed.error || 'Failed to add feed'),
           color: 'danger',
         })
       }
     } catch (e) {
       addToast({
         title: 'Error',
-        description: (e as Error).message,
+        description: sanitizeError(e),
         color: 'danger',
       })
     } finally {
@@ -184,14 +186,14 @@ function RssSettingsPage() {
       } else {
         addToast({
           title: 'Error',
-          description: result.data?.updateRssFeed.error || 'Failed to update feed',
+          description: sanitizeError(result.data?.updateRssFeed.error || 'Failed to update feed'),
           color: 'danger',
         })
       }
     } catch (e) {
       addToast({
         title: 'Error',
-        description: (e as Error).message,
+        description: sanitizeError(e),
         color: 'danger',
       })
     } finally {
@@ -222,14 +224,14 @@ function RssSettingsPage() {
       } else {
         addToast({
           title: 'Error',
-          description: result.data?.deleteRssFeed.error || 'Failed to delete feed',
+          description: sanitizeError(result.data?.deleteRssFeed.error || 'Failed to delete feed'),
           color: 'danger',
         })
       }
     } catch (e) {
       addToast({
         title: 'Error',
-        description: (e as Error).message,
+        description: sanitizeError(e),
         color: 'danger',
       })
     }
@@ -268,14 +270,14 @@ function RssSettingsPage() {
       } else {
         addToast({
           title: 'Error',
-          description: result.data?.pollRssFeed.error || 'Failed to poll feed',
+          description: sanitizeError(result.data?.pollRssFeed.error || 'Failed to poll feed'),
           color: 'danger',
         })
       }
     } catch (e) {
       addToast({
         title: 'Error',
-        description: (e as Error).message,
+        description: sanitizeError(e),
         color: 'danger',
       })
     } finally {
@@ -307,14 +309,14 @@ function RssSettingsPage() {
       } else {
         addToast({
           title: 'Error',
-          description: result.data?.updateRssFeed.error || 'Failed to toggle feed',
+          description: sanitizeError(result.data?.updateRssFeed.error || 'Failed to toggle feed'),
           color: 'danger',
         })
       }
     } catch (e) {
       addToast({
         title: 'Error',
-        description: (e as Error).message,
+        description: sanitizeError(e),
         color: 'danger',
       })
     }
@@ -349,13 +351,13 @@ function RssSettingsPage() {
   )
 
   return (
-    <>
-      {/* Header with Add button */}
-      <div className="flex justify-between items-center mb-6">
+    <div className="flex flex-col gap-6">
+      {/* Page Header */}
+      <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold">RSS Feeds</h2>
           <p className="text-default-500 text-sm">
-            Configure RSS feeds to automatically find new episodes for your shows
+            Configure RSS feeds to automatically find new episodes
           </p>
         </div>
         <div className="flex gap-2">
@@ -434,35 +436,35 @@ function RssSettingsPage() {
                         <DropdownMenu aria-label="Feed actions">
                           <DropdownItem
                             key="poll"
-                            startContent={<span>🔄</span>}
+                            startContent={<IconRefresh size={16} />}
                             onPress={() => handlePollFeed(feed.id)}
                           >
                             Poll Now
                           </DropdownItem>
                           <DropdownItem
                             key="test"
-                            startContent={<span>🧪</span>}
+                            startContent={<IconTestPipe size={16} />}
                             onPress={() => openTestModal(feed.url)}
                           >
                             Test Feed
                           </DropdownItem>
                           <DropdownItem
                             key="toggle"
-                            startContent={<span>{feed.enabled ? '⏸️' : '▶️'}</span>}
+                            startContent={feed.enabled ? <IconPlayerPause size={16} /> : <IconPlayerPlay size={16} />}
                             onPress={() => handleToggleEnabled(feed)}
                           >
                             {feed.enabled ? 'Disable' : 'Enable'}
                           </DropdownItem>
                           <DropdownItem
                             key="edit"
-                            startContent={<span>✏️</span>}
+                            startContent={<IconPencil size={16} />}
                             onPress={() => openEditModal(feed)}
                           >
                             Edit
                           </DropdownItem>
                           <DropdownItem
                             key="delete"
-                            startContent={<span>🗑️</span>}
+                            startContent={<IconTrash size={16} className="text-red-400" />}
                             className="text-danger"
                             color="danger"
                             onPress={() => handleDeleteClick(feed)}
@@ -507,10 +509,10 @@ function RssSettingsPage() {
       />
 
       {/* Info Card */}
-      <Card className="mt-6 bg-content1/50">
+      <Card className="bg-content1/50">
         <CardBody>
           <div className="flex gap-3">
-            <span className="text-2xl">💡</span>
+            <IconBulb size={24} className="text-amber-400 shrink-0 mt-0.5" />
             <div>
               <p className="font-medium">How RSS feeds work</p>
               <p className="text-sm text-default-500 mt-1">
@@ -538,6 +540,6 @@ function RssSettingsPage() {
         confirmLabel="Delete"
         confirmColor="danger"
       />
-    </>
+    </div>
   )
 }

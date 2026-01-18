@@ -105,7 +105,7 @@ mod tests {
         let cache = TtlCache::new(Duration::from_millis(50));
         cache.set("key".to_string(), "value".to_string());
         assert_eq!(cache.get("key"), Some("value".to_string()));
-        
+
         sleep(Duration::from_millis(60));
         assert_eq!(cache.get("key"), None);
     }

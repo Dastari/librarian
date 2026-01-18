@@ -8,17 +8,17 @@
 //! are handled via GraphQL at /graphql.
 
 use axum::{
-    extract::{Multipart, State},
-    http::{header::AUTHORIZATION, HeaderMap, StatusCode},
-    routing::post,
     Json, Router,
+    extract::{Multipart, State},
+    http::{HeaderMap, StatusCode, header::AUTHORIZATION},
+    routing::post,
 };
 use serde::Serialize;
 use uuid::Uuid;
 
+use crate::AppState;
 use crate::graphql::verify_token;
 use crate::services::TorrentInfo as ServiceTorrentInfo;
-use crate::AppState;
 
 #[derive(Debug, Serialize)]
 pub struct TorrentResponse {

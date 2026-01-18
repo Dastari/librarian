@@ -6,15 +6,8 @@ import { Select, SelectItem } from '@heroui/select'
 import { Switch } from '@heroui/switch'
 import { Divider } from '@heroui/divider'
 import { FolderBrowserInput } from '../FolderBrowserInput'
-import type { Library, LibraryType, PostDownloadAction, UpdateLibraryInput } from '../../lib/graphql'
-
-const LIBRARY_TYPES = [
-  { value: 'MOVIES', label: 'Movies', icon: '🎬', color: 'purple' },
-  { value: 'TV', label: 'TV Shows', icon: '📺', color: 'blue' },
-  { value: 'MUSIC', label: 'Music', icon: '🎵', color: 'green' },
-  { value: 'AUDIOBOOKS', label: 'Audiobooks', icon: '🎧', color: 'orange' },
-  { value: 'OTHER', label: 'Other', icon: '📁', color: 'slate' },
-] as const
+import { LIBRARY_TYPES, getLibraryTypeInfo, type Library, type LibraryType, type PostDownloadAction, type UpdateLibraryInput } from '../../lib/graphql'
+import { IconFolder } from '@tabler/icons-react'
 
 export interface EditLibraryModalProps {
   isOpen: boolean
@@ -76,9 +69,11 @@ export function EditLibraryModal({ isOpen, onClose, library, onSave, isLoading }
     <Modal isOpen={isOpen} onClose={handleClose} size="xl">
       <ModalContent>
         <ModalHeader className="flex items-center gap-3">
-          <span className="text-2xl">
-            {LIBRARY_TYPES.find((t) => t.value === libraryType)?.icon || '📁'}
-          </span>
+          {(() => {
+            const typeInfo = getLibraryTypeInfo(libraryType)
+            const IconComponent = typeInfo?.Icon || IconFolder
+            return <IconComponent className="w-6 h-6" />
+          })()}
           <span>Edit Library</span>
         </ModalHeader>
         <ModalBody>
@@ -108,8 +103,10 @@ export function EditLibraryModal({ isOpen, onClose, library, onSave, isLoading }
             >
               {LIBRARY_TYPES.map((type) => (
                 <SelectItem key={type.value} textValue={type.label}>
-                  <span className="mr-2">{type.icon}</span>
-                  {type.label}
+                  <div className="flex items-center gap-2">
+                    <type.Icon className="w-4 h-4" />
+                    {type.label}
+                  </div>
                 </SelectItem>
               ))}
             </Select>

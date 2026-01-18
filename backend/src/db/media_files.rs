@@ -91,12 +91,11 @@ impl MediaFileRepository {
 
     /// Check if a file path already exists
     pub async fn exists_by_path(&self, path: &str) -> Result<bool> {
-        let result = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM media_files WHERE path = $1"
-        )
-        .bind(path)
-        .fetch_one(&self.pool)
-        .await?;
+        let result =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM media_files WHERE path = $1")
+                .bind(path)
+                .fetch_one(&self.pool)
+                .await?;
 
         Ok(result > 0)
     }
@@ -229,25 +228,23 @@ impl MediaFileRepository {
             return Ok(result.rows_affected());
         }
 
-        let result = sqlx::query(
-            "DELETE FROM media_files WHERE library_id = $1 AND path != ALL($2)"
-        )
-        .bind(library_id)
-        .bind(existing_paths)
-        .execute(&self.pool)
-        .await?;
+        let result =
+            sqlx::query("DELETE FROM media_files WHERE library_id = $1 AND path != ALL($2)")
+                .bind(library_id)
+                .bind(existing_paths)
+                .execute(&self.pool)
+                .await?;
 
         Ok(result.rows_affected())
     }
 
     /// Get count of files in a library
     pub async fn count_by_library(&self, library_id: Uuid) -> Result<i64> {
-        let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM media_files WHERE library_id = $1"
-        )
-        .bind(library_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM media_files WHERE library_id = $1")
+                .bind(library_id)
+                .fetch_one(&self.pool)
+                .await?;
 
         Ok(count)
     }
@@ -263,8 +260,34 @@ impl MediaFileRepository {
         Ok(())
     }
 
+    /// Get a media file by episode ID (returns the first/primary file for an episode)
+    pub async fn get_by_episode_id(&self, episode_id: Uuid) -> Result<Option<MediaFileRecord>> {
+        let record = sqlx::query_as::<_, MediaFileRecord>(
+            r#"
+            SELECT id, media_item_id, library_id, path, size as size_bytes, 
+                   container, video_codec, audio_codec, width, height,
+                   duration, bitrate, file_hash, episode_id, relative_path,
+                   original_name, video_bitrate, audio_channels, audio_language,
+                   resolution, is_hdr, hdr_type, organized, organized_at,
+                   original_path, added_at, modified_at
+            FROM media_files
+            WHERE episode_id = $1
+            ORDER BY size_bytes DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(episode_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(record)
+    }
+
     /// Get unorganized files for a library
-    pub async fn list_unorganized_by_library(&self, library_id: Uuid) -> Result<Vec<MediaFileRecord>> {
+    pub async fn list_unorganized_by_library(
+        &self,
+        library_id: Uuid,
+    ) -> Result<Vec<MediaFileRecord>> {
         let records = sqlx::query_as::<_, MediaFileRecord>(
             r#"
             SELECT id, media_item_id, library_id, path, size as size_bytes, 
@@ -286,7 +309,12 @@ impl MediaFileRepository {
     }
 
     /// Mark a file as organized (moved to library structure)
-    pub async fn mark_organized(&self, file_id: Uuid, new_path: &str, original_path: &str) -> Result<()> {
+    pub async fn mark_organized(
+        &self,
+        file_id: Uuid,
+        new_path: &str,
+        original_path: &str,
+    ) -> Result<()> {
         sqlx::query(
             r#"
             UPDATE media_files SET 
@@ -296,7 +324,7 @@ impl MediaFileRepository {
                 organized_at = NOW(),
                 modified_at = NOW()
             WHERE id = $1
-            "#
+            "#,
         )
         .bind(file_id)
         .bind(new_path)
@@ -337,5 +365,52 @@ impl MediaFileRepository {
         .await?;
 
         Ok(record)
+    }
+
+    /// Get unmatched files for a library (files not linked to any episode)
+    pub async fn list_unmatched_by_library(
+        &self,
+        library_id: Uuid,
+    ) -> Result<Vec<MediaFileRecord>> {
+        let records = sqlx::query_as::<_, MediaFileRecord>(
+            r#"
+            SELECT id, media_item_id, library_id, path, size as size_bytes, 
+                   container, video_codec, audio_codec, width, height,
+                   duration, bitrate, file_hash, episode_id, relative_path,
+                   original_name, video_bitrate, audio_channels, audio_language,
+                   resolution, is_hdr, hdr_type, organized, organized_at,
+                   original_path, added_at, modified_at
+            FROM media_files
+            WHERE library_id = $1 AND episode_id IS NULL
+            ORDER BY path
+            "#,
+        )
+        .bind(library_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(records)
+    }
+
+    /// Get count of unmatched files in a library
+    pub async fn count_unmatched_by_library(&self, library_id: Uuid) -> Result<i64> {
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM media_files WHERE library_id = $1 AND episode_id IS NULL",
+        )
+        .bind(library_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(count)
+    }
+
+    /// Delete a media file by ID
+    pub async fn delete(&self, id: Uuid) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM media_files WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
     }
 }

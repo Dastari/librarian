@@ -6,63 +6,7 @@ import { Button } from '@heroui/button'
 import { Image } from '@heroui/image'
 import type { TvShow } from '../../lib/graphql'
 import { formatBytes } from '../../lib/format'
-
-// ============================================================================
-// Icons
-// ============================================================================
-
-const MoreIcon = () => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="16"
-    height="16"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <circle cx="12" cy="12" r="1" />
-    <circle cx="12" cy="5" r="1" />
-    <circle cx="12" cy="19" r="1" />
-  </svg>
-)
-
-const ViewIcon = () => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="16"
-    height="16"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
-    <circle cx="12" cy="12" r="3" />
-  </svg>
-)
-
-const DeleteIcon = () => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="16"
-    height="16"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M3 6h18" />
-    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-  </svg>
-)
+import { IconEye, IconTrash, IconDeviceTv, IconCheck, IconDotsVertical } from '@tabler/icons-react'
 
 // ============================================================================
 // Types
@@ -119,7 +63,7 @@ export function TvShowCard({ show, onDelete }: TvShowCardProps) {
           // Fallback gradient background with icon
           <div className="absolute inset-0 bg-gradient-to-br from-blue-900 via-indigo-800 to-cyan-900">
             <div className="absolute inset-0 flex items-center justify-center opacity-30">
-              <span className="text-6xl">📺</span>
+              <IconDeviceTv size={64} className="text-blue-400" />
             </div>
           </div>
         )}
@@ -134,7 +78,7 @@ export function TvShowCard({ show, onDelete }: TvShowCardProps) {
               : 'bg-black/50 text-white/90'
           }`}
         >
-          {show.monitored ? '✓ Monitored' : 'Unmonitored'}
+          {show.monitored ? <><IconCheck size={12} className="inline mr-1 text-green-400" />Monitored</> : 'Unmonitored'}
         </div>
       </div>
 
@@ -178,7 +122,7 @@ export function TvShowCard({ show, onDelete }: TvShowCardProps) {
               variant="flat"
               className="bg-black/50 backdrop-blur-sm text-white hover:bg-black/70 min-w-6 w-6 h-6"
             >
-              <MoreIcon />
+              <IconDotsVertical size={16} />
             </Button>
           </DropdownTrigger>
           <DropdownMenu
@@ -191,12 +135,12 @@ export function TvShowCard({ show, onDelete }: TvShowCardProps) {
               }
             }}
           >
-            <DropdownItem key="view" startContent={<ViewIcon />}>
+            <DropdownItem key="view" startContent={<IconEye size={16} />}>
               View Details
             </DropdownItem>
             <DropdownItem
               key="delete"
-              startContent={<DeleteIcon />}
+              startContent={<IconTrash size={16} className="text-red-400" />}
               className="text-danger"
               color="danger"
             >
