@@ -4,7 +4,6 @@ import { Card, CardBody } from '@heroui/card'
 import { Chip } from '@heroui/chip'
 import { Image } from '@heroui/image'
 import { Spinner } from '@heroui/spinner'
-import { Skeleton } from '@heroui/skeleton'
 import { useDisclosure } from '@heroui/modal'
 import { useEffect } from 'react'
 import { useAuth } from '../hooks/useAuth'
@@ -12,8 +11,7 @@ import { useDashboardCache } from '../hooks/useDashboardCache'
 import { useDataReactivity } from '../hooks/useSubscription'
 import { AlbumArtCarousel } from '../components/AlbumArtCarousel'
 import { SignInModal } from '../components/SignInModal'
-import { LIBRARY_TYPES } from '../lib/graphql'
-import { formatBytes } from '../lib/format'
+import { IconDeviceTv } from '@tabler/icons-react'
 
 // Format air date to a readable format
 function formatAirDate(dateStr: string): string {
@@ -199,8 +197,8 @@ function HomePage() {
                           removeWrapper={false}
                         />
                       ) : (
-                        <div className="w-full h-full flex items-center justify-center text-2xl">
-                          📺
+                        <div className="w-full h-full flex items-center justify-center">
+                          <IconDeviceTv size={32} className="text-blue-400" />
                         </div>
                       )}
                     </div>
@@ -256,7 +254,7 @@ function HomePage() {
                       />
                     ) : (
                       <div className="w-full h-full bg-default-200 flex items-center justify-center">
-                        <span className="text-4xl">📺</span>
+                        <IconDeviceTv size={40} className="text-blue-400" />
                       </div>
                     )}
                   </div>
@@ -302,7 +300,7 @@ function HomePage() {
                     />
                   ) : (
                     <div className="w-full h-full bg-default-200 flex items-center justify-center">
-                      <span className="text-4xl">📺</span>
+                      <IconDeviceTv size={40} className="text-blue-400" />
                     </div>
                   )}
                   {/* Air date badge */}

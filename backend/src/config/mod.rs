@@ -7,6 +7,9 @@ use anyhow::{Context, Result};
 /// Application configuration loaded from environment variables
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Server host (for generating URLs)
+    pub host: Option<String>,
+
     /// Server port
     pub port: u16,
 
@@ -57,16 +60,16 @@ impl Config {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self> {
         Ok(Self {
+            host: env::var("HOST").ok(),
+
             port: env::var("PORT")
                 .unwrap_or_else(|_| "3001".to_string())
                 .parse()
                 .context("Invalid PORT")?,
 
-            database_url: env::var("DATABASE_URL")
-                .context("DATABASE_URL is required")?,
+            database_url: env::var("DATABASE_URL").context("DATABASE_URL is required")?,
 
-            supabase_url: env::var("SUPABASE_URL")
-                .context("SUPABASE_URL is required")?,
+            supabase_url: env::var("SUPABASE_URL").context("SUPABASE_URL is required")?,
 
             supabase_anon_key: env::var("SUPABASE_ANON_KEY")
                 .context("SUPABASE_ANON_KEY is required")?,
@@ -74,24 +77,20 @@ impl Config {
             supabase_service_key: env::var("SUPABASE_SERVICE_KEY")
                 .context("SUPABASE_SERVICE_KEY is required")?,
 
-            jwt_secret: env::var("JWT_SECRET")
-                .context("JWT_SECRET is required")?,
+            jwt_secret: env::var("JWT_SECRET").context("JWT_SECRET is required")?,
 
             tvdb_api_key: env::var("TVDB_API_KEY").ok(),
 
             tmdb_api_key: env::var("TMDB_API_KEY").ok(),
 
-            media_path: env::var("MEDIA_PATH")
-                .unwrap_or_else(|_| "/data/media".to_string()),
+            media_path: env::var("MEDIA_PATH").unwrap_or_else(|_| "/data/media".to_string()),
 
             downloads_path: env::var("DOWNLOADS_PATH")
                 .unwrap_or_else(|_| "/data/downloads".to_string()),
 
-            cache_path: env::var("CACHE_PATH")
-                .unwrap_or_else(|_| "/data/cache".to_string()),
+            cache_path: env::var("CACHE_PATH").unwrap_or_else(|_| "/data/cache".to_string()),
 
-            session_path: env::var("SESSION_PATH")
-                .unwrap_or_else(|_| "/data/session".to_string()),
+            session_path: env::var("SESSION_PATH").unwrap_or_else(|_| "/data/session".to_string()),
 
             torrent_enable_dht: env::var("TORRENT_ENABLE_DHT")
                 .map(|v| v == "true" || v == "1")

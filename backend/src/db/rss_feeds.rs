@@ -40,6 +40,8 @@ pub struct RssFeedItemRecord {
     pub parsed_resolution: Option<String>,
     pub parsed_codec: Option<String>,
     pub parsed_source: Option<String>,
+    pub parsed_audio: Option<String>,
+    pub parsed_hdr: Option<String>,
     pub processed: bool,
     pub matched_episode_id: Option<Uuid>,
     pub torrent_id: Option<Uuid>,
@@ -85,6 +87,8 @@ pub struct CreateRssFeedItem {
     pub parsed_resolution: Option<String>,
     pub parsed_codec: Option<String>,
     pub parsed_source: Option<String>,
+    pub parsed_audio: Option<String>,
+    pub parsed_hdr: Option<String>,
 }
 
 pub struct RssFeedRepository {
@@ -303,14 +307,16 @@ impl RssFeedRepository {
             INSERT INTO rss_feed_items (
                 feed_id, guid, link_hash, title_hash, title, link,
                 pub_date, description, parsed_show_name, parsed_season,
-                parsed_episode, parsed_resolution, parsed_codec, parsed_source
+                parsed_episode, parsed_resolution, parsed_codec, parsed_source,
+                parsed_audio, parsed_hdr
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             ON CONFLICT (feed_id, link_hash) DO UPDATE SET
                 seen_at = NOW()
             RETURNING id, feed_id, guid, link_hash, title_hash, title, link,
                       pub_date, description, parsed_show_name, parsed_season,
                       parsed_episode, parsed_resolution, parsed_codec, parsed_source,
+                      parsed_audio, parsed_hdr,
                       processed, matched_episode_id, torrent_id, skipped_reason, seen_at
             "#,
         )
@@ -328,6 +334,8 @@ impl RssFeedRepository {
         .bind(&input.parsed_resolution)
         .bind(&input.parsed_codec)
         .bind(&input.parsed_source)
+        .bind(&input.parsed_audio)
+        .bind(&input.parsed_hdr)
         .fetch_one(&self.pool)
         .await?;
 

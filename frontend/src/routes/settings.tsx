@@ -2,6 +2,8 @@ import { createFileRoute, Outlet, redirect } from '@tanstack/react-router'
 import { Link, useLocation } from '@tanstack/react-router'
 import { Card, CardBody } from '@heroui/card'
 import { RouteError } from '../components/RouteError'
+import type { TablerIcon } from '@tabler/icons-react'
+import { IconSettings, IconDownload, IconRss, IconMovie, IconClipboard, IconSearch, IconCast } from '@tabler/icons-react'
 
 // This is the parent route for /settings/* that provides the shared layout
 export const Route = createFileRoute('/settings')({
@@ -24,37 +26,66 @@ interface SettingsTab {
   key: string
   path: string
   label: string
-  icon: string
+  Icon: TablerIcon
+  iconColor: string
   description: string
 }
 
 const settingsTabs: SettingsTab[] = [
   {
-    key: 'torrent',
+    key: 'general',
     path: '/settings',
+    label: 'General',
+    Icon: IconSettings,
+    iconColor: 'text-default-400',
+    description: 'App preferences',
+  },
+  {
+    key: 'torrent',
+    path: '/settings/torrent',
     label: 'Torrent Client',
-    icon: '⬇️',
+    Icon: IconDownload,
+    iconColor: 'text-blue-400',
     description: 'Download settings',
+  },
+  {
+    key: 'indexers',
+    path: '/settings/indexers',
+    label: 'Indexers',
+    Icon: IconSearch,
+    iconColor: 'text-green-400',
+    description: 'Search & encryption',
   },
   {
     key: 'rss',
     path: '/settings/rss',
     label: 'RSS Feeds',
-    icon: '📡',
+    Icon: IconRss,
+    iconColor: 'text-orange-400',
     description: 'Torrent feed sources',
   },
   {
     key: 'metadata',
     path: '/settings/metadata',
     label: 'Metadata & Parser',
-    icon: '🎬',
+    Icon: IconMovie,
+    iconColor: 'text-purple-400',
     description: 'Media identification',
+  },
+  {
+    key: 'casting',
+    path: '/settings/casting',
+    label: 'Casting',
+    Icon: IconCast,
+    iconColor: 'text-teal-400',
+    description: 'Chromecast devices',
   },
   {
     key: 'logs',
     path: '/settings/logs',
     label: 'System Logs',
-    icon: '📋',
+    Icon: IconClipboard,
+    iconColor: 'text-default-400',
     description: 'Activity & errors',
   },
 ]
@@ -70,10 +101,10 @@ function SettingsLayoutRoute() {
   }
 
   return (
-    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col grow">
-      <h1 className="text-2xl font-bold mb-6 flex-shrink-0">Settings</h1>
+    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col h-full overflow-hidden">
+      <h1 className="text-2xl font-bold mb-6 shrink-0">Settings</h1>
 
-      <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
+      <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0 overflow-hidden">
         {/* Left Sidebar - Vertical Tabs */}
         <div className="lg:w-64 shrink-0">
           <Card className="sticky top-4">
@@ -91,7 +122,7 @@ function SettingsLayoutRoute() {
                       }
                     `}
                   >
-                    <span className="text-xl">{tab.icon}</span>
+                    <tab.Icon size={20} className={isActive(tab.path) ? '' : tab.iconColor} />
                     <div className="flex flex-col">
                       <span className="font-medium text-sm">{tab.label}</span>
                       <span
@@ -110,9 +141,9 @@ function SettingsLayoutRoute() {
           </Card>
         </div>
 
-        {/* Right Content Area */}
-        <div className="flex h-full grow flex-col">
-            <Outlet />
+        {/* Right Content Area - scrolls independently */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <Outlet />
         </div>
       </div>
     </div>

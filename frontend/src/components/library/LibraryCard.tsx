@@ -2,16 +2,8 @@ import { useNavigate } from '@tanstack/react-router'
 import { Button } from '@heroui/button'
 import { Card, CardBody, CardHeader } from '@heroui/card'
 import { Chip } from '@heroui/chip'
-import type { Library } from '../../lib/graphql'
+import { LIBRARY_TYPES, type Library } from '../../lib/graphql'
 import { formatBytes } from '../../lib/format'
-
-const LIBRARY_TYPES = [
-  { value: 'MOVIES', label: 'Movies', icon: '🎬', color: 'purple' },
-  { value: 'TV', label: 'TV Shows', icon: '📺', color: 'blue' },
-  { value: 'MUSIC', label: 'Music', icon: '🎵', color: 'green' },
-  { value: 'AUDIOBOOKS', label: 'Audiobooks', icon: '🎧', color: 'orange' },
-  { value: 'OTHER', label: 'Other', icon: '📁', color: 'slate' },
-] as const
 
 export interface LibraryCardProps {
   library: Library
@@ -29,7 +21,7 @@ export function LibraryCard({ library, onScan, onEdit, onDelete }: LibraryCardPr
     <Card className="bg-content1">
       <CardHeader className="flex justify-between items-start">
         <div className="flex items-center gap-3">
-          <span className="text-3xl">{typeInfo.icon}</span>
+          <typeInfo.Icon className="w-8 h-8" />
           <div>
             <h3 className="text-lg font-semibold">{library.name}</h3>
             <p className="text-default-500 text-sm">{typeInfo.label}</p>

@@ -11,6 +11,8 @@ import {
   PARSE_AND_IDENTIFY_QUERY,
   type ParseAndIdentifyResult,
 } from '../../lib/graphql'
+import { IconMovie, IconDeviceTv } from '@tabler/icons-react'
+import { sanitizeError } from '../../lib/format'
 
 export const Route = createFileRoute('/settings/metadata')({
   component: MetadataSettingsPage,
@@ -45,7 +47,7 @@ function MetadataSettingsPage() {
       if (error) {
         addToast({
           title: 'Error',
-          description: `Test failed: ${error.message}`,
+          description: `Test failed: ${sanitizeError(error)}`,
           color: 'danger',
         })
         return
@@ -70,11 +72,19 @@ function MetadataSettingsPage() {
   }
 
   return (
-    <>
+    <div className="flex flex-col gap-6">
+      {/* Page Header */}
+      <div>
+        <h2 className="text-xl font-semibold">Metadata & Parser</h2>
+        <p className="text-default-500 text-sm">
+          Configure metadata providers and test filename parsing
+        </p>
+      </div>
+
       {/* Metadata Providers */}
-      <Card className="mb-6">
+      <Card>
         <CardHeader>
-          <h2 className="font-semibold">Metadata Providers</h2>
+          <p className="font-semibold">Metadata Providers</p>
         </CardHeader>
         <Divider />
         <CardBody className="space-y-4">
@@ -95,7 +105,7 @@ function MetadataSettingsPage() {
 
           <div className="flex items-center justify-between p-3 bg-content2 rounded-lg">
             <div className="flex items-center gap-3">
-              <span className="text-2xl">🎬</span>
+              <IconMovie size={24} className="text-purple-400" />
               <div>
                 <p className="font-medium">TMDB</p>
                 <p className="text-sm text-default-500">API key required</p>
@@ -108,7 +118,7 @@ function MetadataSettingsPage() {
 
           <div className="flex items-center justify-between p-3 bg-content2 rounded-lg">
             <div className="flex items-center gap-3">
-              <span className="text-2xl">📺</span>
+              <IconDeviceTv size={24} className="text-blue-400" />
               <div>
                 <p className="font-medium">TheTVDB</p>
                 <p className="text-sm text-default-500">API key required</p>
@@ -122,9 +132,9 @@ function MetadataSettingsPage() {
       </Card>
 
       {/* Test Parser */}
-      <Card className="mb-6">
+      <Card>
         <CardHeader>
-          <h2 className="font-semibold">Test Filename Parser</h2>
+          <p className="font-semibold">Test Filename Parser</p>
         </CardHeader>
         <Divider />
         <CardBody className="space-y-4">
@@ -163,9 +173,9 @@ function MetadataSettingsPage() {
 
       {/* Test Result */}
       {testResult && (
-        <Card className="mb-6">
+        <Card>
           <CardHeader>
-            <h2 className="font-semibold">Parse Result</h2>
+            <p className="font-semibold">Parse Result</p>
           </CardHeader>
           <Divider />
           <CardBody className="space-y-4">
@@ -330,7 +340,7 @@ function MetadataSettingsPage() {
       {testResult && (
         <Card>
           <CardHeader>
-            <h2 className="font-semibold">Raw JSON Output</h2>
+            <p className="font-semibold">Raw JSON Output</p>
           </CardHeader>
           <Divider />
           <CardBody>
@@ -346,6 +356,6 @@ function MetadataSettingsPage() {
           </CardBody>
         </Card>
       )}
-    </>
+    </div>
   )
 }

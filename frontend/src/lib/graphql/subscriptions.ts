@@ -74,3 +74,19 @@ export const ERROR_LOGS_SUBSCRIPTION = `
     }
   }
 `;
+
+// ============================================================================
+// Filesystem Subscriptions
+// ============================================================================
+
+export const DIRECTORY_CONTENTS_CHANGED_SUBSCRIPTION = `
+  subscription DirectoryContentsChanged($path: String) {
+    directoryContentsChanged(path: $path) {
+      path
+      changeType
+      name
+      newName
+      timestamp
+    }
+  }
+`;

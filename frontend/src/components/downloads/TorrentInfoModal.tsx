@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
 import { Button } from '@heroui/button'
 import { Spinner } from '@heroui/spinner'
@@ -12,9 +12,11 @@ import {
   type TorrentDetails,
   type TorrentFileInfo,
 } from '../../lib/graphql'
-import { formatBytes } from '../../lib/format'
+import { formatBytes, sanitizeError } from '../../lib/format'
 import { TORRENT_STATE_INFO } from './TorrentCard'
 import { DataTable, type DataTableColumn } from '../data-table'
+import { ErrorState } from '../shared'
+import { IconCheck, IconArrowDown, IconArrowUp, IconFolder } from '@tabler/icons-react'
 
 interface TorrentInfoModalProps {
   torrentId: number | null
@@ -99,21 +101,15 @@ export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModa
           if (result.data?.torrentDetails) {
             setDetails(result.data.torrentDetails)
           } else if (result.error) {
-            setError(result.error.message)
+            setError(sanitizeError(result.error))
           } else {
             setError('Torrent not found')
           }
         })
-        .catch((err) => setError(err.message))
+        .catch((err) => setError(sanitizeError(err)))
         .finally(() => setIsLoading(false))
     }
   }, [isOpen, torrentId])
-
-  // Memoize completed files count
-  const completedFilesCount = useMemo(() => {
-    if (!details?.files) return 0
-    return details.files.filter((f) => f.progress >= 1).length
-  }, [details?.files])
 
   return (
     <Modal 
@@ -151,7 +147,7 @@ export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModa
                   {TORRENT_STATE_INFO[details.state]?.label || details.state}
                 </Chip>
                 {details.finished && (
-                  <Chip size="sm" color="success" variant="flat" startContent="✓">
+                  <Chip size="sm" color="success" variant="flat" startContent={<IconCheck size={12} className="text-green-400" />}>
                     Complete
                   </Chip>
                 )}
@@ -169,10 +165,10 @@ export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModa
           )}
 
           {error && (
-            <div className="flex flex-col items-center justify-center py-16 gap-3">
-              <div className="text-4xl">⚠️</div>
-              <div className="text-danger text-center">{error}</div>
-            </div>
+            <ErrorState
+              title="Failed to Load Details"
+              message={error}
+            />
           )}
 
           {details && !isLoading && (
@@ -215,14 +211,14 @@ export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModa
                   title="Download" 
                   value={details.downloadSpeedFormatted} 
                   subtitle={details.timeRemainingFormatted ? `ETA: ${details.timeRemainingFormatted}` : undefined}
-                  icon="⬇️"
+                  icon={<IconArrowDown size={20} className="text-blue-400" />}
                   valueColor="primary"
                 />
                 <StatCard 
                   title="Upload" 
                   value={details.uploadSpeedFormatted} 
                   subtitle={`Ratio: ${details.ratio.toFixed(2)}`}
-                  icon="⬆️"
+                  icon={<IconArrowUp size={20} className="text-green-400" />}
                   valueColor={details.ratio >= 1 ? 'success' : undefined}
                 />
                 <StatCard 
@@ -253,7 +249,7 @@ export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModa
               {/* Save Path */}
               <div className="bg-content2/30 rounded-lg p-3">
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm">📁</span>
+                  <IconFolder size={16} className="text-amber-400" />
                   <span className="text-xs font-medium text-default-500 uppercase tracking-wide">Save Location</span>
                 </div>
                 <code className="text-sm text-default-600 break-all">
@@ -310,7 +306,7 @@ function StatCard({
   title: string
   value: string
   subtitle?: string
-  icon: string
+  icon: React.ReactNode
   valueColor?: 'primary' | 'success' | 'danger'
 }) {
   const colorClass = valueColor

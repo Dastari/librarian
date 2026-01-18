@@ -6,7 +6,7 @@ import { Tooltip } from '@heroui/tooltip'
 import { useDisclosure } from '@heroui/modal'
 import type { Torrent, TorrentState } from '../../lib/graphql'
 import { formatBytes, formatSpeed } from '../../lib/format'
-import { PlayIcon, PauseIcon, DeleteIcon } from '../icons'
+import { IconPlayerPlay, IconPlayerPause, IconTrash, IconArrowDown, IconArrowUp } from '@tabler/icons-react'
 import { ConfirmModal } from '../ConfirmModal'
 
 // ============================================================================
@@ -112,7 +112,7 @@ export function TorrentCard({
                   color="success"
                   onPress={() => onResume(torrent.id)}
                 >
-                  <PlayIcon />
+                  <IconPlayerPlay size={16} />
                 </Button>
               </Tooltip>
             ) : isDownloading ? (
@@ -124,7 +124,7 @@ export function TorrentCard({
                   color="warning"
                   onPress={() => onPause(torrent.id)}
                 >
-                  <PauseIcon />
+                  <IconPlayerPause size={16} />
                 </Button>
               </Tooltip>
             ) : null}
@@ -136,7 +136,7 @@ export function TorrentCard({
                 color="danger"
                 onPress={handleRemove}
               >
-                <DeleteIcon />
+                <IconTrash size={16} />
               </Button>
             </Tooltip>
           </div>
@@ -154,16 +154,16 @@ export function TorrentCard({
           <span>{(torrent.progress * 100).toFixed(1)}%</span>
           <span>
             {isDownloading && (
-              <>
-                ⬇️ {formatSpeed(torrent.downloadSpeed)} • ⬆️ {formatSpeed(torrent.uploadSpeed)}
+              <span className="flex items-center gap-1">
+                <IconArrowDown size={12} className="text-blue-400" /> {formatSpeed(torrent.downloadSpeed)} • <IconArrowUp size={12} className="text-green-400" /> {formatSpeed(torrent.uploadSpeed)}
                 {torrent.peers > 0 && ` • ${torrent.peers} peers`}
-              </>
+              </span>
             )}
             {isSeeding && (
-              <>
-                ⬆️ {formatSpeed(torrent.uploadSpeed)}
+              <span className="flex items-center gap-1">
+                <IconArrowUp size={12} className="text-green-400" /> {formatSpeed(torrent.uploadSpeed)}
                 {torrent.peers > 0 && ` • ${torrent.peers} peers`}
-              </>
+              </span>
             )}
           </span>
         </div>

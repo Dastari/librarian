@@ -3,8 +3,9 @@ import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@herou
 import { Button } from '@heroui/button'
 import { Input } from '@heroui/input'
 import { Divider } from '@heroui/divider'
-import { Card, CardBody } from '@heroui/card'
+import { addToast } from '@heroui/toast'
 import { useAuth } from '../hooks/useAuth'
+import { InlineError } from './shared'
 
 interface SignInModalProps {
   isOpen: boolean
@@ -29,7 +30,11 @@ export function SignInModal({ isOpen, onClose, onSuccess, redirectUrl }: SignInM
     try {
       if (isSignUp) {
         await signUp(email, password)
-        alert('Check your email for a confirmation link!')
+        addToast({
+          title: 'Account Created',
+          description: 'Check your email for a confirmation link!',
+          color: 'success',
+        })
         onClose()
       } else {
         await signIn(email, password)
@@ -110,13 +115,7 @@ export function SignInModal({ isOpen, onClose, onSuccess, redirectUrl }: SignInM
               }}
             />
 
-            {error && (
-              <Card className="bg-danger-50 border-danger">
-                <CardBody className="py-2 px-3">
-                  <p className="text-danger text-sm">{error}</p>
-                </CardBody>
-              </Card>
-            )}
+            {error && <InlineError message={error} />}
 
             <Button
               type="submit"

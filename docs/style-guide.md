@@ -133,10 +133,10 @@ Rich cards with background images, gradients, and hover actions:
         <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/40" />
       </>
     ) : (
-      // Fallback gradient
+      // Fallback gradient with type icon
       <div className="absolute inset-0 bg-gradient-to-br from-violet-900 via-purple-800 to-fuchsia-900">
         <div className="absolute inset-0 flex items-center justify-center opacity-30">
-          <span className="text-6xl">{icon}</span>
+          <TypeIcon size={80} />
         </div>
       </div>
     )}
@@ -144,8 +144,8 @@ Rich cards with background images, gradients, and hover actions:
 
   {/* Type badge - top left */}
   <div className="absolute top-2 left-2 z-10">
-    <div className="px-2 py-1 rounded-md bg-black/50 backdrop-blur-sm text-xs font-medium text-white/90">
-      {typeIcon} {typeLabel}
+    <div className="px-2 py-1 rounded-md bg-black/50 backdrop-blur-sm text-xs font-medium text-white/90 flex items-center gap-1">
+      <TypeIcon size={14} /> {typeLabel}
     </div>
   </div>
 
@@ -189,10 +189,12 @@ const LIBRARY_GRADIENTS = {
 
 ### Empty State Card
 ```tsx
+import { IconFolder } from '@tabler/icons-react'
+
 <Card className="bg-content1/50 border-default-300 border-dashed border-2">
   <CardBody className="py-16 text-center">
     <div className="mx-auto w-20 h-20 rounded-full bg-default-100 flex items-center justify-center mb-6">
-      <span className="text-4xl">📚</span>
+      <IconFolder size={48} className="text-amber-400" />
     </div>
     <h3 className="text-xl font-semibold mb-2">No items yet</h3>
     <p className="text-default-500 mb-6 max-w-md mx-auto">
@@ -347,12 +349,14 @@ const columns: DataTableColumn<Item>[] = [
 
 ### Row Actions Pattern
 ```tsx
+import { IconPlayerPause, IconTrash } from '@tabler/icons-react'
+
 const rowActions: RowAction<Item>[] = [
   // Inline buttons (visible in row)
   {
     key: 'pause',
     label: 'Pause',
-    icon: <PauseIcon />,
+    icon: <IconPlayerPause size={16} className="text-amber-400" />,
     color: 'warning',
     inDropdown: false, // Shows as inline icon button
     isVisible: (item) => item.status === 'active',
@@ -362,7 +366,7 @@ const rowActions: RowAction<Item>[] = [
   {
     key: 'delete',
     label: 'Delete',
-    icon: <DeleteIcon />,
+    icon: <IconTrash size={16} className="text-red-400" />,
     isDestructive: true,
     inDropdown: true, // Shows in ⋮ dropdown
     onAction: (item) => handleDelete(item.id),
@@ -405,9 +409,26 @@ import { Breadcrumbs, BreadcrumbItem } from '@heroui/react'
 
 ### Vertical Tab Navigation
 ```tsx
+import type { TablerIcon } from '@tabler/icons-react'
+import { IconFolder, IconSettings } from '@tabler/icons-react'
+
+interface TabConfig {
+  key: string
+  path: string
+  label: string
+  Icon: TablerIcon
+  iconColor: string
+  description: string
+}
+
+const tabs: TabConfig[] = [
+  { key: 'files', path: '/files', label: 'Files', Icon: IconFolder, iconColor: 'text-amber-400', description: 'Browse files' },
+  { key: 'settings', path: '/settings', label: 'Settings', Icon: IconSettings, iconColor: 'text-default-400', description: 'Configuration' },
+]
+
 <div className="flex gap-6">
   {/* Sidebar */}
-  <div className="w-64 flex-shrink-0">
+  <div className="w-64 shrink-0">
     <Card className="sticky top-4">
       <CardBody className="p-2">
         <nav className="flex flex-col gap-1">
@@ -423,7 +444,7 @@ import { Breadcrumbs, BreadcrumbItem } from '@heroui/react'
                 }
               `}
             >
-              <span className="text-xl">{tab.icon}</span>
+              <tab.Icon size={20} className={isActive(tab.path) ? '' : tab.iconColor} />
               <div className="flex flex-col">
                 <span className="font-medium text-sm">{tab.label}</span>
                 <span className={`text-xs ${isActive(tab.path) ? 'text-primary-foreground/70' : 'text-default-400'}`}>
@@ -631,34 +652,74 @@ Use for hashes, codes, IDs:
 
 ## Icons
 
-### Emoji Icons
-For library types and quick visual identification:
-```
-📚 Libraries    🎬 Movies      📺 TV Shows
-🎵 Music        📖 Audiobooks  📁 Other
-⬇️ Downloading  ⬆️ Seeding     ⏸️ Paused
-✅ Complete     ❌ Error       ⏳ Queued
-🔍 Checking     👥 Peers       ⚙️ Settings
+### Use Tabler Icons
+**Always use `@tabler/icons-react`** for all icons. Never use emojis or custom SVG components.
+
+```tsx
+import { IconFolder, IconMovie, IconTrash } from '@tabler/icons-react'
+
+// Basic usage with size prop
+<IconFolder size={20} />
+
+// With semantic color
+<IconFolder size={20} className="text-amber-400" />
+
+// In buttons
+<Button startContent={<IconTrash size={16} className="text-red-400" />}>
+  Delete
+</Button>
 ```
 
-### SVG Icons
-For actions and UI controls, use 16x16 stroke icons:
+### Icon Color Conventions
+Apply consistent colors based on icon meaning:
+
+| Category | Color | Example Icons |
+|----------|-------|---------------|
+| Folders | `text-amber-400` | `IconFolder`, `IconFolderOpen` |
+| Movies | `text-purple-400` | `IconMovie` |
+| TV Shows | `text-blue-400` | `IconDeviceTv` |
+| Music | `text-green-400` | `IconMusic` |
+| Audiobooks | `text-orange-400` | `IconHeadphones` |
+| Success | `text-green-400` | `IconCheck`, `IconCircleCheck` |
+| Warning | `text-amber-400` | `IconAlertTriangle` |
+| Error/Delete | `text-red-400` | `IconTrash`, `IconX` |
+| Download | `text-blue-400` | `IconArrowDown`, `IconDownload` |
+| Upload | `text-green-400` | `IconArrowUp`, `IconUpload` |
+| RSS | `text-orange-400` | `IconRss` |
+| Neutral | `text-default-400` | `IconSettings`, `IconFile`, `IconClipboard` |
+
+### Common Icon Sizes
 ```tsx
-const Icon = () => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="16"
-    height="16"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    {/* paths */}
-  </svg>
-)
+size={12}  // Inline with small text (speed indicators)
+size={16}  // Buttons, menu items, table cells
+size={20}  // Tab icons, list items  
+size={24}  // Section headers
+size={32}  // Card headers
+size={48}  // Empty states
+size={64}  // Hero placeholders
+```
+
+### Tab/Menu Icon Pattern
+When defining tabs or menus with icons:
+
+```tsx
+import type { TablerIcon } from '@tabler/icons-react'
+import { IconSettings, IconFolder } from '@tabler/icons-react'
+
+interface TabConfig {
+  key: string
+  label: string
+  Icon: TablerIcon
+  iconColor: string
+}
+
+const tabs: TabConfig[] = [
+  { key: 'files', label: 'Files', Icon: IconFolder, iconColor: 'text-amber-400' },
+  { key: 'settings', label: 'Settings', Icon: IconSettings, iconColor: 'text-default-400' },
+]
+
+// Render - active tabs use default color, inactive show iconColor
+<tab.Icon size={20} className={isActive ? '' : tab.iconColor} />
 ```
 
 ---
@@ -667,8 +728,10 @@ const Icon = () => (
 
 ### Floating Badge on Cards
 ```tsx
-<div className="px-2 py-1 rounded-md bg-black/50 backdrop-blur-sm text-xs font-medium text-white/90">
-  {icon} {label}
+import { IconMovie } from '@tabler/icons-react'
+
+<div className="px-2 py-1 rounded-md bg-black/50 backdrop-blur-sm text-xs font-medium text-white/90 flex items-center gap-1">
+  <IconMovie size={14} /> {label}
 </div>
 ```
 
@@ -738,6 +801,7 @@ className="hover:bg-content2 transition-colors"
 5. **Performance**: Use `tabular-nums` for changing numbers, `truncate` for long text
 6. **Mobile-first**: Design for mobile, enhance for desktop
 7. **Layout stability**: The UI must not shift after initial render. Use skeleton loading instead of spinners that change layout, use toasts instead of inline error messages
+8. **Icons**: Always use `@tabler/icons-react` with semantic colors - never emojis or custom SVGs
 
 ---
 

@@ -6,10 +6,8 @@ use async_graphql::{Enum, InputObject, Object, SimpleObject};
 use serde::{Deserialize, Serialize};
 
 use crate::services::{
-    TorrentInfo as ServiceTorrentInfo, 
-    TorrentState as ServiceTorrentState,
-    TorrentDetails as ServiceTorrentDetails,
-    PeerStats as ServicePeerStats,
+    PeerStats as ServicePeerStats, TorrentDetails as ServiceTorrentDetails,
+    TorrentInfo as ServiceTorrentInfo, TorrentState as ServiceTorrentState,
 };
 
 /// Torrent download state
@@ -324,37 +322,91 @@ pub struct TorrentDetails {
 
 #[Object]
 impl TorrentDetails {
-    async fn id(&self) -> i32 { self.id }
-    async fn info_hash(&self) -> &str { &self.info_hash }
-    async fn name(&self) -> &str { &self.name }
-    async fn state(&self) -> TorrentState { self.state }
-    async fn progress(&self) -> f64 { self.progress }
-    async fn progress_percent(&self) -> f64 { self.progress * 100.0 }
-    async fn size(&self) -> i64 { self.size }
-    async fn size_formatted(&self) -> String { format_bytes(self.size as u64) }
-    async fn downloaded(&self) -> i64 { self.downloaded }
-    async fn downloaded_formatted(&self) -> String { format_bytes(self.downloaded as u64) }
-    async fn uploaded(&self) -> i64 { self.uploaded }
-    async fn uploaded_formatted(&self) -> String { format_bytes(self.uploaded as u64) }
-    async fn download_speed(&self) -> i64 { self.download_speed }
-    async fn download_speed_formatted(&self) -> String { format!("{}/s", format_bytes(self.download_speed as u64)) }
-    async fn upload_speed(&self) -> i64 { self.upload_speed }
-    async fn upload_speed_formatted(&self) -> String { format!("{}/s", format_bytes(self.upload_speed as u64)) }
-    async fn save_path(&self) -> &str { &self.save_path }
-    async fn files(&self) -> &[TorrentFile] { &self.files }
-    async fn piece_count(&self) -> i64 { self.piece_count }
-    async fn pieces_downloaded(&self) -> i64 { self.pieces_downloaded }
-    async fn average_piece_download_ms(&self) -> Option<i64> { self.average_piece_download_ms }
-    async fn time_remaining_secs(&self) -> Option<i64> { self.time_remaining_secs }
-    async fn peer_stats(&self) -> &PeerStats { &self.peer_stats }
-    async fn error(&self) -> Option<&str> { self.error.as_deref() }
-    async fn finished(&self) -> bool { self.finished }
-    
+    async fn id(&self) -> i32 {
+        self.id
+    }
+    async fn info_hash(&self) -> &str {
+        &self.info_hash
+    }
+    async fn name(&self) -> &str {
+        &self.name
+    }
+    async fn state(&self) -> TorrentState {
+        self.state
+    }
+    async fn progress(&self) -> f64 {
+        self.progress
+    }
+    async fn progress_percent(&self) -> f64 {
+        self.progress * 100.0
+    }
+    async fn size(&self) -> i64 {
+        self.size
+    }
+    async fn size_formatted(&self) -> String {
+        format_bytes(self.size as u64)
+    }
+    async fn downloaded(&self) -> i64 {
+        self.downloaded
+    }
+    async fn downloaded_formatted(&self) -> String {
+        format_bytes(self.downloaded as u64)
+    }
+    async fn uploaded(&self) -> i64 {
+        self.uploaded
+    }
+    async fn uploaded_formatted(&self) -> String {
+        format_bytes(self.uploaded as u64)
+    }
+    async fn download_speed(&self) -> i64 {
+        self.download_speed
+    }
+    async fn download_speed_formatted(&self) -> String {
+        format!("{}/s", format_bytes(self.download_speed as u64))
+    }
+    async fn upload_speed(&self) -> i64 {
+        self.upload_speed
+    }
+    async fn upload_speed_formatted(&self) -> String {
+        format!("{}/s", format_bytes(self.upload_speed as u64))
+    }
+    async fn save_path(&self) -> &str {
+        &self.save_path
+    }
+    async fn files(&self) -> &[TorrentFile] {
+        &self.files
+    }
+    async fn piece_count(&self) -> i64 {
+        self.piece_count
+    }
+    async fn pieces_downloaded(&self) -> i64 {
+        self.pieces_downloaded
+    }
+    async fn average_piece_download_ms(&self) -> Option<i64> {
+        self.average_piece_download_ms
+    }
+    async fn time_remaining_secs(&self) -> Option<i64> {
+        self.time_remaining_secs
+    }
+    async fn peer_stats(&self) -> &PeerStats {
+        &self.peer_stats
+    }
+    async fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+    async fn finished(&self) -> bool {
+        self.finished
+    }
+
     /// Ratio of uploaded to downloaded
     async fn ratio(&self) -> f64 {
-        if self.downloaded > 0 { self.uploaded as f64 / self.downloaded as f64 } else { 0.0 }
+        if self.downloaded > 0 {
+            self.uploaded as f64 / self.downloaded as f64
+        } else {
+            0.0
+        }
     }
-    
+
     /// Time remaining formatted as human readable
     async fn time_remaining_formatted(&self) -> Option<String> {
         self.time_remaining_secs.map(|secs| {
@@ -396,12 +448,16 @@ impl From<ServiceTorrentDetails> for TorrentDetails {
             download_speed: d.download_speed as i64,
             upload_speed: d.upload_speed as i64,
             save_path: d.save_path,
-            files: d.files.into_iter().map(|f| TorrentFile {
-                index: f.index as i32,
-                path: f.path,
-                size: f.size as i64,
-                progress: f.progress,
-            }).collect(),
+            files: d
+                .files
+                .into_iter()
+                .map(|f| TorrentFile {
+                    index: f.index as i32,
+                    path: f.path,
+                    size: f.size as i64,
+                    progress: f.progress,
+                })
+                .collect(),
             piece_count: d.piece_count as i64,
             pieces_downloaded: d.pieces_downloaded as i64,
             average_piece_download_ms: d.average_piece_download_ms.map(|v| v as i64),
@@ -453,76 +509,6 @@ pub struct Library {
     pub total_size_bytes: i64,
     /// Last scan timestamp (ISO 8601)
     pub last_scanned_at: Option<String>,
-}
-
-/// Input for creating a library (legacy - use CreateLibraryFullInput instead)
-#[allow(dead_code)]
-#[derive(Debug, InputObject)]
-pub struct CreateLibraryInput {
-    /// Display name
-    pub name: String,
-    /// Filesystem path
-    pub path: String,
-    /// Library type
-    pub library_type: LibraryType,
-    /// Optional icon name
-    pub icon: Option<String>,
-    /// Optional color theme
-    pub color: Option<String>,
-    /// Enable auto-scan (default: true)
-    pub auto_scan: Option<bool>,
-    /// Scan interval in minutes (default: 60)
-    pub scan_interval_minutes: Option<i32>,
-    /// Watch for filesystem changes
-    pub watch_for_changes: Option<bool>,
-    /// Post-download action: copy, move, hardlink
-    pub post_download_action: Option<String>,
-    /// Organize files into show/season folders (default: true)
-    pub organize_files: Option<bool>,
-    /// How to rename files: none, clean, preserve_info (default: none)
-    pub rename_style: Option<String>,
-    /// File naming pattern
-    pub naming_pattern: Option<String>,
-    /// Default quality profile ID
-    pub default_quality_profile_id: Option<String>,
-    /// Auto-add discovered shows
-    pub auto_add_discovered: Option<bool>,
-    /// Enable auto-download of available episodes (default: true)
-    pub auto_download: Option<bool>,
-}
-
-/// Input for updating a library (legacy - use UpdateLibraryFullInput instead)
-#[allow(dead_code)]
-#[derive(Debug, InputObject)]
-pub struct UpdateLibraryInput {
-    /// New display name
-    pub name: Option<String>,
-    /// New filesystem path
-    pub path: Option<String>,
-    /// New icon name
-    pub icon: Option<String>,
-    /// New color theme
-    pub color: Option<String>,
-    /// Enable/disable auto-scan
-    pub auto_scan: Option<bool>,
-    /// New scan interval in minutes
-    pub scan_interval_minutes: Option<i32>,
-    /// Watch for filesystem changes
-    pub watch_for_changes: Option<bool>,
-    /// Post-download action: copy, move, hardlink
-    pub post_download_action: Option<String>,
-    /// Organize files into show/season folders
-    pub organize_files: Option<bool>,
-    /// How to rename files: none, clean, preserve_info
-    pub rename_style: Option<String>,
-    /// File naming pattern
-    pub naming_pattern: Option<String>,
-    /// Default quality profile ID
-    pub default_quality_profile_id: Option<String>,
-    /// Auto-add discovered shows
-    pub auto_add_discovered: Option<bool>,
-    /// Enable auto-download of available episodes
-    pub auto_download: Option<bool>,
 }
 
 /// Result of a library mutation
@@ -631,12 +617,250 @@ pub struct AudioTrack {
     pub channels: i32,
 }
 
-/// Cast session for Chromecast/AirPlay
+// ============================================================================
+// Cast Types (Chromecast / AirPlay)
+// ============================================================================
+
+/// Cast device type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum CastDeviceType {
+    Chromecast,
+    ChromecastAudio,
+    GoogleHome,
+    GoogleNestHub,
+    AndroidTv,
+    Unknown,
+}
+
+impl From<&str> for CastDeviceType {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "chromecast" => Self::Chromecast,
+            "chromecast_audio" => Self::ChromecastAudio,
+            "google_home" => Self::GoogleHome,
+            "google_nest_hub" => Self::GoogleNestHub,
+            "android_tv" => Self::AndroidTv,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// Cast player state
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum CastPlayerState {
+    Idle,
+    Buffering,
+    Playing,
+    Paused,
+}
+
+impl From<&str> for CastPlayerState {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "buffering" => Self::Buffering,
+            "playing" => Self::Playing,
+            "paused" => Self::Paused,
+            _ => Self::Idle,
+        }
+    }
+}
+
+/// A discovered/saved cast device
+#[derive(Debug, Clone, SimpleObject)]
+pub struct CastDevice {
+    /// Unique ID
+    pub id: String,
+    /// Device name (friendly name)
+    pub name: String,
+    /// IP address
+    pub address: String,
+    /// Port number
+    pub port: i32,
+    /// Device model
+    pub model: Option<String>,
+    /// Device type
+    pub device_type: CastDeviceType,
+    /// Whether this is a favorite device
+    pub is_favorite: bool,
+    /// Whether this was manually added
+    pub is_manual: bool,
+    /// Whether the device is currently connected
+    pub is_connected: bool,
+    /// Last time the device was seen on the network
+    pub last_seen_at: Option<String>,
+}
+
+impl CastDevice {
+    pub fn from_record(record: crate::db::CastDeviceRecord, is_connected: bool) -> Self {
+        Self {
+            id: record.id.to_string(),
+            name: record.name,
+            address: record.address.to_string(),
+            port: record.port,
+            model: record.model,
+            device_type: CastDeviceType::from(record.device_type.as_str()),
+            is_favorite: record.is_favorite,
+            is_manual: record.is_manual,
+            is_connected,
+            last_seen_at: record.last_seen_at.map(|t| {
+                t.format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default()
+            }),
+        }
+    }
+}
+
+/// An active cast session
 #[derive(Debug, Clone, SimpleObject)]
 pub struct CastSession {
-    pub session_token: String,
+    /// Session ID
+    pub id: String,
+    /// Device ID
+    pub device_id: Option<String>,
+    /// Device name (for display)
+    pub device_name: Option<String>,
+    /// Media file ID being cast
+    pub media_file_id: Option<String>,
+    /// Episode ID if applicable
+    pub episode_id: Option<String>,
+    /// Stream URL
     pub stream_url: String,
-    pub expires_at: String,
+    /// Current player state
+    pub player_state: CastPlayerState,
+    /// Current playback position in seconds
+    #[graphql(name = "currentTime")]
+    pub current_position: f64,
+    /// Total duration in seconds
+    pub duration: Option<f64>,
+    /// Volume level (0.0 - 1.0)
+    pub volume: f32,
+    /// Whether audio is muted
+    pub is_muted: bool,
+    /// When the session started
+    pub started_at: String,
+}
+
+impl CastSession {
+    pub fn from_record(record: crate::db::CastSessionRecord, device_name: Option<String>) -> Self {
+        Self {
+            id: record.id.to_string(),
+            device_id: record.device_id.map(|id| id.to_string()),
+            device_name,
+            media_file_id: record.media_file_id.map(|id| id.to_string()),
+            episode_id: record.episode_id.map(|id| id.to_string()),
+            stream_url: record.stream_url,
+            player_state: CastPlayerState::from(record.player_state.as_str()),
+            current_position: record.current_position,
+            duration: record.duration,
+            volume: record.volume,
+            is_muted: record.is_muted,
+            started_at: record
+                .started_at
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default(),
+        }
+    }
+}
+
+/// Cast settings (global configuration)
+#[derive(Debug, Clone, SimpleObject)]
+pub struct CastSettings {
+    /// Whether auto-discovery is enabled
+    pub auto_discovery_enabled: bool,
+    /// Discovery interval in seconds
+    pub discovery_interval_seconds: i32,
+    /// Default volume level (0.0 - 1.0)
+    pub default_volume: f32,
+    /// Whether to auto-transcode incompatible files
+    pub transcode_incompatible: bool,
+    /// Preferred quality for transcoding
+    pub preferred_quality: Option<String>,
+}
+
+impl CastSettings {
+    pub fn from_record(record: crate::db::CastSettingsRecord) -> Self {
+        Self {
+            auto_discovery_enabled: record.auto_discovery_enabled,
+            discovery_interval_seconds: record.discovery_interval_seconds,
+            default_volume: record.default_volume,
+            transcode_incompatible: record.transcode_incompatible,
+            preferred_quality: record.preferred_quality,
+        }
+    }
+}
+
+/// Input for adding a cast device manually
+#[derive(Debug, InputObject)]
+pub struct AddCastDeviceInput {
+    /// IP address of the device
+    pub address: String,
+    /// Port number (default: 8009)
+    pub port: Option<i32>,
+    /// Friendly name for the device
+    pub name: Option<String>,
+}
+
+/// Input for updating a cast device
+#[derive(Debug, InputObject)]
+pub struct UpdateCastDeviceInput {
+    /// New name
+    pub name: Option<String>,
+    /// Mark as favorite
+    pub is_favorite: Option<bool>,
+}
+
+/// Input for casting media to a device
+#[derive(Debug, InputObject)]
+pub struct CastMediaInput {
+    /// Device ID to cast to
+    pub device_id: String,
+    /// Media file ID to cast
+    pub media_file_id: String,
+    /// Episode ID (optional, for tracking)
+    pub episode_id: Option<String>,
+    /// Start position in seconds
+    pub start_position: Option<f64>,
+}
+
+/// Input for updating cast settings
+#[derive(Debug, InputObject)]
+pub struct UpdateCastSettingsInput {
+    /// Enable/disable auto-discovery
+    pub auto_discovery_enabled: Option<bool>,
+    /// Discovery interval in seconds
+    pub discovery_interval_seconds: Option<i32>,
+    /// Default volume level
+    pub default_volume: Option<f32>,
+    /// Auto-transcode incompatible files
+    pub transcode_incompatible: Option<bool>,
+    /// Preferred quality for transcoding
+    pub preferred_quality: Option<String>,
+}
+
+/// Result of a cast device mutation
+#[derive(Debug, SimpleObject)]
+pub struct CastDeviceResult {
+    pub success: bool,
+    pub device: Option<CastDevice>,
+    pub error: Option<String>,
+}
+
+/// Result of a cast session mutation
+#[derive(Debug, SimpleObject)]
+pub struct CastSessionResult {
+    pub success: bool,
+    pub session: Option<CastSession>,
+    pub error: Option<String>,
+}
+
+/// Result of cast settings mutation
+#[derive(Debug, SimpleObject)]
+pub struct CastSettingsResult {
+    pub success: bool,
+    pub settings: Option<CastSettings>,
+    pub error: Option<String>,
 }
 
 // ============================================================================
@@ -949,6 +1173,23 @@ pub struct TvShow {
     pub episode_count: i32,
     pub episode_file_count: i32,
     pub size_bytes: i64,
+    // Quality override settings (null = inherit from library)
+    /// Override allowed resolutions (null = inherit)
+    pub allowed_resolutions_override: Option<Vec<String>>,
+    /// Override allowed video codecs (null = inherit)
+    pub allowed_video_codecs_override: Option<Vec<String>>,
+    /// Override allowed audio formats (null = inherit)
+    pub allowed_audio_formats_override: Option<Vec<String>>,
+    /// Override HDR requirement (null = inherit)
+    pub require_hdr_override: Option<bool>,
+    /// Override allowed HDR types (null = inherit)
+    pub allowed_hdr_types_override: Option<Vec<String>>,
+    /// Override allowed sources (null = inherit)
+    pub allowed_sources_override: Option<Vec<String>>,
+    /// Override release group blacklist (null = inherit)
+    pub release_group_blacklist_override: Option<Vec<String>>,
+    /// Override release group whitelist (null = inherit)
+    pub release_group_whitelist_override: Option<Vec<String>>,
 }
 
 /// TV show search result from metadata providers
@@ -999,6 +1240,23 @@ pub struct UpdateTvShowInput {
     pub rename_style_override: Option<Option<String>>,
     /// Override library auto_hunt setting (null = inherit, Some(true/false) = override)
     pub auto_hunt_override: Option<Option<bool>>,
+    // Quality override settings (null = inherit, Some([]) = override with any)
+    /// Override allowed resolutions (null = inherit)
+    pub allowed_resolutions_override: Option<Option<Vec<String>>>,
+    /// Override allowed video codecs (null = inherit)
+    pub allowed_video_codecs_override: Option<Option<Vec<String>>>,
+    /// Override allowed audio formats (null = inherit)
+    pub allowed_audio_formats_override: Option<Option<Vec<String>>>,
+    /// Override HDR requirement (null = inherit)
+    pub require_hdr_override: Option<Option<bool>>,
+    /// Override allowed HDR types (null = inherit)
+    pub allowed_hdr_types_override: Option<Option<Vec<String>>>,
+    /// Override allowed sources (null = inherit)
+    pub allowed_sources_override: Option<Option<Vec<String>>>,
+    /// Override release group blacklist (null = inherit)
+    pub release_group_blacklist_override: Option<Option<Vec<String>>>,
+    /// Override release group whitelist (null = inherit)
+    pub release_group_whitelist_override: Option<Option<Vec<String>>>,
 }
 
 /// Result of TV show mutation
@@ -1051,6 +1309,8 @@ pub struct Episode {
     pub torrent_link: Option<String>,
     /// When the torrent link was found in RSS
     pub torrent_link_added_at: Option<String>,
+    /// Media file ID if episode has been downloaded (for playback)
+    pub media_file_id: Option<String>,
 }
 
 /// Episode with show information (for future wanted list feature)
@@ -1280,11 +1540,28 @@ pub struct LibraryFull {
     pub total_size_bytes: i64,
     pub show_count: i32,
     pub last_scanned_at: Option<String>,
+    // Inline quality settings (empty = any)
+    /// Allowed resolutions: 2160p, 1080p, 720p, 480p. Empty = any.
+    pub allowed_resolutions: Vec<String>,
+    /// Allowed video codecs: hevc, h264, av1, xvid. Empty = any.
+    pub allowed_video_codecs: Vec<String>,
+    /// Allowed audio formats: atmos, truehd, dtshd, dts, dd51, aac. Empty = any.
+    pub allowed_audio_formats: Vec<String>,
+    /// If true, only accept releases with HDR.
+    pub require_hdr: bool,
+    /// Allowed HDR types: hdr10, hdr10plus, dolbyvision, hlg. Empty with require_hdr=true = any HDR.
+    pub allowed_hdr_types: Vec<String>,
+    /// Allowed sources: webdl, webrip, bluray, hdtv. Empty = any.
+    pub allowed_sources: Vec<String>,
+    /// Blacklisted release groups.
+    pub release_group_blacklist: Vec<String>,
+    /// Whitelisted release groups (if set, only allow these).
+    pub release_group_whitelist: Vec<String>,
 }
 
-/// Enhanced input for creating a library
+/// Input for creating a library
 #[derive(Debug, InputObject)]
-pub struct CreateLibraryFullInput {
+pub struct CreateLibraryInput {
     pub name: String,
     pub path: String,
     pub library_type: LibraryType,
@@ -1305,11 +1582,28 @@ pub struct CreateLibraryFullInput {
     pub auto_download: Option<bool>,
     /// Automatically hunt for missing episodes using indexers (default: false)
     pub auto_hunt: Option<bool>,
+    // Inline quality settings
+    /// Allowed resolutions (empty = any)
+    pub allowed_resolutions: Option<Vec<String>>,
+    /// Allowed video codecs (empty = any)
+    pub allowed_video_codecs: Option<Vec<String>>,
+    /// Allowed audio formats (empty = any)
+    pub allowed_audio_formats: Option<Vec<String>>,
+    /// Require HDR content
+    pub require_hdr: Option<bool>,
+    /// Allowed HDR types (empty with require_hdr = any HDR)
+    pub allowed_hdr_types: Option<Vec<String>>,
+    /// Allowed sources (empty = any)
+    pub allowed_sources: Option<Vec<String>>,
+    /// Blacklisted release groups
+    pub release_group_blacklist: Option<Vec<String>>,
+    /// Whitelisted release groups
+    pub release_group_whitelist: Option<Vec<String>>,
 }
 
-/// Enhanced input for updating a library
+/// Input for updating a library
 #[derive(Debug, InputObject)]
-pub struct UpdateLibraryFullInput {
+pub struct UpdateLibraryInput {
     pub name: Option<String>,
     pub path: Option<String>,
     pub icon: Option<String>,
@@ -1329,6 +1623,23 @@ pub struct UpdateLibraryFullInput {
     pub auto_download: Option<bool>,
     /// Automatically hunt for missing episodes using indexers
     pub auto_hunt: Option<bool>,
+    // Inline quality settings
+    /// Allowed resolutions (empty = any)
+    pub allowed_resolutions: Option<Vec<String>>,
+    /// Allowed video codecs (empty = any)
+    pub allowed_video_codecs: Option<Vec<String>>,
+    /// Allowed audio formats (empty = any)
+    pub allowed_audio_formats: Option<Vec<String>>,
+    /// Require HDR content
+    pub require_hdr: Option<bool>,
+    /// Allowed HDR types (empty with require_hdr = any HDR)
+    pub allowed_hdr_types: Option<Vec<String>>,
+    /// Allowed sources (empty = any)
+    pub allowed_sources: Option<Vec<String>>,
+    /// Blacklisted release groups
+    pub release_group_blacklist: Option<Vec<String>>,
+    /// Whitelisted release groups
+    pub release_group_whitelist: Option<Vec<String>>,
 }
 
 // ============================================================================
@@ -1541,7 +1852,7 @@ pub struct LibraryUpcomingShow {
 // ============================================================================
 
 /// Format bytes as human-readable string
-fn format_bytes(bytes: u64) -> String {
+pub fn format_bytes(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * 1024;
     const GB: u64 = MB * 1024;
@@ -1558,4 +1869,560 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{} B", bytes)
     }
+}
+
+// ============================================================================
+// Media File Types
+// ============================================================================
+
+/// A media file in a library
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct MediaFile {
+    /// Unique identifier
+    pub id: String,
+    /// Library ID
+    pub library_id: String,
+    /// Full file path
+    pub path: String,
+    /// Relative path within library
+    pub relative_path: Option<String>,
+    /// Original filename
+    pub original_name: Option<String>,
+    /// File size in bytes
+    pub size_bytes: i64,
+    /// Human-readable file size
+    pub size_formatted: String,
+    /// Container format (mkv, mp4, etc.)
+    pub container: Option<String>,
+    /// Video codec
+    pub video_codec: Option<String>,
+    /// Audio codec
+    pub audio_codec: Option<String>,
+    /// Video resolution (1080p, 4K, etc.)
+    pub resolution: Option<String>,
+    /// Whether the file is HDR
+    pub is_hdr: Option<bool>,
+    /// HDR type (HDR10, Dolby Vision, etc.)
+    pub hdr_type: Option<String>,
+    /// Video width
+    pub width: Option<i32>,
+    /// Video height
+    pub height: Option<i32>,
+    /// Duration in seconds
+    pub duration: Option<i32>,
+    /// Bitrate in kbps
+    pub bitrate: Option<i32>,
+    /// Episode ID if matched
+    pub episode_id: Option<String>,
+    /// Whether the file has been organized
+    pub organized: bool,
+    /// When the file was added
+    pub added_at: String,
+}
+
+impl MediaFile {
+    pub fn from_record(record: crate::db::MediaFileRecord) -> Self {
+        Self {
+            id: record.id.to_string(),
+            library_id: record.library_id.to_string(),
+            path: record.path,
+            relative_path: record.relative_path,
+            original_name: record.original_name,
+            size_bytes: record.size_bytes,
+            size_formatted: format_bytes(record.size_bytes as u64),
+            container: record.container,
+            video_codec: record.video_codec,
+            audio_codec: record.audio_codec,
+            resolution: record.resolution,
+            is_hdr: record.is_hdr,
+            hdr_type: record.hdr_type,
+            width: record.width,
+            height: record.height,
+            duration: record.duration,
+            bitrate: record.bitrate,
+            episode_id: record.episode_id.map(|id| id.to_string()),
+            organized: record.organized,
+            added_at: record.added_at.to_rfc3339(),
+        }
+    }
+}
+
+// ============================================================================
+// Indexer Types
+// ============================================================================
+
+/// Type of indexer implementation
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum IndexerImplementationType {
+    /// Native Rust implementation
+    Native,
+    /// YAML-based Cardigann definition
+    Cardigann,
+    /// RSS/Atom feed
+    Feed,
+    /// Newznab-compatible
+    Newznab,
+}
+
+/// Type of tracker
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum TrackerTypeEnum {
+    /// Private tracker requiring invitation
+    Private,
+    /// Public tracker accessible to anyone
+    Public,
+    /// Semi-private tracker with open registration
+    SemiPrivate,
+}
+
+/// An indexer configuration
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct IndexerConfig {
+    /// Unique identifier
+    pub id: String,
+    /// Indexer type (e.g., "iptorrents", "cardigann")
+    pub indexer_type: String,
+    /// Display name
+    pub name: String,
+    /// Whether the indexer is enabled
+    pub enabled: bool,
+    /// Priority (higher = searched first)
+    pub priority: i32,
+    /// Site URL
+    pub site_url: Option<String>,
+    /// Whether the indexer is healthy (no recent errors)
+    pub is_healthy: bool,
+    /// Last error message if any
+    pub last_error: Option<String>,
+    /// Error count
+    pub error_count: i32,
+    /// Last successful search timestamp
+    pub last_success_at: Option<String>,
+    /// When the indexer was created
+    pub created_at: String,
+    /// When the indexer was last updated
+    pub updated_at: String,
+    /// Capabilities
+    pub capabilities: IndexerCapabilities,
+}
+
+/// Indexer capabilities
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct IndexerCapabilities {
+    /// Whether general search is available
+    pub supports_search: bool,
+    /// Whether TV search is available
+    pub supports_tv_search: bool,
+    /// Whether movie search is available
+    pub supports_movie_search: bool,
+    /// Whether music search is available
+    pub supports_music_search: bool,
+    /// Whether book search is available
+    pub supports_book_search: bool,
+    /// Whether IMDB search is available
+    pub supports_imdb_search: bool,
+    /// Whether TVDB search is available
+    pub supports_tvdb_search: bool,
+}
+
+/// Information about an available indexer type
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct IndexerTypeInfo {
+    /// Unique identifier (e.g., "iptorrents")
+    pub id: String,
+    /// Display name
+    pub name: String,
+    /// Description
+    pub description: String,
+    /// Tracker type
+    pub tracker_type: String,
+    /// Language code
+    pub language: String,
+    /// Primary site URL
+    pub site_link: String,
+    /// Required credential types
+    pub required_credentials: Vec<String>,
+    /// Whether this is a native implementation
+    pub is_native: bool,
+}
+
+/// A setting definition for an indexer
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct IndexerSettingDefinition {
+    /// Setting key
+    pub key: String,
+    /// Display label
+    pub label: String,
+    /// Setting type (text, password, checkbox, select)
+    pub setting_type: String,
+    /// Default value
+    pub default_value: Option<String>,
+    /// Options for select type
+    pub options: Option<Vec<IndexerSettingOption>>,
+}
+
+/// An option for a select setting
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct IndexerSettingOption {
+    /// Option value
+    pub value: String,
+    /// Display label
+    pub label: String,
+}
+
+/// Input for creating an indexer
+#[derive(Debug, Clone, InputObject)]
+pub struct CreateIndexerInput {
+    /// Indexer type (e.g., "iptorrents")
+    pub indexer_type: String,
+    /// Display name
+    pub name: String,
+    /// Site URL override
+    pub site_url: Option<String>,
+    /// Credentials (cookie, api_key, etc.)
+    pub credentials: Vec<IndexerCredentialInput>,
+    /// Settings (freeleech, sort, etc.)
+    pub settings: Vec<IndexerSettingInput>,
+}
+
+/// Input for updating an indexer
+#[derive(Debug, Clone, InputObject)]
+pub struct UpdateIndexerInput {
+    /// Display name
+    pub name: Option<String>,
+    /// Whether the indexer is enabled
+    pub enabled: Option<bool>,
+    /// Priority (higher = searched first)
+    pub priority: Option<i32>,
+    /// Site URL override
+    pub site_url: Option<String>,
+    /// Updated credentials
+    pub credentials: Option<Vec<IndexerCredentialInput>>,
+    /// Updated settings
+    pub settings: Option<Vec<IndexerSettingInput>>,
+}
+
+/// Input for a credential
+#[derive(Debug, Clone, InputObject)]
+pub struct IndexerCredentialInput {
+    /// Credential type (cookie, api_key, user_agent, etc.)
+    pub credential_type: String,
+    /// Credential value (will be encrypted)
+    pub value: String,
+}
+
+/// Input for a setting
+#[derive(Debug, Clone, InputObject)]
+pub struct IndexerSettingInput {
+    /// Setting key
+    pub key: String,
+    /// Setting value
+    pub value: String,
+}
+
+/// Input for searching indexers
+#[derive(Debug, Clone, InputObject)]
+pub struct IndexerSearchInput {
+    /// Search query
+    pub query: String,
+    /// Specific indexer IDs to search (or all if empty)
+    pub indexer_ids: Option<Vec<String>>,
+    /// Torznab category IDs
+    pub categories: Option<Vec<i32>>,
+    /// Season number (for TV search)
+    pub season: Option<i32>,
+    /// Episode number (for TV search)
+    pub episode: Option<String>,
+    /// IMDB ID (e.g., "tt1234567")
+    pub imdb_id: Option<String>,
+    /// Result limit
+    pub limit: Option<i32>,
+}
+
+/// Result of an indexer mutation
+#[derive(Debug, Clone, SimpleObject)]
+pub struct IndexerResult {
+    /// Whether the operation succeeded
+    pub success: bool,
+    /// Error message if failed
+    pub error: Option<String>,
+    /// The indexer if successful
+    pub indexer: Option<IndexerConfig>,
+}
+
+/// Result of testing an indexer
+#[derive(Debug, Clone, SimpleObject)]
+pub struct IndexerTestResult {
+    /// Whether the test succeeded
+    pub success: bool,
+    /// Error message if failed
+    pub error: Option<String>,
+    /// Number of releases found in test query
+    pub releases_found: Option<i32>,
+    /// Time taken in milliseconds
+    pub elapsed_ms: Option<i64>,
+}
+
+/// Result of an indexer search
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct IndexerSearchResultSet {
+    /// Results from each indexer
+    pub indexers: Vec<IndexerSearchResultItem>,
+    /// Total releases found
+    pub total_releases: i32,
+    /// Total time taken in milliseconds
+    pub total_elapsed_ms: i64,
+}
+
+/// Search results from a single indexer
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct IndexerSearchResultItem {
+    /// Indexer ID
+    pub indexer_id: String,
+    /// Indexer name
+    pub indexer_name: String,
+    /// Releases found
+    pub releases: Vec<TorrentRelease>,
+    /// Time taken in milliseconds
+    pub elapsed_ms: i64,
+    /// Whether results came from cache
+    pub from_cache: bool,
+    /// Error message if search failed
+    pub error: Option<String>,
+}
+
+/// A torrent release from an indexer search
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct TorrentRelease {
+    /// Release title
+    pub title: String,
+    /// Unique identifier
+    pub guid: String,
+    /// Download link
+    pub link: Option<String>,
+    /// Magnet URI
+    pub magnet_uri: Option<String>,
+    /// Info hash
+    pub info_hash: Option<String>,
+    /// Details page URL
+    pub details: Option<String>,
+    /// Publication date (ISO 8601)
+    pub publish_date: String,
+    /// Torznab category IDs
+    pub categories: Vec<i32>,
+    /// File size in bytes
+    pub size: Option<i64>,
+    /// Human-readable size
+    pub size_formatted: Option<String>,
+    /// Number of seeders
+    pub seeders: Option<i32>,
+    /// Number of leechers
+    pub leechers: Option<i32>,
+    /// Number of peers (seeders + leechers)
+    pub peers: Option<i32>,
+    /// Number of downloads/grabs
+    pub grabs: Option<i32>,
+    /// Whether this is freeleech
+    pub is_freeleech: bool,
+    /// IMDB ID
+    pub imdb_id: Option<String>,
+    /// Poster/cover image URL
+    pub poster: Option<String>,
+    /// Description
+    pub description: Option<String>,
+    /// Indexer ID that found this release
+    pub indexer_id: Option<String>,
+    /// Indexer name
+    pub indexer_name: Option<String>,
+}
+
+// =============================================================================
+// Security Settings Types
+// =============================================================================
+
+/// Security settings for the application
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct SecuritySettings {
+    /// Whether the indexer encryption key is set
+    pub encryption_key_set: bool,
+    /// Masked version of the encryption key (first/last 4 chars)
+    pub encryption_key_preview: Option<String>,
+    /// When the encryption key was last changed
+    pub encryption_key_last_modified: Option<String>,
+}
+
+/// Result of updating security settings
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct SecuritySettingsResult {
+    /// Whether the operation succeeded
+    pub success: bool,
+    /// Error message if failed
+    pub error: Option<String>,
+    /// The updated settings
+    pub settings: Option<SecuritySettings>,
+}
+
+/// Input for generating a new encryption key
+#[derive(Debug, Clone, InputObject)]
+pub struct GenerateEncryptionKeyInput {
+    /// Confirm that you understand this will invalidate existing credentials
+    pub confirm_invalidation: bool,
+}
+
+// =============================================================================
+// Filesystem Types
+// =============================================================================
+
+/// A file or directory entry
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct FileEntry {
+    /// File/directory name
+    pub name: String,
+    /// Full path
+    pub path: String,
+    /// Is this a directory?
+    pub is_dir: bool,
+    /// File size in bytes (0 for directories)
+    pub size: i64,
+    /// Human-readable file size
+    pub size_formatted: String,
+    /// Is this path readable?
+    pub readable: bool,
+    /// Is this path writable?
+    pub writable: bool,
+    /// MIME type (for files)
+    pub mime_type: Option<String>,
+    /// Last modified timestamp (ISO 8601)
+    pub modified_at: Option<String>,
+}
+
+/// A quick-access path shortcut
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct QuickPath {
+    /// Display name
+    pub name: String,
+    /// Full path
+    pub path: String,
+}
+
+/// Result of browsing a directory
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct BrowseDirectoryResult {
+    /// Current path being browsed
+    pub current_path: String,
+    /// Parent path (null if at root)
+    pub parent_path: Option<String>,
+    /// List of entries in the directory
+    pub entries: Vec<FileEntry>,
+    /// Common quick-access paths
+    pub quick_paths: Vec<QuickPath>,
+    /// Whether this path is inside a library
+    pub is_library_path: bool,
+    /// Library ID if path is inside a library
+    pub library_id: Option<String>,
+}
+
+/// Input for browsing a directory
+#[derive(Debug, Clone, InputObject)]
+pub struct BrowseDirectoryInput {
+    /// Path to browse (defaults to root or home)
+    pub path: Option<String>,
+    /// Only show directories
+    pub dirs_only: Option<bool>,
+    /// Show hidden files (starting with .)
+    pub show_hidden: Option<bool>,
+}
+
+/// Result of a file operation
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct FileOperationResult {
+    /// Whether the operation succeeded
+    pub success: bool,
+    /// Error message if failed
+    pub error: Option<String>,
+    /// Number of items affected
+    pub affected_count: i32,
+    /// Detailed messages about what happened
+    pub messages: Vec<String>,
+    /// Updated path (for create operations)
+    pub path: Option<String>,
+}
+
+/// Input for creating a directory
+#[derive(Debug, Clone, InputObject)]
+pub struct CreateDirectoryInput {
+    /// Full path of the directory to create
+    pub path: String,
+}
+
+/// Input for deleting files or directories
+#[derive(Debug, Clone, InputObject)]
+pub struct DeleteFilesInput {
+    /// Paths to delete
+    pub paths: Vec<String>,
+    /// Whether to allow deleting non-empty directories
+    pub recursive: Option<bool>,
+}
+
+/// Input for copying files or directories
+#[derive(Debug, Clone, InputObject)]
+pub struct CopyFilesInput {
+    /// Source paths to copy
+    pub sources: Vec<String>,
+    /// Destination directory
+    pub destination: String,
+    /// Whether to overwrite existing files
+    pub overwrite: Option<bool>,
+}
+
+/// Input for moving files or directories
+#[derive(Debug, Clone, InputObject)]
+pub struct MoveFilesInput {
+    /// Source paths to move
+    pub sources: Vec<String>,
+    /// Destination directory
+    pub destination: String,
+    /// Whether to overwrite existing files
+    pub overwrite: Option<bool>,
+}
+
+/// Input for renaming a file or directory
+#[derive(Debug, Clone, InputObject)]
+pub struct RenameFileInput {
+    /// Current path of the file/directory
+    pub path: String,
+    /// New name (not full path, just the name)
+    pub new_name: String,
+}
+
+/// Event emitted when directory contents change
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct DirectoryChangeEvent {
+    /// Directory path that changed
+    pub path: String,
+    /// Type of change: "created", "modified", "deleted", "renamed"
+    pub change_type: String,
+    /// Affected file/directory name
+    pub name: Option<String>,
+    /// New name (for rename events)
+    pub new_name: Option<String>,
+    /// Timestamp of the change (ISO 8601)
+    pub timestamp: String,
+}
+
+/// Path validation result
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct PathValidationResult {
+    /// Whether the path is valid
+    pub is_valid: bool,
+    /// Whether the path is inside a library
+    pub is_library_path: bool,
+    /// Library ID if path is inside a library
+    pub library_id: Option<String>,
+    /// Library name if path is inside a library
+    pub library_name: Option<String>,
+    /// Error message if path is invalid
+    pub error: Option<String>,
 }

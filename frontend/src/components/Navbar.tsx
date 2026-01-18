@@ -9,6 +9,7 @@ import { useState } from 'react'
 import { Sun, Moon } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
+import { IconAlertTriangle } from '@tabler/icons-react'
 
 const navItems = [
   { to: '/', label: 'Home' },
@@ -33,11 +34,13 @@ export function Navbar() {
   return (
     <HeroNavbar
       isBordered
+      position="sticky"
+      isBlurred
       isMenuOpen={isMenuOpen}
       onMenuOpenChange={setIsMenuOpen}
       classNames={{
-        base: 'bg-content1',
-        wrapper: 'container max-w-8xl',
+        base: 'border-none bg-transparent',
+        wrapper: 'container max-w-auto bg-transparent ',
       }}
     >
       {/* Mobile menu toggle */}
@@ -106,7 +109,7 @@ export function Navbar() {
         {!isConfigured ? (
           <NavbarItem>
             <Chip color="warning" variant="flat" size="sm">
-              ⚠️ Auth not configured
+              <IconAlertTriangle size={16} className="inline mr-1 text-amber-400" /> Auth not configured
             </Chip>
           </NavbarItem>
         ) : error ? (

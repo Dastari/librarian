@@ -11,6 +11,9 @@ import {
   type FileEntry,
   type QuickPath,
 } from '../lib/graphql'
+import { IconFolder, IconFile } from '@tabler/icons-react'
+import { InlineError } from './shared'
+import { sanitizeError } from '../lib/format'
 
 interface FolderBrowserInputProps {
   /** Current folder path value */
@@ -64,7 +67,7 @@ export function FolderBrowserInput({
       return true
     } catch (e) {
       console.error('Browse error:', e)
-      setBrowseError(e instanceof Error ? e.message : 'Failed to browse directory')
+      setBrowseError(sanitizeError(e))
       return false
     } finally {
       setIsBrowsing(false)
@@ -101,10 +104,10 @@ export function FolderBrowserInput({
         setShowNewFolder(false)
         await browse(newPath)
       } else {
-        setBrowseError(result.error || 'Failed to create folder')
+        setBrowseError(sanitizeError(result.error || 'Failed to create folder'))
       }
     } catch (e) {
-      setBrowseError(e instanceof Error ? e.message : 'Failed to create folder')
+      setBrowseError(sanitizeError(e))
     } finally {
       setIsCreatingFolder(false)
     }
@@ -187,11 +190,7 @@ export function FolderBrowserInput({
             <Divider className="my-2" />
 
             {/* Error message */}
-            {browseError && (
-              <div className="text-danger text-sm mb-4 p-2 bg-danger-50 rounded-lg">
-                {browseError}
-              </div>
-            )}
+            {browseError && <InlineError message={browseError} className="mb-4" />}
 
             {/* Directory listing */}
             {isBrowsing ? (
@@ -207,7 +206,7 @@ export function FolderBrowserInput({
                     onPress={() => browse(parentPath)}
                     className="w-full justify-start px-3 py-2 h-auto"
                   >
-                    <span className="text-lg">📁</span>
+                    <IconFolder size={20} className="text-amber-400" />
                     <span className="text-default-600">..</span>
                     <span className="text-xs text-default-400 ml-auto">Parent directory</span>
                   </Button>
@@ -224,7 +223,7 @@ export function FolderBrowserInput({
                     }`}
                     isDisabled={!entry.isDir || !entry.readable}
                   >
-                    <span className="text-lg">{entry.isDir ? '📁' : '📄'}</span>
+                    {entry.isDir ? <IconFolder size={20} className="text-amber-400" /> : <IconFile size={20} className="text-default-400" />}
                     <span className="flex-1 truncate text-left">{entry.name}</span>
                     {entry.isDir && entry.writable && (
                       <Chip size="sm" color="success" variant="flat">

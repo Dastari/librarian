@@ -38,6 +38,15 @@ pub struct TvShowRecord {
     pub size_bytes: Option<i64>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    // Quality override fields (NULL = inherit from library)
+    pub allowed_resolutions_override: Option<Vec<String>>,
+    pub allowed_video_codecs_override: Option<Vec<String>>,
+    pub allowed_audio_formats_override: Option<Vec<String>>,
+    pub require_hdr_override: Option<bool>,
+    pub allowed_hdr_types_override: Option<Vec<String>>,
+    pub allowed_sources_override: Option<Vec<String>>,
+    pub release_group_blacklist_override: Option<Vec<String>>,
+    pub release_group_whitelist_override: Option<Vec<String>>,
 }
 
 /// Input for creating a TV show
@@ -68,6 +77,15 @@ pub struct CreateTvShow {
     pub organize_files_override: Option<bool>,
     pub rename_style_override: Option<String>,
     pub auto_hunt_override: Option<bool>,
+    // Quality override fields
+    pub allowed_resolutions_override: Option<Vec<String>>,
+    pub allowed_video_codecs_override: Option<Vec<String>>,
+    pub allowed_audio_formats_override: Option<Vec<String>>,
+    pub require_hdr_override: Option<bool>,
+    pub allowed_hdr_types_override: Option<Vec<String>>,
+    pub allowed_sources_override: Option<Vec<String>>,
+    pub release_group_blacklist_override: Option<Vec<String>>,
+    pub release_group_whitelist_override: Option<Vec<String>>,
 }
 
 /// Input for updating a TV show
@@ -92,6 +110,15 @@ pub struct UpdateTvShow {
     pub organize_files_override: Option<Option<bool>>,
     pub rename_style_override: Option<Option<String>>,
     pub auto_hunt_override: Option<Option<bool>>,
+    // Quality override fields (Option<Option<...>> for nullable override)
+    pub allowed_resolutions_override: Option<Option<Vec<String>>>,
+    pub allowed_video_codecs_override: Option<Option<Vec<String>>>,
+    pub allowed_audio_formats_override: Option<Option<Vec<String>>>,
+    pub require_hdr_override: Option<Option<bool>>,
+    pub allowed_hdr_types_override: Option<Option<Vec<String>>>,
+    pub allowed_sources_override: Option<Option<Vec<String>>>,
+    pub release_group_blacklist_override: Option<Option<Vec<String>>>,
+    pub release_group_whitelist_override: Option<Option<Vec<String>>>,
 }
 
 pub struct TvShowRepository {
@@ -113,7 +140,11 @@ impl TvShowRepository {
                    monitor_type, quality_profile_id, path,
                    auto_download_override, backfill_existing,
                    organize_files_override, rename_style_override, auto_hunt_override,
-                   episode_count, episode_file_count, size_bytes, created_at, updated_at
+                   episode_count, episode_file_count, size_bytes, created_at, updated_at,
+                   allowed_resolutions_override, allowed_video_codecs_override,
+                   allowed_audio_formats_override, require_hdr_override,
+                   allowed_hdr_types_override, allowed_sources_override,
+                   release_group_blacklist_override, release_group_whitelist_override
             FROM tv_shows
             WHERE library_id = $1
             ORDER BY COALESCE(sort_name, name)
@@ -136,7 +167,11 @@ impl TvShowRepository {
                    monitor_type, quality_profile_id, path,
                    auto_download_override, backfill_existing,
                    organize_files_override, rename_style_override, auto_hunt_override,
-                   episode_count, episode_file_count, size_bytes, created_at, updated_at
+                   episode_count, episode_file_count, size_bytes, created_at, updated_at,
+                   allowed_resolutions_override, allowed_video_codecs_override,
+                   allowed_audio_formats_override, require_hdr_override,
+                   allowed_hdr_types_override, allowed_sources_override,
+                   release_group_blacklist_override, release_group_whitelist_override
             FROM tv_shows
             WHERE user_id = $1 AND monitored = true
             ORDER BY name
@@ -159,7 +194,11 @@ impl TvShowRepository {
                    monitor_type, quality_profile_id, path,
                    auto_download_override, backfill_existing,
                    organize_files_override, rename_style_override, auto_hunt_override,
-                   episode_count, episode_file_count, size_bytes, created_at, updated_at
+                   episode_count, episode_file_count, size_bytes, created_at, updated_at,
+                   allowed_resolutions_override, allowed_video_codecs_override,
+                   allowed_audio_formats_override, require_hdr_override,
+                   allowed_hdr_types_override, allowed_sources_override,
+                   release_group_blacklist_override, release_group_whitelist_override
             FROM tv_shows
             WHERE id = $1
             "#,
@@ -172,7 +211,11 @@ impl TvShowRepository {
     }
 
     /// Get a TV show by TVMaze ID in a library
-    pub async fn get_by_tvmaze_id(&self, library_id: Uuid, tvmaze_id: i32) -> Result<Option<TvShowRecord>> {
+    pub async fn get_by_tvmaze_id(
+        &self,
+        library_id: Uuid,
+        tvmaze_id: i32,
+    ) -> Result<Option<TvShowRecord>> {
         let record = sqlx::query_as::<_, TvShowRecord>(
             r#"
             SELECT id, library_id, user_id, name, sort_name, year, status,
@@ -181,7 +224,11 @@ impl TvShowRepository {
                    monitor_type, quality_profile_id, path,
                    auto_download_override, backfill_existing,
                    organize_files_override, rename_style_override, auto_hunt_override,
-                   episode_count, episode_file_count, size_bytes, created_at, updated_at
+                   episode_count, episode_file_count, size_bytes, created_at, updated_at,
+                   allowed_resolutions_override, allowed_video_codecs_override,
+                   allowed_audio_formats_override, require_hdr_override,
+                   allowed_hdr_types_override, allowed_sources_override,
+                   release_group_blacklist_override, release_group_whitelist_override
             FROM tv_shows
             WHERE library_id = $1 AND tvmaze_id = $2
             "#,
@@ -195,7 +242,11 @@ impl TvShowRepository {
     }
 
     /// Find a TV show by name in a library (case-insensitive fuzzy match)
-    pub async fn find_by_name_in_library(&self, library_id: Uuid, name: &str) -> Result<Option<TvShowRecord>> {
+    pub async fn find_by_name_in_library(
+        &self,
+        library_id: Uuid,
+        name: &str,
+    ) -> Result<Option<TvShowRecord>> {
         // First try exact match (case-insensitive)
         let record = sqlx::query_as::<_, TvShowRecord>(
             r#"
@@ -205,7 +256,11 @@ impl TvShowRepository {
                    monitor_type, quality_profile_id, path,
                    auto_download_override, backfill_existing,
                    organize_files_override, rename_style_override, auto_hunt_override,
-                   episode_count, episode_file_count, size_bytes, created_at, updated_at
+                   episode_count, episode_file_count, size_bytes, created_at, updated_at,
+                   allowed_resolutions_override, allowed_video_codecs_override,
+                   allowed_audio_formats_override, require_hdr_override,
+                   allowed_hdr_types_override, allowed_sources_override,
+                   release_group_blacklist_override, release_group_whitelist_override
             FROM tv_shows
             WHERE library_id = $1 AND LOWER(name) = LOWER($2)
             LIMIT 1
@@ -236,7 +291,11 @@ impl TvShowRepository {
                    monitor_type, quality_profile_id, path,
                    auto_download_override, backfill_existing,
                    organize_files_override, rename_style_override, auto_hunt_override,
-                   episode_count, episode_file_count, size_bytes, created_at, updated_at
+                   episode_count, episode_file_count, size_bytes, created_at, updated_at,
+                   allowed_resolutions_override, allowed_video_codecs_override,
+                   allowed_audio_formats_override, require_hdr_override,
+                   allowed_hdr_types_override, allowed_sources_override,
+                   release_group_blacklist_override, release_group_whitelist_override
             FROM tv_shows
             WHERE library_id = $1 
               AND (
@@ -264,16 +323,25 @@ impl TvShowRepository {
                 runtime, genres, poster_url, backdrop_url, monitored,
                 monitor_type, quality_profile_id, path,
                 auto_download_override, backfill_existing,
-                organize_files_override, rename_style_override, auto_hunt_override
+                organize_files_override, rename_style_override, auto_hunt_override,
+                allowed_resolutions_override, allowed_video_codecs_override,
+                allowed_audio_formats_override, require_hdr_override,
+                allowed_hdr_types_override, allowed_sources_override,
+                release_group_blacklist_override, release_group_whitelist_override
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25,
+                    $26, $27, $28, $29, $30, $31, $32, $33)
             RETURNING id, library_id, user_id, name, sort_name, year, status,
                       tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                       runtime, genres, poster_url, backdrop_url, monitored,
                       monitor_type, quality_profile_id, path,
                       auto_download_override, backfill_existing,
                       organize_files_override, rename_style_override, auto_hunt_override,
-                      episode_count, episode_file_count, size_bytes, created_at, updated_at
+                      episode_count, episode_file_count, size_bytes, created_at, updated_at,
+                      allowed_resolutions_override, allowed_video_codecs_override,
+                      allowed_audio_formats_override, require_hdr_override,
+                      allowed_hdr_types_override, allowed_sources_override,
+                      release_group_blacklist_override, release_group_whitelist_override
             "#,
         )
         .bind(input.library_id)
@@ -301,6 +369,14 @@ impl TvShowRepository {
         .bind(input.organize_files_override)
         .bind(&input.rename_style_override)
         .bind(input.auto_hunt_override)
+        .bind(&input.allowed_resolutions_override)
+        .bind(&input.allowed_video_codecs_override)
+        .bind(&input.allowed_audio_formats_override)
+        .bind(input.require_hdr_override)
+        .bind(&input.allowed_hdr_types_override)
+        .bind(&input.allowed_sources_override)
+        .bind(&input.release_group_blacklist_override)
+        .bind(&input.release_group_whitelist_override)
         .fetch_one(&self.pool)
         .await?;
 
@@ -331,6 +407,14 @@ impl TvShowRepository {
                 organize_files_override = COALESCE($18, organize_files_override),
                 rename_style_override = COALESCE($19, rename_style_override),
                 auto_hunt_override = COALESCE($20, auto_hunt_override),
+                allowed_resolutions_override = COALESCE($21, allowed_resolutions_override),
+                allowed_video_codecs_override = COALESCE($22, allowed_video_codecs_override),
+                allowed_audio_formats_override = COALESCE($23, allowed_audio_formats_override),
+                require_hdr_override = COALESCE($24, require_hdr_override),
+                allowed_hdr_types_override = COALESCE($25, allowed_hdr_types_override),
+                allowed_sources_override = COALESCE($26, allowed_sources_override),
+                release_group_blacklist_override = COALESCE($27, release_group_blacklist_override),
+                release_group_whitelist_override = COALESCE($28, release_group_whitelist_override),
                 updated_at = NOW()
             WHERE id = $1
             RETURNING id, library_id, user_id, name, sort_name, year, status,
@@ -339,7 +423,11 @@ impl TvShowRepository {
                       monitor_type, quality_profile_id, path,
                       auto_download_override, backfill_existing,
                       organize_files_override, rename_style_override, auto_hunt_override,
-                      episode_count, episode_file_count, size_bytes, created_at, updated_at
+                      episode_count, episode_file_count, size_bytes, created_at, updated_at,
+                      allowed_resolutions_override, allowed_video_codecs_override,
+                      allowed_audio_formats_override, require_hdr_override,
+                      allowed_hdr_types_override, allowed_sources_override,
+                      release_group_blacklist_override, release_group_whitelist_override
             "#,
         )
         .bind(id)
@@ -362,6 +450,14 @@ impl TvShowRepository {
         .bind(input.organize_files_override)
         .bind(&input.rename_style_override)
         .bind(input.auto_hunt_override)
+        .bind(&input.allowed_resolutions_override)
+        .bind(&input.allowed_video_codecs_override)
+        .bind(&input.allowed_audio_formats_override)
+        .bind(input.require_hdr_override)
+        .bind(&input.allowed_hdr_types_override)
+        .bind(&input.allowed_sources_override)
+        .bind(&input.release_group_blacklist_override)
+        .bind(&input.release_group_whitelist_override)
         .fetch_optional(&self.pool)
         .await?;
 

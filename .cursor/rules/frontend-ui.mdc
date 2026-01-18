@@ -28,6 +28,73 @@ alwaysApply: true
 
 ---
 
+## Icons - Use Tabler Icons
+
+**ALWAYS use `@tabler/icons-react`** for all icons. Never use emojis or custom SVG components.
+
+```tsx
+import { IconFolder, IconMovie, IconTrash, IconPlus } from '@tabler/icons-react'
+
+// Basic usage with size prop
+<IconFolder size={20} />
+
+// With color class
+<IconFolder size={20} className="text-amber-400" />
+
+// In buttons
+<Button startContent={<IconPlus size={16} />}>Add</Button>
+```
+
+### Icon Color Conventions
+Apply semantic colors to icons based on their meaning:
+
+| Icon Type | Color Class | Example Icons |
+|-----------|-------------|---------------|
+| Folders | `text-amber-400` | `IconFolder`, `IconFolderOpen` |
+| Movies | `text-purple-400` | `IconMovie` |
+| TV Shows | `text-blue-400` | `IconDeviceTv` |
+| Music | `text-green-400` | `IconMusic` |
+| Success/Check | `text-green-400` | `IconCheck`, `IconCircleCheck` |
+| Warning | `text-amber-400` | `IconAlertTriangle` |
+| Error/Delete | `text-red-400` | `IconTrash`, `IconX` |
+| Download | `text-blue-400` | `IconArrowDown`, `IconDownload` |
+| Upload | `text-green-400` | `IconArrowUp`, `IconUpload` |
+| RSS/Feeds | `text-orange-400` | `IconRss` |
+| Neutral | `text-default-400` | `IconSettings`, `IconFile` |
+
+### Common Icon Sizes
+- **12px** - Inline with small text (speed indicators)
+- **16px** - Buttons, menu items, table cells
+- **20px** - Tab icons, list items
+- **24px** - Section headers
+- **32-48px** - Empty states, large placeholders
+- **64-80px** - Hero placeholders
+
+### Tab/Menu Configuration Pattern
+When defining tabs or menus with icons, use the `TablerIcon` type:
+
+```tsx
+import type { TablerIcon } from '@tabler/icons-react'
+import { IconSettings, IconFolder } from '@tabler/icons-react'
+
+interface TabConfig {
+  key: string
+  label: string
+  Icon: TablerIcon
+  iconColor: string
+}
+
+const tabs: TabConfig[] = [
+  { key: 'files', label: 'Files', Icon: IconFolder, iconColor: 'text-amber-400' },
+  { key: 'settings', label: 'Settings', Icon: IconSettings, iconColor: 'text-default-400' },
+]
+
+// Render with conditional color (active tabs don't show custom color)
+<tab.Icon size={20} className={isActive ? '' : tab.iconColor} />
+```
+
+---
+
 ## HeroUI Component Installation
 
 ### Current Setup
@@ -148,6 +215,8 @@ import {
 
 ### Button Patterns
 ```tsx
+import { IconTrash, IconPlus } from '@tabler/icons-react'
+
 // Primary action
 <Button color="primary">Save</Button>
 
@@ -157,13 +226,22 @@ import {
 // Loading state
 <Button isLoading={isSaving}>Save</Button>
 
-// Icon button
-<Button isIconOnly size="sm" variant="light">🗑️</Button>
+// Icon button (use tabler icons)
+<Button isIconOnly size="sm" variant="light">
+  <IconTrash size={16} className="text-red-400" />
+</Button>
 
 // With tooltip
 <Tooltip content="Delete item">
-  <Button isIconOnly color="danger" variant="light">🗑️</Button>
+  <Button isIconOnly color="danger" variant="light">
+    <IconTrash size={16} />
+  </Button>
 </Tooltip>
+
+// Button with icon and text
+<Button color="primary" startContent={<IconPlus size={16} />}>
+  Add Item
+</Button>
 ```
 
 ### Form Patterns

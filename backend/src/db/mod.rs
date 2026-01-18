@@ -1,6 +1,8 @@
 //! Database connection and operations
 
+pub mod cast;
 pub mod episodes;
+pub mod indexers;
 pub mod libraries;
 pub mod logs;
 pub mod media_files;
@@ -11,15 +13,22 @@ pub mod torrents;
 pub mod tv_shows;
 
 use anyhow::Result;
-use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 
+pub use cast::{
+    CastDeviceRecord, CastRepository, CastSessionRecord, CastSettingsRecord, CreateCastDevice,
+    CreateCastSession, UpdateCastDevice, UpdateCastSession, UpdateCastSettings,
+};
 pub use episodes::{CreateEpisode, EpisodeRecord, EpisodeRepository};
+pub use indexers::{CreateIndexerConfig, IndexerRepository, UpdateIndexerConfig, UpsertCredential};
 pub use libraries::{CreateLibrary, LibraryRepository, LibraryStats, UpdateLibrary};
 pub use logs::{CreateLog, LogFilter, LogsRepository};
 pub use media_files::{CreateMediaFile, MediaFileRecord, MediaFileRepository};
 pub use quality_profiles::{CreateQualityProfile, QualityProfileRepository, UpdateQualityProfile};
-pub use rss_feeds::{CreateRssFeed, CreateRssFeedItem, RssFeedRecord, RssFeedRepository, UpdateRssFeed};
+pub use rss_feeds::{
+    CreateRssFeed, CreateRssFeedItem, RssFeedRecord, RssFeedRepository, UpdateRssFeed,
+};
 pub use settings::SettingsRepository;
 pub use torrents::{CreateTorrent, TorrentRecord, TorrentRepository};
 pub use tv_shows::{CreateTvShow, TvShowRecord, TvShowRepository, UpdateTvShow};
@@ -94,6 +103,16 @@ impl Database {
     /// Get a logs repository
     pub fn logs(&self) -> LogsRepository {
         LogsRepository::new(self.pool.clone())
+    }
+
+    /// Get an indexer repository
+    pub fn indexers(&self) -> IndexerRepository {
+        IndexerRepository::new(self.pool.clone())
+    }
+
+    /// Get a cast repository
+    pub fn cast(&self) -> CastRepository {
+        CastRepository::new(self.pool.clone())
     }
 
     /// Run database migrations

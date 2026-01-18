@@ -45,7 +45,7 @@ impl StorageClient {
     pub async fn ensure_bucket(&self, bucket_name: &str, public: bool) -> Result<()> {
         // First check if bucket exists
         let list_url = format!("{}/storage/v1/bucket", self.base_url);
-        
+
         let resp = self
             .client
             .get(&list_url)
@@ -57,7 +57,10 @@ impl StorageClient {
 
         if resp.status().is_success() {
             let buckets: Vec<BucketInfo> = resp.json().await.unwrap_or_default();
-            if buckets.iter().any(|b| b.id == bucket_name || b.name == bucket_name) {
+            if buckets
+                .iter()
+                .any(|b| b.id == bucket_name || b.name == bucket_name)
+            {
                 debug!(bucket = %bucket_name, "Bucket already exists");
                 return Ok(());
             }
@@ -65,7 +68,7 @@ impl StorageClient {
 
         // Bucket doesn't exist, create it
         info!(bucket = %bucket_name, public = %public, "Creating storage bucket");
-        
+
         let create_url = format!("{}/storage/v1/bucket", self.base_url);
         let request = CreateBucketRequest {
             id: bucket_name.to_string(),
@@ -96,7 +99,7 @@ impl StorageClient {
         } else {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            
+
             // Check if it's a "already exists" error (which is fine)
             if body.contains("already exists") || body.contains("Duplicate") {
                 debug!(bucket = %bucket_name, "Bucket already exists (race condition)");
@@ -124,10 +127,7 @@ impl StorageClient {
         content: &[u8],
         content_type: &str,
     ) -> Result<String> {
-        let url = format!(
-            "{}/storage/v1/object/{}/{}",
-            self.base_url, bucket, path
-        );
+        let url = format!("{}/storage/v1/object/{}/{}", self.base_url, bucket, path);
 
         debug!(url = %url, size = content.len(), content_type = %content_type, "Uploading to Supabase Storage");
 
@@ -197,10 +197,7 @@ impl StorageClient {
 
     /// Delete a file from a bucket
     pub async fn delete(&self, bucket: &str, path: &str) -> Result<()> {
-        let url = format!(
-            "{}/storage/v1/object/{}/{}",
-            self.base_url, bucket, path
-        );
+        let url = format!("{}/storage/v1/object/{}/{}", self.base_url, bucket, path);
 
         let resp = self
             .client

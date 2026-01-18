@@ -17,9 +17,15 @@ alwaysApply: true
 - Do NOT create new REST endpoints except for:
   - Health checks (`/healthz`, `/readyz`)
   - File uploads (multipart form data doesn't work well with GraphQL)
-  - Filesystem browsing (simple REST is cleaner for this)
+  - Torznab API (`/api/torznab/{id}`) - standard protocol for external tools
+  - Media streaming (`/api/media/stream/{id}`) - binary streaming
 - Authentication is handled via JWT in the `Authorization: Bearer <token>` header
 - All GraphQL operations require authentication except `health` and `version` queries
+
+### Filesystem Operations
+- Filesystem browsing and file operations are all via GraphQL
+- File operations (copy, move, delete, rename) are protected to only work within library paths
+- Subscribe to `directoryContentsChanged` for real-time file system updates
 
 ### Real-time Updates via Subscriptions
 - Use GraphQL subscriptions for any real-time data (torrent progress, scan status, etc.)
@@ -32,10 +38,17 @@ alwaysApply: true
 ```
 backend/
 ├── src/
-│   ├── api/          # REST endpoints (only for file uploads, filesystem, health)
+│   ├── api/          # REST endpoints (file uploads, health, torznab, media streaming)
 │   ├── config/       # Configuration loading
 │   ├── db/           # Database repositories (one per entity)
 │   ├── graphql/      # GraphQL schema, types, subscriptions, auth
+│   ├── indexer/      # Torrent indexer system (Jackett-like)
+│   │   ├── definitions/  # Indexer implementations (iptorrents, cardigann)
+│   │   ├── categories.rs # Torznab category mappings
+│   │   ├── encryption.rs # Credential encryption (AES-256-GCM)
+│   │   ├── manager.rs    # Indexer instance management
+│   │   ├── torznab/      # Torznab protocol (API + XML responses)
+│   │   └── types.rs      # Core types (TorznabQuery, ReleaseInfo, etc.)
 │   ├── jobs/         # Background job definitions
 │   ├── media/        # Media processing (HLS, transcoding)
 │   ├── services/     # Business logic services

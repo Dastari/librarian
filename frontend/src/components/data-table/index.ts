@@ -33,22 +33,22 @@ export {
   useColumnResize,
 } from './hooks'
 
-// Icons (for use in custom renderers)
+// Re-export tabler icons (for use in custom renderers)
 export {
-  SearchIcon,
-  FilterIcon,
-  ClearIcon,
-  MoreVerticalIcon,
-  CheckIcon,
-  CheckAllIcon,
-  TableIcon,
-  GridIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  ChevronsLeftIcon,
-  ChevronsRightIcon,
-  SortAscIcon,
-  SortDescIcon,
-  LoaderIcon,
-  EmptyIcon,
-} from './icons'
+  IconSearch,
+  IconFilter,
+  IconX,
+  IconDotsVertical,
+  IconCheck,
+  IconChecks,
+  IconTable,
+  IconLayoutGrid,
+  IconChevronLeft,
+  IconChevronRight,
+  IconChevronsLeft,
+  IconChevronsRight,
+  IconSortAscending,
+  IconSortDescending,
+  IconLoader,
+  IconMoodEmpty,
+} from '@tabler/icons-react'

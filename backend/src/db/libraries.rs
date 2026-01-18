@@ -29,6 +29,15 @@ pub struct LibraryRecord {
     pub last_scanned_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    // Inline quality settings (empty = any)
+    pub allowed_resolutions: Vec<String>,
+    pub allowed_video_codecs: Vec<String>,
+    pub allowed_audio_formats: Vec<String>,
+    pub require_hdr: bool,
+    pub allowed_hdr_types: Vec<String>,
+    pub allowed_sources: Vec<String>,
+    pub release_group_blacklist: Vec<String>,
+    pub release_group_whitelist: Vec<String>,
 }
 
 /// Input for creating a library
@@ -51,6 +60,15 @@ pub struct CreateLibrary {
     pub auto_add_discovered: bool,
     pub auto_download: bool,
     pub auto_hunt: bool,
+    // Inline quality settings
+    pub allowed_resolutions: Vec<String>,
+    pub allowed_video_codecs: Vec<String>,
+    pub allowed_audio_formats: Vec<String>,
+    pub require_hdr: bool,
+    pub allowed_hdr_types: Vec<String>,
+    pub allowed_sources: Vec<String>,
+    pub release_group_blacklist: Vec<String>,
+    pub release_group_whitelist: Vec<String>,
 }
 
 /// Input for updating a library
@@ -71,6 +89,15 @@ pub struct UpdateLibrary {
     pub auto_add_discovered: Option<bool>,
     pub auto_download: Option<bool>,
     pub auto_hunt: Option<bool>,
+    // Inline quality settings
+    pub allowed_resolutions: Option<Vec<String>>,
+    pub allowed_video_codecs: Option<Vec<String>>,
+    pub allowed_audio_formats: Option<Vec<String>>,
+    pub require_hdr: Option<bool>,
+    pub allowed_hdr_types: Option<Vec<String>>,
+    pub allowed_sources: Option<Vec<String>>,
+    pub release_group_blacklist: Option<Vec<String>>,
+    pub release_group_whitelist: Option<Vec<String>>,
 }
 
 /// Library statistics
@@ -98,7 +125,10 @@ impl LibraryRepository {
                    auto_scan, scan_interval_minutes, watch_for_changes,
                    post_download_action, organize_files, rename_style, naming_pattern,
                    default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
-                   scanning, last_scanned_at, created_at, updated_at
+                   scanning, last_scanned_at, created_at, updated_at,
+                   allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
+                   require_hdr, allowed_hdr_types, allowed_sources,
+                   release_group_blacklist, release_group_whitelist
             FROM libraries
             WHERE user_id = $1
             ORDER BY name
@@ -119,7 +149,10 @@ impl LibraryRepository {
                    auto_scan, scan_interval_minutes, watch_for_changes,
                    post_download_action, organize_files, rename_style, naming_pattern,
                    default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
-                   scanning, last_scanned_at, created_at, updated_at
+                   scanning, last_scanned_at, created_at, updated_at,
+                   allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
+                   require_hdr, allowed_hdr_types, allowed_sources,
+                   release_group_blacklist, release_group_whitelist
             FROM libraries
             WHERE id = $1
             "#,
@@ -132,14 +165,21 @@ impl LibraryRepository {
     }
 
     /// Get a library by ID and user (for auth check)
-    pub async fn get_by_id_and_user(&self, id: Uuid, user_id: Uuid) -> Result<Option<LibraryRecord>> {
+    pub async fn get_by_id_and_user(
+        &self,
+        id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Option<LibraryRecord>> {
         let record = sqlx::query_as::<_, LibraryRecord>(
             r#"
             SELECT id, user_id, name, path, library_type, icon, color, 
                    auto_scan, scan_interval_minutes, watch_for_changes,
                    post_download_action, organize_files, rename_style, naming_pattern,
                    default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
-                   scanning, last_scanned_at, created_at, updated_at
+                   scanning, last_scanned_at, created_at, updated_at,
+                   allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
+                   require_hdr, allowed_hdr_types, allowed_sources,
+                   release_group_blacklist, release_group_whitelist
             FROM libraries
             WHERE id = $1 AND user_id = $2
             "#,
@@ -160,14 +200,21 @@ impl LibraryRepository {
                 user_id, name, path, library_type, icon, color,
                 auto_scan, scan_interval_minutes, watch_for_changes,
                 post_download_action, organize_files, rename_style, naming_pattern,
-                default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt
+                default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
+                allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
+                require_hdr, allowed_hdr_types, allowed_sources,
+                release_group_blacklist, release_group_whitelist
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+                    $18, $19, $20, $21, $22, $23, $24, $25)
             RETURNING id, user_id, name, path, library_type, icon, color, 
                       auto_scan, scan_interval_minutes, watch_for_changes,
                       post_download_action, organize_files, rename_style, naming_pattern,
                       default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
-                      scanning, last_scanned_at, created_at, updated_at
+                      scanning, last_scanned_at, created_at, updated_at,
+                      allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
+                      require_hdr, allowed_hdr_types, allowed_sources,
+                      release_group_blacklist, release_group_whitelist
             "#,
         )
         .bind(input.user_id)
@@ -187,6 +234,14 @@ impl LibraryRepository {
         .bind(input.auto_add_discovered)
         .bind(input.auto_download)
         .bind(input.auto_hunt)
+        .bind(&input.allowed_resolutions)
+        .bind(&input.allowed_video_codecs)
+        .bind(&input.allowed_audio_formats)
+        .bind(input.require_hdr)
+        .bind(&input.allowed_hdr_types)
+        .bind(&input.allowed_sources)
+        .bind(&input.release_group_blacklist)
+        .bind(&input.release_group_whitelist)
         .fetch_one(&self.pool)
         .await?;
 
@@ -214,13 +269,24 @@ impl LibraryRepository {
                 auto_add_discovered = COALESCE($14, auto_add_discovered),
                 auto_download = COALESCE($15, auto_download),
                 auto_hunt = COALESCE($16, auto_hunt),
+                allowed_resolutions = COALESCE($17, allowed_resolutions),
+                allowed_video_codecs = COALESCE($18, allowed_video_codecs),
+                allowed_audio_formats = COALESCE($19, allowed_audio_formats),
+                require_hdr = COALESCE($20, require_hdr),
+                allowed_hdr_types = COALESCE($21, allowed_hdr_types),
+                allowed_sources = COALESCE($22, allowed_sources),
+                release_group_blacklist = COALESCE($23, release_group_blacklist),
+                release_group_whitelist = COALESCE($24, release_group_whitelist),
                 updated_at = NOW()
             WHERE id = $1
             RETURNING id, user_id, name, path, library_type, icon, color, 
                       auto_scan, scan_interval_minutes, watch_for_changes,
                       post_download_action, organize_files, rename_style, naming_pattern,
                       default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
-                      scanning, last_scanned_at, created_at, updated_at
+                      scanning, last_scanned_at, created_at, updated_at,
+                      allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
+                      require_hdr, allowed_hdr_types, allowed_sources,
+                      release_group_blacklist, release_group_whitelist
             "#,
         )
         .bind(id)
@@ -239,6 +305,14 @@ impl LibraryRepository {
         .bind(input.auto_add_discovered)
         .bind(input.auto_download)
         .bind(input.auto_hunt)
+        .bind(&input.allowed_resolutions)
+        .bind(&input.allowed_video_codecs)
+        .bind(&input.allowed_audio_formats)
+        .bind(input.require_hdr)
+        .bind(&input.allowed_hdr_types)
+        .bind(&input.allowed_sources)
+        .bind(&input.release_group_blacklist)
+        .bind(&input.release_group_whitelist)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -279,26 +353,24 @@ impl LibraryRepository {
     /// Get library statistics
     pub async fn get_stats(&self, id: Uuid) -> Result<LibraryStats> {
         // Use separate queries to ensure proper type handling
-        let file_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM media_files WHERE library_id = $1"
-        )
-        .bind(id)
-        .fetch_one(&self.pool)
-        .await?;
+        let file_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM media_files WHERE library_id = $1")
+                .bind(id)
+                .fetch_one(&self.pool)
+                .await?;
 
         let total_size: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(size), 0)::BIGINT FROM media_files WHERE library_id = $1"
+            "SELECT COALESCE(SUM(size), 0)::BIGINT FROM media_files WHERE library_id = $1",
         )
         .bind(id)
         .fetch_one(&self.pool)
         .await?;
 
-        let show_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM tv_shows WHERE library_id = $1"
-        )
-        .bind(id)
-        .fetch_one(&self.pool)
-        .await?;
+        let show_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM tv_shows WHERE library_id = $1")
+                .bind(id)
+                .fetch_one(&self.pool)
+                .await?;
 
         tracing::debug!(
             library_id = %id,

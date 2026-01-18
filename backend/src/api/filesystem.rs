@@ -1,10 +1,10 @@
 //! Filesystem browsing API for server-side directory selection
 
 use axum::{
+    Json, Router,
     extract::{Query, State},
     http::StatusCode,
     routing::get,
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -58,7 +58,7 @@ pub struct QuickPath {
 /// Get quick access paths for the system
 fn get_quick_paths() -> Vec<QuickPath> {
     let mut paths = vec![];
-    
+
     // Home directory
     if let Some(home) = dirs::home_dir() {
         paths.push(QuickPath {
@@ -66,7 +66,7 @@ fn get_quick_paths() -> Vec<QuickPath> {
             path: home.to_string_lossy().to_string(),
         });
     }
-    
+
     // Common data directories
     let common_paths = [
         ("/data", "Data"),
@@ -76,7 +76,7 @@ fn get_quick_paths() -> Vec<QuickPath> {
         ("/var", "Var"),
         ("/tmp", "Temp"),
     ];
-    
+
     for (path, name) in common_paths {
         if std::path::Path::new(path).exists() {
             paths.push(QuickPath {
@@ -85,13 +85,13 @@ fn get_quick_paths() -> Vec<QuickPath> {
             });
         }
     }
-    
+
     // Root
     paths.push(QuickPath {
         name: "Root".to_string(),
         path: "/".to_string(),
     });
-    
+
     paths
 }
 
@@ -105,7 +105,7 @@ async fn browse_directory(
         Some(p) if !p.is_empty() => PathBuf::from(p),
         _ => PathBuf::from("/"),
     };
-    
+
     // Canonicalize the path to resolve symlinks and ..
     // If the path doesn't exist, fall back to nearest existing parent or root
     let canonical_path = match requested_path.canonicalize() {
@@ -124,10 +124,10 @@ async fn browse_directory(
             }
         }
     };
-    
+
     // Read directory contents
     let mut entries = Vec::new();
-    
+
     match fs::read_dir(&canonical_path).await {
         Ok(mut dir) => {
             while let Ok(Some(entry)) = dir.next_entry().await {
@@ -136,20 +136,20 @@ async fn browse_directory(
                     Ok(m) => m,
                     Err(_) => continue,
                 };
-                
+
                 let is_dir = metadata.is_dir();
-                
+
                 // Skip files if dirs_only is set
                 if query.dirs_only && !is_dir {
                     continue;
                 }
-                
+
                 // Skip hidden files (starting with .)
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.starts_with('.') {
                     continue;
                 }
-                
+
                 // Check permissions
                 let readable = fs::metadata(&entry_path).await.is_ok();
                 let writable = if is_dir {
@@ -161,7 +161,7 @@ async fn browse_directory(
                 } else {
                     false
                 };
-                
+
                 entries.push(FileEntry {
                     name,
                     path: entry_path.to_string_lossy().to_string(),
@@ -179,21 +179,19 @@ async fn browse_directory(
             ));
         }
     }
-    
+
     // Sort: directories first, then by name
-    entries.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
-    
+
     // Get parent path
     let parent_path = canonical_path
         .parent()
         .map(|p| p.to_string_lossy().to_string());
-    
+
     Ok(Json(BrowseResponse {
         current_path: canonical_path.to_string_lossy().to_string(),
         parent_path,
@@ -220,7 +218,7 @@ async fn create_directory(
     Json(body): Json<CreateDirRequest>,
 ) -> Json<CreateDirResponse> {
     let path = PathBuf::from(&body.path);
-    
+
     match fs::create_dir_all(&path).await {
         Ok(_) => Json(CreateDirResponse {
             success: true,

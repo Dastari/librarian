@@ -16,9 +16,12 @@ import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as LibrariesIndexRouteImport } from './routes/libraries/index'
 import { Route as DownloadsIndexRouteImport } from './routes/downloads/index'
 import { Route as ShowsShowIdRouteImport } from './routes/shows/$showId'
+import { Route as SettingsTorrentRouteImport } from './routes/settings/torrent'
 import { Route as SettingsRssRouteImport } from './routes/settings/rss'
 import { Route as SettingsMetadataRouteImport } from './routes/settings/metadata'
 import { Route as SettingsLogsRouteImport } from './routes/settings/logs'
+import { Route as SettingsIndexersRouteImport } from './routes/settings/indexers'
+import { Route as SettingsCastingRouteImport } from './routes/settings/casting'
 import { Route as LibrariesLibraryIdRouteImport } from './routes/libraries/$libraryId'
 import { Route as AuthLoginRouteImport } from './routes/auth/login'
 import { Route as LibrariesLibraryIdIndexRouteImport } from './routes/libraries/$libraryId/index'
@@ -62,6 +65,11 @@ const ShowsShowIdRoute = ShowsShowIdRouteImport.update({
   path: '/shows/$showId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsTorrentRoute = SettingsTorrentRouteImport.update({
+  id: '/torrent',
+  path: '/torrent',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsRssRoute = SettingsRssRouteImport.update({
   id: '/rss',
   path: '/rss',
@@ -75,6 +83,16 @@ const SettingsMetadataRoute = SettingsMetadataRouteImport.update({
 const SettingsLogsRoute = SettingsLogsRouteImport.update({
   id: '/logs',
   path: '/logs',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsIndexersRoute = SettingsIndexersRouteImport.update({
+  id: '/indexers',
+  path: '/indexers',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsCastingRoute = SettingsCastingRouteImport.update({
+  id: '/casting',
+  path: '/casting',
   getParentRoute: () => SettingsRoute,
 } as any)
 const LibrariesLibraryIdRoute = LibrariesLibraryIdRouteImport.update({
@@ -121,9 +139,12 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRouteWithChildren
   '/auth/login': typeof AuthLoginRoute
   '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
+  '/settings/casting': typeof SettingsCastingRoute
+  '/settings/indexers': typeof SettingsIndexersRoute
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
   '/settings/rss': typeof SettingsRssRoute
+  '/settings/torrent': typeof SettingsTorrentRoute
   '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads': typeof DownloadsIndexRoute
   '/libraries': typeof LibrariesIndexRoute
@@ -138,9 +159,12 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth/login': typeof AuthLoginRoute
+  '/settings/casting': typeof SettingsCastingRoute
+  '/settings/indexers': typeof SettingsIndexersRoute
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
   '/settings/rss': typeof SettingsRssRoute
+  '/settings/torrent': typeof SettingsTorrentRoute
   '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads': typeof DownloadsIndexRoute
   '/libraries': typeof LibrariesIndexRoute
@@ -158,9 +182,12 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRouteWithChildren
   '/auth/login': typeof AuthLoginRoute
   '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
+  '/settings/casting': typeof SettingsCastingRoute
+  '/settings/indexers': typeof SettingsIndexersRoute
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
   '/settings/rss': typeof SettingsRssRoute
+  '/settings/torrent': typeof SettingsTorrentRoute
   '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads/': typeof DownloadsIndexRoute
   '/libraries/': typeof LibrariesIndexRoute
@@ -179,9 +206,12 @@ export interface FileRouteTypes {
     | '/settings'
     | '/auth/login'
     | '/libraries/$libraryId'
+    | '/settings/casting'
+    | '/settings/indexers'
     | '/settings/logs'
     | '/settings/metadata'
     | '/settings/rss'
+    | '/settings/torrent'
     | '/shows/$showId'
     | '/downloads'
     | '/libraries'
@@ -196,9 +226,12 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/auth/login'
+    | '/settings/casting'
+    | '/settings/indexers'
     | '/settings/logs'
     | '/settings/metadata'
     | '/settings/rss'
+    | '/settings/torrent'
     | '/shows/$showId'
     | '/downloads'
     | '/libraries'
@@ -215,9 +248,12 @@ export interface FileRouteTypes {
     | '/settings'
     | '/auth/login'
     | '/libraries/$libraryId'
+    | '/settings/casting'
+    | '/settings/indexers'
     | '/settings/logs'
     | '/settings/metadata'
     | '/settings/rss'
+    | '/settings/torrent'
     | '/shows/$showId'
     | '/downloads/'
     | '/libraries/'
@@ -292,6 +328,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShowsShowIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/torrent': {
+      id: '/settings/torrent'
+      path: '/torrent'
+      fullPath: '/settings/torrent'
+      preLoaderRoute: typeof SettingsTorrentRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/rss': {
       id: '/settings/rss'
       path: '/rss'
@@ -311,6 +354,20 @@ declare module '@tanstack/react-router' {
       path: '/logs'
       fullPath: '/settings/logs'
       preLoaderRoute: typeof SettingsLogsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/indexers': {
+      id: '/settings/indexers'
+      path: '/indexers'
+      fullPath: '/settings/indexers'
+      preLoaderRoute: typeof SettingsIndexersRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/casting': {
+      id: '/settings/casting'
+      path: '/casting'
+      fullPath: '/settings/casting'
+      preLoaderRoute: typeof SettingsCastingRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/libraries/$libraryId': {
@@ -366,16 +423,22 @@ declare module '@tanstack/react-router' {
 }
 
 interface SettingsRouteChildren {
+  SettingsCastingRoute: typeof SettingsCastingRoute
+  SettingsIndexersRoute: typeof SettingsIndexersRoute
   SettingsLogsRoute: typeof SettingsLogsRoute
   SettingsMetadataRoute: typeof SettingsMetadataRoute
   SettingsRssRoute: typeof SettingsRssRoute
+  SettingsTorrentRoute: typeof SettingsTorrentRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
+  SettingsCastingRoute: SettingsCastingRoute,
+  SettingsIndexersRoute: SettingsIndexersRoute,
   SettingsLogsRoute: SettingsLogsRoute,
   SettingsMetadataRoute: SettingsMetadataRoute,
   SettingsRssRoute: SettingsRssRoute,
+  SettingsTorrentRoute: SettingsTorrentRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 }
 

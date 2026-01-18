@@ -4,6 +4,7 @@ import { Button } from '@heroui/button'
 import { Card, CardHeader, CardBody } from '@heroui/card'
 import { Select, SelectItem } from '@heroui/select'
 import { Divider } from '@heroui/divider'
+import { QualitySettingsCard, type QualitySettings, DEFAULT_QUALITY_SETTINGS } from '../settings'
 import type { TvShow } from '../../lib/graphql'
 
 export interface ShowSettingsModalProps {
@@ -18,7 +19,17 @@ export interface ShowSettingsInput {
   autoDownloadOverride: boolean | null
   organizeFilesOverride: boolean | null
   renameStyleOverride: string | null
+  // Quality override settings
+  allowedResolutionsOverride: string[] | null
+  allowedVideoCodecsOverride: string[] | null
+  allowedAudioFormatsOverride: string[] | null
+  requireHdrOverride: boolean | null
+  allowedHdrTypesOverride: string[] | null
+  allowedSourcesOverride: string[] | null
+  releaseGroupBlacklistOverride: string[] | null
+  releaseGroupWhitelistOverride: string[] | null
 }
+
 
 type OverrideOption = 'inherit' | 'enabled' | 'disabled'
 type RenameStyleOption = 'inherit' | 'none' | 'clean' | 'preserve_info'
@@ -33,6 +44,8 @@ export function ShowSettingsModal({
   const [autoDownloadOverride, setAutoDownloadOverride] = useState<OverrideOption>('inherit')
   const [organizeFilesOverride, setOrganizeFilesOverride] = useState<OverrideOption>('inherit')
   const [renameStyleOverride, setRenameStyleOverride] = useState<RenameStyleOption>('inherit')
+  const [isInheritingQuality, setIsInheritingQuality] = useState(true)
+  const [qualitySettings, setQualitySettings] = useState<QualitySettings>(DEFAULT_QUALITY_SETTINGS)
 
   // Initialize form when show changes
   useEffect(() => {
@@ -46,6 +59,23 @@ export function ShowSettingsModal({
       setRenameStyleOverride(
         show.renameStyleOverride === null ? 'inherit' : (show.renameStyleOverride as RenameStyleOption)
       )
+      // Check if quality is inherited (all overrides are null)
+      const qualityInherited = show.allowedResolutionsOverride === null
+      setIsInheritingQuality(qualityInherited)
+      if (!qualityInherited) {
+        setQualitySettings({
+          allowedResolutions: show.allowedResolutionsOverride || [],
+          allowedVideoCodecs: show.allowedVideoCodecsOverride || [],
+          allowedAudioFormats: show.allowedAudioFormatsOverride || [],
+          requireHdr: show.requireHdrOverride || false,
+          allowedHdrTypes: show.allowedHdrTypesOverride || [],
+          allowedSources: show.allowedSourcesOverride || [],
+          releaseGroupBlacklist: show.releaseGroupBlacklistOverride || [],
+          releaseGroupWhitelist: show.releaseGroupWhitelistOverride || [],
+        })
+      } else {
+        setQualitySettings(DEFAULT_QUALITY_SETTINGS)
+      }
     }
   }, [show])
 
@@ -54,11 +84,20 @@ export function ShowSettingsModal({
       autoDownloadOverride: autoDownloadOverride === 'inherit' ? null : autoDownloadOverride === 'enabled',
       organizeFilesOverride: organizeFilesOverride === 'inherit' ? null : organizeFilesOverride === 'enabled',
       renameStyleOverride: renameStyleOverride === 'inherit' ? null : renameStyleOverride,
+      // Quality overrides - null if inheriting, otherwise use the settings
+      allowedResolutionsOverride: isInheritingQuality ? null : qualitySettings.allowedResolutions,
+      allowedVideoCodecsOverride: isInheritingQuality ? null : qualitySettings.allowedVideoCodecs,
+      allowedAudioFormatsOverride: isInheritingQuality ? null : qualitySettings.allowedAudioFormats,
+      requireHdrOverride: isInheritingQuality ? null : qualitySettings.requireHdr,
+      allowedHdrTypesOverride: isInheritingQuality ? null : qualitySettings.allowedHdrTypes,
+      allowedSourcesOverride: isInheritingQuality ? null : qualitySettings.allowedSources,
+      releaseGroupBlacklistOverride: isInheritingQuality ? null : qualitySettings.releaseGroupBlacklist,
+      releaseGroupWhitelistOverride: isInheritingQuality ? null : qualitySettings.releaseGroupWhitelist,
     })
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="lg">
+    <Modal isOpen={isOpen} onClose={onClose} size="4xl">
       <ModalContent>
         <ModalHeader>Show Settings</ModalHeader>
         <ModalBody>
@@ -144,6 +183,16 @@ export function ShowSettingsModal({
               </div>
             </CardBody>
           </Card>
+
+          <QualitySettingsCard
+            settings={qualitySettings}
+            onChange={setQualitySettings}
+            isOverrideMode={true}
+            isInheriting={isInheritingQuality}
+            onInheritChange={setIsInheritingQuality}
+            title="Quality Filters"
+            description="Override library quality settings for this show"
+          />
         </ModalBody>
         <ModalFooter>
           <Button variant="flat" onPress={onClose}>

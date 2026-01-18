@@ -6,7 +6,7 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 // Validate environment variables
 if (!supabaseUrl || !supabaseAnonKey) {
   console.error(
-    '⚠️ Missing Supabase environment variables!\n' +
+    '[WARNING] Missing Supabase environment variables!\n' +
     'Create a .env file in the frontend directory with:\n' +
     '  VITE_SUPABASE_URL=http://127.0.0.1:54321\n' +
     '  VITE_SUPABASE_ANON_KEY=your-anon-key\n\n' +

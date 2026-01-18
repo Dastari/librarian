@@ -81,7 +81,10 @@ async fn process_single_torrent(
     );
 
     // Get files from the torrent
-    let files = match torrent_service.get_files_for_torrent(&torrent.info_hash).await {
+    let files = match torrent_service
+        .get_files_for_torrent(&torrent.info_hash)
+        .await
+    {
         Ok(f) => f,
         Err(e) => {
             warn!(
@@ -296,4 +299,3 @@ fn get_container(path: &str) -> Option<String> {
         .and_then(|e| e.to_str())
         .map(|s| s.to_lowercase())
 }
-

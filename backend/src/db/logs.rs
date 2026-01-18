@@ -117,12 +117,7 @@ impl LogsRepository {
     }
 
     /// Get logs with filtering and pagination
-    pub async fn list(
-        &self,
-        filter: LogFilter,
-        limit: i64,
-        offset: i64,
-    ) -> Result<PaginatedLogs> {
+    pub async fn list(&self, filter: LogFilter, limit: i64, offset: i64) -> Result<PaginatedLogs> {
         // Build the WHERE clause dynamically
         let mut conditions = Vec::new();
         let mut params_count = 0;
@@ -161,7 +156,7 @@ impl LogsRepository {
 
         // Count query
         let count_sql = format!("SELECT COUNT(*) as count FROM app_logs {}", where_clause);
-        
+
         // Data query with limit/offset
         let data_sql = format!(
             "SELECT * FROM app_logs {} ORDER BY timestamp DESC LIMIT ${} OFFSET ${}",
@@ -224,12 +219,10 @@ impl LogsRepository {
 
     /// Get a single log by ID
     pub async fn get_by_id(&self, id: Uuid) -> Result<Option<LogRecord>> {
-        let record = sqlx::query_as::<_, LogRecord>(
-            "SELECT * FROM app_logs WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let record = sqlx::query_as::<_, LogRecord>("SELECT * FROM app_logs WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(record)
     }

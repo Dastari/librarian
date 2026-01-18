@@ -18,6 +18,7 @@ alwaysApply: true
 
 ### Frontend
 - ✅ Use HeroUI components (Button, Card, Input, Modal, etc.)
+- ✅ Use `@tabler/icons-react` for all icons (not emojis or custom SVGs)
 - ✅ Use TanStack Router for routing
 - ✅ Use urql + graphql-ws for GraphQL
 - ✅ Define GraphQL operations in `lib/graphql.ts`
@@ -47,13 +48,15 @@ alwaysApply: true
 ## ❌ DON'T
 
 ### API
-- ❌ Create REST endpoints (except file uploads, filesystem, health)
+- ❌ Create REST endpoints (except file uploads, health, torznab, media streaming)
 - ❌ Use WebSockets directly (use GraphQL subscriptions)
 - ❌ Expose internal errors to users
 - ❌ Skip authentication checks
 
 ### Frontend
 - ❌ Use raw HTML elements when HeroUI has a component
+- ❌ Use emojis for icons (use `@tabler/icons-react` instead)
+- ❌ Create custom SVG icon components
 - ❌ Use Redux or other state managers (use React hooks + urql cache)
 - ❌ Create custom form components (use HeroUI Input, Select, etc.)
 - ❌ Hard-code API URLs (use VITE_API_URL env var)
@@ -80,8 +83,13 @@ alwaysApply: true
 | Torrent Service | `backend/src/services/torrent.rs` |
 | Database Connection | `backend/src/db/mod.rs` |
 | Settings Repository | `backend/src/db/settings.rs` |
+| Indexer Trait | `backend/src/indexer/mod.rs` |
+| Indexer Manager | `backend/src/indexer/manager.rs` |
+| IPTorrents Indexer | `backend/src/indexer/definitions/iptorrents.rs` |
+| Indexer DB Repository | `backend/src/db/indexers.rs` |
 | Frontend GraphQL | `frontend/src/lib/graphql.ts` |
 | Frontend Routes | `frontend/src/routes/` |
+| Indexers Settings Page | `frontend/src/routes/settings/indexers.tsx` |
 
 ## Naming Conventions
 

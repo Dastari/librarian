@@ -3,6 +3,7 @@ import { Modal, ModalContent, ModalHeader, ModalBody } from '@heroui/modal'
 import { Button } from '@heroui/button'
 import { Input } from '@heroui/input'
 import { Tabs, Tab } from '@heroui/tabs'
+import { IconLink, IconFolder } from '@tabler/icons-react'
 
 type InputMode = 'magnet' | 'url' | 'file'
 
@@ -110,7 +111,7 @@ export function AddTorrentModal({
                 </div>
               </form>
             </Tab>
-            <Tab key="url" title="🔗 Torrent URL">
+            <Tab key="url" title={<span className="flex items-center gap-1"><IconLink size={16} /> Torrent URL</span>}>
               <form onSubmit={handleSubmit} className="pt-4 space-y-4">
                 <Input
                   value={torrentUrl}
@@ -134,7 +135,7 @@ export function AddTorrentModal({
                 </div>
               </form>
             </Tab>
-            <Tab key="file" title="📁 Upload File">
+            <Tab key="file" title={<span className="flex items-center gap-1"><IconFolder size={16} className="text-amber-400" /> Upload File</span>}>
               <div className="pt-4 space-y-4">
                 <div
                   onDragOver={(e) => {
@@ -155,7 +156,7 @@ export function AddTorrentModal({
                     id="torrent-file-input-modal"
                   />
                   <label htmlFor="torrent-file-input-modal" className="cursor-pointer">
-                    <div className="text-4xl mb-4">📁</div>
+                    <IconFolder size={48} className="mb-4 text-amber-400 mx-auto" />
                     <p className="text-default-600 mb-2">
                       {isDragging ? 'Drop your .torrent file here!' : 'Drag & drop a .torrent file'}
                     </p>

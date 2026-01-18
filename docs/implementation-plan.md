@@ -27,6 +27,7 @@
 | Stage 3C | ✅ Complete | Post-download processing integrated with scheduler (runs every minute) |
 | Stage 3D | ✅ Complete | Auto-organization with show-level overrides, respects copy/move/hardlink |
 | Stage 4 | ✅ Complete | Native torrent client (librqbit) + GraphQL subscriptions |
+| Stage 5 | ✅ Complete | Chromecast casting with device discovery, media streaming, playback controls |
 
 ### Key Decisions Made
 
@@ -509,7 +510,44 @@ Phase 3: Advanced Features (ongoing)
 ├── Stage 4B: OpenAI Matching
 ├── Stage 4C: Unmatched Files UI
 └── Stage 4D: Quality Upgrading
+
+Phase 4: Media Playback & Casting
+└── Stage 5: Chromecast/Google Cast ✅ COMPLETE
 ```
+
+---
+
+## Stage 5: Chromecast Casting (Completed)
+
+### Goals
+- Cast media to Chromecast and Google Cast devices
+- Auto-discover devices via mDNS and support manual IP entry
+- Stream media with HTTP Range support for seeking
+- Full playback control (play, pause, seek, volume)
+
+### Deliverables
+
+**Backend (Rust)**:
+- ✅ `services/cast.rs` - CastService with CASTV2 protocol (rust_cast)
+- ✅ `db/cast.rs` - Repository for devices, sessions, settings
+- ✅ `api/media.rs` - HTTP streaming endpoint with Range headers
+- ✅ Migration `014_cast_devices.sql` - Tables for devices, sessions, settings
+- ✅ GraphQL queries: `castDevices`, `castSessions`, `castSettings`
+- ✅ GraphQL mutations: `discoverCastDevices`, `addCastDevice`, `removeCastDevice`, `castMedia`, `castPlay`, `castPause`, `castStop`, `castSeek`, `castSetVolume`, `castSetMuted`, `updateCastSettings`
+- ✅ GraphQL subscriptions: `castSessionUpdated`, `castDevicesChanged`
+
+**Frontend (React)**:
+- ✅ `hooks/useCast.ts` - Hook for managing cast state
+- ✅ `components/cast/CastButton.tsx` - Device selection dropdown
+- ✅ `components/cast/CastControlBar.tsx` - Playback controls bar
+- ✅ `routes/settings/casting.tsx` - Device management page
+
+### Key Technical Decisions
+- **rust_cast** library for native CASTV2 protocol (no external dependencies)
+- **mdns-sd** for mDNS device discovery on local network
+- HTTP streaming with Range headers for efficient seeking
+- Direct play for compatible formats, transcode for incompatible
+- Settings stored in database, not config files
 
 ---
 

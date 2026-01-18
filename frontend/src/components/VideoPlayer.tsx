@@ -1,13 +1,40 @@
 import { useEffect, useRef } from 'react'
 import Hls from 'hls.js'
+import { CastButton } from './cast'
 
 interface VideoPlayerProps {
+  /** Video source URL (direct file or HLS m3u8) */
   src: string
+  /** Poster image URL */
   poster?: string
+  /** Media file ID for casting */
+  mediaFileId?: string
+  /** Episode ID for tracking */
+  episodeId?: string
+  /** Called on playback error */
   onError?: (error: Error) => void
+  /** Show cast button */
+  showCastButton?: boolean
 }
 
-export function VideoPlayer({ src, poster, onError }: VideoPlayerProps) {
+/**
+ * Video player component with HLS support and Chromecast casting
+ * 
+ * Supports:
+ * - Direct playback of MP4, WebM, and other browser-native formats
+ * - HLS streaming via hls.js (m3u8 playlists)
+ * - Native Safari HLS support
+ * - AirPlay on supported devices
+ * - Chromecast/Google Cast via CastButton
+ */
+export function VideoPlayer({ 
+  src, 
+  poster, 
+  mediaFileId,
+  episodeId,
+  onError,
+  showCastButton = true,
+}: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const hlsRef = useRef<Hls | null>(null)
 
@@ -51,7 +78,7 @@ export function VideoPlayer({ src, poster, onError }: VideoPlayerProps) {
   }, [src, onError])
 
   return (
-    <div className="relative bg-black rounded-lg overflow-hidden">
+    <div className="relative bg-black rounded-lg overflow-hidden group">
       <video
         ref={videoRef}
         className="w-full aspect-video"
@@ -64,6 +91,26 @@ export function VideoPlayer({ src, poster, onError }: VideoPlayerProps) {
       >
         Your browser does not support the video tag.
       </video>
+      
+      {/* Cast button overlay */}
+      {showCastButton && mediaFileId && (
+        <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
+          <CastButton
+            mediaFileId={mediaFileId}
+            episodeId={episodeId}
+            startPosition={videoRef.current?.currentTime}
+            size="sm"
+          />
+        </div>
+      )}
     </div>
   )
+}
+
+/**
+ * Helper to generate the stream URL for a media file
+ */
+export function getMediaStreamUrl(mediaFileId: string): string {
+  const apiUrl = import.meta.env.VITE_API_URL || '';
+  return `${apiUrl}/api/media/${mediaFileId}/stream`;
 }

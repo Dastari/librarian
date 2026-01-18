@@ -7,6 +7,7 @@ mod api;
 mod config;
 mod db;
 mod graphql;
+mod indexer;
 mod jobs;
 mod media;
 mod services;
@@ -16,25 +17,28 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::extract::WebSocketUpgrade;
-use axum::http::header::AUTHORIZATION;
-use axum::http::HeaderMap;
-use axum::response::IntoResponse;
-use axum::routing::get;
-use axum::Router;
 use async_graphql::http::GraphiQLSource;
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
+use axum::Router;
+use axum::extract::WebSocketUpgrade;
+use axum::http::HeaderMap;
+use axum::http::header::AUTHORIZATION;
+use axum::response::IntoResponse;
+use axum::routing::get;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::api::media::{MediaState, media_routes};
 use crate::config::Config;
 use crate::db::Database;
-use crate::graphql::{verify_token, AuthUser, LibrarianSchema};
+use crate::graphql::{AuthUser, LibrarianSchema, verify_token};
 use crate::services::{
-    artwork::ensure_artwork_bucket, create_database_layer, create_metadata_service_with_artwork,
-    create_scanner_service, ArtworkService, DatabaseLoggerConfig, MetadataServiceConfig,
+    ArtworkService, CastService, CastServiceConfig, DatabaseLoggerConfig,
+    FilesystemService, FilesystemServiceConfig, MetadataServiceConfig,
     ScannerService, StorageClient, TorrentService, TorrentServiceConfig,
+    artwork::ensure_artwork_bucket, create_database_layer, create_metadata_service_with_artwork,
+    create_scanner_service,
 };
 
 /// Application state shared across all handlers
@@ -45,6 +49,8 @@ pub struct AppState {
     pub schema: LibrarianSchema,
     pub torrent_service: Arc<TorrentService>,
     pub scanner_service: Arc<ScannerService>,
+    pub cast_service: Arc<CastService>,
+    pub filesystem_service: Arc<FilesystemService>,
 }
 
 #[tokio::main]
@@ -64,13 +70,14 @@ async fn main() -> anyhow::Result<()> {
         flush_interval_ms: 2000,
         broadcast_capacity: 1000,
     };
-    let (db_layer, log_broadcast_sender) = create_database_layer(db.pool().clone(), db_logger_config);
+    let (db_layer, log_broadcast_sender) =
+        create_database_layer(db.pool().clone(), db_logger_config);
 
     // Initialize tracing with both console output and database logging
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "librarian_backend=debug,tower_http=debug,librqbit=info".into()),
+                .unwrap_or_else(|_| "librarian=info,tower_http=info,librqbit=info".into()),
         )
         .with(tracing_subscriber::fmt::layer().json())
         .with(db_layer)
@@ -96,12 +103,12 @@ async fn main() -> anyhow::Result<()> {
         config.supabase_url.clone(),
         config.supabase_service_key.clone(),
     );
-    
+
     // Ensure artwork bucket exists
     if let Err(e) = ensure_artwork_bucket(&storage_client).await {
         tracing::warn!(error = %e, "Failed to create artwork bucket - artwork caching may not work");
     }
-    
+
     let artwork_service = Arc::new(ArtworkService::new(storage_client));
     tracing::info!("Artwork service initialized");
 
@@ -111,22 +118,42 @@ async fn main() -> anyhow::Result<()> {
         tvdb_api_key: std::env::var("TVDB_API_KEY").ok(),
         openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
     };
-    let metadata_service = create_metadata_service_with_artwork(
-        db.clone(),
-        metadata_config,
-        artwork_service,
-    );
+    let metadata_service =
+        create_metadata_service_with_artwork(db.clone(), metadata_config, artwork_service);
     tracing::info!("Metadata service initialized with artwork caching");
 
     // Initialize scanner service (needs metadata service for auto-discovery)
     let scanner_service = create_scanner_service(db.clone(), metadata_service.clone());
     tracing::info!("Scanner service initialized");
 
+    // Initialize cast service for Chromecast/AirPlay support
+    let cast_config = CastServiceConfig {
+        media_base_url: format!("http://{}:{}", config.host.as_deref().unwrap_or("0.0.0.0"), config.port),
+        auto_discovery: true,
+        discovery_interval_secs: 30,
+    };
+    let cast_service = Arc::new(CastService::new(db.clone(), cast_config));
+    
+    // Start mDNS device discovery in background
+    if let Err(e) = cast_service.start_discovery().await {
+        tracing::warn!(error = %e, "Failed to start cast device discovery");
+    }
+    tracing::info!("Cast service initialized");
+
+    // Initialize filesystem service for file operations
+    let filesystem_config = FilesystemServiceConfig {
+        allow_unrestricted: false, // Only allow operations within library paths
+    };
+    let filesystem_service = FilesystemService::new(db.clone(), filesystem_config);
+    tracing::info!("Filesystem service initialized");
+
     // Build GraphQL schema
     let schema = graphql::build_schema(
         torrent_service.clone(),
         metadata_service,
         scanner_service.clone(),
+        cast_service.clone(),
+        filesystem_service.clone(),
         db.clone(),
         Some(log_broadcast_sender),
     );
@@ -137,17 +164,23 @@ async fn main() -> anyhow::Result<()> {
         scanner_service.clone(),
         torrent_service.clone(),
         db.pool().clone(),
-    ).await?;
+    )
+    .await?;
     tracing::info!("Job scheduler started");
 
     // Build application state
     let state = AppState {
         config: config.clone(),
-        db,
+        db: db.clone(),
         schema,
         torrent_service,
         scanner_service,
+        cast_service,
+        filesystem_service,
     };
+    
+    // Build media state for streaming routes
+    let media_state = MediaState { db };
 
     // Build router - GraphQL is the primary API
     let app = Router::new()
@@ -156,6 +189,10 @@ async fn main() -> anyhow::Result<()> {
         // REST API endpoints
         .nest("/api", api::torrents::router())
         .nest("/api", api::filesystem::router())
+        // Torznab API for external apps (Sonarr, Radarr, etc.)
+        .nest("/api", api::torznab::router())
+        // Media streaming endpoints for cast devices and browser playback
+        .nest("/api", media_routes().with_state(media_state))
         // GraphQL endpoint (handles all queries, mutations, subscriptions)
         .route("/graphql", get(graphiql).post(graphql_handler))
         // GraphQL WebSocket endpoint for subscriptions
@@ -172,7 +209,10 @@ async fn main() -> anyhow::Result<()> {
     // Start server
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     tracing::info!("Listening on {}", addr);
-    tracing::info!("GraphQL playground: http://localhost:{}/graphql", config.port);
+    tracing::info!(
+        "GraphQL playground: http://localhost:{}/graphql",
+        config.port
+    );
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
@@ -244,16 +284,13 @@ async fn graphql_ws_handler(
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
     // Extract auth from headers for initial connection
-    let auth_user: Option<AuthUser> = extract_token(&headers)
-        .and_then(|token| verify_token(&token).ok());
+    let auth_user: Option<AuthUser> =
+        extract_token(&headers).and_then(|token| verify_token(&token).ok());
 
     ws.protocols(["graphql-transport-ws", "graphql-ws"])
         .on_upgrade(move |socket| {
-            let mut ws = async_graphql_axum::GraphQLWebSocket::new(
-                socket,
-                state.schema.clone(),
-                protocol,
-            );
+            let mut ws =
+                async_graphql_axum::GraphQLWebSocket::new(socket, state.schema.clone(), protocol);
 
             // Add auth context if available
             if let Some(user) = auth_user {

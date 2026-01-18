@@ -12,12 +12,12 @@ import { useDisclosure } from '@heroui/modal'
 import { addToast } from '@heroui/toast'
 import { useDataReactivity } from '../../hooks/useSubscription'
 import { RouteError } from '../../components/RouteError'
+import { sanitizeError } from '../../lib/format'
 import {
   graphqlClient,
   TV_SHOW_QUERY,
   LIBRARY_QUERY,
   EPISODES_QUERY,
-  QUALITY_PROFILES_QUERY,
   REFRESH_TV_SHOW_MUTATION,
   DOWNLOAD_EPISODE_MUTATION,
   DELETE_TV_SHOW_MUTATION,
@@ -28,12 +28,12 @@ import {
   type EpisodeStatus,
   type DownloadEpisodeResult,
   type TvShowResult,
-  type QualityProfile,
 } from '../../lib/graphql'
 import { formatBytes, formatDate } from '../../lib/format'
 import { DataTable, type DataTableColumn, type RowAction } from '../../components/data-table'
-import { DownloadIcon } from '../../components/icons'
+import { IconDownload, IconDeviceTv, IconClipboard, IconPlayerPlay } from '@tabler/icons-react'
 import { DeleteShowModal, ShowSettingsModal, type ShowSettingsInput } from '../../components/shows'
+import { EpisodeStatusChip } from '../../components/shared'
 
 export const Route = createFileRoute('/shows/$showId')({
   beforeLoad: ({ context, location }) => {
@@ -56,43 +56,6 @@ function formatAirDate(dateStr: string | null): string {
   return formatDate(dateStr, 'TBA')
 }
 
-function getStatusColor(status: EpisodeStatus): 'success' | 'warning' | 'danger' | 'default' | 'primary' | 'secondary' {
-  switch (status) {
-    case 'DOWNLOADED':
-      return 'success'
-    case 'DOWNLOADING':
-      return 'primary'
-    case 'AVAILABLE':
-      return 'secondary'
-    case 'WANTED':
-      return 'warning'
-    case 'MISSING':
-      return 'danger'
-    case 'IGNORED':
-      return 'default'
-    default:
-      return 'default'
-  }
-}
-
-function getStatusLabel(status: EpisodeStatus): string {
-  switch (status) {
-    case 'DOWNLOADED':
-      return 'Downloaded'
-    case 'DOWNLOADING':
-      return 'Downloading'
-    case 'AVAILABLE':
-      return 'Available'
-    case 'WANTED':
-      return 'Wanted'
-    case 'MISSING':
-      return 'Missing'
-    case 'IGNORED':
-      return 'Ignored'
-    default:
-      return status
-  }
-}
 
 interface SeasonData {
   season: number
@@ -140,11 +103,7 @@ const episodeColumns: DataTableColumn<Episode>[] = [
     label: 'Status',
     width: 120,
     sortable: true,
-    render: (ep) => (
-      <Chip size="sm" color={getStatusColor(ep.status)} variant="flat">
-        {getStatusLabel(ep.status)}
-      </Chip>
-    ),
+    render: (ep) => <EpisodeStatusChip status={ep.status} />,
   },
 ]
 
@@ -160,7 +119,7 @@ function EpisodeTable({ episodes, seasonNumber, downloadingEpisodes, onDownload 
     {
       key: 'download',
       label: 'Download Episode',
-      icon: <DownloadIcon />,
+      icon: <IconDownload size={16} />,
       color: 'primary',
       inDropdown: true,
       isVisible: (ep) => ep.status === 'AVAILABLE',
@@ -192,7 +151,6 @@ function ShowDetailPage() {
   const [show, setShow] = useState<TvShow | null>(null)
   const [library, setLibrary] = useState<Library | null>(null)
   const [episodes, setEpisodes] = useState<Episode[]>([])
-  const [qualityProfiles, setQualityProfiles] = useState<QualityProfile[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [downloadingEpisodes, setDownloadingEpisodes] = useState<Set<string>>(new Set())
@@ -230,16 +188,13 @@ function ShowDetailPage() {
       if (showResult.data?.tvShow) {
         setShow(showResult.data.tvShow)
 
-        // Now fetch library, episodes, and quality profiles in parallel
-        const [libraryResult, episodesResult, profilesResult] = await Promise.all([
+        // Now fetch library and episodes in parallel
+        const [libraryResult, episodesResult] = await Promise.all([
           graphqlClient
             .query<{ library: Library | null }>(LIBRARY_QUERY, { id: showResult.data.tvShow.libraryId })
             .toPromise(),
           graphqlClient
             .query<{ episodes: Episode[] }>(EPISODES_QUERY, { tvShowId: showId })
-            .toPromise(),
-          graphqlClient
-            .query<{ qualityProfiles: QualityProfile[] }>(QUALITY_PROFILES_QUERY)
             .toPromise(),
         ])
 
@@ -248,9 +203,6 @@ function ShowDetailPage() {
         }
         if (episodesResult.data?.episodes) {
           setEpisodes(episodesResult.data.episodes)
-        }
-        if (profilesResult.data?.qualityProfiles) {
-          setQualityProfiles(profilesResult.data.qualityProfiles)
         }
       }
     } catch (err) {
@@ -289,7 +241,7 @@ function ShowDetailPage() {
       if (error || !data?.refreshTvShow.success) {
         addToast({
           title: 'Error',
-          description: data?.refreshTvShow.error || 'Failed to refresh show',
+          description: sanitizeError(data?.refreshTvShow.error || 'Failed to refresh show'),
           color: 'danger',
         })
         return
@@ -322,7 +274,7 @@ function ShowDetailPage() {
       if (error || !data?.downloadEpisode.success) {
         addToast({
           title: 'Download Failed',
-          description: data?.downloadEpisode.error || 'Failed to start download',
+          description: sanitizeError(data?.downloadEpisode.error || 'Failed to start download'),
           color: 'danger',
         })
         return
@@ -371,7 +323,7 @@ function ShowDetailPage() {
       if (error || !data?.deleteTvShow.success) {
         addToast({
           title: 'Error',
-          description: data?.deleteTvShow.error || 'Failed to delete show',
+          description: sanitizeError(data?.deleteTvShow.error || 'Failed to delete show'),
           color: 'danger',
         })
         return
@@ -410,7 +362,7 @@ function ShowDetailPage() {
       if (error || !data?.updateTvShow.success) {
         addToast({
           title: 'Error',
-          description: data?.updateTvShow.error || 'Failed to save settings',
+          description: sanitizeError(data?.updateTvShow.error || 'Failed to save settings'),
           color: 'danger',
         })
         return
@@ -452,7 +404,7 @@ function ShowDetailPage() {
       if (error || !data?.updateTvShow.success) {
         addToast({
           title: 'Error',
-          description: data?.updateTvShow.error || 'Failed to update auto-download',
+          description: sanitizeError(data?.updateTvShow.error || 'Failed to update auto-download'),
           color: 'danger',
         })
         return
@@ -594,7 +546,7 @@ function ShowDetailPage() {
             />
           ) : (
             <div className="w-48 h-72 bg-default-200 rounded-lg flex items-center justify-center">
-              <span className="text-6xl">📺</span>
+              <IconDeviceTv size={64} className="text-blue-400" />
             </div>
           )}
         </div>
@@ -744,29 +696,50 @@ function ShowDetailPage() {
                 <span className="text-default-400">Quality:</span>
                 <span className="font-medium text-foreground">
                   {(() => {
-                    // Get effective quality profile
-                    const showProfile = show.qualityProfileId
-                      ? qualityProfiles.find(p => p.id === show.qualityProfileId)
-                      : null
-                    const libraryProfile = library?.defaultQualityProfileId
-                      ? qualityProfiles.find(p => p.id === library.defaultQualityProfileId)
-                      : null
-                    const profile = showProfile || libraryProfile
+                    // Check if show is overriding quality settings
+                    const isOverriding = show.allowedResolutionsOverride !== null
                     
-                    if (!profile) return 'Any'
+                    // Get effective quality settings
+                    const resolutions = isOverriding 
+                      ? (show.allowedResolutionsOverride || [])
+                      : (library?.allowedResolutions || [])
+                    const codecs = isOverriding
+                      ? (show.allowedVideoCodecsOverride || [])
+                      : (library?.allowedVideoCodecs || [])
+                    const requireHdr = isOverriding
+                      ? (show.requireHdrOverride || false)
+                      : (library?.requireHdr || false)
                     
-                    // Format resolution nicely
-                    const res = profile.preferredResolution
-                    if (!res || res === 'any') return 'Any'
-                    if (res === '2160p') return '4K (2160p)'
-                    if (res === '1080p') return 'HD (1080p)'
-                    if (res === '720p') return 'SD (720p)'
-                    return profile.name
+                    // Build summary
+                    const parts: string[] = []
+                    
+                    if (resolutions.length > 0) {
+                      // Show resolutions nicely
+                      if (resolutions.includes('2160p')) parts.push('4K')
+                      else if (resolutions.includes('1080p')) parts.push('1080p')
+                      else if (resolutions.includes('720p')) parts.push('720p')
+                      else parts.push(resolutions.join('/'))
+                    }
+                    
+                    if (codecs.length > 0) {
+                      parts.push(codecs.map(c => c.toUpperCase()).join('/'))
+                    }
+                    
+                    if (requireHdr) {
+                      parts.push('HDR')
+                    }
+                    
+                    return parts.length > 0 ? parts.join(' • ') : 'Any'
                   })()}
                 </span>
-                {!show.qualityProfileId && library?.defaultQualityProfileId && (
+                {show.allowedResolutionsOverride === null && (library?.allowedResolutions?.length || library?.allowedVideoCodecs?.length || library?.requireHdr) && (
                   <Chip size="sm" variant="flat" className="text-xs ml-1">
                     Library
+                  </Chip>
+                )}
+                {show.allowedResolutionsOverride !== null && (
+                  <Chip size="sm" variant="flat" color="secondary" className="text-xs ml-1">
+                    Custom
                   </Chip>
                 )}
               </div>
@@ -798,7 +771,7 @@ function ShowDetailPage() {
         {seasons.length === 0 ? (
           <Card className="bg-content1/50 border-default-300 border-dashed border-2">
             <CardBody className="py-12 text-center">
-              <span className="text-5xl mb-4 block">📋</span>
+              <IconClipboard size={48} className="mx-auto mb-4 text-default-400" />
               <h3 className="text-lg font-semibold mb-2">No episodes found</h3>
               <p className="text-default-500 mb-4">
                 Try refreshing the show metadata to fetch episodes.

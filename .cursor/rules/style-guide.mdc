@@ -155,6 +155,28 @@ OTHER:      from-slate-800 via-gray-700 to-zinc-800
 
 ---
 
+## Icons
+
+**Always use `@tabler/icons-react`** - never emojis or custom SVGs.
+
+```tsx
+import { IconFolder, IconTrash } from '@tabler/icons-react'
+
+<IconFolder size={20} className="text-amber-400" />
+<IconTrash size={16} className="text-red-400" />
+```
+
+**Color conventions:**
+- Folders: `text-amber-400`
+- Movies: `text-purple-400`
+- TV: `text-blue-400`
+- Success: `text-green-400`
+- Warning: `text-amber-400`
+- Error/Delete: `text-red-400`
+- Neutral: `text-default-400`
+
+---
+
 ## Before Implementing UI
 
 1. Check `docs/style-guide.md` for existing patterns
@@ -162,3 +184,4 @@ OTHER:      from-slate-800 via-gray-700 to-zinc-800
 3. Use `ScrollShadow` for scrollable containers
 4. Match existing card styles (content vs poster)
 5. Keep layouts visible during loading states
+6. Use `@tabler/icons-react` for all icons with semantic colors

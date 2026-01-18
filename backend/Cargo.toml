@@ -15,6 +15,7 @@ tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["io"] }
 
 # GraphQL with subscriptions
 async-graphql = { version = "7", features = ["uuid", "time", "tracing"] }
@@ -63,12 +64,31 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 # Config
 dotenvy = "0.15"
 dirs = "6.0.0"
+mime_guess = "2.0"
 chrono = { version = "0.4.42", features = ["serde"] }
 sha2 = "0.10.9"
 rust_decimal = { version = "1.39.0", features = ["serde"] }
 
-# XML parsing for RSS feeds
+# XML parsing for RSS feeds and Torznab responses
 quick-xml = "0.37"
+
+# HTML parsing for indexer scraping
+scraper = "0.22"
+
+# YAML parsing for Cardigann indexer definitions
+serde_yaml = "0.9"
+
+# Credential encryption
+aes-gcm = "0.10"
+base64 = "0.22"
+rand = "0.8"
+
+# Chromecast/Google Cast support
+rust_cast = "0.21"
+
+# mDNS device discovery
+mdns-sd = "0.11"
+flume = "0.11"
 
 [dev-dependencies]
 tokio-test = "0.4"

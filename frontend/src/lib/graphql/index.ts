@@ -28,6 +28,16 @@ export type {
   FileEntry,
   QuickPath,
   BrowseResponse,
+  BrowseDirectoryResult,
+  BrowseDirectoryInput,
+  FileOperationResult,
+  CreateDirectoryInput,
+  DeleteFilesInput,
+  CopyFilesInput,
+  MoveFilesInput,
+  RenameFileInput,
+  DirectoryChangeEvent,
+  PathValidationResult,
   RawFileEntry,
   RawBrowseResponse,
   // Library
@@ -73,6 +83,25 @@ export type {
   UpcomingEpisodeShow,
   LibraryUpcomingEpisode,
   LibraryUpcomingShow,
+  // Media Files
+  MediaFile,
+  // Security Settings
+  SecuritySettings,
+  SecuritySettingsResult,
+  GenerateEncryptionKeyInput,
+  // Cast Types
+  CastDeviceType,
+  CastPlayerState,
+  CastDevice,
+  CastSession,
+  CastSettings,
+  AddCastDeviceInput,
+  UpdateCastDeviceInput,
+  CastMediaInput,
+  UpdateCastSettingsInput,
+  CastDeviceResult,
+  CastSessionResult,
+  CastSettingsResult,
 } from './types';
 
 // Constants
@@ -99,6 +128,19 @@ export {
   LOG_STATS_QUERY,
   UPCOMING_EPISODES_QUERY,
   LIBRARY_UPCOMING_EPISODES_QUERY,
+  UNMATCHED_FILES_QUERY,
+  UNMATCHED_FILES_COUNT_QUERY,
+  SECURITY_SETTINGS_QUERY,
+  // Cast Queries
+  CAST_DEVICES_QUERY,
+  CAST_DEVICE_QUERY,
+  CAST_SESSIONS_QUERY,
+  CAST_SESSION_QUERY,
+  CAST_SETTINGS_QUERY,
+  // Filesystem Queries
+  BROWSE_DIRECTORY_QUERY,
+  QUICK_PATHS_QUERY,
+  VALIDATE_PATH_QUERY,
 } from './queries';
 
 // Mutations
@@ -125,6 +167,27 @@ export {
   DOWNLOAD_EPISODE_MUTATION,
   CLEAR_ALL_LOGS_MUTATION,
   CLEAR_OLD_LOGS_MUTATION,
+  INITIALIZE_ENCRYPTION_KEY_MUTATION,
+  REGENERATE_ENCRYPTION_KEY_MUTATION,
+  // Cast Mutations
+  DISCOVER_CAST_DEVICES_MUTATION,
+  ADD_CAST_DEVICE_MUTATION,
+  UPDATE_CAST_DEVICE_MUTATION,
+  REMOVE_CAST_DEVICE_MUTATION,
+  CAST_MEDIA_MUTATION,
+  CAST_PLAY_MUTATION,
+  CAST_PAUSE_MUTATION,
+  CAST_STOP_MUTATION,
+  CAST_SEEK_MUTATION,
+  CAST_SET_VOLUME_MUTATION,
+  CAST_SET_MUTED_MUTATION,
+  UPDATE_CAST_SETTINGS_MUTATION,
+  // Filesystem Mutations
+  CREATE_DIRECTORY_MUTATION,
+  DELETE_FILES_MUTATION,
+  COPY_FILES_MUTATION,
+  MOVE_FILES_MUTATION,
+  RENAME_FILE_MUTATION,
 } from './mutations';
 
 // Subscriptions
@@ -135,7 +198,9 @@ export {
   TORRENT_REMOVED_SUBSCRIPTION,
   LOG_EVENTS_SUBSCRIPTION,
   ERROR_LOGS_SUBSCRIPTION,
+  // Filesystem Subscriptions
+  DIRECTORY_CONTENTS_CHANGED_SUBSCRIPTION,
 } from './subscriptions';
 
-// REST API
-export { browseDirectory, createDirectory } from './api';
+// GraphQL-based filesystem functions (replaces REST API)
+export { browseDirectory, createDirectory } from './filesystem';

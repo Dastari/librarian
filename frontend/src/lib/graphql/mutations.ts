@@ -77,7 +77,7 @@ export const UPDATE_TORRENT_SETTINGS_MUTATION = `
 // ============================================================================
 
 export const CREATE_LIBRARY_MUTATION = `
-  mutation CreateLibrary($input: CreateLibraryFullInput!) {
+  mutation CreateLibrary($input: CreateLibraryInput!) {
     createLibrary(input: $input) {
       success
       library {
@@ -94,7 +94,7 @@ export const CREATE_LIBRARY_MUTATION = `
 `;
 
 export const UPDATE_LIBRARY_MUTATION = `
-  mutation UpdateLibrary($id: String!, $input: UpdateLibraryFullInput!) {
+  mutation UpdateLibrary($id: String!, $input: UpdateLibraryInput!) {
     updateLibrary(id: $id, input: $input) {
       success
       library {
@@ -289,6 +289,14 @@ export const UPDATE_TV_SHOW_MUTATION = `
         episodeCount
         episodeFileCount
         sizeBytes
+        allowedResolutionsOverride
+        allowedVideoCodecsOverride
+        allowedAudioFormatsOverride
+        requireHdrOverride
+        allowedHdrTypesOverride
+        allowedSourcesOverride
+        releaseGroupBlacklistOverride
+        releaseGroupWhitelistOverride
       }
       error
     }
@@ -345,6 +353,292 @@ export const CLEAR_OLD_LOGS_MUTATION = `
       success
       deletedCount
       error
+    }
+  }
+`;
+
+// ============================================================================
+// Security Settings Mutations
+// ============================================================================
+
+export const INITIALIZE_ENCRYPTION_KEY_MUTATION = `
+  mutation InitializeEncryptionKey {
+    initializeEncryptionKey {
+      success
+      error
+      settings {
+        encryptionKeySet
+        encryptionKeyPreview
+        encryptionKeyLastModified
+      }
+    }
+  }
+`;
+
+export const REGENERATE_ENCRYPTION_KEY_MUTATION = `
+  mutation RegenerateEncryptionKey($input: GenerateEncryptionKeyInput!) {
+    regenerateEncryptionKey(input: $input) {
+      success
+      error
+      settings {
+        encryptionKeySet
+        encryptionKeyPreview
+        encryptionKeyLastModified
+      }
+    }
+  }
+`;
+
+// ============================================================================
+// Cast Mutations
+// ============================================================================
+
+export const DISCOVER_CAST_DEVICES_MUTATION = `
+  mutation DiscoverCastDevices {
+    discoverCastDevices {
+      id
+      name
+      address
+      port
+      model
+      deviceType
+      isFavorite
+      isManual
+      isConnected
+      lastSeenAt
+    }
+  }
+`;
+
+export const ADD_CAST_DEVICE_MUTATION = `
+  mutation AddCastDevice($input: AddCastDeviceInput!) {
+    addCastDevice(input: $input) {
+      success
+      device {
+        id
+        name
+        address
+        port
+        model
+        deviceType
+        isFavorite
+        isManual
+        isConnected
+        lastSeenAt
+      }
+      error
+    }
+  }
+`;
+
+export const UPDATE_CAST_DEVICE_MUTATION = `
+  mutation UpdateCastDevice($id: ID!, $input: UpdateCastDeviceInput!) {
+    updateCastDevice(id: $id, input: $input) {
+      success
+      device {
+        id
+        name
+        address
+        port
+        model
+        deviceType
+        isFavorite
+        isManual
+        isConnected
+        lastSeenAt
+      }
+      error
+    }
+  }
+`;
+
+export const REMOVE_CAST_DEVICE_MUTATION = `
+  mutation RemoveCastDevice($id: ID!) {
+    removeCastDevice(id: $id) {
+      success
+      error
+    }
+  }
+`;
+
+export const CAST_MEDIA_MUTATION = `
+  mutation CastMedia($input: CastMediaInput!) {
+    castMedia(input: $input) {
+      success
+      session {
+        id
+        deviceId
+        deviceName
+        mediaFileId
+        episodeId
+        streamUrl
+        playerState
+        currentTime
+        duration
+        volume
+        isMuted
+        startedAt
+      }
+      error
+    }
+  }
+`;
+
+export const CAST_PLAY_MUTATION = `
+  mutation CastPlay($sessionId: ID!) {
+    castPlay(sessionId: $sessionId) {
+      success
+      session {
+        id
+        playerState
+        currentTime
+      }
+      error
+    }
+  }
+`;
+
+export const CAST_PAUSE_MUTATION = `
+  mutation CastPause($sessionId: ID!) {
+    castPause(sessionId: $sessionId) {
+      success
+      session {
+        id
+        playerState
+        currentTime
+      }
+      error
+    }
+  }
+`;
+
+export const CAST_STOP_MUTATION = `
+  mutation CastStop($sessionId: ID!) {
+    castStop(sessionId: $sessionId) {
+      success
+      error
+    }
+  }
+`;
+
+export const CAST_SEEK_MUTATION = `
+  mutation CastSeek($sessionId: ID!, $position: Float!) {
+    castSeek(sessionId: $sessionId, position: $position) {
+      success
+      session {
+        id
+        playerState
+        currentTime
+      }
+      error
+    }
+  }
+`;
+
+export const CAST_SET_VOLUME_MUTATION = `
+  mutation CastSetVolume($sessionId: ID!, $volume: Float!) {
+    castSetVolume(sessionId: $sessionId, volume: $volume) {
+      success
+      session {
+        id
+        volume
+        isMuted
+      }
+      error
+    }
+  }
+`;
+
+export const CAST_SET_MUTED_MUTATION = `
+  mutation CastSetMuted($sessionId: ID!, $muted: Boolean!) {
+    castSetMuted(sessionId: $sessionId, muted: $muted) {
+      success
+      session {
+        id
+        volume
+        isMuted
+      }
+      error
+    }
+  }
+`;
+
+export const UPDATE_CAST_SETTINGS_MUTATION = `
+  mutation UpdateCastSettings($input: UpdateCastSettingsInput!) {
+    updateCastSettings(input: $input) {
+      success
+      settings {
+        autoDiscoveryEnabled
+        discoveryIntervalSeconds
+        defaultVolume
+        transcodeIncompatible
+        preferredQuality
+      }
+      error
+    }
+  }
+`;
+
+// ============================================================================
+// Filesystem Mutations
+// ============================================================================
+
+export const CREATE_DIRECTORY_MUTATION = `
+  mutation CreateDirectory($input: CreateDirectoryInput!) {
+    createDirectory(input: $input) {
+      success
+      error
+      affectedCount
+      messages
+      path
+    }
+  }
+`;
+
+export const DELETE_FILES_MUTATION = `
+  mutation DeleteFiles($input: DeleteFilesInput!) {
+    deleteFiles(input: $input) {
+      success
+      error
+      affectedCount
+      messages
+      path
+    }
+  }
+`;
+
+export const COPY_FILES_MUTATION = `
+  mutation CopyFiles($input: CopyFilesInput!) {
+    copyFiles(input: $input) {
+      success
+      error
+      affectedCount
+      messages
+      path
+    }
+  }
+`;
+
+export const MOVE_FILES_MUTATION = `
+  mutation MoveFiles($input: MoveFilesInput!) {
+    moveFiles(input: $input) {
+      success
+      error
+      affectedCount
+      messages
+      path
+    }
+  }
+`;
+
+export const RENAME_FILE_MUTATION = `
+  mutation RenameFile($input: RenameFileInput!) {
+    renameFile(input: $input) {
+      success
+      error
+      affectedCount
+      messages
+      path
     }
   }
 `;

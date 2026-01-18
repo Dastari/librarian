@@ -6,21 +6,25 @@ import { Select, SelectItem } from '@heroui/select'
 import { Switch } from '@heroui/switch'
 import { Divider } from '@heroui/divider'
 import { FolderBrowserInput } from '../FolderBrowserInput'
-import type { LibraryType, PostDownloadAction, CreateLibraryInput } from '../../lib/graphql'
-
-const LIBRARY_TYPES = [
-  { value: 'MOVIES', label: 'Movies', icon: '🎬', color: 'purple' },
-  { value: 'TV', label: 'TV Shows', icon: '📺', color: 'blue' },
-  { value: 'MUSIC', label: 'Music', icon: '🎵', color: 'green' },
-  { value: 'AUDIOBOOKS', label: 'Audiobooks', icon: '🎧', color: 'orange' },
-  { value: 'OTHER', label: 'Other', icon: '📁', color: 'slate' },
-] as const
+import { QUALITY_PRESETS, type QualitySettings } from '../settings'
+import { LIBRARY_TYPES, type LibraryType, type PostDownloadAction, type CreateLibraryInput } from '../../lib/graphql'
 
 export interface AddLibraryModalProps {
   isOpen: boolean
   onClose: () => void
   onAdd: (library: CreateLibraryInput) => Promise<void>
   isLoading: boolean
+}
+
+const DEFAULT_QUALITY_SETTINGS: QualitySettings = {
+  allowedResolutions: [],
+  allowedVideoCodecs: [],
+  allowedAudioFormats: [],
+  requireHdr: false,
+  allowedHdrTypes: [],
+  allowedSources: [],
+  releaseGroupBlacklist: [],
+  releaseGroupWhitelist: [],
 }
 
 export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibraryModalProps) {
@@ -34,6 +38,19 @@ export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibrar
     useState<PostDownloadAction>('COPY')
   const [organizeFiles, setOrganizeFiles] = useState(true)
   const [autoAddDiscovered, setAutoAddDiscovered] = useState(true)
+  const [qualityPreset, setQualityPreset] = useState('Any Quality')
+  const [qualitySettings, setQualitySettings] = useState<QualitySettings>(DEFAULT_QUALITY_SETTINGS)
+
+  const handlePresetChange = (presetName: string) => {
+    setQualityPreset(presetName)
+    const preset = QUALITY_PRESETS.find(p => p.name === presetName)
+    if (preset) {
+      setQualitySettings({
+        ...DEFAULT_QUALITY_SETTINGS,
+        ...preset.settings,
+      })
+    }
+  }
 
   const handleSubmit = async () => {
     if (!name || !path) return
@@ -47,6 +64,15 @@ export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibrar
       postDownloadAction,
       organizeFiles,
       autoAddDiscovered,
+      // Quality settings from preset
+      allowedResolutions: qualitySettings.allowedResolutions,
+      allowedVideoCodecs: qualitySettings.allowedVideoCodecs,
+      allowedAudioFormats: qualitySettings.allowedAudioFormats,
+      requireHdr: qualitySettings.requireHdr,
+      allowedHdrTypes: qualitySettings.allowedHdrTypes,
+      allowedSources: qualitySettings.allowedSources,
+      releaseGroupBlacklist: qualitySettings.releaseGroupBlacklist,
+      releaseGroupWhitelist: qualitySettings.releaseGroupWhitelist,
     })
     // Reset form
     setName('')
@@ -58,6 +84,8 @@ export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibrar
     setPostDownloadAction('COPY')
     setOrganizeFiles(true)
     setAutoAddDiscovered(true)
+    setQualityPreset('Any Quality')
+    setQualitySettings(DEFAULT_QUALITY_SETTINGS)
     onClose()
   }
 
@@ -90,8 +118,10 @@ export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibrar
             >
               {LIBRARY_TYPES.map((type) => (
                 <SelectItem key={type.value} textValue={type.label}>
-                  <span className="mr-2">{type.icon}</span>
-                  {type.label}
+                  <div className="flex items-center gap-2">
+                    <type.Icon className="w-4 h-4" />
+                    {type.label}
+                  </div>
                 </SelectItem>
               ))}
             </Select>
@@ -175,6 +205,26 @@ export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibrar
                 onValueChange={setAutoAddDiscovered}
               />
             </div>
+
+            <Divider />
+
+            <Select
+              label="Quality Preset"
+              selectedKeys={[qualityPreset]}
+              onChange={(e) => handlePresetChange(e.target.value)}
+              description="Quick quality filter setup (can be customized later in settings)"
+            >
+              {QUALITY_PRESETS.map((preset) => (
+                <SelectItem key={preset.name} textValue={preset.name}>
+                  <div className="flex flex-col">
+                    <span>{preset.name}</span>
+                    <span className="text-xs text-default-400">
+                      {preset.description}
+                    </span>
+                  </div>
+                </SelectItem>
+              ))}
+            </Select>
           </div>
         </ModalBody>
         <ModalFooter>

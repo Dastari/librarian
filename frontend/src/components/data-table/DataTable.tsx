@@ -98,13 +98,13 @@ function getColumnStyle(
   return style
 }
 import {
-  SearchIcon,
-  FilterIcon,
-  ClearIcon,
-  MoreVerticalIcon,
-  TableIcon,
-  GridIcon,
-} from './icons'
+  IconSearch,
+  IconFilter,
+  IconX,
+  IconDotsVertical,
+  IconTable,
+  IconLayoutGrid,
+} from '@tabler/icons-react'
 
 // ============================================================================
 // Sub-components
@@ -127,7 +127,7 @@ function RowActionsDropdown<T>({ item, actions }: RowActionsDropdownProps<T>) {
     <Dropdown>
       <DropdownTrigger>
         <Button isIconOnly size="sm" variant="light">
-          <MoreVerticalIcon />
+          <IconDotsVertical size={18} />
         </Button>
       </DropdownTrigger>
       <DropdownMenu aria-label="Row actions">
@@ -651,7 +651,7 @@ export function DataTable<T>({
                 placeholder={searchPlaceholder}
                 value={searchTerm}
                 onValueChange={handleSearchChange}
-                startContent={<SearchIcon />}
+                startContent={<IconSearch size={18} />}
                 isClearable
                 onClear={() => handleSearchChange('')}
               />
@@ -718,7 +718,7 @@ export function DataTable<T>({
                       variant={viewMode === 'table' ? 'solid' : 'flat'}
                       onPress={() => handleViewModeChange('table')}
                     >
-                      <TableIcon />
+                      <IconTable size={18} />
                     </Button>
                   </Tooltip>
                   <Tooltip content="Card view">
@@ -727,7 +727,7 @@ export function DataTable<T>({
                       variant={viewMode === 'cards' ? 'solid' : 'flat'}
                       onPress={() => handleViewModeChange('cards')}
                     >
-                      <GridIcon />
+                      <IconLayoutGrid size={18} />
                     </Button>
                   </Tooltip>
                 </ButtonGroup>
@@ -755,7 +755,7 @@ export function DataTable<T>({
           {(filters.some((f) => f.type === 'select' && f.position !== 'dropdown') || filterRowContent) && (
             <div className="flex flex-wrap gap-2 items-center">
               <span className="text-sm text-default-500 flex items-center gap-1">
-                <FilterIcon /> Filter:
+                <IconFilter size={16} /> Filter:
               </span>
               {filters
                 .filter((f) => f.type === 'select' && f.position !== 'dropdown')
@@ -778,7 +778,7 @@ export function DataTable<T>({
                   variant="light"
                   color="danger"
                   onPress={handleClearFilters}
-                  startContent={<ClearIcon />}
+                  startContent={<IconX size={18} />}
                 >
                   Clear
                 </Button>

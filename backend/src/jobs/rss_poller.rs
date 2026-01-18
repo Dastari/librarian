@@ -14,10 +14,11 @@ use sqlx::PgPool;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
+use crate::db::libraries::LibraryRecord;
+use crate::db::tv_shows::TvShowRecord;
 use crate::db::{CreateRssFeedItem, Database, RssFeedRecord};
-use crate::db::quality_profiles::QualityProfileRecord;
-use crate::services::RssService;
 use crate::services::ParsedRssItem;
+use crate::services::RssService;
 
 /// Poll all RSS feeds that are due for polling
 pub async fn poll_feeds() -> Result<()> {
@@ -76,16 +77,13 @@ pub async fn poll_feeds_with_db(db: &Database) -> Result<()> {
 }
 
 /// Poll a single RSS feed by ID (for manual polling via GraphQL)
-pub async fn poll_single_feed_by_id(
-    db: &Database,
-    feed_id: Uuid,
-) -> Result<(i32, i32)> {
+pub async fn poll_single_feed_by_id(db: &Database, feed_id: Uuid) -> Result<(i32, i32)> {
     let feed = db
         .rss_feeds()
         .get_by_id(feed_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("RSS feed not found"))?;
-    
+
     let rss_service = RssService::new();
     poll_single_feed(db, &rss_service, &feed).await
 }
@@ -119,10 +117,7 @@ async fn poll_single_feed(
 
     for item in items {
         // Check if we've already seen this item
-        let exists = db
-            .rss_feeds()
-            .item_exists(feed.id, &item.link_hash)
-            .await?;
+        let exists = db.rss_feeds().item_exists(feed.id, &item.link_hash).await?;
 
         if exists {
             debug!("Skipping existing item: {}", item.title);
@@ -131,9 +126,16 @@ async fn poll_single_feed(
 
         // Transform the link if needed (e.g., IPTorrents page URL -> download URL)
         let download_link = transform_torrent_link(&item, &feed.url);
-        
-        // Clone resolution before moving item fields
-        let parsed_resolution = item.parsed_resolution.clone();
+
+        // Build quality info struct for matching
+        let quality_info = ParsedQualityInfo {
+            resolution: item.parsed_resolution.clone(),
+            codec: item.parsed_codec.clone(),
+            audio: item.parsed_audio.clone(),
+            hdr: item.parsed_hdr.clone(),
+            source: item.parsed_source.clone(),
+            release_group: extract_release_group(&item.title),
+        };
 
         // Store the new item with the transformed download link
         let rss_item = db
@@ -153,6 +155,8 @@ async fn poll_single_feed(
                 parsed_resolution: item.parsed_resolution,
                 parsed_codec: item.parsed_codec,
                 parsed_source: item.parsed_source,
+                parsed_audio: item.parsed_audio,
+                parsed_hdr: item.parsed_hdr,
             })
             .await?;
 
@@ -161,17 +165,16 @@ async fn poll_single_feed(
         // Try to match this item to a wanted episode
         if let Some(ref show_name) = item.parsed_show_name {
             if let (Some(season), Some(episode)) = (item.parsed_season, item.parsed_episode) {
-                if let Some(matched) =
-                    try_match_episode(
-                        db,
-                        show_name,
-                        season,
-                        episode,
-                        &download_link,
-                        rss_item.id,
-                        parsed_resolution.as_deref(),
-                    )
-                        .await?
+                if let Some(matched) = try_match_episode(
+                    db,
+                    show_name,
+                    season,
+                    episode,
+                    &download_link,
+                    rss_item.id,
+                    &quality_info,
+                )
+                .await?
                 {
                     info!(
                         job = "rss_poller",
@@ -239,99 +242,240 @@ async fn poll_single_feed(
     Ok((new_items, matched_episodes))
 }
 
-/// Get the effective quality profile for a show (show's profile or library default)
-async fn get_effective_quality_profile(
+/// Effective quality settings for a show (merged from library + show overrides)
+#[derive(Debug, Default)]
+struct EffectiveQualitySettings {
+    pub allowed_resolutions: Vec<String>,
+    pub allowed_video_codecs: Vec<String>,
+    pub allowed_audio_formats: Vec<String>,
+    pub require_hdr: bool,
+    pub allowed_hdr_types: Vec<String>,
+    pub allowed_sources: Vec<String>,
+    pub release_group_blacklist: Vec<String>,
+    pub release_group_whitelist: Vec<String>,
+}
+
+impl EffectiveQualitySettings {
+    /// Create effective settings by merging library defaults with show overrides
+    fn from_library_and_show(library: &LibraryRecord, show: &TvShowRecord) -> Self {
+        Self {
+            // Use show override if set, otherwise use library default
+            allowed_resolutions: show
+                .allowed_resolutions_override
+                .clone()
+                .unwrap_or_else(|| library.allowed_resolutions.clone()),
+            allowed_video_codecs: show
+                .allowed_video_codecs_override
+                .clone()
+                .unwrap_or_else(|| library.allowed_video_codecs.clone()),
+            allowed_audio_formats: show
+                .allowed_audio_formats_override
+                .clone()
+                .unwrap_or_else(|| library.allowed_audio_formats.clone()),
+            require_hdr: show.require_hdr_override.unwrap_or(library.require_hdr),
+            allowed_hdr_types: show
+                .allowed_hdr_types_override
+                .clone()
+                .unwrap_or_else(|| library.allowed_hdr_types.clone()),
+            allowed_sources: show
+                .allowed_sources_override
+                .clone()
+                .unwrap_or_else(|| library.allowed_sources.clone()),
+            release_group_blacklist: show
+                .release_group_blacklist_override
+                .clone()
+                .unwrap_or_else(|| library.release_group_blacklist.clone()),
+            release_group_whitelist: show
+                .release_group_whitelist_override
+                .clone()
+                .unwrap_or_else(|| library.release_group_whitelist.clone()),
+        }
+    }
+}
+
+/// Get the effective quality settings for a show (merged library + show overrides)
+async fn get_effective_quality_settings(
     db: &Database,
     show_id: Uuid,
-) -> Result<Option<QualityProfileRecord>> {
+) -> Result<Option<EffectiveQualitySettings>> {
     // Get the show
-    let show = db.tv_shows().get_by_id(show_id).await?;
-    let show = match show {
+    let show = match db.tv_shows().get_by_id(show_id).await? {
         Some(s) => s,
         None => return Ok(None),
     };
 
-    // First try show's quality profile
-    if let Some(profile_id) = show.quality_profile_id {
-        if let Some(profile) = db.quality_profiles().get_by_id(profile_id).await? {
-            return Ok(Some(profile));
-        }
-    }
-
-    // Fall back to library's default quality profile
-    let library = db.libraries().get_by_id(show.library_id).await?;
-    if let Some(library) = library {
-        if let Some(profile_id) = library.default_quality_profile_id {
-            if let Some(profile) = db.quality_profiles().get_by_id(profile_id).await? {
-                return Ok(Some(profile));
-            }
-        }
-    }
-
-    Ok(None)
-}
-
-/// Check if an RSS item's resolution matches the quality profile
-fn matches_quality_profile(
-    parsed_resolution: Option<&str>,
-    profile: &QualityProfileRecord,
-) -> bool {
-    // If profile allows "any" resolution, always match
-    if profile.preferred_resolution.as_deref() == Some("any")
-        || profile.min_resolution.as_deref() == Some("any")
-    {
-        return true;
-    }
-
-    // If we couldn't parse resolution from the RSS item, allow it (conservative)
-    let resolution = match parsed_resolution {
-        Some(r) => r.to_lowercase(),
-        None => return true,
+    // Get the library
+    let library = match db.libraries().get_by_id(show.library_id).await? {
+        Some(l) => l,
+        None => return Ok(None),
     };
 
-    // Convert resolution strings to numeric values for comparison
-    fn resolution_value(res: &str) -> i32 {
-        match res.to_lowercase().as_str() {
-            "2160p" | "4k" | "uhd" => 2160,
-            "1080p" | "fullhd" | "fhd" => 1080,
-            "720p" | "hd" => 720,
-            "480p" | "sd" => 480,
-            "any" => 0,
-            _ => 0,
-        }
+    Ok(Some(EffectiveQualitySettings::from_library_and_show(
+        &library, &show,
+    )))
+}
+
+/// Parsed quality info from an RSS item for matching
+#[derive(Debug, Default)]
+struct ParsedQualityInfo {
+    pub resolution: Option<String>,
+    pub codec: Option<String>,
+    pub audio: Option<String>,
+    pub hdr: Option<String>,
+    pub source: Option<String>,
+    pub release_group: Option<String>,
+}
+
+/// Check if an RSS item matches the quality settings
+/// Returns true if the item passes all quality filters
+fn matches_quality_settings(
+    parsed: &ParsedQualityInfo,
+    settings: &EffectiveQualitySettings,
+) -> bool {
+    // Helper to normalize strings for comparison
+    fn normalize(s: &str) -> String {
+        s.to_lowercase().replace(['-', '.', ' ', '_'], "")
     }
 
-    let item_res = resolution_value(&resolution);
-    
-    // Check minimum resolution
-    if let Some(min_res) = &profile.min_resolution {
-        let min_val = resolution_value(min_res);
-        if min_val > 0 && item_res > 0 && item_res < min_val {
+    // Check resolution (empty = any)
+    if !settings.allowed_resolutions.is_empty() {
+        let resolution = parsed.resolution.as_deref().unwrap_or("");
+        let normalized_res = normalize(resolution);
+
+        let matches = settings.allowed_resolutions.iter().any(|allowed| {
+            let allowed_norm = normalize(allowed);
+            normalized_res.contains(&allowed_norm)
+                || allowed_norm.contains(&normalized_res)
+                || (allowed_norm == "2160p" && (normalized_res == "4k" || normalized_res == "uhd"))
+                || (normalized_res == "2160p" && (allowed_norm == "4k" || allowed_norm == "uhd"))
+        });
+
+        if !matches && !resolution.is_empty() {
             debug!(
-                "Quality filter: {} < min resolution {} - rejecting",
-                resolution, min_res
+                "Quality filter: resolution '{}' not in allowed list {:?}",
+                resolution, settings.allowed_resolutions
             );
             return false;
         }
     }
 
-    // Check preferred resolution - if set, prefer matching it but don't reject
-    // unless it's way off (more than one tier below)
-    if let Some(pref_res) = &profile.preferred_resolution {
-        let pref_val = resolution_value(pref_res);
-        if pref_val > 0 && item_res > 0 {
-            // Calculate tier difference (each tier is roughly 2x)
-            let tier_diff = if pref_val > item_res {
-                (pref_val / item_res.max(1)) as f32
-            } else {
-                1.0
-            };
-            
-            // Reject if more than 2 tiers below preferred
-            if tier_diff > 2.5 {
+    // Check video codec (empty = any)
+    if !settings.allowed_video_codecs.is_empty() {
+        let codec = parsed.codec.as_deref().unwrap_or("");
+        let normalized_codec = normalize(codec);
+
+        let matches = settings.allowed_video_codecs.iter().any(|allowed| {
+            let allowed_norm = normalize(allowed);
+            normalized_codec.contains(&allowed_norm)
+                || allowed_norm.contains(&normalized_codec)
+                || (normalized_codec == "hevc" && allowed_norm == "h265")
+                || (normalized_codec == "h265" && allowed_norm == "hevc")
+                || (normalized_codec == "h264" && (allowed_norm == "x264" || allowed_norm == "avc"))
+        });
+
+        if !matches && !codec.is_empty() {
+            debug!(
+                "Quality filter: codec '{}' not in allowed list {:?}",
+                codec, settings.allowed_video_codecs
+            );
+            return false;
+        }
+    }
+
+    // Check audio format (empty = any)
+    if !settings.allowed_audio_formats.is_empty() {
+        let audio = parsed.audio.as_deref().unwrap_or("");
+        let normalized_audio = normalize(audio);
+
+        let matches = settings.allowed_audio_formats.iter().any(|allowed| {
+            let allowed_norm = normalize(allowed);
+            normalized_audio.contains(&allowed_norm)
+                || allowed_norm.contains(&normalized_audio)
+                || (normalized_audio == "dd" && allowed_norm == "dd51")
+                || (normalized_audio == "ddplus" && allowed_norm == "dd+")
+        });
+
+        if !matches && !audio.is_empty() {
+            debug!(
+                "Quality filter: audio '{}' not in allowed list {:?}",
+                audio, settings.allowed_audio_formats
+            );
+            return false;
+        }
+    }
+
+    // Check HDR requirement
+    if settings.require_hdr {
+        let hdr = parsed.hdr.as_deref().unwrap_or("");
+        if hdr.is_empty() {
+            debug!("Quality filter: HDR required but not present");
+            return false;
+        }
+
+        // If specific HDR types are specified, check those
+        if !settings.allowed_hdr_types.is_empty() {
+            let normalized_hdr = normalize(hdr);
+            let matches = settings.allowed_hdr_types.iter().any(|allowed| {
+                let allowed_norm = normalize(allowed);
+                normalized_hdr.contains(&allowed_norm) || allowed_norm.contains(&normalized_hdr)
+            });
+
+            if !matches {
                 debug!(
-                    "Quality filter: {} is significantly below preferred {} - rejecting",
-                    resolution, pref_res
+                    "Quality filter: HDR type '{}' not in allowed list {:?}",
+                    hdr, settings.allowed_hdr_types
+                );
+                return false;
+            }
+        }
+    }
+
+    // Check source (empty = any)
+    if !settings.allowed_sources.is_empty() {
+        let source = parsed.source.as_deref().unwrap_or("");
+        let normalized_source = normalize(source);
+
+        let matches = settings.allowed_sources.iter().any(|allowed| {
+            let allowed_norm = normalize(allowed);
+            normalized_source.contains(&allowed_norm) || allowed_norm.contains(&normalized_source)
+        });
+
+        if !matches && !source.is_empty() {
+            debug!(
+                "Quality filter: source '{}' not in allowed list {:?}",
+                source, settings.allowed_sources
+            );
+            return false;
+        }
+    }
+
+    // Check release group blacklist
+    if !settings.release_group_blacklist.is_empty() {
+        if let Some(group) = &parsed.release_group {
+            let normalized_group = normalize(group);
+            if settings
+                .release_group_blacklist
+                .iter()
+                .any(|blocked| normalize(blocked) == normalized_group)
+            {
+                debug!("Quality filter: release group '{}' is blacklisted", group);
+                return false;
+            }
+        }
+    }
+
+    // Check release group whitelist (if set, only allow listed groups)
+    if !settings.release_group_whitelist.is_empty() {
+        if let Some(group) = &parsed.release_group {
+            let normalized_group = normalize(group);
+            if !settings
+                .release_group_whitelist
+                .iter()
+                .any(|allowed| normalize(allowed) == normalized_group)
+            {
+                debug!(
+                    "Quality filter: release group '{}' not in whitelist {:?}",
+                    group, settings.release_group_whitelist
                 );
                 return false;
             }
@@ -350,7 +494,7 @@ async fn try_match_episode(
     episode: i32,
     torrent_link: &str,
     rss_item_id: Uuid,
-    parsed_resolution: Option<&str>,
+    quality_info: &ParsedQualityInfo,
 ) -> Result<Option<Uuid>> {
     // Normalize the show name for matching
     let normalized_name = normalize_show_name(show_name);
@@ -378,23 +522,27 @@ async fn try_match_episode(
 
     // Strategy 1: Try exact season/episode match
     for show_id in &shows {
-        // Check quality profile before matching
-        if let Some(profile) = get_effective_quality_profile(db, *show_id).await? {
-            if !matches_quality_profile(parsed_resolution, &profile) {
+        // Check quality settings before matching
+        if let Some(settings) = get_effective_quality_settings(db, *show_id).await? {
+            if !matches_quality_settings(quality_info, &settings) {
                 info!(
                     job = "rss_poller",
                     show_name = %show_name,
-                    resolution = ?parsed_resolution,
-                    profile_name = %profile.name,
-                    "Skipping: quality doesn't match profile '{}'",
-                    profile.name
+                    resolution = ?quality_info.resolution,
+                    codec = ?quality_info.codec,
+                    "Skipping: quality doesn't match settings"
                 );
                 continue;
             }
         }
 
-        if let Some(ep_id) = try_exact_match(db, *show_id, season, episode, torrent_link, rss_item_id).await? {
-            info!("Strategy 1 (exact match) succeeded for S{:02}E{:02}", season, episode);
+        if let Some(ep_id) =
+            try_exact_match(db, *show_id, season, episode, torrent_link, rss_item_id).await?
+        {
+            info!(
+                "Strategy 1 (exact match) succeeded for S{:02}E{:02}",
+                season, episode
+            );
             return Ok(Some(ep_id));
         }
     }
@@ -404,17 +552,26 @@ async fn try_match_episode(
     // e.g., S02E04 in scene naming might be Season 2026, Episode 4
     let current_year = chrono::Utc::now().year();
     let year_seasons = [current_year, current_year - 1, current_year - 2];
-    
+
     for show_id in &shows {
-        // Check quality profile before matching
-        if let Some(profile) = get_effective_quality_profile(db, *show_id).await? {
-            if !matches_quality_profile(parsed_resolution, &profile) {
+        // Check quality settings before matching
+        if let Some(settings) = get_effective_quality_settings(db, *show_id).await? {
+            if !matches_quality_settings(quality_info, &settings) {
                 continue; // Already logged in Strategy 1
             }
         }
 
         for &year_season in &year_seasons {
-            if let Some(ep_id) = try_exact_match(db, *show_id, year_season, episode, torrent_link, rss_item_id).await? {
+            if let Some(ep_id) = try_exact_match(
+                db,
+                *show_id,
+                year_season,
+                episode,
+                torrent_link,
+                rss_item_id,
+            )
+            .await?
+            {
                 info!(
                     "Strategy 2 (year-based season) succeeded: S{:02}E{:02} matched as Season {} Episode {}",
                     season, episode, year_season, episode
@@ -428,14 +585,16 @@ async fn try_match_episode(
     // Scene S02E04 might be absolute episode number calculated from season start
     // This is a rough heuristic for shows that don't reset episode numbers per season
     for show_id in &shows {
-        // Check quality profile before matching
-        if let Some(profile) = get_effective_quality_profile(db, *show_id).await? {
-            if !matches_quality_profile(parsed_resolution, &profile) {
+        // Check quality settings before matching
+        if let Some(settings) = get_effective_quality_settings(db, *show_id).await? {
+            if !matches_quality_settings(quality_info, &settings) {
                 continue; // Already logged in Strategy 1
             }
         }
 
-        if let Some(ep_id) = try_absolute_match(db, *show_id, season, episode, torrent_link, rss_item_id).await? {
+        if let Some(ep_id) =
+            try_absolute_match(db, *show_id, season, episode, torrent_link, rss_item_id).await?
+        {
             info!(
                 "Strategy 3 (absolute episode) succeeded for S{:02}E{:02}",
                 season, episode
@@ -487,10 +646,7 @@ async fn try_exact_match(
                 debug!("Episode already available with same link, skipping");
             }
         } else {
-            debug!(
-                "Episode found but status is '{}', not matching",
-                ep.status
-            );
+            debug!("Episode found but status is '{}', not matching", ep.status);
         }
     }
 
@@ -509,25 +665,25 @@ async fn try_absolute_match(
 ) -> Result<Option<Uuid>> {
     // For shows with year-based seasons (season > 2000) and absolute episode numbers,
     // we need to find the nth episode of that "scene season"
-    
+
     // First, get all seasons for this show to understand the numbering
     let seasons: Vec<(i32,)> = sqlx::query_as(
-        "SELECT DISTINCT season FROM episodes WHERE tv_show_id = $1 ORDER BY season"
+        "SELECT DISTINCT season FROM episodes WHERE tv_show_id = $1 ORDER BY season",
     )
     .bind(show_id)
     .fetch_all(db.pool())
     .await?;
 
     let season_numbers: Vec<i32> = seasons.into_iter().map(|(s,)| s).collect();
-    
+
     // Check if this show uses year-based seasons
     let uses_year_seasons = season_numbers.iter().any(|&s| s > 2000);
-    
+
     if uses_year_seasons && scene_season > 0 && scene_season <= season_numbers.len() as i32 {
         // Map scene season to actual year-based season
         // Scene S01 = first year season, S02 = second year season, etc.
         let target_year_season = season_numbers.get((scene_season - 1) as usize);
-        
+
         if let Some(&year_season) = target_year_season {
             // Now find the nth episode of that year season
             let episodes: Vec<(Uuid, i32, i32, String)> = sqlx::query_as(
@@ -543,7 +699,9 @@ async fn try_absolute_match(
             .await?;
 
             // Scene episode N is the Nth episode in this season
-            if let Some((ep_id, found_season, found_episode, status)) = episodes.get((scene_episode - 1) as usize) {
+            if let Some((ep_id, found_season, found_episode, status)) =
+                episodes.get((scene_episode - 1) as usize)
+            {
                 if status == "missing" || status == "wanted" || status == "available" {
                     info!(
                         "Year-based absolute match: S{:02}E{:02} -> Season {} Episode {} (year season mapping)",
@@ -587,16 +745,17 @@ async fn try_absolute_match(
     .await?;
 
     if let Some((ep_id, found_season, found_episode, status)) = rows.into_iter().next()
-        && (status == "missing" || status == "wanted" || status == "available") {
-            info!(
-                "Absolute number match: S{:02}E{:02} -> Season {} Episode {} (abs: {})",
-                scene_season, scene_episode, found_season, found_episode, estimated_absolute
-            );
-            db.episodes()
-                .mark_available(ep_id, torrent_link, Some(rss_item_id))
-                .await?;
-            return Ok(Some(ep_id));
-        }
+        && (status == "missing" || status == "wanted" || status == "available")
+    {
+        info!(
+            "Absolute number match: S{:02}E{:02} -> Season {} Episode {} (abs: {})",
+            scene_season, scene_episode, found_season, found_episode, estimated_absolute
+        );
+        db.episodes()
+            .mark_available(ep_id, torrent_link, Some(rss_item_id))
+            .await?;
+        return Ok(Some(ep_id));
+    }
 
     Ok(None)
 }
@@ -607,17 +766,15 @@ async fn try_absolute_match(
 /// direct download links. This function transforms those URLs into usable download links.
 fn transform_torrent_link(item: &ParsedRssItem, feed_url: &str) -> String {
     let link = &item.link;
-    
+
     // IPTorrents: Transform /t/{id} page URLs to /download.php/{id}/name.torrent?torrent_pass=...
     if link.contains("iptorrents.com/t/")
-        && let Some(download_url) = transform_iptorrents_link(link, &item.title, feed_url) {
-            debug!(
-                "Transformed IPTorrents link: {} -> {}",
-                link, download_url
-            );
-            return download_url;
-        }
-    
+        && let Some(download_url) = transform_iptorrents_link(link, &item.title, feed_url)
+    {
+        debug!("Transformed IPTorrents link: {} -> {}", link, download_url);
+        return download_url;
+    }
+
     // For other trackers or if transformation fails, return the original link
     link.clone()
 }
@@ -629,28 +786,22 @@ fn transform_torrent_link(item: &ParsedRssItem, feed_url: &str) -> String {
 fn transform_iptorrents_link(page_url: &str, title: &str, feed_url: &str) -> Option<String> {
     // Extract torrent ID from page URL
     let id_regex = Regex::new(r"iptorrents\.com/t/(\d+)").ok()?;
-    let torrent_id = id_regex.captures(page_url)?
-        .get(1)?
-        .as_str();
-    
+    let torrent_id = id_regex.captures(page_url)?.get(1)?.as_str();
+
     // Extract torrent_pass from feed URL (it's in the tp= parameter)
     // Feed URL format: https://iptorrents.com/t.rss?u=...;tp=PASSKEY;...
     let pass_regex = Regex::new(r"[;&?]tp=([a-f0-9]+)").ok()?;
-    let torrent_pass = pass_regex.captures(feed_url)?
-        .get(1)?
-        .as_str();
-    
+    let torrent_pass = pass_regex.captures(feed_url)?.get(1)?.as_str();
+
     // Create a safe filename from the title (replace spaces with dots, remove special chars)
     let safe_filename = title
         .replace(' ', ".")
         .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "");
-    
+
     // Construct the download URL
     Some(format!(
         "https://iptorrents.com/download.php/{}/{}.torrent?torrent_pass={}",
-        torrent_id,
-        safe_filename,
-        torrent_pass
+        torrent_id, safe_filename, torrent_pass
     ))
 }
 
@@ -673,6 +824,15 @@ async fn find_matching_shows(db: &Database, normalized_name: &str) -> Result<Vec
     .await?;
 
     Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
+/// Extract release group from a title (usually after the last dash)
+fn extract_release_group(title: &str) -> Option<String> {
+    let group_re = Regex::new(r"-([A-Za-z0-9]+)(?:\.[A-Za-z0-9]+)?$").ok()?;
+    group_re
+        .captures(title)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string())
 }
 
 /// Normalize a show name for matching

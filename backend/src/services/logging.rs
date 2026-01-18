@@ -12,11 +12,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sqlx::PgPool;
 use time::OffsetDateTime;
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{RwLock, broadcast, mpsc};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
-use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
+use tracing_subscriber::layer::Context;
 
 use crate::db::{CreateLog, LogsRepository};
 
@@ -79,7 +79,10 @@ impl LoggingService {
             config.flush_interval_ms,
         ));
 
-        Self { broadcast_tx, db_tx }
+        Self {
+            broadcast_tx,
+            db_tx,
+        }
     }
 
     /// Subscribe to real-time log events - for GraphQL subscriptions
@@ -187,8 +190,10 @@ impl Visit for FieldVisitor {
         if field.name() == "message" {
             self.message = Some(value.to_string());
         } else {
-            self.fields
-                .insert(field.name().to_string(), JsonValue::String(value.to_string()));
+            self.fields.insert(
+                field.name().to_string(),
+                JsonValue::String(value.to_string()),
+            );
         }
     }
 
@@ -246,7 +251,9 @@ where
         };
 
         let timestamp = OffsetDateTime::now_utc();
-        let timestamp_str = timestamp.format(&time::format_description::well_known::Rfc3339).unwrap_or_default();
+        let timestamp_str = timestamp
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default();
 
         // Create log event for broadcasting
         let log_event = LogEvent {
@@ -284,7 +291,10 @@ static LOGGING_SERVICE: std::sync::OnceLock<SharedLoggingService> = std::sync::O
 
 /// Initialize the global logging service - for future global access pattern
 #[allow(dead_code)]
-pub fn init_logging_service(pool: PgPool, config: DatabaseLoggerConfig) -> &'static SharedLoggingService {
+pub fn init_logging_service(
+    pool: PgPool,
+    config: DatabaseLoggerConfig,
+) -> &'static SharedLoggingService {
     LOGGING_SERVICE.get_or_init(|| {
         let service = LoggingService::new(pool, config);
         Arc::new(RwLock::new(Some(service)))
@@ -306,6 +316,7 @@ pub fn create_database_layer(
     let min_level = config.min_level;
     let service = LoggingService::new(pool, config);
     let broadcast_sender = service.broadcast_sender();
-    let layer = DatabaseLoggingLayer::new(min_level, service.broadcast_sender(), service.db_sender());
+    let layer =
+        DatabaseLoggingLayer::new(min_level, service.broadcast_sender(), service.db_sender());
     (layer, broadcast_sender)
 }

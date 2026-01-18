@@ -107,12 +107,11 @@ impl TorrentRepository {
 
     /// Get a torrent by info_hash
     pub async fn get_by_info_hash(&self, info_hash: &str) -> Result<Option<TorrentRecord>> {
-        let record = sqlx::query_as::<_, TorrentRecord>(
-            "SELECT * FROM torrents WHERE info_hash = $1",
-        )
-        .bind(info_hash)
-        .fetch_optional(&self.pool)
-        .await?;
+        let record =
+            sqlx::query_as::<_, TorrentRecord>("SELECT * FROM torrents WHERE info_hash = $1")
+                .bind(info_hash)
+                .fetch_optional(&self.pool)
+                .await?;
 
         Ok(record)
     }
@@ -210,12 +209,10 @@ impl TorrentRepository {
 
     /// Mark torrent as processed
     pub async fn mark_processed(&self, info_hash: &str) -> Result<()> {
-        sqlx::query(
-            "UPDATE torrents SET post_process_status = 'completed' WHERE info_hash = $1"
-        )
-        .bind(info_hash)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("UPDATE torrents SET post_process_status = 'completed' WHERE info_hash = $1")
+            .bind(info_hash)
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }
@@ -236,22 +233,19 @@ impl TorrentRepository {
     /// Get a default user ID from the database (for session sync when no user context)
     pub async fn get_default_user_id(&self) -> Result<Option<Uuid>> {
         // Try to get a user from existing torrents first
-        let result = sqlx::query_scalar::<_, Uuid>(
-            "SELECT DISTINCT user_id FROM torrents LIMIT 1"
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let result = sqlx::query_scalar::<_, Uuid>("SELECT DISTINCT user_id FROM torrents LIMIT 1")
+            .fetch_optional(&self.pool)
+            .await?;
 
         if result.is_some() {
             return Ok(result);
         }
 
         // Fall back to any user from libraries table
-        let result = sqlx::query_scalar::<_, Uuid>(
-            "SELECT DISTINCT user_id FROM libraries LIMIT 1"
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let result =
+            sqlx::query_scalar::<_, Uuid>("SELECT DISTINCT user_id FROM libraries LIMIT 1")
+                .fetch_optional(&self.pool)
+                .await?;
 
         Ok(result)
     }
@@ -328,11 +322,10 @@ impl TorrentRepository {
 
     /// List all torrents (for admin/sync purposes)
     pub async fn list_all(&self) -> Result<Vec<TorrentRecord>> {
-        let records = sqlx::query_as::<_, TorrentRecord>(
-            "SELECT * FROM torrents ORDER BY added_at DESC"
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let records =
+            sqlx::query_as::<_, TorrentRecord>("SELECT * FROM torrents ORDER BY added_at DESC")
+                .fetch_all(&self.pool)
+                .await?;
 
         Ok(records)
     }

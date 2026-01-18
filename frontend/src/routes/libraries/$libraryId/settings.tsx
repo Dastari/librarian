@@ -18,12 +18,11 @@ function SettingsPage() {
     )
   }
 
-  const { library, qualityProfiles, handleUpdateLibrary, actionLoading } = ctx
+  const { library, handleUpdateLibrary, actionLoading } = ctx
 
   return (
     <LibrarySettingsTab
       library={library}
-      qualityProfiles={qualityProfiles}
       onSave={handleUpdateLibrary}
       isLoading={actionLoading}
     />

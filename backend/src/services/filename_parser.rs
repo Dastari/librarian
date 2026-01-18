@@ -46,8 +46,7 @@ pub fn parse_episode(filename: &str) -> ParsedEpisode {
     };
 
     // Clean up the filename (replace dots/underscores with spaces, but keep the original)
-    let cleaned = filename
-        .replace(['.', '_', '-'], " ");
+    let cleaned = filename.replace(['.', '_', '-'], " ");
 
     // Try different patterns in order of specificity
 
@@ -68,8 +67,7 @@ pub fn parse_episode(filename: &str) -> ParsedEpisode {
         }
         // Pattern 3: Season X Episode Y format
         else {
-            let verbose_re =
-                Regex::new(r"(?i)(.+?)\s*Season\s*(\d+).*?Episode\s*(\d+)").unwrap();
+            let verbose_re = Regex::new(r"(?i)(.+?)\s*Season\s*(\d+).*?Episode\s*(\d+)").unwrap();
             if let Some(caps) = verbose_re.captures(&cleaned) {
                 result.show_name = Some(clean_show_name(caps.get(1).unwrap().as_str()));
                 result.season = caps.get(2).and_then(|m| m.as_str().parse().ok());
@@ -167,7 +165,11 @@ pub fn parse_quality(filename: &str) -> ParsedQuality {
     }
 
     // Codec
-    if upper.contains("X265") || upper.contains("H265") || upper.contains("H.265") || upper.contains("HEVC") {
+    if upper.contains("X265")
+        || upper.contains("H265")
+        || upper.contains("H.265")
+        || upper.contains("HEVC")
+    {
         quality.codec = Some("HEVC".to_string());
     } else if upper.contains("X264") || upper.contains("H264") || upper.contains("H.264") {
         quality.codec = Some("H.264".to_string());
@@ -178,7 +180,11 @@ pub fn parse_quality(filename: &str) -> ParsedQuality {
     }
 
     // HDR
-    if upper.contains("DOLBY VISION") || upper.contains("DOLBYVISION") || upper.contains("DV") || upper.contains("DOVI") {
+    if upper.contains("DOLBY VISION")
+        || upper.contains("DOLBYVISION")
+        || upper.contains("DV")
+        || upper.contains("DOVI")
+    {
         quality.hdr = Some("Dolby Vision".to_string());
     } else if upper.contains("HDR10+") || upper.contains("HDR10PLUS") {
         quality.hdr = Some("HDR10+".to_string());
@@ -300,7 +306,11 @@ fn levenshtein_distance(s1: &str, s2: &str) -> usize {
 
     for i in 1..=m {
         for j in 1..=n {
-            let cost = if s1_chars[i - 1] == s2_chars[j - 1] { 0 } else { 1 };
+            let cost = if s1_chars[i - 1] == s2_chars[j - 1] {
+                0
+            } else {
+                1
+            };
             dp[i][j] = (dp[i - 1][j] + 1)
                 .min(dp[i][j - 1] + 1)
                 .min(dp[i - 1][j - 1] + cost);
@@ -327,7 +337,8 @@ mod tests {
 
     #[test]
     fn test_parse_daily_show() {
-        let result = parse_episode("The.Daily.Show.2026.01.07.Stephen.J.Dubner.720p.WEB.h264-EDITH");
+        let result =
+            parse_episode("The.Daily.Show.2026.01.07.Stephen.J.Dubner.720p.WEB.h264-EDITH");
         assert_eq!(result.show_name.as_deref(), Some("The Daily Show"));
         assert_eq!(result.date.as_deref(), Some("2026-01-07"));
         assert_eq!(result.resolution.as_deref(), Some("720p"));

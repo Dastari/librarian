@@ -30,7 +30,7 @@ import {
   type FilterOption,
   type RowAction,
 } from '../../components/data-table'
-import { ViewIcon, RefreshIcon } from '../../components/icons'
+import { IconEye, IconRefresh } from '@tabler/icons-react'
 
 export const Route = createFileRoute('/settings/logs')({
   component: LogsSettingsPage,
@@ -262,7 +262,7 @@ function LogsSettingsPage() {
           } else {
             addToast({
               title: 'Error',
-              description: result.data?.clearAllLogs.error || 'Failed to clear logs',
+              description: sanitizeError(result.data?.clearAllLogs.error || 'Failed to clear logs'),
               color: 'danger',
             })
           }
@@ -296,7 +296,7 @@ function LogsSettingsPage() {
       } else {
         addToast({
           title: 'Error',
-          description: result.data?.clearOldLogs.error || 'Failed to clear old logs',
+          description: sanitizeError(result.data?.clearOldLogs.error || 'Failed to clear old logs'),
           color: 'danger',
         })
       }
@@ -430,7 +430,7 @@ function LogsSettingsPage() {
       {
         key: 'view',
         label: 'View Details',
-        icon: <ViewIcon />,
+        icon: <IconEye size={16} />,
         inDropdown: false,
         isVisible: (log) => !!log.fields && Object.keys(log.fields).length > 0,
         onAction: handleViewLog,
@@ -495,7 +495,7 @@ function LogsSettingsPage() {
 
       <Tooltip content="Refresh">
         <Button isIconOnly variant="flat" size="sm" onPress={() => fetchLogs(true)}>
-          <RefreshIcon />
+          <IconRefresh size={16} />
         </Button>
       </Tooltip>
       <Button variant="flat" color="warning" size="sm" onPress={() => handleClearOld(7)}>
@@ -507,23 +507,24 @@ function LogsSettingsPage() {
     </div>
   )
 
-  // Header content - title above the toolbar
-  const headerContent = (
-    <div className="mb-4">
-      <h2 className="text-xl font-semibold">Application Logs</h2>
-      <p className="text-default-500 text-sm">
-        {totalCount > 0 ? `${totalCount.toLocaleString()} total logs` : 'View system activity and errors'}
-        {liveEventCount > 0 && isLiveFeedEnabled && (
-          <span className="ml-2 text-success">
-            (+{liveEventCount} live)
-          </span>
-        )}
-      </p>
-    </div>
-  )
-
   return (
-    <>
+    <div className="flex flex-col gap-6 h-full min-h-0">
+      {/* Page Header */}
+      <div className="flex items-center justify-between shrink-0">
+        <div>
+          <h2 className="text-xl font-semibold">System Logs</h2>
+          <p className="text-default-500 text-sm">
+            {totalCount > 0 ? `${totalCount.toLocaleString()} total logs` : 'View system activity and errors'}
+            {liveEventCount > 0 && isLiveFeedEnabled && (
+              <span className="ml-2 text-success">
+                (+{liveEventCount} live)
+              </span>
+            )}
+          </p>
+        </div>
+        {toolbarContent}
+      </div>
+
       {/* Logs Table */}
       <DataTable
         stateKey="settings-logs"
@@ -543,9 +544,6 @@ function LogsSettingsPage() {
         fillHeight={true}
         showItemCount
         ariaLabel="Application logs"
-        headerContent={headerContent}
-        toolbarContent={toolbarContent}
-        toolbarContentPosition="end"
         filterRowContent={filterRowContent}
         paginationMode="infinite"
         onLoadMore={loadMore}
@@ -627,6 +625,6 @@ function LogsSettingsPage() {
         confirmLabel="Delete"
         confirmColor="danger"
       />
-    </>
+    </div>
   )
 }

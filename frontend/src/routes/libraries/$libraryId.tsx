@@ -15,17 +15,17 @@ import {
   LibraryLayout,
   type LibraryTab,
 } from '../../components/library'
+import { sanitizeError } from '../../lib/format'
 import {
   graphqlClient,
   LIBRARY_QUERY,
   TV_SHOWS_QUERY,
   DELETE_TV_SHOW_MUTATION,
-  QUALITY_PROFILES_QUERY,
   UPDATE_LIBRARY_MUTATION,
   SCAN_LIBRARY_MUTATION,
+  getLibraryTypeInfo,
   type Library,
   type TvShow,
-  type QualityProfile,
   type UpdateLibraryInput,
 } from '../../lib/graphql'
 import { formatBytes } from '../../lib/format'
@@ -34,7 +34,6 @@ import { formatBytes } from '../../lib/format'
 export interface LibraryContextValue {
   library: Library
   tvShows: TvShow[]
-  qualityProfiles: QualityProfile[]
   fetchData: (isBackgroundRefresh?: boolean) => Promise<void>
   actionLoading: boolean
   handleDeleteShowClick: (showId: string, showName: string) => void
@@ -64,13 +63,6 @@ export const Route = createFileRoute('/libraries/$libraryId')({
   errorComponent: RouteError,
 })
 
-const LIBRARY_TYPES = [
-  { value: 'MOVIES', label: 'Movies', icon: '🎬' },
-  { value: 'TV', label: 'TV Shows', icon: '📺' },
-  { value: 'MUSIC', label: 'Music', icon: '🎵' },
-  { value: 'AUDIOBOOKS', label: 'Audiobooks', icon: '🎧' },
-  { value: 'OTHER', label: 'Other', icon: '📁' },
-] as const
 
 function LibraryDetailLayout() {
   const { libraryId } = Route.useParams()
@@ -79,7 +71,6 @@ function LibraryDetailLayout() {
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
   const [library, setLibrary] = useState<Library | null>(null)
   const [tvShows, setTvShows] = useState<TvShow[]>([])
-  const [qualityProfiles, setQualityProfiles] = useState<QualityProfile[]>([])
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
   const [showToDelete, setShowToDelete] = useState<{ id: string; name: string } | null>(null)
@@ -103,16 +94,13 @@ function LibraryDetailLayout() {
         setLoading(true)
       }
 
-      // Fetch library, TV shows, and quality profiles in parallel
-      const [libraryResult, showsResult, profilesResult] = await Promise.all([
+      // Fetch library and TV shows in parallel
+      const [libraryResult, showsResult] = await Promise.all([
         graphqlClient
           .query<{ library: Library | null }>(LIBRARY_QUERY, { id: libraryId })
           .toPromise(),
         graphqlClient
           .query<{ tvShows: TvShow[] }>(TV_SHOWS_QUERY, { libraryId })
-          .toPromise(),
-        graphqlClient
-          .query<{ qualityProfiles: QualityProfile[] }>(QUALITY_PROFILES_QUERY)
           .toPromise(),
       ])
 
@@ -121,9 +109,6 @@ function LibraryDetailLayout() {
       }
       if (showsResult.data?.tvShows) {
         setTvShows(showsResult.data.tvShows)
-      }
-      if (profilesResult.data?.qualityProfiles) {
-        setQualityProfiles(profilesResult.data.qualityProfiles)
       }
     } catch (err) {
       console.error('Failed to fetch data:', err)
@@ -176,7 +161,7 @@ function LibraryDetailLayout() {
       if (error || !data?.deleteTvShow.success) {
         addToast({
           title: 'Error',
-          description: data?.deleteTvShow.error || 'Failed to delete show',
+          description: sanitizeError(data?.deleteTvShow.error || 'Failed to delete show'),
           color: 'danger',
         })
         onConfirmClose()
@@ -254,7 +239,7 @@ function LibraryDetailLayout() {
       if (error) {
         addToast({
           title: 'Error',
-          description: `Failed to start scan: ${error.message}`,
+          description: sanitizeError(error),
           color: 'danger',
         })
         return
@@ -330,12 +315,11 @@ function LibraryDetailLayout() {
     )
   }
 
-  const typeInfo = LIBRARY_TYPES.find((t) => t.value === library.libraryType) || LIBRARY_TYPES[4]
+  const typeInfo = getLibraryTypeInfo(library.libraryType)
 
   const contextValue: LibraryContextValue = {
     library,
     tvShows,
-    qualityProfiles,
     fetchData,
     actionLoading,
     handleDeleteShowClick,
@@ -357,7 +341,7 @@ function LibraryDetailLayout() {
           {/* Title and Stats */}
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-4">
-              <span className="text-4xl">{typeInfo.icon}</span>
+              <typeInfo.Icon className="w-10 h-10" />
               <div>
                 <h1 className="text-2xl font-bold">{library.name}</h1>
                 <div className="flex items-center gap-3 text-sm text-default-500 mt-1">
@@ -371,17 +355,28 @@ function LibraryDetailLayout() {
             </div>
 
             <div className="flex items-center gap-2">
-              {/* Quality Profile Chip */}
+              {/* Quality Settings Chip */}
               {(() => {
-                const profile = library.defaultQualityProfileId
-                  ? qualityProfiles.find(p => p.id === library.defaultQualityProfileId)
-                  : null
-                const res = profile?.preferredResolution
-                let label = 'Any Quality'
-                if (res === '2160p') label = '4K'
-                else if (res === '1080p') label = 'HD'
-                else if (res === '720p') label = 'SD'
-                else if (profile) label = profile.name
+                const resolutions = library.allowedResolutions || []
+                const codecs = library.allowedVideoCodecs || []
+                const requireHdr = library.requireHdr || false
+                
+                // Build summary
+                const parts: string[] = []
+                if (resolutions.length > 0) {
+                  if (resolutions.includes('2160p')) parts.push('4K')
+                  else if (resolutions.includes('1080p')) parts.push('1080p')
+                  else if (resolutions.includes('720p')) parts.push('720p')
+                  else parts.push(resolutions.join('/'))
+                }
+                if (codecs.length > 0) {
+                  parts.push(codecs.map(c => c.toUpperCase()).join('/'))
+                }
+                if (requireHdr) {
+                  parts.push('HDR')
+                }
+                
+                const label = parts.length > 0 ? parts.join(' • ') : 'Any Quality'
                 
                 return (
                   <Chip size="sm" variant="flat" color="primary">
@@ -425,7 +420,6 @@ function LibraryDetailLayout() {
           isOpen={isOpen}
           onClose={onClose}
           libraryId={libraryId}
-          qualityProfiles={qualityProfiles}
           onAdded={fetchData}
         />
 

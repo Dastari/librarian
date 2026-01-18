@@ -45,7 +45,11 @@ impl MetadataService {
     }
 
     /// Search for a movie on TMDB
-    pub async fn search_tmdb_movie(&self, query: &str, year: Option<i32>) -> Result<Vec<TmdbSearchResult>> {
+    pub async fn search_tmdb_movie(
+        &self,
+        query: &str,
+        year: Option<i32>,
+    ) -> Result<Vec<TmdbSearchResult>> {
         let api_key = self
             .tmdb_api_key
             .as_ref()
