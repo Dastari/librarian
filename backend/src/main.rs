@@ -61,7 +61,22 @@ async fn main() -> anyhow::Result<()> {
     let config = Arc::new(config);
 
     // Initialize database connection early so we can use it for logging
-    let db = Database::connect(&config.database_url).await?;
+    // Uses retry logic to wait for database to become available
+    eprintln!("Connecting to database...");
+    let db = Database::connect_with_retry(
+        &config.database_url,
+        std::time::Duration::from_secs(30),
+    ).await;
+    eprintln!("Database connected!");
+
+    // Run migrations to ensure schema is up to date
+    eprintln!("Running database migrations...");
+    if let Err(e) = db.migrate().await {
+        eprintln!("Failed to run migrations: {}", e);
+        eprintln!("Please run migrations manually: cd backend && sqlx migrate run");
+        std::process::exit(1);
+    }
+    eprintln!("Migrations complete!");
 
     // Create the database logging layer
     let db_logger_config = DatabaseLoggerConfig {
@@ -167,6 +182,36 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
     tracing::info!("Job scheduler started");
+
+    // Trigger initial schedule sync in the background
+    // This ensures the schedule cache is populated on first startup
+    let startup_pool = db.pool().clone();
+    tokio::spawn(async move {
+        tracing::info!("Starting initial TV schedule sync...");
+        if let Err(e) = jobs::schedule_sync::sync_schedule(startup_pool).await {
+            tracing::warn!("Initial schedule sync failed (will retry on schedule): {}", e);
+        } else {
+            tracing::info!("Initial TV schedule sync completed");
+        }
+    });
+
+    // Process any completed torrents that weren't organized on previous run
+    // This catches torrents that completed while the server was down
+    let startup_pool2 = db.pool().clone();
+    let startup_torrent_service = torrent_service.clone();
+    tokio::spawn(async move {
+        // Short delay to ensure everything is initialized
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        tracing::info!("Checking for unprocessed completed torrents...");
+        if let Err(e) = jobs::download_monitor::process_completed_torrents(
+            startup_pool2,
+            startup_torrent_service,
+        ).await {
+            tracing::warn!("Startup torrent processing failed (will retry on schedule): {}", e);
+        } else {
+            tracing::info!("Startup torrent processing completed");
+        }
+    });
 
     // Build application state
     let state = AppState {

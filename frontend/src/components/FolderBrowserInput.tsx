@@ -121,32 +121,25 @@ export function FolderBrowserInput({
 
   return (
     <div className={`flex flex-col gap-2 ${className}`}>
-      {label && <label className="text-sm font-medium">{label}</label>}
       <div className="flex gap-2">
         <Input
           value={value}
+          label={label}
+          labelPlacement="inside"
+          variant="flat"
+          description={description}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           className="flex-1"
           classNames={{
             input: 'font-mono text-sm',
+            label: 'text-sm font-medium text-primary!',
           }}
           isDisabled={isDisabled}
+          endContent={<Button size="sm" variant="light" color="primary" className="font-semibold" onPress={openBrowser}>Browse</Button>}
         />
-        <Button 
-          color="primary" 
-          variant="flat" 
-          onPress={openBrowser}
-          isDisabled={isDisabled}
-        >
-          Browse
-        </Button>
       </div>
-      {description && (
-        <p className="text-xs text-default-400">{description}</p>
-      )}
 
-      {/* Folder Browser Modal */}
       <Modal isOpen={isOpen} onClose={onClose} size="2xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader className="flex flex-col gap-1">
@@ -154,21 +147,27 @@ export function FolderBrowserInput({
           </ModalHeader>
           <ModalBody>
             {/* Current path input */}
-            <div className="flex items-center gap-2 mb-4">
+            <div className="mb-4">
               <Input
+                label="Path"
+                labelPlacement="inside"
+                variant="flat"
                 value={currentPath}
                 onChange={(e) => setCurrentPath(e.target.value)}
                 onKeyDown={handlePathInputKeyDown}
                 className="flex-1"
                 classNames={{
                   input: 'font-mono text-sm',
+                  label: 'text-sm font-medium text-primary!',
                 }}
                 size="sm"
                 placeholder="/path/to/folder"
+                endContent={
+                  <Button size="sm" variant="light" color="primary" className="font-semibold" onPress={() => browse(currentPath)}>
+                    Go
+                  </Button>
+                }
               />
-              <Button size="sm" onPress={() => browse(currentPath)}>
-                Go
-              </Button>
             </div>
 
             {/* Quick paths */}
@@ -256,36 +255,46 @@ export function FolderBrowserInput({
 
             {/* New folder creation */}
             {showNewFolder ? (
-              <div className="flex gap-2">
-                <Input
-                  size="sm"
-                  placeholder="New folder name"
-                  value={newFolderName}
-                  onChange={(e) => setNewFolderName(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()}
-                  className="flex-1"
-                  isDisabled={isCreatingFolder}
-                />
-                <Button 
-                  size="sm" 
-                  color="primary" 
-                  onPress={handleCreateFolder}
-                  isLoading={isCreatingFolder}
-                >
-                  Create
-                </Button>
-                <Button
-                  size="sm"
-                  variant="flat"
-                  onPress={() => {
-                    setShowNewFolder(false)
-                    setNewFolderName('')
-                  }}
-                  isDisabled={isCreatingFolder}
-                >
-                  Cancel
-                </Button>
-              </div>
+              <Input
+                label="New Folder Name"
+                labelPlacement="inside"
+                variant="flat"
+                size="sm"
+                placeholder="Enter folder name"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()}
+                className="flex-1"
+                isDisabled={isCreatingFolder}
+                classNames={{
+                  label: 'text-sm font-medium text-primary!',
+                }}
+                endContent={
+                  <div className="flex items-center gap-1">
+                    <Button 
+                      size="sm" 
+                      variant="light"
+                      color="primary"
+                      className="font-semibold"
+                      onPress={handleCreateFolder}
+                      isLoading={isCreatingFolder}
+                    >
+                      Create
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="light"
+                      onPress={() => {
+                        setShowNewFolder(false)
+                        setNewFolderName('')
+                      }}
+                      isDisabled={isCreatingFolder}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                }
+              />
             ) : (
               <Button 
                 size="sm" 

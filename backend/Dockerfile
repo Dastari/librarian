@@ -31,11 +31,19 @@ FROM debian:bookworm-slim
 WORKDIR /app
 
 # Install runtime dependencies
+# - ca-certificates: HTTPS connections
+# - libssl3: TLS support for reqwest/tokio
+# - ffmpeg: Media analysis (ffprobe) for extracting video/audio/subtitle streams
+# - curl: Health checks
+# - unrar-free, unzip, p7zip-full: Archive extraction for RAR/ZIP/7z files
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     ffmpeg \
     curl \
+    unrar-free \
+    unzip \
+    p7zip-full \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the binary

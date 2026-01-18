@@ -68,12 +68,24 @@ export function VideoPlayer({
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         // Native HLS support (Safari)
         video.src = src
+        return () => {
+          // Cleanup for native HLS: abort network requests
+          video.pause()
+          video.src = ''
+          video.load()
+        }
       } else {
         onError?.(new Error('HLS not supported'))
       }
     } else {
       // Direct play
       video.src = src
+      return () => {
+        // Cleanup for direct play: abort network requests
+        video.pause()
+        video.src = ''
+        video.load()
+      }
     }
   }, [src, onError])
 

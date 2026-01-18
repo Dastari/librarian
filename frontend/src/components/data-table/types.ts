@@ -278,14 +278,8 @@ export interface DataTableProps<T> {
   /** Whether selection only happens on checkbox click (not row click). Default: false */
   checkboxSelectionOnly?: boolean
 
-  // --- Filtering ---
-  /** Filter definitions */
-  filters?: DataTableFilter<T>[]
-  /** Controlled filter values */
-  filterValues?: FilterValues
-  /** Filter change handler */
-  onFilterChange?: (values: FilterValues) => void
-  /** Custom global search function */
+  // --- Search ---
+  /** Custom search function. If not provided, searches all string properties. */
   searchFn?: (item: T, searchTerm: string) => boolean
   /** Search placeholder */
   searchPlaceholder?: string

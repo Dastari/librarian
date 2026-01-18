@@ -126,6 +126,17 @@ export const SCAN_LIBRARY_MUTATION = `
   }
 `;
 
+export const CONSOLIDATE_LIBRARY_MUTATION = `
+  mutation ConsolidateLibrary($id: String!) {
+    consolidateLibrary(id: $id) {
+      success
+      foldersRemoved
+      filesMoved
+      messages
+    }
+  }
+`;
+
 // ============================================================================
 // TV Show Mutations
 // ============================================================================
@@ -283,6 +294,7 @@ export const UPDATE_TV_SHOW_MUTATION = `
         qualityProfileId
         path
         autoDownloadOverride
+        autoHuntOverride
         backfillExisting
         organizeFilesOverride
         renameStyleOverride
@@ -298,6 +310,71 @@ export const UPDATE_TV_SHOW_MUTATION = `
         releaseGroupBlacklistOverride
         releaseGroupWhitelistOverride
       }
+      error
+    }
+  }
+`;
+
+// ============================================================================
+// Movie Mutations
+// ============================================================================
+
+export const ADD_MOVIE_MUTATION = `
+  mutation AddMovie($libraryId: String!, $input: AddMovieInput!) {
+    addMovie(libraryId: $libraryId, input: $input) {
+      success
+      movie {
+        id
+        libraryId
+        title
+        year
+        tmdbId
+        imdbId
+        status
+        overview
+        posterUrl
+        backdropUrl
+        monitored
+        hasFile
+        sizeBytes
+      }
+      error
+    }
+  }
+`;
+
+export const UPDATE_MOVIE_MUTATION = `
+  mutation UpdateMovie($id: String!, $input: UpdateMovieInput!) {
+    updateMovie(id: $id, input: $input) {
+      success
+      movie {
+        id
+        libraryId
+        title
+        year
+        status
+        monitored
+        hasFile
+        sizeBytes
+        path
+        allowedResolutionsOverride
+        allowedVideoCodecsOverride
+        allowedAudioFormatsOverride
+        requireHdrOverride
+        allowedHdrTypesOverride
+        allowedSourcesOverride
+        releaseGroupBlacklistOverride
+        releaseGroupWhitelistOverride
+      }
+      error
+    }
+  }
+`;
+
+export const DELETE_MOVIE_MUTATION = `
+  mutation DeleteMovie($id: String!) {
+    deleteMovie(id: $id) {
+      success
       error
     }
   }
@@ -580,6 +657,68 @@ export const UPDATE_CAST_SETTINGS_MUTATION = `
 `;
 
 // ============================================================================
+// Playback Session Mutations
+// ============================================================================
+
+export const START_PLAYBACK_MUTATION = `
+  mutation StartPlayback($input: StartPlaybackInput!) {
+    startPlayback(input: $input) {
+      success
+      session {
+        id
+        userId
+        episodeId
+        mediaFileId
+        tvShowId
+        currentPosition
+        duration
+        volume
+        isMuted
+        isPlaying
+        startedAt
+        lastUpdatedAt
+      }
+      error
+    }
+  }
+`;
+
+export const UPDATE_PLAYBACK_MUTATION = `
+  mutation UpdatePlayback($input: UpdatePlaybackInput!) {
+    updatePlayback(input: $input) {
+      success
+      session {
+        id
+        userId
+        episodeId
+        mediaFileId
+        tvShowId
+        currentPosition
+        duration
+        volume
+        isMuted
+        isPlaying
+        startedAt
+        lastUpdatedAt
+      }
+      error
+    }
+  }
+`;
+
+export const STOP_PLAYBACK_MUTATION = `
+  mutation StopPlayback {
+    stopPlayback {
+      success
+      session {
+        id
+      }
+      error
+    }
+  }
+`;
+
+// ============================================================================
 // Filesystem Mutations
 // ============================================================================
 
@@ -639,6 +778,45 @@ export const RENAME_FILE_MUTATION = `
       affectedCount
       messages
       path
+    }
+  }
+`;
+
+// ============================================================================
+// Naming Pattern Mutations
+// ============================================================================
+
+export const CREATE_NAMING_PATTERN_MUTATION = `
+  mutation CreateNamingPattern($input: CreateNamingPatternInput!) {
+    createNamingPattern(input: $input) {
+      success
+      namingPattern {
+        id
+        name
+        pattern
+        description
+        isDefault
+        isSystem
+      }
+      error
+    }
+  }
+`;
+
+export const DELETE_NAMING_PATTERN_MUTATION = `
+  mutation DeleteNamingPattern($id: String!) {
+    deleteNamingPattern(id: $id) {
+      success
+      error
+    }
+  }
+`;
+
+export const SET_DEFAULT_NAMING_PATTERN_MUTATION = `
+  mutation SetDefaultNamingPattern($id: String!) {
+    setDefaultNamingPattern(id: $id) {
+      success
+      error
     }
   }
 `;

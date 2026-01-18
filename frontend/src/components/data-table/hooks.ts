@@ -5,7 +5,6 @@ import type {
   ViewMode,
   FilterValues,
   DataTableColumn,
-  DataTableFilter,
 } from './types'
 
 // ============================================================================
@@ -228,50 +227,38 @@ export function useDataTableState(options: UseDataTableStateOptions = {}): UseDa
 }
 
 // ============================================================================
-// Filtering Hook
+// Search/Filtering Hook
 // ============================================================================
 
+/**
+ * Hook to filter data by search term.
+ * 
+ * Note: Complex filtering (status filters, etc.) should be done by the caller
+ * before passing data to DataTable. This hook only handles search functionality.
+ */
 export function useFilteredData<T>(
   data: T[],
-  filters: DataTableFilter<T>[],
-  filterValues: FilterValues,
   searchTerm: string,
   searchFn?: (item: T, term: string) => boolean
 ): T[] {
   return useMemo(() => {
-    let result = data
+    if (!searchTerm) return data
 
-    // Apply search filter
-    if (searchTerm) {
-      const lowerSearch = searchTerm.toLowerCase()
-      if (searchFn) {
-        result = result.filter((item) => searchFn(item, searchTerm))
-      } else {
-        // Default: search all string properties
-        result = result.filter((item) => {
-          return Object.values(item as Record<string, unknown>).some((value) => {
-            if (typeof value === 'string') {
-              return value.toLowerCase().includes(lowerSearch)
-            }
-            return false
-          })
-        })
-      }
+    const lowerSearch = searchTerm.toLowerCase()
+    if (searchFn) {
+      return data.filter((item) => searchFn(item, searchTerm))
     }
-
-    // Apply each filter
-    for (const filter of filters) {
-      const value = filterValues[filter.key]
-      if (value === null || value === undefined || value === '') continue
-      if (Array.isArray(value) && value.length === 0) continue
-
-      if (filter.filterFn) {
-        result = result.filter((item) => filter.filterFn!(item, value))
-      }
-    }
-
-    return result
-  }, [data, filters, filterValues, searchTerm, searchFn])
+    
+    // Default: search all string properties
+    return data.filter((item) => {
+      return Object.values(item as Record<string, unknown>).some((value) => {
+        if (typeof value === 'string') {
+          return value.toLowerCase().includes(lowerSearch)
+        }
+        return false
+      })
+    })
+  }, [data, searchTerm, searchFn])
 }
 
 // ============================================================================

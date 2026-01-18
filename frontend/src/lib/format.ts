@@ -126,3 +126,20 @@ export function sanitizeError(error: unknown): string {
   }
   return message
 }
+
+/**
+ * Preview a naming pattern with sample data
+ * Replaces all pattern variables with example values
+ */
+export function previewNamingPattern(pattern: string): string {
+  if (!pattern) return ''
+  return pattern
+    .replaceAll('{show}', 'Breaking Bad')
+    .replaceAll('{year}', '2008')
+    .replaceAll('{season:02}', '01')
+    .replaceAll('{season}', '1')
+    .replaceAll('{episode:02}', '05')
+    .replaceAll('{episode}', '5')
+    .replaceAll('{title}', 'Gray Matter')
+    .replaceAll('{ext}', 'mkv')
+}

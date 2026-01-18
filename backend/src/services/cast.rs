@@ -143,6 +143,7 @@ pub struct CastDevicesEvent {
 }
 
 /// Active connection to a cast device
+#[allow(dead_code)]
 struct ActiveConnection {
     device_id: Uuid,
     session_id: Option<Uuid>,
@@ -490,7 +491,7 @@ impl CastService {
         let port = device.port as u16;
         let session_id = session.id;
         let db = self.db.clone();
-        let session_tx = self.session_tx.clone();
+        let _session_tx = self.session_tx.clone();
         let start_pos = start_position.unwrap_or(0.0);
 
         // Determine media type from file
@@ -498,7 +499,7 @@ impl CastService {
 
         tokio::task::spawn_blocking(move || {
             match Self::cast_media_blocking(&addr, port, &stream_url, &content_type, start_pos) {
-                Ok((transport_id, duration)) => {
+                Ok((_transport_id, duration)) => {
                     info!("Started casting to {} (session: {})", addr, session_id);
                     
                     // Update session with duration and playing state

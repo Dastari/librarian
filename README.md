@@ -17,8 +17,12 @@ Librarian is a local-first, privacy-preserving media library that runs on a sing
 - **In-browser streaming** with HLS; direct play when possible
 - **Casting**: Chromecast (Google Cast Sender SDK) and AirPlay (native Safari)
 - **Playback UI** with search, details pages, and library browsing
-- **Metadata fetching** from TheTVDB (series/episodes) and TMDB (movies/art)
-- **Subscriptions** for shows, with automated searching via Torznab indexers
+- **Metadata fetching** from TVMaze (series/episodes) and TMDB (movies/art)
+- **Multi-indexer search** ("Hunt") for torrents across all configured indexers
+- **Local library search** with global keyboard shortcut (Cmd/Ctrl+K)
+- **Auto-matching** of downloads to episodes based on filename parsing
+- **Auto-organization** of completed downloads with copy/move/hardlink support
+- **Library consolidation** to clean up duplicate folders from naming changes
 - **Auto-rename & organization** of media files into predictable folders
 - **Background workers** for scanning, RSS polling, monitoring, transcoding GC
 
@@ -79,6 +83,16 @@ librarian/
 - **Node.js** (20+): Use nvm or download from nodejs.org
 - **Supabase CLI**: `brew install supabase/tap/supabase` or download from releases
 
+##### System Dependencies (for local development)
+
+The backend requires these system packages for full functionality:
+
+| Package | Purpose | Install Command |
+|---------|---------|-----------------|
+| `ffmpeg` | Media analysis (ffprobe), transcoding | `apt install ffmpeg` / `brew install ffmpeg` |
+
+**Note:** The production Docker image (`backend/Dockerfile`) already includes these dependencies.
+
 #### Quick Start
 
 1. **Clone and setup environment**
@@ -110,7 +124,9 @@ librarian/
    - Backend API: http://localhost:3001
    - Supabase Studio: http://localhost:54323
 
-#### Using Docker (Production-like)
+#### Docker Deployment
+
+##### Development (with hot reload)
 
 ```bash
 # Start all services (requires Supabase running separately)
@@ -125,6 +141,92 @@ make docker-logs
 # Stop services
 make docker-down
 ```
+
+##### Production Deployment
+
+The production setup includes an nginx reverse proxy that handles:
+- SSL termination (optional)
+- Rate limiting
+- WebSocket proxying for GraphQL subscriptions
+- Static file caching for the frontend
+
+```bash
+# 1. Configure environment
+cp .env.example .env
+# Edit .env with your production values:
+#   - DATABASE_URL: Your PostgreSQL connection string
+#   - SUPABASE_URL: Your Supabase project URL
+#   - SUPABASE_ANON_KEY: Your Supabase anon key
+#   - SUPABASE_SERVICE_KEY: Your Supabase service key
+#   - JWT_SECRET: Your JWT secret
+#   - INDEXER_ENCRYPTION_KEY: Generate with `openssl rand -base64 32`
+#   - PUBLIC_URL: Your public URL (e.g., https://librarian.example.com)
+#   - MEDIA_PATH: Path to your media library
+#   - DOWNLOADS_PATH: Path for torrent downloads
+
+# 2. Build production images
+make prod-build
+
+# 3. Start production services
+make prod-up
+
+# 4. Check status
+make prod-status
+
+# 5. View logs
+make prod-logs
+
+# 6. Stop services
+make prod-down
+```
+
+##### Production Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    nginx (port 80/443)                  │
+│              Reverse Proxy + Rate Limiting              │
+├─────────────────────────────────────────────────────────┤
+│                           │                             │
+│    ┌──────────────────────┴──────────────────────┐     │
+│    │                                              │     │
+│    ▼                                              ▼     │
+│  /graphql                                        /*     │
+│  /api/*                                                 │
+│    │                                              │     │
+│    ▼                                              ▼     │
+│ ┌──────────────┐                        ┌──────────────┐│
+│ │   Backend    │                        │   Frontend   ││
+│ │  (port 3001) │                        │  (port 80)   ││
+│ │   Rust API   │                        │    nginx     ││
+│ └──────────────┘                        └──────────────┘│
+└─────────────────────────────────────────────────────────┘
+```
+
+##### SSL/HTTPS Configuration
+
+To enable HTTPS in production:
+
+1. Place your SSL certificates in `nginx/ssl/`:
+   - `cert.pem` - Your SSL certificate
+   - `key.pem` - Your private key
+
+2. Uncomment the HTTPS server block in `nginx/nginx.conf`
+
+3. Update `docker-compose.prod.yml` to mount the SSL volume:
+   ```yaml
+   volumes:
+     - ./nginx/ssl:/etc/nginx/ssl:ro
+   ```
+
+##### Health Checks
+
+All containers include health checks:
+- **nginx**: `http://localhost/healthz`
+- **backend**: `http://localhost:3001/healthz`
+- **frontend**: `http://localhost/healthz`
+
+Use `make prod-status` to view container health.
 
 #### Using Make Commands
 
@@ -144,20 +246,26 @@ make lint           # Run linters
 
 #### Environment Variables
 
+See `.env.example` for a complete list with documentation. Key variables:
+
 | Variable | Description | Required |
 |----------|-------------|----------|
+| `DATABASE_URL` | PostgreSQL connection URL | Yes |
 | `SUPABASE_URL` | Supabase API URL | Yes |
 | `SUPABASE_ANON_KEY` | Public anon key | Yes |
 | `SUPABASE_SERVICE_KEY` | Service role key (backend only) | Yes |
 | `JWT_SECRET` | JWT signing secret | Yes |
-| `DATABASE_URL` | PostgreSQL connection URL | Yes |
-| `DOWNLOADS_PATH` | Directory for torrent downloads | No (default: `/data/downloads`) |
-| `SESSION_PATH` | Directory for torrent session/DHT state | No (default: `/data/session`) |
+| `INDEXER_ENCRYPTION_KEY` | Encryption key for indexer credentials | Yes (prod) |
+| `PUBLIC_URL` | Public URL for the app (production) | Yes (prod) |
+| `MEDIA_PATH` | Path to media library on host | No (default: `./data/media`) |
+| `DOWNLOADS_PATH` | Directory for torrent downloads | No (default: `./data/downloads`) |
 | `TORRENT_ENABLE_DHT` | Enable DHT for peer discovery | No (default: `true`) |
-| `TORRENT_LISTEN_PORT` | Port for incoming torrent connections | No (default: random) |
+| `TORRENT_LISTEN_PORT` | Port for incoming torrent connections | No (default: `6881`) |
 | `TORRENT_MAX_CONCURRENT` | Max concurrent downloads | No (default: `5`) |
 | `TVDB_API_KEY` | TheTVDB API key | No |
 | `TMDB_API_KEY` | TMDB API key | No |
+| `OPENSUBTITLES_API_KEY` | OpenSubtitles API key | No |
+| `RUST_LOG` | Log level (error/warn/info/debug/trace) | No (default: `info`) |
 
 ### API
 
@@ -367,14 +475,17 @@ We ship vertical slices that exercise the full stack end-to-end:
 
 1. ✅ Environment & scaffolding (Docker Compose, Supabase CLI), health endpoints
 2. ✅ Native torrent client (librqbit) with GraphQL subscriptions
-3. ⏳ Auth (Supabase ↔ Frontend ↔ Rust), `GET /api/me`
-4. ⏳ Libraries & basic scan (index files; simple UI to browse)
-5. ⏳ Playback (direct play first), then single-rung HLS fallback
-6. ⏳ Metadata fetch/normalize (TheTVDB/TMDB, artwork in Storage)
-7. ⏳ Organization & rename (Movies/TV schemes)
-8. ⏳ Subscriptions & "fill the gaps" (Prowlarr/Jackett + Torznab)
-9. ⏳ Casting (Chromecast, AirPlay) and streaming enhancements
-10. ⏳ Admin settings, testing/observability, packaging/deployment
+3. ✅ Auth (Supabase ↔ Frontend ↔ Rust) with JWT middleware
+4. ✅ Libraries & basic scan (index files; simple UI to browse)
+5. ✅ Metadata fetch/normalize (TVMaze/TMDB, artwork in Storage)
+6. ✅ Organization & rename (TV/Movies schemes with naming patterns)
+7. ✅ RSS feeds & auto-download for monitored shows
+8. ✅ Multi-indexer search ("Hunt") with authenticated downloads
+9. ✅ Casting (Chromecast) with device discovery and playback controls
+10. ✅ Auto-matching of downloads to episodes with organization
+11. ⏳ Playback (direct play first), then single-rung HLS fallback
+12. ⏳ Movies, Music, Audiobooks libraries (schema ready, UI in progress)
+13. ⏳ Admin settings, testing/observability, packaging/deployment
 
 ### License
 

@@ -120,8 +120,6 @@ export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModa
       classNames={{
         wrapper: 'overflow-hidden',
         base: 'max-h-[90vh]',
-        header: 'border-b border-default-100',
-        footer: 'border-t border-default-100',
       }}
     >
       <ModalContent>

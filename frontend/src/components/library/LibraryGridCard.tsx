@@ -17,7 +17,6 @@ export interface LibraryGridCardProps {
   library: Library
   shows?: TvShow[]
   onScan: () => void
-  onEdit: () => void
   onDelete: () => void
 }
 
@@ -41,7 +40,6 @@ export function LibraryGridCard({
   library,
   shows = [],
   onScan,
-  onEdit,
   onDelete,
 }: LibraryGridCardProps) {
   const navigate = useNavigate()
@@ -178,7 +176,7 @@ export function LibraryGridCard({
               } else if (key === 'scan') {
                 onScan()
               } else if (key === 'settings') {
-                onEdit()
+                navigate({ to: '/libraries/$libraryId/settings', params: { libraryId: library.id } })
               } else if (key === 'delete') {
                 onDelete()
               }

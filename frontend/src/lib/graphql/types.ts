@@ -351,6 +351,15 @@ export interface LibraryResult {
   error: string | null;
 }
 
+export type LibraryChangeType = 'CREATED' | 'UPDATED' | 'DELETED';
+
+export interface LibraryChangedEvent {
+  changeType: LibraryChangeType;
+  libraryId: string;
+  libraryName: string | null;
+  library: Library | null;
+}
+
 export interface CreateLibraryInput {
   name: string;
   path: string;
@@ -365,6 +374,8 @@ export interface CreateLibraryInput {
   namingPattern?: string;
   defaultQualityProfileId?: string;
   autoAddDiscovered?: boolean;
+  autoDownload?: boolean;
+  autoHunt?: boolean;
   // Inline quality settings
   allowedResolutions?: string[];
   allowedVideoCodecs?: string[];
@@ -532,6 +543,8 @@ export interface UpdateTvShowInput {
   organizeFilesOverride?: boolean | null;
   /** Override library rename_style (null = inherit) */
   renameStyleOverride?: string | null;
+  /** Override library auto_hunt (null = inherit) */
+  autoHuntOverride?: boolean | null;
   // Quality override settings (null = inherit, [] = any)
   /** Override allowed resolutions (null = inherit) */
   allowedResolutionsOverride?: string[] | null;
@@ -548,6 +561,95 @@ export interface UpdateTvShowInput {
   /** Override release group blacklist (null = inherit) */
   releaseGroupBlacklistOverride?: string[] | null;
   /** Override release group whitelist (null = inherit) */
+  releaseGroupWhitelistOverride?: string[] | null;
+}
+
+// ============================================================================
+// Movie Types
+// ============================================================================
+
+export type MovieStatus = 'RELEASED' | 'UPCOMING' | 'ANNOUNCED' | 'IN_PRODUCTION' | 'UNKNOWN';
+
+export interface Movie {
+  id: string;
+  libraryId: string;
+  title: string;
+  sortTitle: string | null;
+  originalTitle: string | null;
+  year: number | null;
+  tmdbId: number | null;
+  imdbId: string | null;
+  status: MovieStatus;
+  overview: string | null;
+  tagline: string | null;
+  runtime: number | null;
+  genres: string[];
+  director: string | null;
+  castNames: string[];
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  monitored: boolean;
+  /** Whether a file exists for this movie */
+  hasFile: boolean;
+  sizeBytes: number;
+  path: string | null;
+  /** TMDB collection ID */
+  collectionId: number | null;
+  collectionName: string | null;
+  collectionPosterUrl: string | null;
+  /** Ratings */
+  tmdbRating: number | null;
+  tmdbVoteCount: number | null;
+  certification: string | null;
+  releaseDate: string | null;
+  // Quality override settings (null = inherit from library)
+  allowedResolutionsOverride: string[] | null;
+  allowedVideoCodecsOverride: string[] | null;
+  allowedAudioFormatsOverride: string[] | null;
+  requireHdrOverride: boolean | null;
+  allowedHdrTypesOverride: string[] | null;
+  allowedSourcesOverride: string[] | null;
+  releaseGroupBlacklistOverride: string[] | null;
+  releaseGroupWhitelistOverride: string[] | null;
+}
+
+export interface MovieSearchResult {
+  provider: string;
+  providerId: number;
+  title: string;
+  originalTitle: string | null;
+  year: number | null;
+  overview: string | null;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  imdbId: string | null;
+  voteAverage: number | null;
+  popularity: number | null;
+}
+
+export interface MovieResult {
+  success: boolean;
+  movie: Movie | null;
+  error: string | null;
+}
+
+export interface AddMovieInput {
+  tmdbId: number;
+  monitored?: boolean;
+  path?: string;
+}
+
+export interface UpdateMovieInput {
+  monitored?: boolean;
+  path?: string;
+  // Quality override settings (null = inherit, [] = any)
+  allowedResolutionsOverride?: string[] | null;
+  allowedVideoCodecsOverride?: string[] | null;
+  allowedAudioFormatsOverride?: string[] | null;
+  requireHdrOverride?: boolean | null;
+  allowedHdrTypesOverride?: string[] | null;
+  allowedSourcesOverride?: string[] | null;
+  releaseGroupBlacklistOverride?: string[] | null;
   releaseGroupWhitelistOverride?: string[] | null;
 }
 
@@ -597,6 +699,40 @@ export interface QualityProfile {
   releaseGroupWhitelist: string[];
   releaseGroupBlacklist: string[];
   upgradeUntil: string | null;
+}
+
+// ============================================================================
+// Naming Pattern Types
+// ============================================================================
+
+/** A file naming pattern preset */
+export interface NamingPattern {
+  /** Unique identifier */
+  id: string;
+  /** Display name for the pattern */
+  name: string;
+  /** The actual pattern string (e.g., "{show}/Season {season:02}/...") */
+  pattern: string;
+  /** Human-readable description/example */
+  description: string | null;
+  /** Whether this is the default pattern for new libraries */
+  isDefault: boolean;
+  /** Whether this is a built-in system pattern (cannot be deleted) */
+  isSystem: boolean;
+}
+
+/** Input for creating a custom naming pattern */
+export interface CreateNamingPatternInput {
+  name: string;
+  pattern: string;
+  description?: string;
+}
+
+/** Result of naming pattern mutation */
+export interface NamingPatternResult {
+  success: boolean;
+  namingPattern: NamingPattern | null;
+  error: string | null;
 }
 
 // ============================================================================
@@ -1015,6 +1151,51 @@ export interface CastSettings {
   defaultVolume: number;
   transcodeIncompatible: boolean;
   preferredQuality: string | null;
+}
+
+// ============================================================================
+// Playback Session Types
+// ============================================================================
+
+/** A user's playback session (what they're currently watching) */
+export interface PlaybackSession {
+  id: string;
+  userId: string;
+  episodeId: string | null;
+  mediaFileId: string | null;
+  tvShowId: string | null;
+  currentPosition: number;
+  duration: number | null;
+  volume: number;
+  isMuted: boolean;
+  isPlaying: boolean;
+  startedAt: string;
+  lastUpdatedAt: string;
+}
+
+/** Input for starting playback */
+export interface StartPlaybackInput {
+  episodeId: string;
+  mediaFileId: string;
+  tvShowId: string;
+  startPosition?: number;
+  duration?: number;
+}
+
+/** Input for updating playback */
+export interface UpdatePlaybackInput {
+  currentPosition?: number;
+  duration?: number;
+  volume?: number;
+  isMuted?: boolean;
+  isPlaying?: boolean;
+}
+
+/** Result of playback operations */
+export interface PlaybackResult {
+  success: boolean;
+  session: PlaybackSession | null;
+  error: string | null;
 }
 
 /** Input for adding a cast device manually */

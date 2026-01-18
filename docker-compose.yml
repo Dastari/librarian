@@ -1,6 +1,16 @@
-# Librarian Docker Compose
-# This orchestrates the application services. Supabase is managed separately.
-# See infra/supabase/README.md for Supabase setup instructions.
+# Librarian Development Docker Compose
+#
+# This orchestrates the application services for development.
+# For production, use: docker compose -f docker-compose.prod.yml up -d
+#
+# Usage:
+#   docker compose up -d                    # Start all services
+#   docker compose --profile indexers up -d # Start with Prowlarr
+#   docker compose logs -f                  # View logs
+#
+# Prerequisites:
+#   - Copy .env.example to .env and configure
+#   - Supabase must be running (see: make supabase-start)
 
 services:
   # Rust Backend API (includes native torrent client)
@@ -16,6 +26,7 @@ services:
       - "6881:6881/udp"  # Torrent DHT
     environment:
       - PORT=3001
+      - RUST_LOG=${RUST_LOG:-debug}
       - DATABASE_URL=${DATABASE_URL}
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
@@ -23,6 +34,8 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - TVDB_API_KEY=${TVDB_API_KEY:-}
       - TMDB_API_KEY=${TMDB_API_KEY:-}
+      - OPENSUBTITLES_API_KEY=${OPENSUBTITLES_API_KEY:-}
+      - INDEXER_ENCRYPTION_KEY=${INDEXER_ENCRYPTION_KEY:-dev-key-change-in-production}
       - MEDIA_PATH=/data/media
       - DOWNLOADS_PATH=/data/downloads
       - CACHE_PATH=/data/cache
@@ -31,8 +44,8 @@ services:
       - TORRENT_LISTEN_PORT=${TORRENT_LISTEN_PORT:-6881}
       - TORRENT_MAX_CONCURRENT=${TORRENT_MAX_CONCURRENT:-5}
     volumes:
-      - media_data:/data/media
-      - downloads_data:/data/downloads
+      - ${MEDIA_PATH:-./data/media}:/data/media
+      - ${DOWNLOADS_PATH:-./data/downloads}:/data/downloads
       - cache_data:/data/cache
       - session_data:/data/session
     networks:
@@ -44,23 +57,30 @@ services:
       retries: 3
       start_period: 10s
 
-  # TanStack Start Frontend
+  # React Frontend (Vite SPA)
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:3001
+        VITE_SUPABASE_URL: ${SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
     container_name: librarian-frontend
     restart: unless-stopped
     ports:
-      - "3000:3000"
-    environment:
-      - VITE_API_URL=http://localhost:3001
-      - VITE_SUPABASE_URL=${SUPABASE_URL}
-      - VITE_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - "3000:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - librarian-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   # Prowlarr (optional - indexer manager)
   prowlarr:
@@ -70,7 +90,7 @@ services:
     environment:
       - PUID=1000
       - PGID=1000
-      - TZ=UTC
+      - TZ=${TZ:-UTC}
     volumes:
       - prowlarr_config:/config
     ports:
@@ -81,10 +101,6 @@ services:
       - indexers
 
 volumes:
-  media_data:
-    driver: local
-  downloads_data:
-    driver: local
   cache_data:
     driver: local
   session_data:

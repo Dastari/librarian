@@ -1,0 +1,122 @@
+# Librarian Production Docker Compose
+# 
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Prerequisites:
+#   1. Copy .env.example to .env and fill in all values
+#   2. Ensure you have a PostgreSQL database (Supabase recommended)
+#   3. Configure your reverse proxy or use the included nginx
+
+services:
+  # Nginx Reverse Proxy
+  # Handles routing between frontend and backend, SSL termination, rate limiting
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: librarian-nginx
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      # Uncomment to use SSL certificates
+      # - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    networks:
+      - librarian-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Rust Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: librarian-backend
+    restart: unless-stopped
+    # In production, only expose to nginx (no host port mapping)
+    expose:
+      - "3001"
+    ports:
+      # Torrent ports still need host exposure for incoming connections
+      - "${TORRENT_PORT:-6881}:6881"
+      - "${TORRENT_PORT:-6881}:6881/udp"
+    environment:
+      - PORT=3001
+      - RUST_LOG=${RUST_LOG:-info}
+      - DATABASE_URL=${DATABASE_URL}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - TVDB_API_KEY=${TVDB_API_KEY:-}
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
+      - OPENSUBTITLES_API_KEY=${OPENSUBTITLES_API_KEY:-}
+      - INDEXER_ENCRYPTION_KEY=${INDEXER_ENCRYPTION_KEY}
+      - MEDIA_PATH=/data/media
+      - DOWNLOADS_PATH=/data/downloads
+      - CACHE_PATH=/data/cache
+      - SESSION_PATH=/data/session
+      - TORRENT_ENABLE_DHT=${TORRENT_ENABLE_DHT:-true}
+      - TORRENT_LISTEN_PORT=${TORRENT_LISTEN_PORT:-6881}
+      - TORRENT_MAX_CONCURRENT=${TORRENT_MAX_CONCURRENT:-5}
+    volumes:
+      - ${MEDIA_PATH:-./data/media}:/data/media
+      - ${DOWNLOADS_PATH:-./data/downloads}:/data/downloads
+      - cache_data:/data/cache
+      - session_data:/data/session
+    networks:
+      - librarian-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # React Frontend (served by nginx)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # These are baked into the build at build time
+        VITE_API_URL: ${PUBLIC_URL:-http://localhost}
+        VITE_SUPABASE_URL: ${SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+    container_name: librarian-frontend
+    restart: unless-stopped
+    # In production, only expose to nginx (no host port mapping)
+    expose:
+      - "80"
+    networks:
+      - librarian-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  cache_data:
+    driver: local
+  session_data:
+    driver: local
+  nginx_logs:
+    driver: local
+
+networks:
+  librarian-network:
+    driver: bridge

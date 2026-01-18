@@ -45,8 +45,7 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls", "cookies", "gzip
 # Job scheduling
 tokio-cron-scheduler = "0.13"
 
-# File watching
-notify = "8"
+# File walking
 walkdir = "2"
 
 # Utilities
@@ -56,6 +55,11 @@ uuid = { version = "1", features = ["v4", "serde"] }
 time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 once_cell = "1"
 parking_lot = "0.12"
+url = "2"
+
+# Rate limiting and retry logic
+governor = "0.6"
+backoff = { version = "0.4", features = ["tokio"] }
 
 # Observability
 tracing = "0.1"

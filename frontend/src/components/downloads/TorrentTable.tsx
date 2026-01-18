@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Progress } from '@heroui/progress'
 import { Chip } from '@heroui/chip'
-import { Button } from '@heroui/button'
+import { Button, ButtonGroup } from '@heroui/button'
 import { Tooltip } from '@heroui/tooltip'
 import { Skeleton } from '@heroui/skeleton'
 import { useDisclosure } from '@heroui/modal'
@@ -9,8 +9,6 @@ import { ConfirmModal } from '../ConfirmModal'
 import {
   DataTable,
   type DataTableColumn,
-  type DataTableFilter,
-  type FilterOption,
   type BulkAction,
   type RowAction,
 } from '../data-table'
@@ -41,6 +39,22 @@ export interface TorrentTableProps {
 // Main Component
 // ============================================================================
 
+// State filter options
+interface StateFilterOption {
+  key: string
+  label: string
+  color: 'primary' | 'success' | 'warning' | 'secondary' | 'default' | 'danger'
+}
+
+const STATE_FILTER_OPTIONS: StateFilterOption[] = [
+  { key: 'DOWNLOADING', label: 'Downloading', color: 'primary' },
+  { key: 'SEEDING', label: 'Seeding', color: 'success' },
+  { key: 'PAUSED', label: 'Paused', color: 'warning' },
+  { key: 'CHECKING', label: 'Checking', color: 'secondary' },
+  { key: 'QUEUED', label: 'Queued', color: 'default' },
+  { key: 'ERROR', label: 'Error', color: 'danger' },
+]
+
 export function TorrentTable({
   torrents,
   isLoading = false,
@@ -57,6 +71,9 @@ export function TorrentTable({
   // Confirm modal state
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
   const [torrentToRemove, setTorrentToRemove] = useState<Torrent | null>(null)
+  
+  // State filter (managed locally)
+  const [stateFilter, setStateFilter] = useState<string | null>(null)
 
   // Calculate state counts for filter badges
   const stateCounts = useMemo(() => {
@@ -66,6 +83,12 @@ export function TorrentTable({
     }
     return counts
   }, [torrents])
+  
+  // Filter torrents by state
+  const filteredTorrents = useMemo(() => {
+    if (!stateFilter) return torrents
+    return torrents.filter((t) => t.state === stateFilter)
+  }, [torrents, stateFilter])
 
   // Column definitions with skeleton support
   const columns: DataTableColumn<Torrent>[] = useMemo(
@@ -81,9 +104,14 @@ export function TorrentTable({
         ),
         render: (torrent) => (
           <div className="flex flex-col gap-1 min-w-0">
-            <span className="font-medium truncate" title={torrent.name}>
+            <button
+              type="button"
+              className="font-medium truncate text-left hover:text-primary transition-colors"
+              title={torrent.name}
+              onClick={() => onInfo(torrent.id)}
+            >
               {torrent.name}
-            </span>
+            </button>
           </div>
         ),
         sortFn: (a, b) => a.name.localeCompare(b.name),
@@ -222,35 +250,38 @@ export function TorrentTable({
     []
   )
 
-  // Filter options with counts
-  const stateFilterOptions: FilterOption[] = useMemo(
-    () => [
-      { key: 'DOWNLOADING', label: 'Downloading', color: 'primary', count: stateCounts['DOWNLOADING'] || 0 },
-      { key: 'SEEDING', label: 'Seeding', color: 'success', count: stateCounts['SEEDING'] || 0 },
-      { key: 'PAUSED', label: 'Paused', color: 'warning', count: stateCounts['PAUSED'] || 0 },
-      { key: 'CHECKING', label: 'Checking', color: 'secondary', count: stateCounts['CHECKING'] || 0 },
-      { key: 'QUEUED', label: 'Queued', color: 'default', count: stateCounts['QUEUED'] || 0 },
-      { key: 'ERROR', label: 'Error', color: 'danger', count: stateCounts['ERROR'] || 0 },
-    ],
-    [stateCounts]
-  )
-
-  // Filter definitions
-  const filters: DataTableFilter<Torrent>[] = useMemo(
-    () => [
-      {
-        key: 'state',
-        label: 'Status',
-        type: 'select',
-        options: stateFilterOptions,
-        filterFn: (torrent, value) => {
-          if (!value) return true
-          return torrent.state === value
-        },
-        position: 'toolbar',
-      },
-    ],
-    [stateFilterOptions]
+  // Filter row content with state filter chips
+  const filterRowContent: ReactNode = useMemo(
+    () => (
+      <ButtonGroup size="sm" variant="solid">
+        <Button
+          variant={stateFilter === null ? 'solid' : 'flat'}
+          color={stateFilter === null ? 'primary' : 'default'}
+          onPress={() => setStateFilter(null)}
+        >
+          All ({torrents.length})
+        </Button>
+        {STATE_FILTER_OPTIONS.map((option) => {
+          const count = stateCounts[option.key] || 0
+          if (count === 0) return null
+          return (
+            <Button
+              key={option.key}
+              variant={stateFilter === option.key ? 'solid' : 'flat'}
+              color={stateFilter === option.key ? option.color : 'default'}
+              onPress={() => setStateFilter(stateFilter === option.key ? null : option.key)}
+              className="gap-1"
+            >
+              <span>{option.label}</span>
+              <Chip size="sm" variant="flat" className="ml-1">
+                {count}
+              </Chip>
+            </Button>
+          )
+        })}
+      </ButtonGroup>
+    ),
+    [stateFilter, stateCounts, torrents.length]
   )
 
   // Bulk actions
@@ -360,14 +391,14 @@ export function TorrentTable({
     <>
     <DataTable
       stateKey="torrents"
-      data={torrents}
+      data={filteredTorrents}
       columns={columns}
       getRowKey={(torrent) => torrent.id}
       isLoading={isLoading}
       skeletonRowCount={12}
       selectionMode="multiple"
-      filters={filters}
-      searchFn={searchFn}
+      checkboxSelectionOnly
+      searchFn={searchFn} 
       searchPlaceholder="Search torrents..."
       defaultSortColumn="name"
       fillHeight
@@ -387,6 +418,7 @@ export function TorrentTable({
       rowActions={rowActions}
       emptyContent={emptyContent}
       ariaLabel="Torrents table"
+      filterRowContent={filterRowContent}
       toolbarContent={
         <Tooltip content="Add Torrent">
           <Button isIconOnly color="primary" size="sm" onPress={onAddClick}>

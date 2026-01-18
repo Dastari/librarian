@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
 import { Button } from '@heroui/button'
 import { Input } from '@heroui/input'
-import { Divider } from '@heroui/divider'
 import { addToast } from '@heroui/toast'
 import { useAuth } from '../hooks/useAuth'
 import { InlineError } from './shared'
@@ -73,17 +72,19 @@ export function SignInModal({ isOpen, onClose, onSuccess, redirectUrl }: SignInM
       }}
     >
       <ModalContent>
-        <ModalHeader className="flex flex-col gap-1 items-center">
-          <h2 className="text-2xl font-bold">
-            {isSignUp ? 'Create Account' : 'Sign In'}
-          </h2>
+        <ModalHeader className="flex flex-col gap-1 items-center pt-6">
+          {/* Logo and brand */}
+          <div className="flex flex-row items-center gap-2 mb-2">
+            <img src="/logo.svg" alt="" className="h-12 w-12" />
+            <span className="text-2xl" style={{ fontFamily: '"Playwrite Australia SA", cursive' }}>Librarian</span>
+          </div>
+          
           <p className="text-small text-default-500 font-normal">
             {isSignUp
               ? 'Create your account to get started'
               : 'Welcome back! Sign in to continue'}
           </p>
         </ModalHeader>
-        <Divider />
         <ModalBody>
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <Input
@@ -128,7 +129,6 @@ export function SignInModal({ isOpen, onClose, onSuccess, redirectUrl }: SignInM
             </Button>
           </form>
         </ModalBody>
-        <Divider />
         <ModalFooter className="justify-center">
           <Button
             variant="light"

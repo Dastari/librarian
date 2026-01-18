@@ -38,6 +38,9 @@ pub struct LibraryRecord {
     pub allowed_sources: Vec<String>,
     pub release_group_blacklist: Vec<String>,
     pub release_group_whitelist: Vec<String>,
+    // Subtitle settings
+    pub auto_download_subtitles: Option<bool>,
+    pub preferred_subtitle_languages: Option<Vec<String>>,
 }
 
 /// Input for creating a library
@@ -128,7 +131,8 @@ impl LibraryRepository {
                    scanning, last_scanned_at, created_at, updated_at,
                    allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
                    require_hdr, allowed_hdr_types, allowed_sources,
-                   release_group_blacklist, release_group_whitelist
+                   release_group_blacklist, release_group_whitelist,
+                   auto_download_subtitles, preferred_subtitle_languages
             FROM libraries
             WHERE user_id = $1
             ORDER BY name
@@ -152,7 +156,8 @@ impl LibraryRepository {
                    scanning, last_scanned_at, created_at, updated_at,
                    allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
                    require_hdr, allowed_hdr_types, allowed_sources,
-                   release_group_blacklist, release_group_whitelist
+                   release_group_blacklist, release_group_whitelist,
+                   auto_download_subtitles, preferred_subtitle_languages
             FROM libraries
             WHERE id = $1
             "#,
@@ -179,7 +184,8 @@ impl LibraryRepository {
                    scanning, last_scanned_at, created_at, updated_at,
                    allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
                    require_hdr, allowed_hdr_types, allowed_sources,
-                   release_group_blacklist, release_group_whitelist
+                   release_group_blacklist, release_group_whitelist,
+                   auto_download_subtitles, preferred_subtitle_languages
             FROM libraries
             WHERE id = $1 AND user_id = $2
             "#,
@@ -214,7 +220,8 @@ impl LibraryRepository {
                       scanning, last_scanned_at, created_at, updated_at,
                       allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
                       require_hdr, allowed_hdr_types, allowed_sources,
-                      release_group_blacklist, release_group_whitelist
+                      release_group_blacklist, release_group_whitelist,
+                      auto_download_subtitles, preferred_subtitle_languages
             "#,
         )
         .bind(input.user_id)
@@ -286,7 +293,8 @@ impl LibraryRepository {
                       scanning, last_scanned_at, created_at, updated_at,
                       allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
                       require_hdr, allowed_hdr_types, allowed_sources,
-                      release_group_blacklist, release_group_whitelist
+                      release_group_blacklist, release_group_whitelist,
+                      auto_download_subtitles, preferred_subtitle_languages
             "#,
         )
         .bind(id)

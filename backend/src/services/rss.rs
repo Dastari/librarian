@@ -4,14 +4,151 @@
 //! - Fetching RSS feeds from URLs
 //! - Parsing RSS XML into structured items
 //! - Using the filename parser to extract show/episode info
+//! - SSRF protection for URL validation
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
+use std::net::{IpAddr, ToSocketAddrs};
 use tracing::{debug, info, warn};
+use url::Url;
 
 use super::filename_parser::{parse_episode, parse_quality};
+
+/// Validates a URL for SSRF protection
+///
+/// Blocks requests to:
+/// - Private/internal IP ranges (10.x.x.x, 172.16-31.x.x, 192.168.x.x)
+/// - Loopback addresses (127.x.x.x, ::1)
+/// - Link-local addresses (169.254.x.x, fe80::/10)
+/// - Multicast addresses
+/// - Non-HTTP(S) schemes
+///
+/// Returns an error if the URL is not allowed.
+pub fn validate_url_for_ssrf(url_str: &str) -> Result<()> {
+    let url = Url::parse(url_str).context("Invalid URL format")?;
+
+    // Only allow HTTP and HTTPS schemes
+    match url.scheme() {
+        "http" | "https" => {}
+        scheme => anyhow::bail!("URL scheme '{}' is not allowed. Only HTTP(S) is permitted.", scheme),
+    }
+
+    // Get the host
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("URL must have a host"))?;
+
+    // Check if it's a raw IP address
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_internal_ip(&ip) {
+            anyhow::bail!("Requests to internal/private IP addresses are not allowed");
+        }
+        return Ok(());
+    }
+
+    // Resolve hostname to check the actual IP addresses
+    let port = url.port().unwrap_or(match url.scheme() {
+        "https" => 443,
+        _ => 80,
+    });
+
+    let addr_str = format!("{}:{}", host, port);
+    match addr_str.to_socket_addrs() {
+        Ok(addrs) => {
+            for addr in addrs {
+                if is_internal_ip(&addr.ip()) {
+                    anyhow::bail!(
+                        "Hostname '{}' resolves to internal IP address '{}', which is not allowed",
+                        host,
+                        addr.ip()
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            // DNS resolution failed - this could be a temporary issue or invalid hostname
+            // Log a warning but allow the request to proceed (reqwest will fail anyway)
+            warn!("Failed to resolve hostname '{}': {}. Allowing request to proceed.", host, e);
+        }
+    }
+
+    Ok(())
+}
+
+/// Checks if an IP address is internal/private
+fn is_internal_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ipv4) => {
+            // Loopback: 127.0.0.0/8
+            if ipv4.is_loopback() {
+                return true;
+            }
+            // Private: 10.0.0.0/8
+            if ipv4.octets()[0] == 10 {
+                return true;
+            }
+            // Private: 172.16.0.0/12
+            if ipv4.octets()[0] == 172 && (16..=31).contains(&ipv4.octets()[1]) {
+                return true;
+            }
+            // Private: 192.168.0.0/16
+            if ipv4.octets()[0] == 192 && ipv4.octets()[1] == 168 {
+                return true;
+            }
+            // Link-local: 169.254.0.0/16
+            if ipv4.is_link_local() {
+                return true;
+            }
+            // Broadcast
+            if ipv4.is_broadcast() {
+                return true;
+            }
+            // Unspecified (0.0.0.0)
+            if ipv4.is_unspecified() {
+                return true;
+            }
+            // Documentation: 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24
+            let octets = ipv4.octets();
+            if (octets[0] == 192 && octets[1] == 0 && octets[2] == 2)
+                || (octets[0] == 198 && octets[1] == 51 && octets[2] == 100)
+                || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113)
+            {
+                return true;
+            }
+            // Carrier-grade NAT: 100.64.0.0/10
+            if octets[0] == 100 && (64..=127).contains(&octets[1]) {
+                return true;
+            }
+            false
+        }
+        IpAddr::V6(ipv6) => {
+            // Loopback: ::1
+            if ipv6.is_loopback() {
+                return true;
+            }
+            // Unspecified: ::
+            if ipv6.is_unspecified() {
+                return true;
+            }
+            // Multicast
+            if ipv6.is_multicast() {
+                return true;
+            }
+            // Unique local addresses (ULA): fc00::/7
+            let segments = ipv6.segments();
+            if (segments[0] & 0xfe00) == 0xfc00 {
+                return true;
+            }
+            // Link-local: fe80::/10
+            if (segments[0] & 0xffc0) == 0xfe80 {
+                return true;
+            }
+            false
+        }
+    }
+}
 
 /// Parsed RSS item with extracted metadata
 #[derive(Debug, Clone)]
@@ -53,7 +190,12 @@ impl RssService {
     }
 
     /// Fetch and parse an RSS feed from a URL
+    ///
+    /// This method includes SSRF protection to prevent requests to internal networks.
     pub async fn fetch_feed(&self, url: &str) -> Result<Vec<ParsedRssItem>> {
+        // Validate URL for SSRF protection
+        validate_url_for_ssrf(url).context("URL validation failed")?;
+
         info!("Fetching RSS feed: {}", url);
 
         let response = self
@@ -275,5 +417,55 @@ mod tests {
         assert_eq!(items[1].parsed_show_name.as_deref(), Some("Corner Gas"));
         assert_eq!(items[1].parsed_season, Some(6));
         assert_eq!(items[1].parsed_episode, Some(12));
+    }
+
+    #[test]
+    fn test_ssrf_blocks_loopback() {
+        assert!(validate_url_for_ssrf("http://127.0.0.1/feed.xml").is_err());
+        assert!(validate_url_for_ssrf("http://127.1.2.3:8080/feed").is_err());
+        assert!(validate_url_for_ssrf("https://localhost/feed.xml").is_err());
+    }
+
+    #[test]
+    fn test_ssrf_blocks_private_ranges() {
+        // 10.0.0.0/8
+        assert!(validate_url_for_ssrf("http://10.0.0.1/feed.xml").is_err());
+        assert!(validate_url_for_ssrf("http://10.255.255.255/feed.xml").is_err());
+
+        // 172.16.0.0/12
+        assert!(validate_url_for_ssrf("http://172.16.0.1/feed.xml").is_err());
+        assert!(validate_url_for_ssrf("http://172.31.255.255/feed.xml").is_err());
+        // 172.32.x.x should be allowed (not in private range)
+        assert!(validate_url_for_ssrf("http://172.32.0.1/feed.xml").is_ok());
+
+        // 192.168.0.0/16
+        assert!(validate_url_for_ssrf("http://192.168.0.1/feed.xml").is_err());
+        assert!(validate_url_for_ssrf("http://192.168.255.255/feed.xml").is_err());
+    }
+
+    #[test]
+    fn test_ssrf_blocks_link_local() {
+        assert!(validate_url_for_ssrf("http://169.254.0.1/feed.xml").is_err());
+        assert!(validate_url_for_ssrf("http://169.254.255.255/feed.xml").is_err());
+    }
+
+    #[test]
+    fn test_ssrf_allows_public_ips() {
+        assert!(validate_url_for_ssrf("https://1.2.3.4/feed.xml").is_ok());
+        assert!(validate_url_for_ssrf("https://8.8.8.8/dns-query").is_ok());
+        assert!(validate_url_for_ssrf("http://93.184.216.34/feed.xml").is_ok());
+    }
+
+    #[test]
+    fn test_ssrf_blocks_invalid_schemes() {
+        assert!(validate_url_for_ssrf("file:///etc/passwd").is_err());
+        assert!(validate_url_for_ssrf("ftp://example.com/feed.xml").is_err());
+        assert!(validate_url_for_ssrf("gopher://example.com/").is_err());
+    }
+
+    #[test]
+    fn test_ssrf_allows_valid_external_urls() {
+        assert!(validate_url_for_ssrf("https://example.com/feed.xml").is_ok());
+        assert!(validate_url_for_ssrf("http://feeds.example.org/rss").is_ok());
     }
 }

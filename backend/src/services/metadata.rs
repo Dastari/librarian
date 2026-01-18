@@ -13,8 +13,9 @@ use uuid::Uuid;
 use super::artwork::{ArtworkService, ArtworkType};
 use super::cache::{SharedCache, create_cache};
 use super::filename_parser::{ParsedEpisode, parse_episode};
+use super::tmdb::{TmdbClient, TmdbMovie, normalize_movie_status};
 use super::tvmaze::{TvMazeClient, TvMazeEpisode, TvMazeScheduleEntry, TvMazeShow};
-use crate::db::{CreateEpisode, CreateTvShow, Database, TvShowRecord};
+use crate::db::{CreateEpisode, CreateMovie, CreateTvShow, Database, MovieRecord, TvShowRecord};
 
 /// Metadata provider enum
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +82,68 @@ pub struct ParseAndIdentifyResult {
     pub matches: Vec<ShowSearchResult>,
 }
 
+/// Unified movie search result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MovieSearchResult {
+    pub provider: MetadataProvider,
+    pub provider_id: u32,
+    pub title: String,
+    pub original_title: Option<String>,
+    pub year: Option<i32>,
+    pub overview: Option<String>,
+    pub poster_url: Option<String>,
+    pub backdrop_url: Option<String>,
+    pub imdb_id: Option<String>,
+    pub vote_average: Option<f64>,
+    pub popularity: Option<f64>,
+}
+
+/// Unified movie details
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MovieDetails {
+    pub provider: MetadataProvider,
+    pub provider_id: u32,
+    pub title: String,
+    pub original_title: Option<String>,
+    pub year: Option<i32>,
+    pub status: Option<String>,
+    pub overview: Option<String>,
+    pub tagline: Option<String>,
+    pub genres: Vec<String>,
+    pub runtime: Option<i32>,
+    pub poster_url: Option<String>,
+    pub backdrop_url: Option<String>,
+    pub imdb_id: Option<String>,
+    pub director: Option<String>,
+    pub cast_names: Vec<String>,
+    pub production_countries: Vec<String>,
+    pub spoken_languages: Vec<String>,
+    pub vote_average: Option<f64>,
+    pub vote_count: Option<i32>,
+    pub certification: Option<String>,
+    pub collection_id: Option<i32>,
+    pub collection_name: Option<String>,
+    pub collection_poster_url: Option<String>,
+    pub release_date: Option<String>,
+}
+
+/// Options for adding a movie from a metadata provider
+#[derive(Debug, Clone)]
+pub struct AddMovieOptions {
+    /// Metadata provider to use (should be Tmdb for movies)
+    pub provider: MetadataProvider,
+    /// Provider-specific ID (e.g., TMDB ID)
+    pub provider_id: u32,
+    /// Library to add the movie to
+    pub library_id: Uuid,
+    /// User who owns the library
+    pub user_id: Uuid,
+    /// Whether to monitor for releases
+    pub monitored: bool,
+    /// Custom path within the library (optional)
+    pub path: Option<String>,
+}
+
 /// Metadata service configuration
 #[derive(Debug, Clone, Default)]
 pub struct MetadataServiceConfig {
@@ -113,7 +176,7 @@ pub struct AddTvShowOptions {
 /// Unified metadata service
 pub struct MetadataService {
     tvmaze: TvMazeClient,
-    #[allow(dead_code)]
+    tmdb: Option<TmdbClient>,
     config: MetadataServiceConfig,
     db: Database,
     artwork_service: Option<Arc<ArtworkService>>,
@@ -126,8 +189,15 @@ const SCHEDULE_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 
 impl MetadataService {
     pub fn new(db: Database, config: MetadataServiceConfig) -> Self {
+        let tmdb = config
+            .tmdb_api_key
+            .as_ref()
+            .filter(|k| !k.is_empty())
+            .map(|k| TmdbClient::new(k.clone()));
+        
         Self {
             tvmaze: TvMazeClient::new(),
+            tmdb,
             config,
             db,
             artwork_service: None,
@@ -146,13 +216,25 @@ impl MetadataService {
         config: MetadataServiceConfig,
         artwork_service: Arc<ArtworkService>,
     ) -> Self {
+        let tmdb = config
+            .tmdb_api_key
+            .as_ref()
+            .filter(|k| !k.is_empty())
+            .map(|k| TmdbClient::new(k.clone()));
+        
         Self {
             tvmaze: TvMazeClient::new(),
+            tmdb,
             config,
             db,
             artwork_service: Some(artwork_service),
             schedule_cache: create_cache(SCHEDULE_CACHE_TTL),
         }
+    }
+    
+    /// Check if TMDB is configured
+    pub fn has_tmdb(&self) -> bool {
+        self.tmdb.is_some()
     }
 
     /// Get reference to artwork service if available
@@ -276,33 +358,366 @@ impl MetadataService {
         Ok(ParseAndIdentifyResult { parsed, matches })
     }
 
-    /// Get upcoming TV schedule from TVMaze (cached)
+    // =========================================================================
+    // Movie Methods
+    // =========================================================================
+
+    /// Search for movies using TMDB
+    pub async fn search_movies(
+        &self,
+        query: &str,
+        year: Option<i32>,
+    ) -> Result<Vec<MovieSearchResult>> {
+        info!(query = %query, year = ?year, "Searching for movies");
+
+        let tmdb = self.tmdb.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("TMDB API key not configured. Add tmdb_api_key to settings.")
+        })?;
+
+        let movies = tmdb.search_movies(query, year).await?;
+
+        let results: Vec<MovieSearchResult> = movies
+            .into_iter()
+            .map(|m| {
+                // Compute year before moving fields
+                let year = m.year();
+                let poster_url = tmdb.poster_url(m.poster_path.as_deref());
+                let backdrop_url = tmdb.backdrop_url(m.backdrop_path.as_deref());
+                
+                MovieSearchResult {
+                    provider: MetadataProvider::Tmdb,
+                    provider_id: m.id as u32,
+                    title: m.title,
+                    original_title: m.original_title,
+                    year,
+                    overview: m.overview,
+                    poster_url,
+                    backdrop_url,
+                    imdb_id: m.imdb_id,
+                    vote_average: m.vote_average,
+                    popularity: m.popularity,
+                }
+            })
+            .collect();
+
+        debug!(count = results.len(), "Found movies");
+        Ok(results)
+    }
+
+    /// Get movie details from TMDB
+    pub async fn get_movie(&self, tmdb_id: u32) -> Result<MovieDetails> {
+        info!(tmdb_id = tmdb_id, "Fetching movie details");
+
+        let tmdb = self.tmdb.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("TMDB API key not configured")
+        })?;
+
+        // Fetch movie details
+        let movie = tmdb.get_movie(tmdb_id as i32).await?;
+
+        // Fetch credits for director and cast
+        let credits = tmdb.get_credits(tmdb_id as i32).await.ok();
+        let director = credits.as_ref().and_then(|c| c.director());
+        let cast_names = credits
+            .as_ref()
+            .map(|c| c.top_cast(10))
+            .unwrap_or_default();
+
+        // Fetch release dates for certification
+        let release_dates = tmdb.get_release_dates(tmdb_id as i32).await.ok();
+        let certification = release_dates.as_ref().and_then(|r| r.us_certification());
+
+        // Build collection info if available
+        let (collection_id, collection_name, collection_poster_url) =
+            if let Some(ref collection) = movie.belongs_to_collection {
+                (
+                    Some(collection.id),
+                    Some(collection.name.clone()),
+                    tmdb.poster_url(collection.poster_path.as_deref()),
+                )
+            } else {
+                (None, None, None)
+            };
+
+        Ok(MovieDetails {
+            provider: MetadataProvider::Tmdb,
+            provider_id: tmdb_id,
+            title: movie.title.clone(),
+            original_title: movie.original_title.clone(),
+            year: movie.year(),
+            status: normalize_movie_status(movie.status.as_deref()),
+            overview: movie.overview.clone(),
+            tagline: movie.tagline.clone(),
+            genres: movie.genre_names(),
+            runtime: movie.runtime,
+            poster_url: tmdb.original_url(movie.poster_path.as_deref()),
+            backdrop_url: tmdb.original_url(movie.backdrop_path.as_deref()),
+            imdb_id: movie.imdb_id.clone(),
+            director,
+            cast_names,
+            production_countries: movie.country_codes(),
+            spoken_languages: movie.language_codes(),
+            vote_average: movie.vote_average,
+            vote_count: movie.vote_count,
+            certification,
+            collection_id,
+            collection_name,
+            collection_poster_url,
+            release_date: movie.release_date.clone(),
+        })
+    }
+
+    /// Add a movie from TMDB to a library
+    pub async fn add_movie_from_provider(&self, options: AddMovieOptions) -> Result<MovieRecord> {
+        info!(
+            provider = ?options.provider,
+            provider_id = options.provider_id,
+            library_id = %options.library_id,
+            "Adding movie from provider"
+        );
+
+        // Only TMDB is supported for movies
+        if options.provider != MetadataProvider::Tmdb {
+            anyhow::bail!("Only TMDB is supported for movie metadata");
+        }
+
+        // Check if movie already exists in this library
+        let movies_repo = self.db.movies();
+        if let Some(existing) = movies_repo
+            .get_by_tmdb_id(options.library_id, options.provider_id as i32)
+            .await?
+        {
+            info!(
+                movie_id = %existing.id,
+                movie_title = %existing.title,
+                "Movie already exists in library, returning existing"
+            );
+            return Ok(existing);
+        }
+
+        // Get movie details from TMDB
+        let movie_details = self.get_movie(options.provider_id).await?;
+
+        // Cache artwork to Supabase storage if artwork service is available
+        let (cached_poster_url, cached_backdrop_url) =
+            if let Some(ref artwork_service) = self.artwork_service {
+                let entity_id = format!("movie_{}_{}", options.provider_id, options.library_id);
+
+                let poster_url = artwork_service
+                    .cache_image_optional(
+                        movie_details.poster_url.as_deref(),
+                        ArtworkType::Poster,
+                        "movie",
+                        &entity_id,
+                    )
+                    .await;
+
+                let backdrop_url = artwork_service
+                    .cache_image_optional(
+                        movie_details.backdrop_url.as_deref(),
+                        ArtworkType::Backdrop,
+                        "movie",
+                        &entity_id,
+                    )
+                    .await;
+
+                info!(
+                    poster_cached = poster_url.is_some(),
+                    backdrop_cached = backdrop_url.is_some(),
+                    "Movie artwork caching completed"
+                );
+
+                (poster_url, backdrop_url)
+            } else {
+                (movie_details.poster_url.clone(), movie_details.backdrop_url.clone())
+            };
+
+        // Parse release date
+        let release_date = movie_details
+            .release_date
+            .as_ref()
+            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
+
+        // Convert vote_average to Decimal
+        let tmdb_rating = movie_details
+            .vote_average
+            .map(|v| rust_decimal::Decimal::from_f64_retain(v))
+            .flatten();
+
+        // Create the movie in the database
+        let movies_repo = self.db.movies();
+        let movie = movies_repo
+            .create(CreateMovie {
+                library_id: options.library_id,
+                user_id: options.user_id,
+                title: movie_details.title.clone(),
+                sort_title: None, // Could generate this later
+                original_title: movie_details.original_title,
+                year: movie_details.year,
+                tmdb_id: Some(options.provider_id as i32),
+                imdb_id: movie_details.imdb_id,
+                overview: movie_details.overview,
+                tagline: movie_details.tagline,
+                runtime: movie_details.runtime,
+                genres: movie_details.genres,
+                production_countries: movie_details.production_countries,
+                spoken_languages: movie_details.spoken_languages,
+                director: movie_details.director,
+                cast_names: movie_details.cast_names,
+                tmdb_rating,
+                tmdb_vote_count: movie_details.vote_count,
+                poster_url: cached_poster_url,
+                backdrop_url: cached_backdrop_url,
+                collection_id: movie_details.collection_id,
+                collection_name: movie_details.collection_name,
+                collection_poster_url: movie_details.collection_poster_url,
+                release_date,
+                certification: movie_details.certification,
+                status: movie_details.status,
+                monitored: options.monitored,
+                path: options.path,
+            })
+            .await?;
+
+        info!(
+            movie_id = %movie.id,
+            movie_title = %movie.title,
+            "Created movie record"
+        );
+
+        Ok(movie)
+    }
+
+    /// Get upcoming TV schedule (database cached)
     ///
-    /// Fetches episodes airing in the next N days from TVMaze.
-    /// Results are cached for 30 minutes to reduce API calls.
+    /// Fetches episodes airing in the next N days from the database cache.
+    /// The cache is populated by a background job that syncs from TVMaze every 6 hours.
+    /// Falls back to direct TVMaze API if cache is empty.
     /// Optionally filter by country code (e.g., "US", "GB").
     pub async fn get_upcoming_schedule(
         &self,
         days: u32,
         country: Option<&str>,
     ) -> Result<Vec<TvMazeScheduleEntry>> {
-        // Create a cache key based on parameters
-        let cache_key = format!("schedule:{}:{}", days, country.unwrap_or("all"));
+        let country_code = country.unwrap_or("US");
+        let repo = self.db.schedule();
 
-        // Check cache first
+        // Try to get from database cache first
+        let cached_entries = repo.get_upcoming(days as i32, Some(country_code)).await?;
+
+        if !cached_entries.is_empty() {
+            debug!(
+                country = country_code,
+                count = cached_entries.len(),
+                "Returning schedule from database cache"
+            );
+
+            // Convert database records to TvMazeScheduleEntry format
+            let schedule: Vec<TvMazeScheduleEntry> = cached_entries
+                .into_iter()
+                .map(|record| {
+                    use super::tvmaze::{TvMazeImage, TvMazeNetwork, TvMazeRating};
+
+                    TvMazeScheduleEntry {
+                        id: record.tvmaze_episode_id as u32,
+                        name: record.episode_name,
+                        season: Some(record.season as u32),
+                        number: Some(record.episode_number as u32),
+                        episode_type: record.episode_type,
+                        airdate: Some(record.air_date.to_string()),
+                        airtime: record.air_time,
+                        air_stamp: record.air_stamp.map(|ts| ts.to_string()),
+                        runtime: record.runtime.map(|r| r as u32),
+                        image: record.episode_image_url.map(|url| TvMazeImage {
+                            medium: Some(url),
+                            original: None,
+                        }),
+                        summary: record.summary,
+                        rating: None,
+                        show: super::tvmaze::TvMazeShow {
+                            id: record.tvmaze_show_id as u32,
+                            name: record.show_name,
+                            show_type: None,
+                            language: None,
+                            genres: record.show_genres,
+                            status: None,
+                            runtime: None,
+                            average_runtime: None,
+                            premiered: None,
+                            ended: None,
+                            official_site: None,
+                            network: record.show_network.clone().map(|name| TvMazeNetwork {
+                                id: 0,
+                                name,
+                                country: None,
+                            }),
+                            web_channel: None,
+                            image: record.show_poster_url.map(|url| TvMazeImage {
+                                medium: Some(url),
+                                original: None,
+                            }),
+                            summary: None,
+                            rating: None,
+                            externals: None,
+                        },
+                    }
+                })
+                .collect();
+
+            return Ok(schedule);
+        }
+
+        // Cache is empty - fall back to direct API call
+        // This should only happen on first run before the sync job runs
+        info!(
+            days = days,
+            country = country_code,
+            "Database cache empty, fetching directly from TVMaze"
+        );
+
+        // Check in-memory cache as a secondary fallback
+        let cache_key = format!("schedule:{}:{}", days, country_code);
         if let Some(cached) = self.schedule_cache.get(&cache_key) {
-            debug!(cache_key = %cache_key, "Returning cached TVMaze schedule");
+            debug!(cache_key = %cache_key, "Returning in-memory cached schedule");
             return Ok(cached);
         }
 
-        // Fetch from TVMaze
-        info!(days = days, country = ?country, "Fetching fresh TVMaze schedule");
-        let schedule = self.tvmaze.get_upcoming_schedule(days, country).await?;
+        // Fetch from TVMaze API
+        let schedule = self.tvmaze.get_upcoming_schedule(days, Some(country_code)).await?;
 
-        // Cache the result
+        // Cache in memory for immediate subsequent requests
         self.schedule_cache.set(cache_key, schedule.clone());
 
         Ok(schedule)
+    }
+
+    /// Force refresh the schedule cache for a country
+    ///
+    /// This bypasses the database cache and fetches fresh data from TVMaze,
+    /// then updates both the database and in-memory caches.
+    pub async fn refresh_schedule_cache(
+        &self,
+        days: u32,
+        country: Option<&str>,
+    ) -> Result<usize> {
+        use crate::jobs::schedule_sync;
+
+        let country_code = country.unwrap_or("US");
+        info!(country = country_code, days = days, "Force refreshing schedule cache");
+
+        // Use the sync job to update the database
+        let count = schedule_sync::sync_country_on_demand(
+            self.db.pool().clone(),
+            country_code,
+            days,
+        )
+        .await?;
+
+        // Clear in-memory cache for this country
+        let cache_key = format!("schedule:{}:{}", days, country_code);
+        self.schedule_cache.remove(&cache_key);
+
+        Ok(count)
     }
 
     /// Add a TV show from a metadata provider to a library.
@@ -312,11 +727,12 @@ impl MetadataService {
     /// - The scanner service (automatic discovery)
     ///
     /// It handles:
-    /// 1. Fetching show details from the provider
-    /// 2. Caching artwork to Supabase storage
-    /// 3. Creating the TV show record with normalized status
-    /// 4. Fetching and creating all episode records
-    /// 5. Updating show statistics
+    /// 1. Checking if show already exists (returns existing if so)
+    /// 2. Fetching show details from the provider
+    /// 3. Caching artwork to Supabase storage
+    /// 4. Creating the TV show record with normalized status
+    /// 5. Fetching and creating all episode records
+    /// 6. Updating show statistics
     pub async fn add_tv_show_from_provider(
         &self,
         options: AddTvShowOptions,
@@ -327,6 +743,22 @@ impl MetadataService {
             library_id = %options.library_id,
             "Adding TV show from provider"
         );
+
+        // Check if show already exists in this library
+        let tv_shows_repo = self.db.tv_shows();
+        if options.provider == MetadataProvider::TvMaze {
+            if let Some(existing) = tv_shows_repo
+                .get_by_tvmaze_id(options.library_id, options.provider_id as i32)
+                .await?
+            {
+                info!(
+                    show_id = %existing.id,
+                    show_name = %existing.name,
+                    "TV show already exists in library, returning existing"
+                );
+                return Ok(existing);
+            }
+        }
 
         // Get show details from provider
         let show_details = self.get_show(options.provider, options.provider_id).await?;

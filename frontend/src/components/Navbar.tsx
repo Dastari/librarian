@@ -3,28 +3,137 @@ import { Navbar as HeroNavbar, NavbarBrand, NavbarContent, NavbarItem, NavbarMen
 import { Button } from '@heroui/button'
 import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
 import { Avatar } from '@heroui/avatar'
+import { Badge } from '@heroui/badge'
 import { Chip } from '@heroui/chip'
 import { Tooltip } from '@heroui/tooltip'
-import { useState } from 'react'
-import { Sun, Moon } from 'lucide-react'
+import { Kbd } from '@heroui/kbd'
+import { useDisclosure } from '@heroui/modal'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
-import { IconAlertTriangle } from '@tabler/icons-react'
+import { IconAlertTriangle, IconDownload, IconSearch, IconSun, IconMoon } from '@tabler/icons-react'
+import { SearchModal } from './SearchModal'
+import {
+  graphqlClient,
+  TORRENTS_QUERY,
+  TORRENT_PROGRESS_SUBSCRIPTION,
+  TORRENT_ADDED_SUBSCRIPTION,
+  TORRENT_REMOVED_SUBSCRIPTION,
+  type Torrent,
+  type TorrentProgress,
+  type TorrentState,
+} from '../lib/graphql'
 
 const navItems = [
   { to: '/', label: 'Home' },
   { to: '/libraries', label: 'Libraries' },
+  { to: '/hunt', label: 'Hunt' },
   { to: '/downloads', label: 'Downloads' },
-  { to: '/subscriptions', label: 'Subscriptions' },
   { to: '/settings', label: 'Settings' },
 ]
+
+/** States considered as actively downloading (not complete) */
+const ACTIVE_DOWNLOAD_STATES: TorrentState[] = ['QUEUED', 'CHECKING', 'DOWNLOADING']
 
 export function Navbar() {
   const { user, signOut, loading, error, isConfigured } = useAuth()
   const { isDark, toggleTheme } = useTheme()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [activeDownloadCount, setActiveDownloadCount] = useState(0)
+  const { isOpen: isSearchOpen, onOpen: onSearchOpen, onClose: onSearchClose } = useDisclosure()
+  const torrentStatesRef = useRef<Map<number, TorrentState>>(new Map())
   const location = useLocation()
   const navigate = useNavigate()
+
+  // Keyboard shortcut for search (Cmd/Ctrl + K)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        onSearchOpen()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onSearchOpen])
+
+  // Recalculate active count from states map
+  const recalculateActiveCount = useCallback(() => {
+    let count = 0
+    torrentStatesRef.current.forEach((state) => {
+      if (ACTIVE_DOWNLOAD_STATES.includes(state)) {
+        count++
+      }
+    })
+    setActiveDownloadCount(count)
+  }, [])
+
+  // Fetch torrents
+  const fetchTorrents = useCallback(() => {
+    graphqlClient
+      .query<{ torrents: Torrent[] }>(TORRENTS_QUERY, {})
+      .toPromise()
+      .then((result) => {
+        if (result.data?.torrents) {
+          const newStates = new Map<number, TorrentState>()
+          result.data.torrents.forEach((t) => {
+            newStates.set(t.id, t.state)
+          })
+          torrentStatesRef.current = newStates
+          recalculateActiveCount()
+        }
+      })
+  }, [recalculateActiveCount])
+
+  // Fetch initial torrent list and subscribe to updates
+  useEffect(() => {
+    if (!user) {
+      setActiveDownloadCount(0)
+      torrentStatesRef.current = new Map()
+      return
+    }
+
+    // Fetch initial list
+    fetchTorrents()
+
+    // Subscribe to progress updates (includes state changes)
+    const progressSub = graphqlClient
+      .subscription<{ torrentProgress: TorrentProgress }>(TORRENT_PROGRESS_SUBSCRIPTION, {})
+      .subscribe({
+        next: (result) => {
+          if (result.data?.torrentProgress) {
+            const p = result.data.torrentProgress
+            torrentStatesRef.current.set(p.id, p.state)
+            recalculateActiveCount()
+          }
+        },
+      })
+
+    // Subscribe to new torrents (refetch to get accurate state)
+    const addedSub = graphqlClient
+      .subscription(TORRENT_ADDED_SUBSCRIPTION, {})
+      .subscribe({
+        next: () => fetchTorrents(),
+      })
+
+    // Subscribe to removed torrents
+    const removedSub = graphqlClient
+      .subscription<{ torrentRemoved: { id: number } }>(TORRENT_REMOVED_SUBSCRIPTION, {})
+      .subscribe({
+        next: (result) => {
+          if (result.data?.torrentRemoved) {
+            torrentStatesRef.current.delete(result.data.torrentRemoved.id)
+            recalculateActiveCount()
+          }
+        },
+      })
+
+    return () => {
+      progressSub.unsubscribe()
+      addedSub.unsubscribe()
+      removedSub.unsubscribe()
+    }
+  }, [user, fetchTorrents, recalculateActiveCount])
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/'
@@ -52,7 +161,8 @@ export function Navbar() {
       <NavbarContent className="sm:hidden pr-3" justify="center">
         <NavbarBrand>
           <Link to="/" className="flex items-center gap-2">
-            <span className="text-xl font-bold">📚 Librarian</span>
+            <img src="/logo.svg" alt="Librarian" className="h-7 w-7" />
+            <span className="text-xl" style={{ fontFamily: '"Playwrite Australia SA", cursive' }}>Librarian</span>
           </Link>
         </NavbarBrand>
       </NavbarContent>
@@ -60,7 +170,8 @@ export function Navbar() {
       <NavbarContent className="hidden sm:flex gap-4" justify="start">
         <NavbarBrand>
           <Link to="/" className="flex items-center gap-2">
-            <span className="text-xl font-bold">📚 Librarian</span>
+            <img src="/logo.svg" alt="Librarian" className="h-7 w-7" />
+            <span className="text-xl" style={{ fontFamily: '"Playwrite Australia SA", cursive' }}>Librarian</span>
           </Link>
         </NavbarBrand>
       </NavbarContent>
@@ -85,8 +196,51 @@ export function Navbar() {
         </NavbarContent>
       )}
 
-      {/* Right side - theme toggle & auth status */}
-      <NavbarContent justify="end">
+      {/* Right side - search, download indicator, theme toggle & auth status */}
+      <NavbarContent justify="end" className="gap-2">
+        {/* Library search button - only show when logged in */}
+        {user && (
+          <NavbarItem className="hidden sm:flex">
+            <Button
+              variant="light"
+              color='primary'
+              size="sm"
+              startContent={<IconSearch size={16}  />}
+              endContent={<Kbd keys={['command']} className="hidden lg:inline-flex">K</Kbd>}
+              onPress={onSearchOpen}
+              className="min-w-[180px] justify-start"
+            >
+              <span className="grow text-sm font-semibold">Search...</span>
+            </Button>
+          </NavbarItem>
+        )}
+
+        {/* Download indicator - only show when logged in and has active downloads */}
+        {user && (
+          <NavbarItem>
+            <Tooltip content={activeDownloadCount > 0 ? `${activeDownloadCount} active download${activeDownloadCount !== 1 ? 's' : ''}` : 'No active downloads'}>
+              <Button
+                isIconOnly
+                variant="light"
+                size="sm"
+                as={Link}
+                to="/downloads"
+                aria-label={`${activeDownloadCount} active downloads`}
+              >
+                <Badge
+                  content={activeDownloadCount}
+                  color="primary"
+                  size="sm"
+                  isInvisible={activeDownloadCount === 0}
+                  showOutline={false}
+                >
+                  <IconDownload size={20} className="text-blue-400" />
+                </Badge>
+              </Button>
+            </Tooltip>
+          </NavbarItem>
+        )}
+
         {/* Theme toggle */}
         <NavbarItem>
           <Tooltip content={isDark ? 'Switch to light mode' : 'Switch to dark mode'}>
@@ -98,9 +252,9 @@ export function Navbar() {
               aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
             >
               {isDark ? (
-                <Sun className="w-5 h-5 text-default-500" />
+                <IconSun size={20} className="text-default-500" />
               ) : (
-                <Moon className="w-5 h-5 text-default-500" />
+                <IconMoon size={20} className="text-default-500" />
               )}
             </Button>
           </Tooltip>
@@ -200,6 +354,9 @@ export function Navbar() {
           </NavbarMenuItem>
         )}
       </NavbarMenu>
+
+      {/* Search Modal */}
+      <SearchModal isOpen={isSearchOpen} onClose={onSearchClose} />
     </HeroNavbar>
   )
 }

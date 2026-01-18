@@ -90,11 +90,17 @@ export function AddTorrentModal({
             <Tab key="magnet" title="🧲 Magnet Link">
               <form onSubmit={handleSubmit} className="pt-4 space-y-4">
                 <Input
+                  label="Magnet Link"
+                  labelPlacement="inside"
+                  variant="flat"
                   value={magnetUrl}
                   onChange={(e) => setMagnetUrl(e.target.value)}
                   placeholder="Paste magnet link (magnet:?xt=urn:btih:...)..."
                   size="lg"
                   autoFocus
+                  classNames={{
+                    label: 'text-sm font-medium text-primary!',
+                  }}
                 />
                 <div className="flex justify-end gap-2">
                   <Button variant="flat" onPress={handleClose}>
@@ -114,11 +120,17 @@ export function AddTorrentModal({
             <Tab key="url" title={<span className="flex items-center gap-1"><IconLink size={16} /> Torrent URL</span>}>
               <form onSubmit={handleSubmit} className="pt-4 space-y-4">
                 <Input
+                  label="Torrent URL"
+                  labelPlacement="inside"
+                  variant="flat"
                   value={torrentUrl}
                   onChange={(e) => setTorrentUrl(e.target.value)}
                   placeholder="Enter URL to .torrent file (https://...)..."
                   size="lg"
                   autoFocus
+                  classNames={{
+                    label: 'text-sm font-medium text-primary!',
+                  }}
                 />
                 <div className="flex justify-end gap-2">
                   <Button variant="flat" onPress={handleClose}>

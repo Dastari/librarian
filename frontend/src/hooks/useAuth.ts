@@ -1,27 +1,30 @@
-import { useState, useEffect } from 'react'
-import { supabase, isSupabaseConfigured, type User, type Session } from '../lib/supabase'
+import { useState, useEffect, useCallback } from 'react'
+import { supabase, isSupabaseConfigured, type User } from '../lib/supabase'
+import type { AuthContext } from '../lib/auth-context'
+import { DEFAULT_AUTH_STATE } from '../lib/auth-context'
 
-export function useAuth() {
-  const [user, setUser] = useState<User | null>(null)
-  const [session, setSession] = useState<Session | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+/**
+ * Core auth state hook used by both main.tsx (for router context) and useAuth (for components).
+ * This centralizes the auth state management logic to avoid duplication.
+ */
+export function useAuthState(): AuthContext {
+  const [auth, setAuth] = useState<AuthContext>(DEFAULT_AUTH_STATE)
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
-      setError('Supabase is not configured. Check your environment variables.')
-      setLoading(false)
+      setAuth({ isAuthenticated: false, isLoading: false, session: null })
       return
     }
 
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      setUser(session?.user ?? null)
-      setLoading(false)
-    }).catch((err) => {
-      setError(err.message)
-      setLoading(false)
+      setAuth({
+        isAuthenticated: !!session,
+        isLoading: false,
+        session,
+      })
+    }).catch(() => {
+      setAuth({ isAuthenticated: false, isLoading: false, session: null })
     })
 
     // Listen for auth changes - skip token refresh events to avoid unnecessary re-renders
@@ -32,46 +35,72 @@ export function useAuth() {
         return
       }
       
-      setSession((prev) => {
-        // Only update if session actually changed
-        if (prev?.access_token === session?.access_token) {
-          return prev
+      setAuth((prev) => {
+        // Only update if authentication status actually changed
+        const isAuthenticated = !!session
+        const sessionChanged = prev.session?.access_token !== session?.access_token
+
+        // Skip update if nothing meaningful changed
+        if (prev.isAuthenticated === isAuthenticated && !prev.isLoading && !sessionChanged) {
+          return prev // Return same reference to avoid re-render
         }
-        return session
-      })
-      setUser((prev) => {
-        const newUser = session?.user ?? null
-        // Only update if user actually changed
-        if (prev?.id === newUser?.id) {
-          return prev
+
+        return {
+          isAuthenticated,
+          isLoading: false,
+          session,
         }
-        return newUser
       })
-      setLoading(false)
     })
 
     return () => subscription.unsubscribe()
   }, [])
 
-  const signIn = async (email: string, password: string) => {
+  return auth
+}
+
+/**
+ * Full auth hook with sign in/out functionality.
+ * Use this in components that need to interact with auth (sign in forms, navbar, etc.)
+ */
+export function useAuth() {
+  const auth = useAuthState()
+  const [error, setError] = useState<string | null>(null)
+  
+  // Derive user from session
+  const user: User | null = auth.session?.user ?? null
+
+  const signIn = useCallback(async (email: string, password: string) => {
+    setError(null)
     const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) throw error
-  }
+    if (error) {
+      setError(error.message)
+      throw error
+    }
+  }, [])
 
-  const signUp = async (email: string, password: string) => {
+  const signUp = useCallback(async (email: string, password: string) => {
+    setError(null)
     const { error } = await supabase.auth.signUp({ email, password })
-    if (error) throw error
-  }
+    if (error) {
+      setError(error.message)
+      throw error
+    }
+  }, [])
 
-  const signOut = async () => {
+  const signOut = useCallback(async () => {
+    setError(null)
     const { error } = await supabase.auth.signOut()
-    if (error) throw error
-  }
+    if (error) {
+      setError(error.message)
+      throw error
+    }
+  }, [])
 
   return {
     user,
-    session,
-    loading,
+    session: auth.session,
+    loading: auth.isLoading,
     error,
     isConfigured: isSupabaseConfigured,
     signIn,

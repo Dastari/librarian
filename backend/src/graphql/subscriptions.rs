@@ -18,8 +18,9 @@ use crate::services::{
 
 use super::auth::AuthGuard;
 use super::types::{
-    CastDevice, CastPlayerState, CastSession, DirectoryChangeEvent, LogEventSubscription, LogLevel,
-    TorrentAddedEvent, TorrentCompletedEvent, TorrentProgress, TorrentRemovedEvent, TorrentState,
+    CastDevice, CastPlayerState, CastSession, DirectoryChangeEvent, LibraryChangedEvent,
+    LogEventSubscription, LogLevel, TorrentAddedEvent, TorrentCompletedEvent, TorrentProgress,
+    TorrentRemovedEvent, TorrentState,
 };
 
 pub struct SubscriptionRoot;
@@ -318,6 +319,25 @@ impl SubscriptionRoot {
                     .collect()
             })
         })
+    }
+
+    // ------------------------------------------------------------------------
+    // Library Subscriptions
+    // ------------------------------------------------------------------------
+
+    /// Subscribe to library changes (created, updated, deleted)
+    ///
+    /// Receives events when libraries are created, modified, or deleted.
+    #[graphql(guard = "AuthGuard")]
+    async fn library_changed<'ctx>(
+        &self,
+        ctx: &Context<'ctx>,
+    ) -> impl Stream<Item = LibraryChangedEvent> + 'ctx {
+        let receiver = ctx
+            .data_unchecked::<broadcast::Sender<LibraryChangedEvent>>()
+            .subscribe();
+
+        BroadcastStream::new(receiver).filter_map(|result| result.ok())
     }
 
     // ------------------------------------------------------------------------

@@ -370,6 +370,7 @@ function CastingSettingsPage() {
               </div>
               <Input
                 type="number"
+                variant="flat"
                 className="w-24"
                 value={settings.discoveryIntervalSeconds.toString()}
                 onValueChange={(value) =>
@@ -430,27 +431,42 @@ function CastingSettingsPage() {
             <div className="flex flex-col gap-4">
               <Input
                 label="IP Address"
+                labelPlacement="inside"
+                variant="flat"
                 placeholder="192.168.1.100"
                 value={newDeviceAddress}
                 onValueChange={setNewDeviceAddress}
                 isRequired
                 isInvalid={!!addError}
                 errorMessage={addError}
+                classNames={{
+                  label: 'text-sm font-medium text-primary!',
+                }}
               />
               <Input
                 label="Port"
+                labelPlacement="inside"
+                variant="flat"
                 placeholder="8009"
                 value={newDevicePort}
                 onValueChange={setNewDevicePort}
                 type="number"
                 description="Default Chromecast port is 8009"
+                classNames={{
+                  label: 'text-sm font-medium text-primary!',
+                }}
               />
               <Input
                 label="Name (optional)"
+                labelPlacement="inside"
+                variant="flat"
                 placeholder="Living Room TV"
                 value={newDeviceName}
                 onValueChange={setNewDeviceName}
                 description="A friendly name for this device"
+                classNames={{
+                  label: 'text-sm font-medium text-primary!',
+                }}
               />
             </div>
           </ModalBody>

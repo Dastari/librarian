@@ -4,7 +4,12 @@ import { Button } from '@heroui/button'
 import { Card, CardBody } from '@heroui/card'
 import { useDisclosure } from '@heroui/modal'
 import { Skeleton } from '@heroui/skeleton'
-import { Chip } from '@heroui/chip'
+import {
+  AutoDownloadBadge,
+  AutoHuntBadge,
+  FileOrganizationBadge,
+  QualityFilterBadge,
+} from '../../components/shared'
 import { addToast } from '@heroui/toast'
 import { Breadcrumbs, BreadcrumbItem } from '@heroui/breadcrumbs'
 import { ConfirmModal } from '../../components/ConfirmModal'
@@ -23,6 +28,7 @@ import {
   DELETE_TV_SHOW_MUTATION,
   UPDATE_LIBRARY_MUTATION,
   SCAN_LIBRARY_MUTATION,
+  CONSOLIDATE_LIBRARY_MUTATION,
   getLibraryTypeInfo,
   type Library,
   type TvShow,
@@ -78,10 +84,39 @@ function LibraryDetailLayout() {
   // Determine active tab from current URL
   const getActiveTab = (): LibraryTab => {
     const path = location.pathname
+    // Common tabs
     if (path.endsWith('/unmatched')) return 'unmatched'
     if (path.endsWith('/browser')) return 'browser'
     if (path.endsWith('/settings')) return 'settings'
-    return 'shows' // default
+    // TV tabs
+    if (path.endsWith('/shows')) return 'shows'
+    // Movie tabs
+    if (path.endsWith('/movies')) return 'movies'
+    if (path.endsWith('/collections')) return 'collections'
+    // Music tabs
+    if (path.endsWith('/artists')) return 'artists'
+    if (path.endsWith('/albums')) return 'albums'
+    if (path.endsWith('/tracks')) return 'tracks'
+    // Audiobook tabs
+    if (path.endsWith('/books')) return 'books'
+    if (path.endsWith('/authors')) return 'authors'
+    
+    // Return default based on library type
+    if (library) {
+      switch (library.libraryType) {
+        case 'MOVIES':
+          return 'movies'
+        case 'TV':
+          return 'shows'
+        case 'MUSIC':
+          return 'albums'
+        case 'AUDIOBOOKS':
+          return 'books'
+        default:
+          return 'browser'
+      }
+    }
+    return 'shows' // fallback
   }
 
   // Track if initial load is done to avoid showing spinner on background refreshes
@@ -255,6 +290,61 @@ function LibraryDetailLayout() {
     }
   }
 
+  const [isConsolidating, setIsConsolidating] = useState(false)
+
+  const handleConsolidateLibrary = async () => {
+    if (!library) return
+
+    setIsConsolidating(true)
+    try {
+      const { data, error } = await graphqlClient
+        .mutation<{
+          consolidateLibrary: {
+            success: boolean
+            foldersRemoved: number
+            filesMoved: number
+            messages: string[]
+          }
+        }>(CONSOLIDATE_LIBRARY_MUTATION, { id: library.id })
+        .toPromise()
+
+      if (error) {
+        addToast({
+          title: 'Error',
+          description: sanitizeError(error),
+          color: 'danger',
+        })
+        return
+      }
+
+      if (data?.consolidateLibrary.success) {
+        const result = data.consolidateLibrary
+        addToast({
+          title: 'Consolidation Complete',
+          description: `Moved ${result.filesMoved} files, removed ${result.foldersRemoved} folders`,
+          color: 'success',
+        })
+        // Refresh the library data
+        fetchData()
+      } else {
+        addToast({
+          title: 'Consolidation Failed',
+          description: data?.consolidateLibrary.messages[0] || 'Unknown error',
+          color: 'danger',
+        })
+      }
+    } catch (err) {
+      console.error('Failed to consolidate library:', err)
+      addToast({
+        title: 'Error',
+        description: 'Failed to consolidate library',
+        color: 'danger',
+      })
+    } finally {
+      setIsConsolidating(false)
+    }
+  }
+
   // Loading skeleton for library detail page
   if (loading) {
     return (
@@ -355,63 +445,45 @@ function LibraryDetailLayout() {
             </div>
 
             <div className="flex items-center gap-2">
-              {/* Quality Settings Chip */}
-              {(() => {
-                const resolutions = library.allowedResolutions || []
-                const codecs = library.allowedVideoCodecs || []
-                const requireHdr = library.requireHdr || false
-                
-                // Build summary
-                const parts: string[] = []
-                if (resolutions.length > 0) {
-                  if (resolutions.includes('2160p')) parts.push('4K')
-                  else if (resolutions.includes('1080p')) parts.push('1080p')
-                  else if (resolutions.includes('720p')) parts.push('720p')
-                  else parts.push(resolutions.join('/'))
-                }
-                if (codecs.length > 0) {
-                  parts.push(codecs.map(c => c.toUpperCase()).join('/'))
-                }
-                if (requireHdr) {
-                  parts.push('HDR')
-                }
-                
-                const label = parts.length > 0 ? parts.join(' • ') : 'Any Quality'
-                
-                return (
-                  <Chip size="sm" variant="flat" color="primary">
-                    {label}
-                  </Chip>
-                )
-              })()}
-              {library.watchForChanges && (
-                <Chip size="sm" color="secondary" variant="flat">
-                  Watching
-                </Chip>
-              )}
-              <Chip
-                size="sm"
-                color={library.autoScan ? 'success' : 'default'}
-                variant="flat"
-              >
-                {library.autoScan ? 'Auto-scan' : 'Manual'}
-              </Chip>
+              {/* Setting Badges */}
+              <AutoDownloadBadge isEnabled={library.autoDownload} />
+              <AutoHuntBadge isEnabled={library.autoHunt} />
+              <FileOrganizationBadge isEnabled={library.organizeFiles} />
+              <QualityFilterBadge
+                resolutions={library.allowedResolutions || []}
+                codecs={library.allowedVideoCodecs || []}
+                requireHdr={library.requireHdr || false}
+              />
             <Button
               color="primary"
               variant="flat"
               size="sm"
               onPress={handleScanLibrary}
               isLoading={library.scanning}
-              isDisabled={library.scanning}
+              isDisabled={library.scanning || isConsolidating}
             >
               {library.scanning ? 'Scanning...' : 'Scan Now'}
+            </Button>
+            <Button
+              color="warning"
+              variant="flat"
+              size="sm"
+              onPress={handleConsolidateLibrary}
+              isLoading={isConsolidating}
+              isDisabled={library.scanning || isConsolidating}
+            >
+              {isConsolidating ? 'Consolidating...' : 'Consolidate'}
             </Button>
             </div>
           </div>
         </div>
 
         {/* Tabbed Content with Outlet for subroutes */}
-        <LibraryLayout activeTab={getActiveTab()} libraryId={libraryId}>
+        <LibraryLayout 
+          activeTab={getActiveTab()} 
+          libraryId={libraryId}
+          libraryType={library.libraryType}
+        >
           <Outlet />
         </LibraryLayout>
 

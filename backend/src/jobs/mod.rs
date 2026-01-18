@@ -1,19 +1,158 @@
 //! Background job scheduling and workers
+//!
+//! This module provides:
+//! - Cron-based job scheduling via tokio-cron-scheduler
+//! - Job execution with retry logic
+//! - Basic failure tracking and logging
 
 pub mod artwork;
 pub mod auto_download;
 pub mod download_monitor;
 pub mod rss_poller;
 pub mod scanner;
+pub mod schedule_sync;
 pub mod transcode_gc;
 
+use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
 use sqlx::PgPool;
 use tokio_cron_scheduler::{Job, JobScheduler};
-use tracing::info;
+use tracing::{error, info, warn};
 
 use crate::services::{ScannerService, TorrentService};
+
+/// Configuration for job retry behavior
+#[derive(Debug, Clone)]
+pub struct JobRetryConfig {
+    /// Maximum number of retry attempts (0 = no retries)
+    pub max_retries: u32,
+    /// Initial delay between retries
+    pub initial_delay: Duration,
+    /// Maximum delay between retries
+    pub max_delay: Duration,
+    /// Multiplier for exponential backoff
+    pub backoff_multiplier: f64,
+}
+
+impl Default for JobRetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 2,
+            initial_delay: Duration::from_secs(5),
+            max_delay: Duration::from_secs(60),
+            backoff_multiplier: 2.0,
+        }
+    }
+}
+
+impl JobRetryConfig {
+    /// Create a config for critical jobs that should retry more aggressively
+    pub fn critical() -> Self {
+        Self {
+            max_retries: 3,
+            initial_delay: Duration::from_secs(10),
+            max_delay: Duration::from_secs(120),
+            backoff_multiplier: 2.0,
+        }
+    }
+
+    /// Create a config for jobs that should not retry
+    pub fn no_retry() -> Self {
+        Self {
+            max_retries: 0,
+            initial_delay: Duration::ZERO,
+            max_delay: Duration::ZERO,
+            backoff_multiplier: 1.0,
+        }
+    }
+}
+
+/// Execute a job with retry logic
+///
+/// This function wraps job execution with:
+/// - Configurable retry attempts with exponential backoff
+/// - Logging of failures and retry attempts
+/// - Final error logging after all retries exhausted
+///
+/// # Arguments
+/// * `job_name` - Human-readable name for logging
+/// * `config` - Retry configuration
+/// * `job_fn` - The async job function to execute
+///
+/// # Returns
+/// Ok(()) if the job succeeded (possibly after retries), Err if all attempts failed
+pub async fn run_with_retry<F, Fut>(
+    job_name: &str,
+    config: &JobRetryConfig,
+    job_fn: F,
+) -> anyhow::Result<()>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = anyhow::Result<()>>,
+{
+    let mut attempt = 0;
+    let mut delay = config.initial_delay;
+
+    loop {
+        attempt += 1;
+
+        match job_fn().await {
+            Ok(()) => {
+                if attempt > 1 {
+                    info!(
+                        job = %job_name,
+                        attempt = attempt,
+                        "Job succeeded after retry"
+                    );
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                if attempt > config.max_retries {
+                    error!(
+                        job = %job_name,
+                        attempts = attempt,
+                        error = %e,
+                        "Job failed after all retry attempts"
+                    );
+                    return Err(e);
+                }
+
+                warn!(
+                    job = %job_name,
+                    attempt = attempt,
+                    max_attempts = config.max_retries + 1,
+                    error = %e,
+                    retry_delay_secs = delay.as_secs(),
+                    "Job failed, scheduling retry"
+                );
+
+                tokio::time::sleep(delay).await;
+
+                // Exponential backoff
+                delay = Duration::from_secs_f64(
+                    (delay.as_secs_f64() * config.backoff_multiplier).min(config.max_delay.as_secs_f64()),
+                );
+            }
+        }
+    }
+}
+
+/// Helper macro to create a job that runs with retry logic
+#[macro_export]
+macro_rules! job_with_retry {
+    ($name:expr, $config:expr, $body:expr) => {{
+        let config = $config.clone();
+        let name = $name.to_string();
+        Box::pin(async move {
+            if let Err(e) = $crate::jobs::run_with_retry(&name, &config, || async { $body }).await {
+                tracing::error!(job = %name, error = %e, "Job ultimately failed");
+            }
+        })
+    }};
+}
 
 /// Initialize and start the job scheduler
 pub async fn start_scheduler(
@@ -22,73 +161,109 @@ pub async fn start_scheduler(
     pool: PgPool,
 ) -> anyhow::Result<JobScheduler> {
     let scheduler = JobScheduler::new().await?;
+    let default_retry = JobRetryConfig::default();
+    let critical_retry = JobRetryConfig::critical();
 
-    // Library scanner - run every hour
+    // Library scanner - run every hour (with retries for network issues)
     let scanner = scanner_service.clone();
+    let scanner_retry = default_retry.clone();
     let scanner_job = Job::new_async("0 0 * * * *", move |_uuid, _l| {
         let scanner = scanner.clone();
+        let retry_cfg = scanner_retry.clone();
         Box::pin(async move {
             info!("Running library scanner");
-            if let Err(e) = scanner::run_scan(scanner).await {
-                tracing::error!("Scanner error: {}", e);
-            }
+            let _ = run_with_retry("library_scanner", &retry_cfg, || {
+                let s = scanner.clone();
+                async move { scanner::run_scan(s).await }
+            })
+            .await;
         })
     })?;
     scheduler.add(scanner_job).await?;
 
-    // RSS/Indexer poller - run every 15 minutes
-    let rss_job = Job::new_async("0 */15 * * * *", |_uuid, _l| {
+    // RSS/Indexer poller - run every 15 minutes (with retries for network issues)
+    let rss_retry = default_retry.clone();
+    let rss_job = Job::new_async("0 */15 * * * *", move |_uuid, _l| {
+        let retry_cfg = rss_retry.clone();
         Box::pin(async move {
             info!("Running RSS poller");
-            if let Err(e) = rss_poller::poll_feeds().await {
-                tracing::error!("RSS poller error: {}", e);
-            }
+            let _ = run_with_retry("rss_poller", &retry_cfg, || async {
+                rss_poller::poll_feeds().await
+            })
+            .await;
         })
     })?;
     scheduler.add(rss_job).await?;
 
-    // Auto-download available episodes - run every 5 minutes
+    // Auto-download available episodes - run every 5 minutes (critical - use more retries)
     let torrent_svc = torrent_service.clone();
     let download_pool = pool.clone();
+    let auto_dl_retry = critical_retry.clone();
     let auto_download_job = Job::new_async("0 */5 * * * *", move |_uuid, _l| {
         let svc = torrent_svc.clone();
         let p = download_pool.clone();
+        let retry_cfg = auto_dl_retry.clone();
         Box::pin(async move {
             info!("Running auto-download check");
-            if let Err(e) = auto_download::process_available_episodes(p, svc).await {
-                tracing::error!("Auto-download error: {}", e);
-            }
+            let _ = run_with_retry("auto_download", &retry_cfg, || {
+                let svc = svc.clone();
+                let p = p.clone();
+                async move { auto_download::process_available_episodes(p, svc).await }
+            })
+            .await;
         })
     })?;
     scheduler.add(auto_download_job).await?;
 
-    // Download monitor - run every minute to process completed torrents
+    // Download monitor - run every minute to process completed torrents (critical)
     let monitor_torrent_svc = torrent_service.clone();
     let monitor_pool = pool.clone();
+    let monitor_retry = critical_retry.clone();
     let download_job = Job::new_async("0 * * * * *", move |_uuid, _l| {
         let svc = monitor_torrent_svc.clone();
         let p = monitor_pool.clone();
+        let retry_cfg = monitor_retry.clone();
         Box::pin(async move {
-            if let Err(e) = download_monitor::process_completed_torrents(p, svc).await {
-                tracing::error!("Download monitor error: {}", e);
-            }
+            let _ = run_with_retry("download_monitor", &retry_cfg, || {
+                let svc = svc.clone();
+                let p = p.clone();
+                async move { download_monitor::process_completed_torrents(p, svc).await }
+            })
+            .await;
         })
     })?;
     scheduler.add(download_job).await?;
 
-    // Transcode cache cleanup - run daily at 3 AM
+    // Transcode cache cleanup - run daily at 3 AM (no retry needed - not critical)
     let gc_job = Job::new_async("0 0 3 * * *", |_uuid, _l| {
         Box::pin(async move {
             info!("Running transcode cache cleanup");
             if let Err(e) = transcode_gc::cleanup_cache().await {
-                tracing::error!("Transcode GC error: {}", e);
+                error!("Transcode GC error: {}", e);
             }
         })
     })?;
     scheduler.add(gc_job).await?;
 
+    // TV Schedule sync - run every 6 hours (with retries for API issues)
+    let schedule_pool = pool.clone();
+    let schedule_retry = default_retry.clone();
+    let schedule_job = Job::new_async("0 0 */6 * * *", move |_uuid, _l| {
+        let p = schedule_pool.clone();
+        let retry_cfg = schedule_retry.clone();
+        Box::pin(async move {
+            info!("Running TV schedule sync");
+            let _ = run_with_retry("schedule_sync", &retry_cfg, || {
+                let p = p.clone();
+                async move { schedule_sync::sync_schedule(p).await }
+            })
+            .await;
+        })
+    })?;
+    scheduler.add(schedule_job).await?;
+
     scheduler.start().await?;
 
-    info!("Job scheduler started");
+    info!("Job scheduler started with retry logic enabled");
     Ok(scheduler)
 }

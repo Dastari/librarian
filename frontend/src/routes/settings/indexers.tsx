@@ -185,8 +185,8 @@ const TEST_INDEXER_MUTATION = `
   }
 `
 
-const SEARCH_INDEXERS_MUTATION = `
-  mutation SearchIndexers($input: IndexerSearchInput!) {
+const SEARCH_INDEXERS_QUERY = `
+  query SearchIndexers($input: IndexerSearchInput!) {
     searchIndexers(input: $input) {
       indexers {
         indexerId
@@ -363,7 +363,7 @@ function IndexersSettingsPage() {
 
     try {
       const result = await graphqlClient
-        .mutation<SearchIndexersResponse>(SEARCH_INDEXERS_MUTATION, {
+        .query<SearchIndexersResponse>(SEARCH_INDEXERS_QUERY, {
           input: {
             query: searchQuery,
             limit: 50,
@@ -497,25 +497,34 @@ function IndexersSettingsPage() {
       {indexers.length > 0 && (
         <Card>
           <CardBody className="gap-4">
-            <div className="flex items-center gap-3">
-              <Input
-                placeholder="Search for releases across enabled indexers..."
-                value={searchQuery}
-                onValueChange={setSearchQuery}
-                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                startContent={<IconSearch size={18} className="text-default-400" />}
-                classNames={{ inputWrapper: 'flex-1' }}
-                isDisabled={isSearching || enabledCount === 0}
-              />
-              <Button
-                color="primary"
-                onPress={handleSearch}
-                isLoading={isSearching}
-                isDisabled={enabledCount === 0}
-              >
-                Search
-              </Button>
-            </div>
+            <Input
+              label="Search Indexers"
+              labelPlacement="inside"
+              variant="flat"
+              placeholder="Search for releases across enabled indexers..."
+              value={searchQuery}
+              onValueChange={setSearchQuery}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              startContent={<IconSearch size={18} className="text-default-400" />}
+              className="flex-1"
+              classNames={{
+                label: 'text-sm font-medium text-primary!',
+              }}
+              isDisabled={isSearching || enabledCount === 0}
+              endContent={
+                <Button
+                  size="sm"
+                  variant="light"
+                  color="primary"
+                  className="font-semibold"
+                  onPress={handleSearch}
+                  isLoading={isSearching}
+                  isDisabled={enabledCount === 0}
+                >
+                  Search
+                </Button>
+              }
+            />
             {enabledCount === 0 && (
               <p className="text-warning-500 text-sm">
                 Enable at least one indexer to search
@@ -545,6 +554,7 @@ function IndexersSettingsPage() {
         getRowKey={(indexer) => indexer.id}
         isLoading={isLoading}
         defaultViewMode="cards"
+        hideToolbar={true}
         cardRenderer={renderIndexerCard}
         cardGridClassName="grid grid-cols-1 gap-4"
         rowActions={indexerActions}
@@ -696,21 +706,18 @@ function IndexerCard({
         <div className="flex items-center gap-2 min-w-[140px] justify-end">
           {isTesting ? (
             <div className="flex items-center gap-2 text-default-400">
-              <Spinner size="sm" />
               <span className="text-sm">Testing...</span>
             </div>
           ) : testResult ? (
             testResult.success ? (
               <Tooltip content={`Completed in ${testResult.elapsedMs}ms`}>
                 <Chip color="success" variant="flat" size="sm">
-                  <IconCheck size={12} className="mr-1" />
-                  {testResult.releasesFound} releases ({testResult.elapsedMs}ms)
+                  Success
                 </Chip>
               </Tooltip>
             ) : (
               <Tooltip content={testResult.error || 'Test failed'}>
                 <Chip color="danger" variant="flat" size="sm">
-                  <IconX size={12} className="mr-1" />
                   Failed
                 </Chip>
               </Tooltip>
@@ -900,9 +907,14 @@ function AddIndexerModal({
               {/* Name */}
               <Input
                 label="Display Name"
+                labelPlacement="inside"
+                variant="flat"
                 placeholder="My Indexer"
                 value={name}
                 onValueChange={setName}
+                classNames={{
+                  label: 'text-sm font-medium text-primary!',
+                }}
               />
 
               {/* Credentials */}
@@ -934,10 +946,15 @@ function AddIndexerModal({
               {selectedTypeInfo.requiredCredentials.includes('user_agent') && (
                 <Input
                   label="User Agent"
+                  labelPlacement="inside"
+                  variant="flat"
                   placeholder="Mozilla/5.0..."
                   description="Your browser's user agent (optional but recommended)"
                   value={userAgent}
                   onValueChange={setUserAgent}
+                  classNames={{
+                    label: 'text-sm font-medium text-primary!',
+                  }}
                 />
               )}
 
@@ -984,11 +1001,16 @@ function AddIndexerModal({
                       <Input
                         key={def.key}
                         label={def.label}
+                        labelPlacement="inside"
+                        variant="flat"
                         type={def.settingType === 'password' ? 'password' : 'text'}
                         value={settings[def.key] || ''}
                         onValueChange={(v) =>
                           setSettings((prev) => ({ ...prev, [def.key]: v }))
                         }
+                        classNames={{
+                          label: 'text-sm font-medium text-primary!',
+                        }}
                       />
                     )
                   })}
@@ -1134,19 +1156,29 @@ function EditIndexerModal({
           {/* Name */}
           <Input
             label="Display Name"
+            labelPlacement="inside"
+            variant="flat"
             placeholder="My Indexer"
             value={name}
             onValueChange={setName}
+            classNames={{
+              label: 'text-sm font-medium text-primary!',
+            }}
           />
 
           {/* Priority */}
           <Input
             label="Priority"
+            labelPlacement="inside"
+            variant="flat"
             type="number"
             placeholder="50"
             value={priority}
             onValueChange={setPriority}
             description="Higher priority indexers are searched first (1-100)"
+            classNames={{
+              label: 'text-sm font-medium text-primary!',
+            }}
           />
 
           <Divider />
@@ -1181,10 +1213,15 @@ function EditIndexerModal({
 
           <Input
             label="User Agent"
+            labelPlacement="inside"
+            variant="flat"
             placeholder="Mozilla/5.0..."
             description="Your browser's user agent (optional)"
             value={userAgent}
             onValueChange={setUserAgent}
+            classNames={{
+              label: 'text-sm font-medium text-primary!',
+            }}
           />
 
           {/* Health Status */}

@@ -593,6 +593,58 @@ impl TorrentService {
         }
     }
 
+    /// Add a torrent from raw bytes (for authenticated downloads)
+    pub async fn add_torrent_bytes(&self, bytes: &[u8], user_id: Option<Uuid>) -> Result<TorrentInfo> {
+        info!(bytes_len = bytes.len(), "Adding torrent from bytes");
+
+        let add_result = self
+            .session
+            .add_torrent(
+                AddTorrent::from_bytes(bytes.to_vec()),
+                Some(AddTorrentOptions::default()),
+            )
+            .await
+            .context("Failed to add torrent from bytes")?;
+
+        match add_result {
+            AddTorrentResponse::Added(id, handle) => {
+                let info_hash = get_info_hash_hex(&handle);
+                let name = handle.name().unwrap_or_else(|| "Unknown".to_string());
+                let stats = handle.stats();
+
+                // Persist to database
+                if let Some(uid) = user_id {
+                    let repo = self.db.torrents();
+                    if let Err(e) = repo
+                        .create(CreateTorrent {
+                            user_id: uid,
+                            info_hash: info_hash.clone(),
+                            magnet_uri: None,
+                            name: name.clone(),
+                            save_path: self.config.download_dir.to_string_lossy().to_string(),
+                            total_bytes: stats.total_bytes as i64,
+                        })
+                        .await
+                    {
+                        error!(error = %e, "Failed to persist torrent to database");
+                    }
+                }
+
+                let _ = self.event_tx.send(TorrentEvent::Added {
+                    id,
+                    name,
+                    info_hash,
+                });
+                self.get_torrent_info(id).await
+            }
+            AddTorrentResponse::AlreadyManaged(id, _) => {
+                warn!(id = %id, "Torrent already exists");
+                self.get_torrent_info(id).await
+            }
+            AddTorrentResponse::ListOnly(_) => anyhow::bail!("Torrent was added in list-only mode"),
+        }
+    }
+
     pub async fn get_torrent_info(&self, id: usize) -> Result<TorrentInfo> {
         let handle = self
             .session

@@ -220,6 +220,82 @@ The indexer system is designed to power the **Auto Hunt** feature:
 - Test connection to verify credentials
 - Global search box to test queries across all enabled indexers
 
+## Hunt System (Manual Search)
+
+### Routes
+- `/hunt` - Search across all indexers for torrents
+- `/search` - Search local library content (navbar modal)
+
+### Hunt Page Features
+- Search input with media type filter (TV, Movies, Music, etc.)
+- DataTable with search results from all enabled indexers
+- Actions: Download, Download + Add to Library
+- Deep linking: `/hunt?q=Show+Name&type=tv` pre-fills search
+
+### Local Search (Navbar)
+- Global keyboard shortcut: Cmd/Ctrl+K
+- Opens modal with instant search across all library content
+- Shows TV shows and movies with poster thumbnails
+- Click result to navigate to detail page
+- "Hunt for X online" link when no local results
+
+### Download Flow
+```
+User searches on /hunt
+    ↓
+Selects release → clicks "Download + Add to Library"
+    ↓
+AddToLibraryModal opens
+    ↓
+User selects library, searches for show/movie
+    ↓
+System downloads torrent (authenticated if private tracker)
+    ↓
+Auto-matches to episode, links in database
+    ↓
+Episode status → "Downloading"
+    ↓
+Download completes → auto-organization
+    ↓
+Episode status → "Downloaded"
+```
+
+## Unified Content Acquisition Pipeline
+
+### Auto-Matching at Add Time
+When a torrent is added with a library_id but no episode_id:
+1. Parse torrent name for show/season/episode
+2. Find matching show in library
+3. Find matching episode
+4. Link torrent to episode
+5. Mark episode as "Downloading"
+
+### Auto-Matching at Completion (No Library)
+When a torrent completes without any library context:
+1. Get user's libraries
+2. Parse filename for show/season/episode
+3. Try to match against each TV library
+4. If match found: create media file, link torrent, organize
+
+### Library Consolidation
+Clean up duplicate folders after naming convention changes:
+```graphql
+mutation {
+  consolidateLibrary(id: "library-id") {
+    success
+    foldersRemoved
+    filesMoved
+    messages
+  }
+}
+```
+
+Handles:
+- Merging "Show" and "Show (2024)" folders
+- Moving loose files from library root to proper structure
+- Updating database paths to match filesystem
+- Removing empty folders after consolidation
+
 ## Planned Features
 
 ### Notifications

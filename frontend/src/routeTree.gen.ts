@@ -10,39 +10,54 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as SearchRouteImport } from './routes/search'
+import { Route as HuntRouteImport } from './routes/hunt'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as SubscriptionsIndexRouteImport } from './routes/subscriptions/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as LibrariesIndexRouteImport } from './routes/libraries/index'
 import { Route as DownloadsIndexRouteImport } from './routes/downloads/index'
 import { Route as ShowsShowIdRouteImport } from './routes/shows/$showId'
 import { Route as SettingsTorrentRouteImport } from './routes/settings/torrent'
 import { Route as SettingsRssRouteImport } from './routes/settings/rss'
+import { Route as SettingsOrganizationRouteImport } from './routes/settings/organization'
 import { Route as SettingsMetadataRouteImport } from './routes/settings/metadata'
 import { Route as SettingsLogsRouteImport } from './routes/settings/logs'
 import { Route as SettingsIndexersRouteImport } from './routes/settings/indexers'
 import { Route as SettingsCastingRouteImport } from './routes/settings/casting'
+import { Route as MoviesMovieIdRouteImport } from './routes/movies/$movieId'
 import { Route as LibrariesLibraryIdRouteImport } from './routes/libraries/$libraryId'
 import { Route as AuthLoginRouteImport } from './routes/auth/login'
 import { Route as LibrariesLibraryIdIndexRouteImport } from './routes/libraries/$libraryId/index'
 import { Route as LibrariesLibraryIdUnmatchedRouteImport } from './routes/libraries/$libraryId/unmatched'
+import { Route as LibrariesLibraryIdTracksRouteImport } from './routes/libraries/$libraryId/tracks'
 import { Route as LibrariesLibraryIdShowsRouteImport } from './routes/libraries/$libraryId/shows'
 import { Route as LibrariesLibraryIdSettingsRouteImport } from './routes/libraries/$libraryId/settings'
+import { Route as LibrariesLibraryIdMoviesRouteImport } from './routes/libraries/$libraryId/movies'
+import { Route as LibrariesLibraryIdCollectionsRouteImport } from './routes/libraries/$libraryId/collections'
 import { Route as LibrariesLibraryIdBrowserRouteImport } from './routes/libraries/$libraryId/browser'
+import { Route as LibrariesLibraryIdBooksRouteImport } from './routes/libraries/$libraryId/books'
+import { Route as LibrariesLibraryIdAuthorsRouteImport } from './routes/libraries/$libraryId/authors'
+import { Route as LibrariesLibraryIdArtistsRouteImport } from './routes/libraries/$libraryId/artists'
+import { Route as LibrariesLibraryIdAlbumsRouteImport } from './routes/libraries/$libraryId/albums'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SearchRoute = SearchRouteImport.update({
+  id: '/search',
+  path: '/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HuntRoute = HuntRouteImport.update({
+  id: '/hunt',
+  path: '/hunt',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SubscriptionsIndexRoute = SubscriptionsIndexRouteImport.update({
-  id: '/subscriptions/',
-  path: '/subscriptions/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
@@ -75,6 +90,11 @@ const SettingsRssRoute = SettingsRssRouteImport.update({
   path: '/rss',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsOrganizationRoute = SettingsOrganizationRouteImport.update({
+  id: '/organization',
+  path: '/organization',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsMetadataRoute = SettingsMetadataRouteImport.update({
   id: '/metadata',
   path: '/metadata',
@@ -94,6 +114,11 @@ const SettingsCastingRoute = SettingsCastingRouteImport.update({
   id: '/casting',
   path: '/casting',
   getParentRoute: () => SettingsRoute,
+} as any)
+const MoviesMovieIdRoute = MoviesMovieIdRouteImport.update({
+  id: '/movies/$movieId',
+  path: '/movies/$movieId',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const LibrariesLibraryIdRoute = LibrariesLibraryIdRouteImport.update({
   id: '/libraries/$libraryId',
@@ -116,6 +141,12 @@ const LibrariesLibraryIdUnmatchedRoute =
     path: '/unmatched',
     getParentRoute: () => LibrariesLibraryIdRoute,
   } as any)
+const LibrariesLibraryIdTracksRoute =
+  LibrariesLibraryIdTracksRouteImport.update({
+    id: '/tracks',
+    path: '/tracks',
+    getParentRoute: () => LibrariesLibraryIdRoute,
+  } as any)
 const LibrariesLibraryIdShowsRoute = LibrariesLibraryIdShowsRouteImport.update({
   id: '/shows',
   path: '/shows',
@@ -127,75 +158,140 @@ const LibrariesLibraryIdSettingsRoute =
     path: '/settings',
     getParentRoute: () => LibrariesLibraryIdRoute,
   } as any)
+const LibrariesLibraryIdMoviesRoute =
+  LibrariesLibraryIdMoviesRouteImport.update({
+    id: '/movies',
+    path: '/movies',
+    getParentRoute: () => LibrariesLibraryIdRoute,
+  } as any)
+const LibrariesLibraryIdCollectionsRoute =
+  LibrariesLibraryIdCollectionsRouteImport.update({
+    id: '/collections',
+    path: '/collections',
+    getParentRoute: () => LibrariesLibraryIdRoute,
+  } as any)
 const LibrariesLibraryIdBrowserRoute =
   LibrariesLibraryIdBrowserRouteImport.update({
     id: '/browser',
     path: '/browser',
     getParentRoute: () => LibrariesLibraryIdRoute,
   } as any)
+const LibrariesLibraryIdBooksRoute = LibrariesLibraryIdBooksRouteImport.update({
+  id: '/books',
+  path: '/books',
+  getParentRoute: () => LibrariesLibraryIdRoute,
+} as any)
+const LibrariesLibraryIdAuthorsRoute =
+  LibrariesLibraryIdAuthorsRouteImport.update({
+    id: '/authors',
+    path: '/authors',
+    getParentRoute: () => LibrariesLibraryIdRoute,
+  } as any)
+const LibrariesLibraryIdArtistsRoute =
+  LibrariesLibraryIdArtistsRouteImport.update({
+    id: '/artists',
+    path: '/artists',
+    getParentRoute: () => LibrariesLibraryIdRoute,
+  } as any)
+const LibrariesLibraryIdAlbumsRoute =
+  LibrariesLibraryIdAlbumsRouteImport.update({
+    id: '/albums',
+    path: '/albums',
+    getParentRoute: () => LibrariesLibraryIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/hunt': typeof HuntRoute
+  '/search': typeof SearchRoute
   '/settings': typeof SettingsRouteWithChildren
   '/auth/login': typeof AuthLoginRoute
   '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
+  '/movies/$movieId': typeof MoviesMovieIdRoute
   '/settings/casting': typeof SettingsCastingRoute
   '/settings/indexers': typeof SettingsIndexersRoute
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
-  '/settings/rss': typeof SettingsRssRoute
-  '/settings/torrent': typeof SettingsTorrentRoute
-  '/shows/$showId': typeof ShowsShowIdRoute
-  '/downloads': typeof DownloadsIndexRoute
-  '/libraries': typeof LibrariesIndexRoute
-  '/settings/': typeof SettingsIndexRoute
-  '/subscriptions': typeof SubscriptionsIndexRoute
-  '/libraries/$libraryId/browser': typeof LibrariesLibraryIdBrowserRoute
-  '/libraries/$libraryId/settings': typeof LibrariesLibraryIdSettingsRoute
-  '/libraries/$libraryId/shows': typeof LibrariesLibraryIdShowsRoute
-  '/libraries/$libraryId/unmatched': typeof LibrariesLibraryIdUnmatchedRoute
-  '/libraries/$libraryId/': typeof LibrariesLibraryIdIndexRoute
-}
-export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/auth/login': typeof AuthLoginRoute
-  '/settings/casting': typeof SettingsCastingRoute
-  '/settings/indexers': typeof SettingsIndexersRoute
-  '/settings/logs': typeof SettingsLogsRoute
-  '/settings/metadata': typeof SettingsMetadataRoute
-  '/settings/rss': typeof SettingsRssRoute
-  '/settings/torrent': typeof SettingsTorrentRoute
-  '/shows/$showId': typeof ShowsShowIdRoute
-  '/downloads': typeof DownloadsIndexRoute
-  '/libraries': typeof LibrariesIndexRoute
-  '/settings': typeof SettingsIndexRoute
-  '/subscriptions': typeof SubscriptionsIndexRoute
-  '/libraries/$libraryId/browser': typeof LibrariesLibraryIdBrowserRoute
-  '/libraries/$libraryId/settings': typeof LibrariesLibraryIdSettingsRoute
-  '/libraries/$libraryId/shows': typeof LibrariesLibraryIdShowsRoute
-  '/libraries/$libraryId/unmatched': typeof LibrariesLibraryIdUnmatchedRoute
-  '/libraries/$libraryId': typeof LibrariesLibraryIdIndexRoute
-}
-export interface FileRoutesById {
-  __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/settings': typeof SettingsRouteWithChildren
-  '/auth/login': typeof AuthLoginRoute
-  '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
-  '/settings/casting': typeof SettingsCastingRoute
-  '/settings/indexers': typeof SettingsIndexersRoute
-  '/settings/logs': typeof SettingsLogsRoute
-  '/settings/metadata': typeof SettingsMetadataRoute
+  '/settings/organization': typeof SettingsOrganizationRoute
   '/settings/rss': typeof SettingsRssRoute
   '/settings/torrent': typeof SettingsTorrentRoute
   '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads/': typeof DownloadsIndexRoute
   '/libraries/': typeof LibrariesIndexRoute
   '/settings/': typeof SettingsIndexRoute
-  '/subscriptions/': typeof SubscriptionsIndexRoute
+  '/libraries/$libraryId/albums': typeof LibrariesLibraryIdAlbumsRoute
+  '/libraries/$libraryId/artists': typeof LibrariesLibraryIdArtistsRoute
+  '/libraries/$libraryId/authors': typeof LibrariesLibraryIdAuthorsRoute
+  '/libraries/$libraryId/books': typeof LibrariesLibraryIdBooksRoute
   '/libraries/$libraryId/browser': typeof LibrariesLibraryIdBrowserRoute
+  '/libraries/$libraryId/collections': typeof LibrariesLibraryIdCollectionsRoute
+  '/libraries/$libraryId/movies': typeof LibrariesLibraryIdMoviesRoute
   '/libraries/$libraryId/settings': typeof LibrariesLibraryIdSettingsRoute
   '/libraries/$libraryId/shows': typeof LibrariesLibraryIdShowsRoute
+  '/libraries/$libraryId/tracks': typeof LibrariesLibraryIdTracksRoute
+  '/libraries/$libraryId/unmatched': typeof LibrariesLibraryIdUnmatchedRoute
+  '/libraries/$libraryId/': typeof LibrariesLibraryIdIndexRoute
+}
+export interface FileRoutesByTo {
+  '/': typeof IndexRoute
+  '/hunt': typeof HuntRoute
+  '/search': typeof SearchRoute
+  '/auth/login': typeof AuthLoginRoute
+  '/movies/$movieId': typeof MoviesMovieIdRoute
+  '/settings/casting': typeof SettingsCastingRoute
+  '/settings/indexers': typeof SettingsIndexersRoute
+  '/settings/logs': typeof SettingsLogsRoute
+  '/settings/metadata': typeof SettingsMetadataRoute
+  '/settings/organization': typeof SettingsOrganizationRoute
+  '/settings/rss': typeof SettingsRssRoute
+  '/settings/torrent': typeof SettingsTorrentRoute
+  '/shows/$showId': typeof ShowsShowIdRoute
+  '/downloads': typeof DownloadsIndexRoute
+  '/libraries': typeof LibrariesIndexRoute
+  '/settings': typeof SettingsIndexRoute
+  '/libraries/$libraryId/albums': typeof LibrariesLibraryIdAlbumsRoute
+  '/libraries/$libraryId/artists': typeof LibrariesLibraryIdArtistsRoute
+  '/libraries/$libraryId/authors': typeof LibrariesLibraryIdAuthorsRoute
+  '/libraries/$libraryId/books': typeof LibrariesLibraryIdBooksRoute
+  '/libraries/$libraryId/browser': typeof LibrariesLibraryIdBrowserRoute
+  '/libraries/$libraryId/collections': typeof LibrariesLibraryIdCollectionsRoute
+  '/libraries/$libraryId/movies': typeof LibrariesLibraryIdMoviesRoute
+  '/libraries/$libraryId/settings': typeof LibrariesLibraryIdSettingsRoute
+  '/libraries/$libraryId/shows': typeof LibrariesLibraryIdShowsRoute
+  '/libraries/$libraryId/tracks': typeof LibrariesLibraryIdTracksRoute
+  '/libraries/$libraryId/unmatched': typeof LibrariesLibraryIdUnmatchedRoute
+  '/libraries/$libraryId': typeof LibrariesLibraryIdIndexRoute
+}
+export interface FileRoutesById {
+  __root__: typeof rootRouteImport
+  '/': typeof IndexRoute
+  '/hunt': typeof HuntRoute
+  '/search': typeof SearchRoute
+  '/settings': typeof SettingsRouteWithChildren
+  '/auth/login': typeof AuthLoginRoute
+  '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
+  '/movies/$movieId': typeof MoviesMovieIdRoute
+  '/settings/casting': typeof SettingsCastingRoute
+  '/settings/indexers': typeof SettingsIndexersRoute
+  '/settings/logs': typeof SettingsLogsRoute
+  '/settings/metadata': typeof SettingsMetadataRoute
+  '/settings/organization': typeof SettingsOrganizationRoute
+  '/settings/rss': typeof SettingsRssRoute
+  '/settings/torrent': typeof SettingsTorrentRoute
+  '/shows/$showId': typeof ShowsShowIdRoute
+  '/downloads/': typeof DownloadsIndexRoute
+  '/libraries/': typeof LibrariesIndexRoute
+  '/settings/': typeof SettingsIndexRoute
+  '/libraries/$libraryId/albums': typeof LibrariesLibraryIdAlbumsRoute
+  '/libraries/$libraryId/artists': typeof LibrariesLibraryIdArtistsRoute
+  '/libraries/$libraryId/authors': typeof LibrariesLibraryIdAuthorsRoute
+  '/libraries/$libraryId/books': typeof LibrariesLibraryIdBooksRoute
+  '/libraries/$libraryId/browser': typeof LibrariesLibraryIdBrowserRoute
+  '/libraries/$libraryId/collections': typeof LibrariesLibraryIdCollectionsRoute
+  '/libraries/$libraryId/movies': typeof LibrariesLibraryIdMoviesRoute
+  '/libraries/$libraryId/settings': typeof LibrariesLibraryIdSettingsRoute
+  '/libraries/$libraryId/shows': typeof LibrariesLibraryIdShowsRoute
+  '/libraries/$libraryId/tracks': typeof LibrariesLibraryIdTracksRoute
   '/libraries/$libraryId/unmatched': typeof LibrariesLibraryIdUnmatchedRoute
   '/libraries/$libraryId/': typeof LibrariesLibraryIdIndexRoute
 }
@@ -203,78 +299,110 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/hunt'
+    | '/search'
     | '/settings'
     | '/auth/login'
     | '/libraries/$libraryId'
+    | '/movies/$movieId'
     | '/settings/casting'
     | '/settings/indexers'
     | '/settings/logs'
     | '/settings/metadata'
-    | '/settings/rss'
-    | '/settings/torrent'
-    | '/shows/$showId'
-    | '/downloads'
-    | '/libraries'
-    | '/settings/'
-    | '/subscriptions'
-    | '/libraries/$libraryId/browser'
-    | '/libraries/$libraryId/settings'
-    | '/libraries/$libraryId/shows'
-    | '/libraries/$libraryId/unmatched'
-    | '/libraries/$libraryId/'
-  fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/auth/login'
-    | '/settings/casting'
-    | '/settings/indexers'
-    | '/settings/logs'
-    | '/settings/metadata'
-    | '/settings/rss'
-    | '/settings/torrent'
-    | '/shows/$showId'
-    | '/downloads'
-    | '/libraries'
-    | '/settings'
-    | '/subscriptions'
-    | '/libraries/$libraryId/browser'
-    | '/libraries/$libraryId/settings'
-    | '/libraries/$libraryId/shows'
-    | '/libraries/$libraryId/unmatched'
-    | '/libraries/$libraryId'
-  id:
-    | '__root__'
-    | '/'
-    | '/settings'
-    | '/auth/login'
-    | '/libraries/$libraryId'
-    | '/settings/casting'
-    | '/settings/indexers'
-    | '/settings/logs'
-    | '/settings/metadata'
+    | '/settings/organization'
     | '/settings/rss'
     | '/settings/torrent'
     | '/shows/$showId'
     | '/downloads/'
     | '/libraries/'
     | '/settings/'
-    | '/subscriptions/'
+    | '/libraries/$libraryId/albums'
+    | '/libraries/$libraryId/artists'
+    | '/libraries/$libraryId/authors'
+    | '/libraries/$libraryId/books'
     | '/libraries/$libraryId/browser'
+    | '/libraries/$libraryId/collections'
+    | '/libraries/$libraryId/movies'
     | '/libraries/$libraryId/settings'
     | '/libraries/$libraryId/shows'
+    | '/libraries/$libraryId/tracks'
+    | '/libraries/$libraryId/unmatched'
+    | '/libraries/$libraryId/'
+  fileRoutesByTo: FileRoutesByTo
+  to:
+    | '/'
+    | '/hunt'
+    | '/search'
+    | '/auth/login'
+    | '/movies/$movieId'
+    | '/settings/casting'
+    | '/settings/indexers'
+    | '/settings/logs'
+    | '/settings/metadata'
+    | '/settings/organization'
+    | '/settings/rss'
+    | '/settings/torrent'
+    | '/shows/$showId'
+    | '/downloads'
+    | '/libraries'
+    | '/settings'
+    | '/libraries/$libraryId/albums'
+    | '/libraries/$libraryId/artists'
+    | '/libraries/$libraryId/authors'
+    | '/libraries/$libraryId/books'
+    | '/libraries/$libraryId/browser'
+    | '/libraries/$libraryId/collections'
+    | '/libraries/$libraryId/movies'
+    | '/libraries/$libraryId/settings'
+    | '/libraries/$libraryId/shows'
+    | '/libraries/$libraryId/tracks'
+    | '/libraries/$libraryId/unmatched'
+    | '/libraries/$libraryId'
+  id:
+    | '__root__'
+    | '/'
+    | '/hunt'
+    | '/search'
+    | '/settings'
+    | '/auth/login'
+    | '/libraries/$libraryId'
+    | '/movies/$movieId'
+    | '/settings/casting'
+    | '/settings/indexers'
+    | '/settings/logs'
+    | '/settings/metadata'
+    | '/settings/organization'
+    | '/settings/rss'
+    | '/settings/torrent'
+    | '/shows/$showId'
+    | '/downloads/'
+    | '/libraries/'
+    | '/settings/'
+    | '/libraries/$libraryId/albums'
+    | '/libraries/$libraryId/artists'
+    | '/libraries/$libraryId/authors'
+    | '/libraries/$libraryId/books'
+    | '/libraries/$libraryId/browser'
+    | '/libraries/$libraryId/collections'
+    | '/libraries/$libraryId/movies'
+    | '/libraries/$libraryId/settings'
+    | '/libraries/$libraryId/shows'
+    | '/libraries/$libraryId/tracks'
     | '/libraries/$libraryId/unmatched'
     | '/libraries/$libraryId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  HuntRoute: typeof HuntRoute
+  SearchRoute: typeof SearchRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   AuthLoginRoute: typeof AuthLoginRoute
   LibrariesLibraryIdRoute: typeof LibrariesLibraryIdRouteWithChildren
+  MoviesMovieIdRoute: typeof MoviesMovieIdRoute
   ShowsShowIdRoute: typeof ShowsShowIdRoute
   DownloadsIndexRoute: typeof DownloadsIndexRoute
   LibrariesIndexRoute: typeof LibrariesIndexRoute
-  SubscriptionsIndexRoute: typeof SubscriptionsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -286,18 +414,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/search': {
+      id: '/search'
+      path: '/search'
+      fullPath: '/search'
+      preLoaderRoute: typeof SearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/hunt': {
+      id: '/hunt'
+      path: '/hunt'
+      fullPath: '/hunt'
+      preLoaderRoute: typeof HuntRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/subscriptions/': {
-      id: '/subscriptions/'
-      path: '/subscriptions'
-      fullPath: '/subscriptions'
-      preLoaderRoute: typeof SubscriptionsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/': {
@@ -310,14 +445,14 @@ declare module '@tanstack/react-router' {
     '/libraries/': {
       id: '/libraries/'
       path: '/libraries'
-      fullPath: '/libraries'
+      fullPath: '/libraries/'
       preLoaderRoute: typeof LibrariesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/downloads/': {
       id: '/downloads/'
       path: '/downloads'
-      fullPath: '/downloads'
+      fullPath: '/downloads/'
       preLoaderRoute: typeof DownloadsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
@@ -340,6 +475,13 @@ declare module '@tanstack/react-router' {
       path: '/rss'
       fullPath: '/settings/rss'
       preLoaderRoute: typeof SettingsRssRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/organization': {
+      id: '/settings/organization'
+      path: '/organization'
+      fullPath: '/settings/organization'
+      preLoaderRoute: typeof SettingsOrganizationRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/metadata': {
@@ -370,6 +512,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsCastingRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/movies/$movieId': {
+      id: '/movies/$movieId'
+      path: '/movies/$movieId'
+      fullPath: '/movies/$movieId'
+      preLoaderRoute: typeof MoviesMovieIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/libraries/$libraryId': {
       id: '/libraries/$libraryId'
       path: '/libraries/$libraryId'
@@ -398,6 +547,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LibrariesLibraryIdUnmatchedRouteImport
       parentRoute: typeof LibrariesLibraryIdRoute
     }
+    '/libraries/$libraryId/tracks': {
+      id: '/libraries/$libraryId/tracks'
+      path: '/tracks'
+      fullPath: '/libraries/$libraryId/tracks'
+      preLoaderRoute: typeof LibrariesLibraryIdTracksRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
     '/libraries/$libraryId/shows': {
       id: '/libraries/$libraryId/shows'
       path: '/shows'
@@ -412,11 +568,53 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LibrariesLibraryIdSettingsRouteImport
       parentRoute: typeof LibrariesLibraryIdRoute
     }
+    '/libraries/$libraryId/movies': {
+      id: '/libraries/$libraryId/movies'
+      path: '/movies'
+      fullPath: '/libraries/$libraryId/movies'
+      preLoaderRoute: typeof LibrariesLibraryIdMoviesRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/collections': {
+      id: '/libraries/$libraryId/collections'
+      path: '/collections'
+      fullPath: '/libraries/$libraryId/collections'
+      preLoaderRoute: typeof LibrariesLibraryIdCollectionsRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
     '/libraries/$libraryId/browser': {
       id: '/libraries/$libraryId/browser'
       path: '/browser'
       fullPath: '/libraries/$libraryId/browser'
       preLoaderRoute: typeof LibrariesLibraryIdBrowserRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/books': {
+      id: '/libraries/$libraryId/books'
+      path: '/books'
+      fullPath: '/libraries/$libraryId/books'
+      preLoaderRoute: typeof LibrariesLibraryIdBooksRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/authors': {
+      id: '/libraries/$libraryId/authors'
+      path: '/authors'
+      fullPath: '/libraries/$libraryId/authors'
+      preLoaderRoute: typeof LibrariesLibraryIdAuthorsRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/artists': {
+      id: '/libraries/$libraryId/artists'
+      path: '/artists'
+      fullPath: '/libraries/$libraryId/artists'
+      preLoaderRoute: typeof LibrariesLibraryIdArtistsRouteImport
+      parentRoute: typeof LibrariesLibraryIdRoute
+    }
+    '/libraries/$libraryId/albums': {
+      id: '/libraries/$libraryId/albums'
+      path: '/albums'
+      fullPath: '/libraries/$libraryId/albums'
+      preLoaderRoute: typeof LibrariesLibraryIdAlbumsRouteImport
       parentRoute: typeof LibrariesLibraryIdRoute
     }
   }
@@ -427,6 +625,7 @@ interface SettingsRouteChildren {
   SettingsIndexersRoute: typeof SettingsIndexersRoute
   SettingsLogsRoute: typeof SettingsLogsRoute
   SettingsMetadataRoute: typeof SettingsMetadataRoute
+  SettingsOrganizationRoute: typeof SettingsOrganizationRoute
   SettingsRssRoute: typeof SettingsRssRoute
   SettingsTorrentRoute: typeof SettingsTorrentRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
@@ -437,6 +636,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsIndexersRoute: SettingsIndexersRoute,
   SettingsLogsRoute: SettingsLogsRoute,
   SettingsMetadataRoute: SettingsMetadataRoute,
+  SettingsOrganizationRoute: SettingsOrganizationRoute,
   SettingsRssRoute: SettingsRssRoute,
   SettingsTorrentRoute: SettingsTorrentRoute,
   SettingsIndexRoute: SettingsIndexRoute,
@@ -447,17 +647,31 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 )
 
 interface LibrariesLibraryIdRouteChildren {
+  LibrariesLibraryIdAlbumsRoute: typeof LibrariesLibraryIdAlbumsRoute
+  LibrariesLibraryIdArtistsRoute: typeof LibrariesLibraryIdArtistsRoute
+  LibrariesLibraryIdAuthorsRoute: typeof LibrariesLibraryIdAuthorsRoute
+  LibrariesLibraryIdBooksRoute: typeof LibrariesLibraryIdBooksRoute
   LibrariesLibraryIdBrowserRoute: typeof LibrariesLibraryIdBrowserRoute
+  LibrariesLibraryIdCollectionsRoute: typeof LibrariesLibraryIdCollectionsRoute
+  LibrariesLibraryIdMoviesRoute: typeof LibrariesLibraryIdMoviesRoute
   LibrariesLibraryIdSettingsRoute: typeof LibrariesLibraryIdSettingsRoute
   LibrariesLibraryIdShowsRoute: typeof LibrariesLibraryIdShowsRoute
+  LibrariesLibraryIdTracksRoute: typeof LibrariesLibraryIdTracksRoute
   LibrariesLibraryIdUnmatchedRoute: typeof LibrariesLibraryIdUnmatchedRoute
   LibrariesLibraryIdIndexRoute: typeof LibrariesLibraryIdIndexRoute
 }
 
 const LibrariesLibraryIdRouteChildren: LibrariesLibraryIdRouteChildren = {
+  LibrariesLibraryIdAlbumsRoute: LibrariesLibraryIdAlbumsRoute,
+  LibrariesLibraryIdArtistsRoute: LibrariesLibraryIdArtistsRoute,
+  LibrariesLibraryIdAuthorsRoute: LibrariesLibraryIdAuthorsRoute,
+  LibrariesLibraryIdBooksRoute: LibrariesLibraryIdBooksRoute,
   LibrariesLibraryIdBrowserRoute: LibrariesLibraryIdBrowserRoute,
+  LibrariesLibraryIdCollectionsRoute: LibrariesLibraryIdCollectionsRoute,
+  LibrariesLibraryIdMoviesRoute: LibrariesLibraryIdMoviesRoute,
   LibrariesLibraryIdSettingsRoute: LibrariesLibraryIdSettingsRoute,
   LibrariesLibraryIdShowsRoute: LibrariesLibraryIdShowsRoute,
+  LibrariesLibraryIdTracksRoute: LibrariesLibraryIdTracksRoute,
   LibrariesLibraryIdUnmatchedRoute: LibrariesLibraryIdUnmatchedRoute,
   LibrariesLibraryIdIndexRoute: LibrariesLibraryIdIndexRoute,
 }
@@ -467,13 +681,15 @@ const LibrariesLibraryIdRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  HuntRoute: HuntRoute,
+  SearchRoute: SearchRoute,
   SettingsRoute: SettingsRouteWithChildren,
   AuthLoginRoute: AuthLoginRoute,
   LibrariesLibraryIdRoute: LibrariesLibraryIdRouteWithChildren,
+  MoviesMovieIdRoute: MoviesMovieIdRoute,
   ShowsShowIdRoute: ShowsShowIdRoute,
   DownloadsIndexRoute: DownloadsIndexRoute,
   LibrariesIndexRoute: LibrariesIndexRoute,
-  SubscriptionsIndexRoute: SubscriptionsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

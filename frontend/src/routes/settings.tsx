@@ -3,7 +3,7 @@ import { Link, useLocation } from '@tanstack/react-router'
 import { Card, CardBody } from '@heroui/card'
 import { RouteError } from '../components/RouteError'
 import type { TablerIcon } from '@tabler/icons-react'
-import { IconSettings, IconDownload, IconRss, IconMovie, IconClipboard, IconSearch, IconCast } from '@tabler/icons-react'
+import { IconSettings, IconDownload, IconRss, IconMovie, IconClipboard, IconSearch, IconCast, IconFolderCog } from '@tabler/icons-react'
 
 // This is the parent route for /settings/* that provides the shared layout
 export const Route = createFileRoute('/settings')({
@@ -71,6 +71,14 @@ const settingsTabs: SettingsTab[] = [
     Icon: IconMovie,
     iconColor: 'text-purple-400',
     description: 'Media identification',
+  },
+  {
+    key: 'organization',
+    path: '/settings/organization',
+    label: 'File Organization',
+    Icon: IconFolderCog,
+    iconColor: 'text-amber-400',
+    description: 'Naming patterns',
   },
   {
     key: 'casting',
@@ -142,8 +150,10 @@ function SettingsLayoutRoute() {
         </div>
 
         {/* Right Content Area - scrolls independently */}
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <Outlet />
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 -mx-4">
+          <div className="flex flex-col h-full">
+            <Outlet />
+          </div>
         </div>
       </div>
     </div>
