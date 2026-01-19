@@ -37,6 +37,7 @@ export type {
   MoveFilesInput,
   RenameFileInput,
   DirectoryChangeEvent,
+  MediaFileUpdatedEvent,
   PathValidationResult,
   RawFileEntry,
   RawBrowseResponse,
@@ -98,6 +99,11 @@ export type {
   LibraryUpcomingShow,
   // Media Files
   MediaFile,
+  MediaFileDetails,
+  VideoStreamInfo,
+  AudioStreamInfo,
+  SubtitleInfo,
+  ChapterInfo,
   // Security Settings
   SecuritySettings,
   SecuritySettingsResult,
@@ -117,8 +123,10 @@ export type {
   CastSettingsResult,
   // Playback Session Types
   PlaybackSession,
+  PlaybackSettings,
   StartPlaybackInput,
   UpdatePlaybackInput,
+  UpdatePlaybackSettingsInput,
   PlaybackResult,
   // Indexer Search Types
   IndexerSearchInput,
@@ -161,6 +169,9 @@ export {
   LIBRARY_UPCOMING_EPISODES_QUERY,
   UNMATCHED_FILES_QUERY,
   UNMATCHED_FILES_COUNT_QUERY,
+  MEDIA_FILE_BY_PATH_QUERY,
+  MOVIE_MEDIA_FILE_QUERY,
+  MEDIA_FILE_DETAILS_QUERY,
   SECURITY_SETTINGS_QUERY,
   // Cast Queries
   CAST_DEVICES_QUERY,
@@ -174,6 +185,7 @@ export {
   VALIDATE_PATH_QUERY,
   // Playback Queries
   PLAYBACK_SESSION_QUERY,
+  PLAYBACK_SETTINGS_QUERY,
   // Indexer Search Queries
   SEARCH_INDEXERS_QUERY,
   INDEXER_CONFIGS_QUERY,
@@ -237,6 +249,7 @@ export {
   START_PLAYBACK_MUTATION,
   UPDATE_PLAYBACK_MUTATION,
   STOP_PLAYBACK_MUTATION,
+  UPDATE_PLAYBACK_SETTINGS_MUTATION,
 } from './mutations';
 
 // Subscriptions
@@ -249,6 +262,8 @@ export {
   ERROR_LOGS_SUBSCRIPTION,
   // Library Subscriptions
   LIBRARY_CHANGED_SUBSCRIPTION,
+  // Media File Subscriptions
+  MEDIA_FILE_UPDATED_SUBSCRIPTION,
   // Filesystem Subscriptions
   DIRECTORY_CONTENTS_CHANGED_SUBSCRIPTION,
 } from './subscriptions';

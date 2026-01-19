@@ -13,10 +13,13 @@ import {
   TV_SHOWS_QUERY,
   UPCOMING_EPISODES_QUERY,
   LIBRARY_UPCOMING_EPISODES_QUERY,
+  LIBRARY_CHANGED_SUBSCRIPTION,
+  TORRENT_COMPLETED_SUBSCRIPTION,
   type Library,
   type TvShow,
   type UpcomingEpisode,
   type LibraryUpcomingEpisode,
+  type LibraryChangedEvent,
 } from '../lib/graphql'
 
 // Cache configuration
@@ -215,6 +218,42 @@ export function useDashboardCache(userId: string | null): UseDashboardCacheResul
     } else {
       // No cache, fetch fresh data
       refetch()
+    }
+  }, [userId, refetch])
+
+  // Subscribe to real-time updates for library changes and torrent completions
+  useEffect(() => {
+    if (!userId) return
+
+    // Subscribe to library changes (created, updated, deleted)
+    const librarySub = graphqlClient
+      .subscription<{ libraryChanged: LibraryChangedEvent }>(
+        LIBRARY_CHANGED_SUBSCRIPTION,
+        {}
+      )
+      .subscribe({
+        next: () => {
+          // Refetch dashboard data when any library changes
+          refetch()
+        },
+      })
+
+    // Subscribe to torrent completions (triggers media organization)
+    const torrentSub = graphqlClient
+      .subscription<{ torrentCompleted: { id: number } }>(
+        TORRENT_COMPLETED_SUBSCRIPTION,
+        {}
+      )
+      .subscribe({
+        next: () => {
+          // Refetch dashboard data when a torrent completes
+          refetch()
+        },
+      })
+
+    return () => {
+      librarySub.unsubscribe()
+      torrentSub.unsubscribe()
     }
   }, [userId, refetch])
 

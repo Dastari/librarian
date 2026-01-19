@@ -519,6 +519,35 @@ pub struct Library {
     pub total_size_bytes: i64,
     /// Last scan timestamp (ISO 8601)
     pub last_scanned_at: Option<String>,
+    /// Whether a scan is currently in progress
+    #[serde(default)]
+    pub scanning: bool,
+}
+
+impl Library {
+    /// Create a Library from a database record
+    pub fn from_db(r: crate::db::libraries::LibraryRecord) -> Self {
+        Self {
+            id: r.id.to_string(),
+            name: r.name,
+            path: r.path,
+            library_type: match r.library_type.as_str() {
+                "movies" => LibraryType::Movies,
+                "tv" => LibraryType::Tv,
+                "music" => LibraryType::Music,
+                "audiobooks" => LibraryType::Audiobooks,
+                _ => LibraryType::Other,
+            },
+            icon: r.icon.unwrap_or_else(|| "folder".to_string()),
+            color: r.color.unwrap_or_else(|| "default".to_string()),
+            auto_scan: r.auto_scan,
+            scan_interval_hours: r.scan_interval_minutes / 60,
+            item_count: 0,
+            total_size_bytes: 0,
+            last_scanned_at: r.last_scanned_at.map(|dt| dt.to_rfc3339()),
+            scanning: r.scanning,
+        }
+    }
 }
 
 /// Result of a library mutation
@@ -569,6 +598,33 @@ pub struct LibraryChangedEvent {
     pub library_name: Option<String>,
     /// The full library object (None if deleted)
     pub library: Option<Library>,
+}
+
+/// Event when a media file is updated (e.g., after FFmpeg analysis)
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct MediaFileUpdatedEvent {
+    /// Media file ID
+    pub media_file_id: String,
+    /// Library ID
+    pub library_id: String,
+    /// Episode ID if linked
+    pub episode_id: Option<String>,
+    /// Movie ID if linked
+    pub movie_id: Option<String>,
+    /// Resolution (e.g., "1080p", "2160p")
+    pub resolution: Option<String>,
+    /// Video codec
+    pub video_codec: Option<String>,
+    /// Audio codec
+    pub audio_codec: Option<String>,
+    /// Audio channels
+    pub audio_channels: Option<String>,
+    /// Whether the video is HDR
+    pub is_hdr: Option<bool>,
+    /// HDR type
+    pub hdr_type: Option<String>,
+    /// Duration in seconds
+    pub duration: Option<i32>,
 }
 
 // ============================================================================
@@ -1555,6 +1611,127 @@ pub struct Episode {
     pub torrent_link_added_at: Option<String>,
     /// Media file ID if episode has been downloaded (for playback)
     pub media_file_id: Option<String>,
+
+    // --- Media file metadata (populated from FFmpeg analysis) ---
+    /// Video resolution (e.g., "1080p", "2160p", "720p")
+    pub resolution: Option<String>,
+    /// Video codec (e.g., "hevc", "h264", "av1")
+    pub video_codec: Option<String>,
+    /// Audio codec (e.g., "aac", "dts", "truehd", "atmos")
+    pub audio_codec: Option<String>,
+    /// Audio channel layout (e.g., "stereo", "5.1", "7.1")
+    pub audio_channels: Option<String>,
+    /// Whether the video is HDR
+    pub is_hdr: Option<bool>,
+    /// HDR format type (e.g., "HDR10", "Dolby Vision", "HDR10+")
+    pub hdr_type: Option<String>,
+    /// Video bitrate in kbps
+    pub video_bitrate: Option<i32>,
+    /// File size in bytes
+    pub file_size_bytes: Option<i64>,
+    /// Human-readable file size
+    pub file_size_formatted: Option<String>,
+
+    // --- Watch progress (per-user, populated from watch_progress table) ---
+    /// User's watch progress (0.0 to 1.0, null if never watched)
+    pub watch_progress: Option<f32>,
+    /// User's current position in seconds (for resume)
+    pub watch_position: Option<f64>,
+    /// Whether the user has watched this episode (>=90% or manually marked)
+    pub is_watched: Option<bool>,
+}
+
+impl Episode {
+    /// Create an Episode from database record with optional media file info and watch progress
+    pub fn from_record(
+        r: crate::db::EpisodeRecord,
+        media_file: Option<crate::db::MediaFileRecord>,
+    ) -> Self {
+        Self::from_record_with_progress(r, media_file, None)
+    }
+
+    /// Create an Episode from database record with optional media file info and watch progress
+    pub fn from_record_with_progress(
+        r: crate::db::EpisodeRecord,
+        media_file: Option<crate::db::MediaFileRecord>,
+        watch_progress: Option<crate::db::WatchProgressRecord>,
+    ) -> Self {
+        let status = match r.status.as_str() {
+            "missing" => EpisodeStatus::Missing,
+            "wanted" => EpisodeStatus::Wanted,
+            "available" => EpisodeStatus::Available,
+            "downloading" => EpisodeStatus::Downloading,
+            "downloaded" => EpisodeStatus::Downloaded,
+            "ignored" => EpisodeStatus::Ignored,
+            _ => EpisodeStatus::Missing,
+        };
+
+        let (
+            media_file_id,
+            resolution,
+            video_codec,
+            audio_codec,
+            audio_channels,
+            is_hdr,
+            hdr_type,
+            video_bitrate,
+            file_size_bytes,
+            file_size_formatted,
+        ) = if let Some(mf) = media_file {
+            (
+                Some(mf.id.to_string()),
+                mf.resolution,
+                mf.video_codec,
+                mf.audio_codec,
+                mf.audio_channels,
+                mf.is_hdr,
+                mf.hdr_type,
+                mf.video_bitrate,
+                Some(mf.size_bytes),
+                Some(format_bytes(mf.size_bytes as u64)),
+            )
+        } else {
+            (None, None, None, None, None, None, None, None, None, None)
+        };
+
+        // Extract watch progress fields
+        let (wp_progress, wp_position, wp_is_watched) = if let Some(wp) = watch_progress {
+            (Some(wp.progress_percent), Some(wp.current_position), Some(wp.is_watched))
+        } else {
+            (None, None, None)
+        };
+
+        Self {
+            id: r.id.to_string(),
+            tv_show_id: r.tv_show_id.to_string(),
+            season: r.season,
+            episode: r.episode,
+            absolute_number: r.absolute_number,
+            title: r.title,
+            overview: r.overview,
+            air_date: r.air_date.map(|d| d.to_string()),
+            runtime: r.runtime,
+            status,
+            tvmaze_id: r.tvmaze_id,
+            tmdb_id: r.tmdb_id,
+            tvdb_id: r.tvdb_id,
+            torrent_link: r.torrent_link,
+            torrent_link_added_at: r.torrent_link_added_at.map(|t| t.to_rfc3339()),
+            media_file_id,
+            resolution,
+            video_codec,
+            audio_codec,
+            audio_channels,
+            is_hdr,
+            hdr_type,
+            video_bitrate,
+            file_size_bytes,
+            file_size_formatted,
+            watch_progress: wp_progress,
+            watch_position: wp_position,
+            is_watched: wp_is_watched,
+        }
+    }
 }
 
 /// Episode with show information (for future wanted list feature)
@@ -1841,6 +2018,7 @@ pub struct LibraryFull {
     pub item_count: i32,
     pub total_size_bytes: i64,
     pub show_count: i32,
+    pub movie_count: i32,
     pub last_scanned_at: Option<String>,
     // Inline quality settings (empty = any)
     /// Allowed resolutions: 2160p, 1080p, 720p, 480p. Empty = any.
@@ -1899,6 +2077,7 @@ impl LibraryFull {
             item_count: stats.file_count.unwrap_or(0) as i32,
             total_size_bytes: stats.total_size_bytes.unwrap_or(0),
             show_count: stats.show_count.unwrap_or(0) as i32,
+            movie_count: stats.movie_count.unwrap_or(0) as i32,
             last_scanned_at: r.last_scanned_at.map(|dt| dt.to_rfc3339()),
             allowed_resolutions: r.allowed_resolutions,
             allowed_video_codecs: r.allowed_video_codecs,
@@ -2208,6 +2387,28 @@ pub struct PlaybackResult {
     pub error: Option<String>,
 }
 
+/// Playback settings (configurable by user)
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct PlaybackSettings {
+    /// How often to sync watch progress to database (in seconds)
+    pub sync_interval_seconds: i32,
+}
+
+impl Default for PlaybackSettings {
+    fn default() -> Self {
+        Self {
+            sync_interval_seconds: 15,
+        }
+    }
+}
+
+/// Input for updating playback settings
+#[derive(Debug, InputObject)]
+pub struct UpdatePlaybackSettingsInput {
+    /// How often to sync watch progress to database (in seconds, 5-60)
+    pub sync_interval_seconds: Option<i32>,
+}
+
 // ============================================================================
 // Upcoming Episode Types (for home page)
 // ============================================================================
@@ -2441,6 +2642,8 @@ pub struct Subtitle {
     pub file_path: Option<String>,
     /// Codec/format (srt, ass, pgs, etc.)
     pub codec: Option<String>,
+    /// Codec long name
+    pub codec_long_name: Option<String>,
     /// Language code (ISO 639-1)
     pub language: Option<String>,
     /// Stream title
@@ -2466,6 +2669,7 @@ impl Subtitle {
             stream_index: record.stream_index,
             file_path: record.file_path,
             codec: record.codec,
+            codec_long_name: record.codec_long_name,
             language: record.language,
             title: record.title,
             is_default: record.is_default,

@@ -128,6 +128,7 @@ export const LIBRARIES_QUERY = `
       itemCount
       totalSizeBytes
       showCount
+      movieCount
       lastScannedAt
     }
   }
@@ -157,6 +158,7 @@ export const LIBRARY_QUERY = `
       itemCount
       totalSizeBytes
       showCount
+      movieCount
       lastScannedAt
       allowedResolutions
       allowedVideoCodecs
@@ -425,6 +427,18 @@ export const EPISODES_QUERY = `
       tmdbId
       tvdbId
       mediaFileId
+      resolution
+      videoCodec
+      audioCodec
+      audioChannels
+      isHdr
+      hdrType
+      videoBitrate
+      fileSizeBytes
+      fileSizeFormatted
+      watchProgress
+      watchPosition
+      isWatched
     }
   }
 `;
@@ -675,6 +689,132 @@ export const UNMATCHED_FILES_COUNT_QUERY = `
   }
 `;
 
+export const MEDIA_FILE_BY_PATH_QUERY = `
+  query MediaFileByPath($path: String!) {
+    mediaFileByPath(path: $path) {
+      id
+      libraryId
+      path
+      sizeBytes
+      sizeFormatted
+      container
+      videoCodec
+      audioCodec
+      resolution
+      isHdr
+      hdrType
+      duration
+      bitrate
+      organized
+      addedAt
+    }
+  }
+`;
+
+export const MOVIE_MEDIA_FILE_QUERY = `
+  query MovieMediaFile($movieId: String!) {
+    movieMediaFile(movieId: $movieId) {
+      id
+      libraryId
+      path
+      sizeBytes
+      sizeFormatted
+      container
+      videoCodec
+      audioCodec
+      resolution
+      isHdr
+      hdrType
+      duration
+      bitrate
+      organized
+      addedAt
+    }
+  }
+`;
+
+export const MEDIA_FILE_DETAILS_QUERY = `
+  query MediaFileDetails($mediaFileId: String!) {
+    mediaFileDetails(mediaFileId: $mediaFileId) {
+      id
+      file {
+        id
+        libraryId
+        path
+        relativePath
+        originalName
+        sizeBytes
+        sizeFormatted
+        container
+        videoCodec
+        audioCodec
+        resolution
+        isHdr
+        hdrType
+        width
+        height
+        duration
+        bitrate
+        episodeId
+        organized
+        addedAt
+      }
+      videoStreams {
+        id
+        streamIndex
+        codec
+        codecLongName
+        width
+        height
+        aspectRatio
+        frameRate
+        bitrate
+        pixelFormat
+        hdrType
+        bitDepth
+        language
+        title
+        isDefault
+      }
+      audioStreams {
+        id
+        streamIndex
+        codec
+        codecLongName
+        channels
+        channelLayout
+        sampleRate
+        bitrate
+        bitDepth
+        language
+        title
+        isDefault
+        isCommentary
+      }
+      subtitles {
+        id
+        streamIndex
+        sourceType
+        codec
+        codecLongName
+        language
+        title
+        isDefault
+        isForced
+        isHearingImpaired
+        filePath
+      }
+      chapters {
+        id
+        chapterIndex
+        startSecs
+        endSecs
+        title
+      }
+    }
+  }
+`;
+
 // ============================================================================
 // Security Settings Queries
 // ============================================================================
@@ -796,6 +936,14 @@ export const PLAYBACK_SESSION_QUERY = `
       isPlaying
       startedAt
       lastUpdatedAt
+    }
+  }
+`;
+
+export const PLAYBACK_SETTINGS_QUERY = `
+  query PlaybackSettings {
+    playbackSettings {
+      syncIntervalSeconds
     }
   }
 `;

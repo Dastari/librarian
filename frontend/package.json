@@ -60,7 +60,8 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "tailwind-variants": "^3.2.2",
-    "tailwindcss": "^4.1.18"
+    "tailwindcss": "^4.1.18",
+    "wonka": "^6.3.5"
   },
   "devDependencies": {
     "@tanstack/devtools-vite": "^0.4.1",

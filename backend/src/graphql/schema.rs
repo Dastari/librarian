@@ -42,8 +42,10 @@ use super::types::{
     // Playback types
     PlaybackSession,
     PlaybackResult,
+    PlaybackSettings,
     StartPlaybackInput,
     UpdatePlaybackInput,
+    UpdatePlaybackSettingsInput,
     // Filesystem types
     BrowseDirectoryInput,
     BrowseDirectoryResult,
@@ -89,6 +91,7 @@ use super::types::{
     LogLevel,
     LogStats,
     MediaFile,
+    MediaFileUpdatedEvent,
     MediaItem,
     MonitorType,
     // Movie types
@@ -221,10 +224,18 @@ pub fn build_schema(
     cast_service: Arc<CastService>,
     filesystem_service: Arc<FilesystemService>,
     db: Database,
+    analysis_queue: Arc<crate::services::MediaAnalysisQueue>,
     log_broadcast: Option<tokio::sync::broadcast::Sender<LogEvent>>,
+    library_broadcast: Option<tokio::sync::broadcast::Sender<LibraryChangedEvent>>,
+    media_file_broadcast: Option<tokio::sync::broadcast::Sender<MediaFileUpdatedEvent>>,
 ) -> LibrarianSchema {
-    // Create library events broadcast channel
-    let (library_tx, _) = tokio::sync::broadcast::channel::<LibraryChangedEvent>(100);
+    // Create library events broadcast channel (use provided or create new)
+    let library_tx = library_broadcast
+        .unwrap_or_else(|| tokio::sync::broadcast::channel::<LibraryChangedEvent>(100).0);
+
+    // Create media file updated broadcast channel (use provided or create new)
+    let media_file_tx = media_file_broadcast
+        .unwrap_or_else(|| tokio::sync::broadcast::channel::<MediaFileUpdatedEvent>(100).0);
 
     let mut schema = Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
         .data(torrent_service)
@@ -233,7 +244,9 @@ pub fn build_schema(
         .data(cast_service)
         .data(filesystem_service)
         .data(db)
-        .data(library_tx);
+        .data(analysis_queue)
+        .data(library_tx)
+        .data(media_file_tx);
 
     // Add log broadcast sender if provided
     if let Some(sender) = log_broadcast {
@@ -553,10 +566,12 @@ impl QueryRoot {
 
     /// Get all episodes for a TV show
     async fn episodes(&self, ctx: &Context<'_>, tv_show_id: String) -> Result<Vec<Episode>> {
-        let _user = ctx.auth_user()?;
+        let user = ctx.auth_user()?;
         let db = ctx.data_unchecked::<Database>();
         let show_id = Uuid::parse_str(&tv_show_id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid show ID: {}", e)))?;
+        let user_id = Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
 
         let records = db
             .episodes()
@@ -564,47 +579,37 @@ impl QueryRoot {
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        // For downloaded episodes, look up the media file ID
+        // Batch fetch watch progress for all episodes
+        let episode_ids: Vec<Uuid> = records.iter().map(|r| r.id).collect();
+        let watch_progress_list = db
+            .watch_progress()
+            .get_progress_batch(user_id, &episode_ids)
+            .await
+            .unwrap_or_default();
+        
+        // Create a map for quick lookup
+        let progress_map: std::collections::HashMap<Uuid, crate::db::WatchProgressRecord> = 
+            watch_progress_list.into_iter().map(|wp| (wp.episode_id, wp)).collect();
+
+        // For downloaded episodes, look up the media file with its metadata
         let mut episodes = Vec::with_capacity(records.len());
         for r in records {
-            let media_file_id = if r.status == "downloaded" {
-                // Try to get the media file for this episode
+            let episode_id = r.id;
+            let media_file = if r.status == "downloaded" {
+                // Try to get the media file for this episode (includes metadata from FFmpeg analysis)
                 db.media_files()
                     .get_by_episode_id(r.id)
                     .await
                     .ok()
                     .flatten()
-                    .map(|f| f.id.to_string())
             } else {
                 None
             };
 
-            episodes.push(Episode {
-                id: r.id.to_string(),
-                tv_show_id: r.tv_show_id.to_string(),
-                season: r.season,
-                episode: r.episode,
-                absolute_number: r.absolute_number,
-                title: r.title,
-                overview: r.overview,
-                air_date: r.air_date.map(|d| d.to_string()),
-                runtime: r.runtime,
-                status: match r.status.as_str() {
-                    "missing" => EpisodeStatus::Missing,
-                    "wanted" => EpisodeStatus::Wanted,
-                    "available" => EpisodeStatus::Available,
-                    "downloading" => EpisodeStatus::Downloading,
-                    "downloaded" => EpisodeStatus::Downloaded,
-                    "ignored" => EpisodeStatus::Ignored,
-                    _ => EpisodeStatus::Missing,
-                },
-                tvmaze_id: r.tvmaze_id,
-                tmdb_id: r.tmdb_id,
-                tvdb_id: r.tvdb_id,
-                torrent_link: r.torrent_link,
-                torrent_link_added_at: r.torrent_link_added_at.map(|t| t.to_rfc3339()),
-                media_file_id,
-            });
+            // Get watch progress for this episode
+            let watch_progress = progress_map.get(&episode_id).cloned();
+
+            episodes.push(Episode::from_record_with_progress(r, media_file, watch_progress));
         }
 
         Ok(episodes)
@@ -632,32 +637,7 @@ impl QueryRoot {
 
         Ok(records
             .into_iter()
-            .map(|r| Episode {
-                id: r.id.to_string(),
-                tv_show_id: r.tv_show_id.to_string(),
-                season: r.season,
-                episode: r.episode,
-                absolute_number: r.absolute_number,
-                title: r.title,
-                overview: r.overview,
-                air_date: r.air_date.map(|d| d.to_string()),
-                runtime: r.runtime,
-                status: match r.status.as_str() {
-                    "missing" => EpisodeStatus::Missing,
-                    "wanted" => EpisodeStatus::Wanted,
-                    "available" => EpisodeStatus::Available,
-                    "downloading" => EpisodeStatus::Downloading,
-                    "downloaded" => EpisodeStatus::Downloaded,
-                    "ignored" => EpisodeStatus::Ignored,
-                    _ => EpisodeStatus::Wanted,
-                },
-                tvmaze_id: r.tvmaze_id,
-                tmdb_id: r.tmdb_id,
-                tvdb_id: r.tvdb_id,
-                torrent_link: r.torrent_link,
-                torrent_link_added_at: r.torrent_link_added_at.map(|t| t.to_rfc3339()),
-                media_file_id: None, // Wanted episodes don't have media files
-            })
+            .map(|r| Episode::from_record(r, None)) // Wanted episodes don't have media files yet
             .collect())
     }
 
@@ -753,6 +733,50 @@ impl QueryRoot {
             subtitles: subtitles.into_iter().map(Subtitle::from_record).collect(),
             chapters: chapters.into_iter().map(ChapterInfo::from_record).collect(),
         }))
+    }
+
+    /// Get media file by path
+    ///
+    /// Returns the media file record if found, null otherwise.
+    /// Useful for file browsers to check if a file has been analyzed.
+    async fn media_file_by_path(
+        &self,
+        ctx: &Context<'_>,
+        path: String,
+    ) -> Result<Option<MediaFile>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let file = db
+            .media_files()
+            .get_by_path(&path)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(file.map(MediaFile::from_record))
+    }
+
+    /// Get media file for a movie
+    ///
+    /// Returns the media file associated with a movie, if one exists.
+    async fn movie_media_file(
+        &self,
+        ctx: &Context<'_>,
+        movie_id: String,
+    ) -> Result<Option<MediaFile>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let movie_uuid = Uuid::parse_str(&movie_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid movie ID: {}", e)))?;
+
+        let file = db
+            .media_files()
+            .get_by_movie_id(movie_uuid)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(file.map(MediaFile::from_record))
     }
 
     /// Get subtitle settings for a library
@@ -1173,6 +1197,22 @@ impl QueryRoot {
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         Ok(session.map(PlaybackSession::from_record))
+    }
+
+    /// Get playback settings (sync interval, etc.)
+    async fn playback_settings(&self, ctx: &Context<'_>) -> Result<PlaybackSettings> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        
+        let sync_interval = db
+            .settings()
+            .get_or_default::<i32>("playback_sync_interval", 15)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        
+        Ok(PlaybackSettings {
+            sync_interval_seconds: sync_interval,
+        })
     }
 
     // ------------------------------------------------------------------------
@@ -2237,6 +2277,7 @@ impl MutationRoot {
             item_count: 0,
             total_size_bytes: 0,
             last_scanned_at: None,
+            scanning: record.scanning,
         };
 
         // Emit library created event
@@ -2334,6 +2375,7 @@ impl MutationRoot {
                 item_count: 0,
                 total_size_bytes: 0,
                 last_scanned_at: record.last_scanned_at.map(|t| t.to_rfc3339()),
+                scanning: record.scanning,
             };
 
             // Emit library updated event
@@ -3770,7 +3812,7 @@ impl MutationRoot {
             .ok_or_else(|| async_graphql::Error::new("Episode not found"))?;
 
         // Check if it has a torrent link
-        let torrent_link = episode.torrent_link.ok_or_else(|| {
+        let torrent_link = episode.torrent_link.clone().ok_or_else(|| {
             async_graphql::Error::new("Episode has no torrent link - not available for download")
         })?;
 
@@ -3816,28 +3858,14 @@ impl MutationRoot {
                     tracing::error!("Failed to update episode status: {:?}", e);
                 }
 
+                // Episode just started downloading - no media file yet
+                let mut ep = Episode::from_record(episode, None);
+                ep.status = EpisodeStatus::Downloading;
+                ep.torrent_link = Some(torrent_link);
+
                 Ok(DownloadEpisodeResult {
                     success: true,
-                    episode: Some(Episode {
-                        id: episode.id.to_string(),
-                        tv_show_id: episode.tv_show_id.to_string(),
-                        season: episode.season,
-                        episode: episode.episode,
-                        absolute_number: episode.absolute_number,
-                        title: episode.title,
-                        overview: episode.overview,
-                        air_date: episode.air_date.map(|d| d.to_string()),
-                        runtime: episode.runtime,
-                        status: EpisodeStatus::Downloading,
-                        tvmaze_id: episode.tvmaze_id,
-                        tmdb_id: episode.tmdb_id,
-                        tvdb_id: episode.tvdb_id,
-                        torrent_link: Some(torrent_link),
-                        torrent_link_added_at: episode
-                            .torrent_link_added_at
-                            .map(|t| t.to_rfc3339()),
-                        media_file_id: None, // Episode is being downloaded, no file yet
-                    }),
+                    episode: Some(ep),
                     error: None,
                 })
             }
@@ -4291,6 +4319,7 @@ impl MutationRoot {
     }
 
     /// Update playback position/state
+    /// Also persists watch progress to the watch_progress table for resume functionality
     async fn update_playback(
         &self,
         ctx: &Context<'_>,
@@ -4310,11 +4339,42 @@ impl MutationRoot {
         };
 
         match db.playback().update_position(user_id, db_input).await {
-            Ok(Some(session)) => Ok(PlaybackResult {
-                success: true,
-                session: Some(PlaybackSession::from_record(session)),
-                error: None,
-            }),
+            Ok(Some(session)) => {
+                // Also persist to watch_progress table for resume functionality
+                if let (Some(episode_id), Some(position)) = (session.episode_id, input.current_position) {
+                    tracing::info!(
+                        "Persisting watch progress: user={}, episode={}, position={:.1}s, duration={:?}",
+                        user_id, episode_id, position, input.duration.or(session.duration)
+                    );
+                    
+                    let wp_input = crate::db::UpsertWatchProgress {
+                        user_id,
+                        episode_id,
+                        media_file_id: session.media_file_id,
+                        current_position: position,
+                        duration: input.duration.or(session.duration),
+                    };
+                    
+                    match db.watch_progress().upsert_progress(wp_input).await {
+                        Ok(wp) => tracing::info!(
+                            "Watch progress saved: episode={}, progress={:.1}%, is_watched={}",
+                            episode_id, wp.progress_percent * 100.0, wp.is_watched
+                        ),
+                        Err(e) => tracing::warn!("Failed to persist watch progress: {}", e),
+                    }
+                } else {
+                    tracing::debug!(
+                        "Skipping watch progress: episode_id={:?}, position={:?}",
+                        session.episode_id, input.current_position
+                    );
+                }
+                
+                Ok(PlaybackResult {
+                    success: true,
+                    session: Some(PlaybackSession::from_record(session)),
+                    error: None,
+                })
+            },
             Ok(None) => Ok(PlaybackResult {
                 success: false,
                 session: None,
@@ -4352,6 +4412,41 @@ impl MutationRoot {
                 error: Some(e.to_string()),
             }),
         }
+    }
+
+    /// Update playback settings
+    async fn update_playback_settings(
+        &self,
+        ctx: &Context<'_>,
+        input: UpdatePlaybackSettingsInput,
+    ) -> Result<PlaybackSettings> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        
+        // Get current settings
+        let mut sync_interval = db
+            .settings()
+            .get_or_default::<i32>("playback_sync_interval", 15)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        
+        // Update if provided (clamp to 5-60 seconds)
+        if let Some(new_interval) = input.sync_interval_seconds {
+            sync_interval = new_interval.clamp(5, 60);
+            db.settings()
+                .set_with_category(
+                    "playback_sync_interval",
+                    sync_interval,
+                    "playback",
+                    Some("How often to sync watch progress to the database (in seconds)"),
+                )
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        
+        Ok(PlaybackSettings {
+            sync_interval_seconds: sync_interval,
+        })
     }
 
     // ------------------------------------------------------------------------
@@ -4643,36 +4738,26 @@ impl MutationRoot {
 
     /// Organize a completed torrent's files into the library structure
     ///
-    /// This processes the torrent files:
-    /// 1. Parses filenames to identify show/episode
-    /// 2. Matches to existing shows in the library
-    /// 3. Copies/moves/hardlinks files based on library settings
-    /// 4. Creates folder structure (Show Name/Season XX/)
-    /// 5. Updates episode status to downloaded
+    /// This uses the unified TorrentProcessor to:
+    /// 1. Parse filenames to identify show/episode
+    /// 2. Match to existing shows in the library
+    /// 3. Copy/move/hardlink files based on library settings
+    /// 4. Create folder structure (Show Name/Season XX/)
+    /// 5. Update episode status to downloaded
+    ///
+    /// If library_id is provided, the torrent will be linked to that library first.
     async fn organize_torrent(
         &self,
         ctx: &Context<'_>,
         id: i32,
         #[graphql(
-            desc = "Optional library ID to organize into (uses first TV library if not specified)"
+            desc = "Optional library ID to organize into (links torrent to library first)"
         )]
         library_id: Option<String>,
     ) -> Result<OrganizeTorrentResult> {
-        let user = ctx.auth_user()?;
+        let _user = ctx.auth_user()?;
         let db = ctx.data_unchecked::<Database>();
         let torrent_service = ctx.data_unchecked::<Arc<TorrentService>>();
-
-        let user_id = Uuid::parse_str(&user.user_id)
-            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
-
-        let library_uuid = if let Some(ref lib_id) = library_id {
-            Some(
-                Uuid::parse_str(lib_id)
-                    .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?,
-            )
-        } else {
-            None
-        };
 
         // Get torrent info to get info_hash
         let torrent_info = match torrent_service.get_torrent_info(id as usize).await {
@@ -4687,47 +4772,36 @@ impl MutationRoot {
             }
         };
 
-        // Get files from the torrent
-        let files = match torrent_service
-            .get_files_for_torrent(&torrent_info.info_hash)
-            .await
-        {
-            Ok(f) => f,
-            Err(e) => {
-                return Ok(OrganizeTorrentResult {
-                    success: false,
-                    organized_count: 0,
-                    failed_count: 0,
-                    messages: vec![format!("Failed to get torrent files: {}", e)],
-                });
+        // If library_id provided, link the torrent to that library first
+        if let Some(ref lib_id) = library_id {
+            if let Ok(library_uuid) = Uuid::parse_str(lib_id) {
+                if let Err(e) = db
+                    .torrents()
+                    .link_to_library(&torrent_info.info_hash, library_uuid)
+                    .await
+                {
+                    tracing::warn!(error = %e, "Failed to link torrent to library");
+                }
             }
-        };
+        }
 
-        // Convert to organizer format
-        let files_for_organize: Vec<crate::services::TorrentFileForOrganize> = files
-            .into_iter()
-            .map(|f| crate::services::TorrentFileForOrganize {
-                path: f.path,
-                size: f.size,
-            })
-            .collect();
+        // Use the unified TorrentProcessor with force=true to reprocess
+        // Include metadata service for auto-adding movies from TMDB
+        let metadata_service = ctx.data_unchecked::<Arc<crate::services::MetadataService>>();
+        let processor = crate::services::TorrentProcessor::with_services(
+            db.clone(),
+            ctx.data_unchecked::<Arc<crate::services::MediaAnalysisQueue>>().clone(),
+            metadata_service.clone(),
+        );
 
-        // Run the organizer
-        let organizer = crate::services::OrganizerService::new(db.clone());
-
-        match organizer
-            .organize_torrent(
-                &torrent_info.info_hash,
-                files_for_organize,
-                user_id,
-                library_uuid,
-            )
+        match processor
+            .process_torrent(torrent_service, &torrent_info.info_hash, true)
             .await
         {
             Ok(result) => Ok(OrganizeTorrentResult {
                 success: result.success,
-                organized_count: result.organized_count,
-                failed_count: result.failed_count,
+                organized_count: result.files_processed,
+                failed_count: result.files_failed,
                 messages: result.messages,
             }),
             Err(e) => Ok(OrganizeTorrentResult {

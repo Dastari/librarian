@@ -148,6 +148,8 @@ export function LibraryGridCard({
           <span>
             {library.libraryType === 'TV'
               ? `${library.showCount} Shows`
+              : library.libraryType === 'MOVIES'
+              ? `${library.movieCount} Movies`
               : `${library.itemCount} Items`}
           </span>
           <span>•</span>

@@ -97,7 +97,30 @@ export const LIBRARY_CHANGED_SUBSCRIPTION = `
         itemCount
         totalSizeBytes
         lastScannedAt
+        scanning
       }
+    }
+  }
+`;
+
+// ============================================================================
+// Media File Subscriptions
+// ============================================================================
+
+export const MEDIA_FILE_UPDATED_SUBSCRIPTION = `
+  subscription MediaFileUpdated($libraryId: String, $episodeId: String) {
+    mediaFileUpdated(libraryId: $libraryId, episodeId: $episodeId) {
+      mediaFileId
+      libraryId
+      episodeId
+      movieId
+      resolution
+      videoCodec
+      audioCodec
+      audioChannels
+      isHdr
+      hdrType
+      duration
     }
   }
 `;

@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
+use walkdir::WalkDir;
 
 use crate::db::{Database, EpisodeRecord, MediaFileRecord, TvShowRecord};
 use crate::db::libraries::LibraryRecord;
@@ -334,13 +335,27 @@ impl OrganizerService {
                 if let Some(existing) = self.db.media_files().get_by_path(&new_path_str).await? {
                     if existing.id != file.id {
                         // Another record already has this path - this file is a duplicate
-                        // Delete this duplicate record and mark as skipped
+                        // Delete the source file from disk AND the database record
                         info!(
                             file_id = %file.id,
                             existing_file_id = %existing.id,
-                            path = %new_path_str,
-                            "Duplicate file detected, deleting duplicate record"
+                            source_path = %original_path,
+                            target_path = %new_path_str,
+                            "Duplicate file detected, deleting source file and DB record"
                         );
+
+                        // Delete the source file from disk (if it's different from target)
+                        if original_path != new_path_str && source_path.exists() {
+                            if let Err(e) = tokio::fs::remove_file(source_path).await {
+                                warn!(
+                                    path = %original_path,
+                                    error = %e,
+                                    "Failed to delete duplicate source file"
+                                );
+                            } else {
+                                info!(path = %original_path, "Deleted duplicate source file");
+                            }
+                        }
 
                         self.db.media_files().delete(file.id).await?;
 
@@ -354,7 +369,9 @@ impl OrganizerService {
                     }
                 }
 
-                // Mark as organized without copying
+                // Target exists with same size, but no other record has this path
+                // This means the file is already at the correct location
+                // Just update the database record
                 info!(
                     file_id = %file.id,
                     path = %new_path_str,
@@ -376,8 +393,29 @@ impl OrganizerService {
             }
         }
 
-        // Perform file operation based on action
-        let operation_result = match action {
+        // Determine the effective action:
+        // - If source is already in the library folder, use "move" (rename in-place)
+        // - If source is in downloads folder, use the specified action (hardlink/copy to preserve seeding)
+        let source_in_library = source_path.starts_with(library_path);
+        let effective_action = if source_in_library {
+            // File is already in library - just rename it, don't create duplicates
+            "move"
+        } else {
+            // File is in downloads - use the specified action to preserve seeding capability
+            action
+        };
+
+        if source_in_library && effective_action != action {
+            debug!(
+                file_id = %file.id,
+                original_action = %action,
+                effective_action = %effective_action,
+                "File is already in library, using move instead of {}", action
+            );
+        }
+
+        // Perform file operation based on effective action
+        let operation_result = match effective_action {
             "move" => {
                 // Try rename first (same filesystem), fall back to copy+delete
                 match tokio::fs::rename(source_path, &new_path).await {
@@ -422,7 +460,7 @@ impl OrganizerService {
         if let Err(e) = operation_result {
             error!(
                 file_id = %file.id,
-                action = %action,
+                action = %effective_action,
                 error = %e,
                 "Failed to organize file"
             );
@@ -431,7 +469,7 @@ impl OrganizerService {
                 original_path,
                 new_path: new_path_str,
                 success: false,
-                error: Some(format!("Failed to {} file: {}", action, e)),
+                error: Some(format!("Failed to {} file: {}", effective_action, e)),
             });
         }
 
@@ -465,7 +503,7 @@ impl OrganizerService {
 
         info!(
             file_id = %file.id,
-            action = %action,
+            action = %effective_action,
             original = %original_path,
             new = %new_path_str,
             "Successfully organized file"
@@ -477,6 +515,278 @@ impl OrganizerService {
             new_path: new_path_str,
             success: true,
             error: None,
+        })
+    }
+
+    /// Remove duplicate files for the same episode
+    ///
+    /// For each episode that has multiple media files:
+    /// 1. Keep the file that is already at the canonical path (if any)
+    /// 2. Otherwise, keep the highest quality file (by resolution/codec)
+    /// 3. Delete the other files from both disk and database
+    ///
+    /// Returns the number of duplicates removed
+    pub async fn deduplicate_library(&self, library_id: Uuid) -> Result<DeduplicationResult> {
+        let library = self
+            .db
+            .libraries()
+            .get_by_id(library_id)
+            .await?
+            .context("Library not found")?;
+
+        let mut duplicates_removed = 0;
+        let mut files_deleted = 0;
+        let mut messages = Vec::new();
+
+        // Get all shows in this library
+        let shows = self.db.tv_shows().list_by_library(library_id).await?;
+
+        for show in shows {
+            let episodes = self.db.episodes().list_by_show(show.id).await?;
+
+            for episode in episodes {
+                // Get all media files linked to this episode
+                let files = self
+                    .db
+                    .media_files()
+                    .list_by_episode(episode.id)
+                    .await?;
+
+                if files.len() <= 1 {
+                    continue; // No duplicates
+                }
+
+                // Generate the canonical path for this episode
+                let (organize_files, rename_style) =
+                    self.get_show_organize_settings(&show).await?;
+
+                // Find the "best" file to keep
+                // Priority: 1. Already at canonical path, 2. Highest resolution, 3. Best codec
+                let canonical_path = if organize_files {
+                    let dummy_filename = "file.mkv";
+                    let path = self.generate_organized_path(
+                        &library.path,
+                        &show,
+                        &episode,
+                        dummy_filename,
+                        rename_style,
+                        library.naming_pattern.as_deref(),
+                    );
+                    // Get the parent directory (without filename)
+                    path.parent().map(|p| p.to_path_buf())
+                } else {
+                    None
+                };
+
+                // Score each file
+                let scored_files: Vec<_> = files
+                    .iter()
+                    .map(|f| {
+                        let mut score = 0i32;
+
+                        // Bonus for being at canonical location
+                        if let Some(ref canon) = canonical_path {
+                            if Path::new(&f.path).parent() == Some(canon.as_path()) {
+                                score += 10000;
+                            }
+                        }
+
+                        // Bonus for being organized already
+                        if f.organized {
+                            score += 5000;
+                        }
+
+                        // Resolution score
+                        score += match f.resolution.as_deref() {
+                            Some("2160p") => 4000,
+                            Some("1080p") => 3000,
+                            Some("720p") => 2000,
+                            Some("480p") => 1000,
+                            _ => 0,
+                        };
+
+                        // Codec score
+                        let codec = f.video_codec.as_deref().unwrap_or("").to_lowercase();
+                        score += if codec.contains("hevc") || codec.contains("h265") {
+                            300
+                        } else if codec.contains("av1") {
+                            200
+                        } else if codec.contains("h264") || codec.contains("avc") {
+                            100
+                        } else {
+                            0
+                        };
+
+                        // Larger file is probably better quality
+                        score += (f.size_bytes / 1_000_000) as i32; // MB as points
+
+                        (f, score)
+                    })
+                    .collect();
+
+                // Sort by score descending
+                let mut sorted: Vec<_> = scored_files;
+                sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+                // Keep the first (best) file, delete the rest
+                let best_file = sorted[0].0;
+                let duplicates: Vec<_> = sorted.iter().skip(1).map(|(f, _)| *f).collect();
+
+                for dup in duplicates {
+                    info!(
+                        episode = %format!("S{:02}E{:02}", episode.season, episode.episode),
+                        show = %show.name,
+                        keeping = %best_file.path,
+                        deleting = %dup.path,
+                        "Removing duplicate file"
+                    );
+
+                    // Delete the file from disk
+                    let dup_path = Path::new(&dup.path);
+                    if dup_path.exists() {
+                        if let Err(e) = tokio::fs::remove_file(dup_path).await {
+                            warn!(
+                                path = %dup.path,
+                                error = %e,
+                                "Failed to delete duplicate file from disk"
+                            );
+                            messages.push(format!("Failed to delete {}: {}", dup.path, e));
+                        } else {
+                            files_deleted += 1;
+                            messages.push(format!("Deleted duplicate: {}", dup.path));
+                        }
+                    }
+
+                    // Delete the database record
+                    if let Err(e) = self.db.media_files().delete(dup.id).await {
+                        warn!(
+                            file_id = %dup.id,
+                            error = %e,
+                            "Failed to delete duplicate record from database"
+                        );
+                    }
+
+                    duplicates_removed += 1;
+                }
+            }
+        }
+
+        if duplicates_removed > 0 {
+            info!(
+                library_id = %library_id,
+                duplicates_removed = duplicates_removed,
+                files_deleted = files_deleted,
+                "Deduplication complete"
+            );
+        }
+
+        Ok(DeduplicationResult {
+            duplicates_removed,
+            files_deleted,
+            messages,
+        })
+    }
+
+    /// Clean up orphan files - files on disk that aren't tracked in the database
+    ///
+    /// This is useful after hardlinking, where the original file remains but the
+    /// database record is updated to point to the new location.
+    pub async fn cleanup_orphan_files(&self, library_id: Uuid) -> Result<CleanupResult> {
+        let library = self
+            .db
+            .libraries()
+            .get_by_id(library_id)
+            .await?
+            .context("Library not found")?;
+
+        let library_path = Path::new(&library.path);
+        if !library_path.exists() {
+            return Ok(CleanupResult {
+                folders_removed: 0,
+                messages: vec!["Library path does not exist".to_string()],
+            });
+        }
+
+        let mut files_deleted = 0;
+        let mut messages = Vec::new();
+
+        // Get all tracked files in this library
+        let tracked_files = self.db.media_files().list_by_library(library_id).await?;
+        let tracked_paths: std::collections::HashSet<String> =
+            tracked_files.iter().map(|f| f.path.clone()).collect();
+
+        // Get extensions for this library type
+        let valid_extensions = crate::services::scanner::get_extensions_for_library_type(&library.library_type);
+
+        // Walk the library and find orphan files
+        for entry in WalkDir::new(library_path)
+            .follow_links(false) // Don't follow symlinks
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|s| s.to_lowercase());
+
+            // Skip non-media files
+            if !ext.as_ref().map(|e| valid_extensions.contains(&e.as_str())).unwrap_or(false) {
+                continue;
+            }
+
+            let path_str = path.to_string_lossy().to_string();
+
+            // If this file is tracked in the database, skip it
+            if tracked_paths.contains(&path_str) {
+                continue;
+            }
+
+            // This file is not tracked - check if it's a hardlink
+            if let Ok(metadata) = std::fs::metadata(path) {
+                use std::os::unix::fs::MetadataExt;
+                let nlink = metadata.nlink();
+
+                if nlink > 1 {
+                    // This is a hardlink - another file with the same content exists
+                    // Safe to delete this orphan
+                    info!(
+                        path = %path_str,
+                        "Deleting orphan hardlink (not in database, has other hardlinks)"
+                    );
+                    if let Err(e) = tokio::fs::remove_file(path).await {
+                        warn!(path = %path_str, error = %e, "Failed to delete orphan hardlink");
+                        messages.push(format!("Failed to delete orphan: {}", path_str));
+                    } else {
+                        files_deleted += 1;
+                        messages.push(format!("Deleted orphan hardlink: {}", path_str));
+                    }
+                } else {
+                    // Single link - this file is unique, don't auto-delete
+                    // Log it for review
+                    debug!(
+                        path = %path_str,
+                        "Found orphan file (not in database), but it's not a hardlink - skipping"
+                    );
+                }
+            }
+        }
+
+        if files_deleted > 0 {
+            info!(
+                library_id = %library_id,
+                files_deleted = files_deleted,
+                "Orphan file cleanup complete"
+            );
+        }
+
+        Ok(CleanupResult {
+            folders_removed: files_deleted, // Reusing the field for files
+            messages,
         })
     }
 
@@ -549,6 +859,92 @@ impl OrganizerService {
                 )
                 .await?;
             results.push(result);
+        }
+
+        // Also check organized files that might need renaming (wrong naming pattern)
+        let organized_files = self
+            .db
+            .media_files()
+            .list_by_library(library_id)
+            .await?
+            .into_iter()
+            .filter(|f| f.organized && f.episode_id.is_some())
+            .collect::<Vec<_>>();
+
+        for file in organized_files {
+            let episode_id = file.episode_id.unwrap();
+
+            let episode = match self.db.episodes().get_by_id(episode_id).await? {
+                Some(ep) => ep,
+                None => continue,
+            };
+
+            let show = match self.db.tv_shows().get_by_id(episode.tv_show_id).await? {
+                Some(s) => s,
+                None => continue,
+            };
+
+            let (organize_files, rename_style, action) =
+                self.get_full_organize_settings(&show).await?;
+
+            if !organize_files || rename_style == RenameStyle::None {
+                continue;
+            }
+
+            // Generate what the path should be
+            let expected_path = self.generate_organized_path(
+                &library.path,
+                &show,
+                &episode,
+                Path::new(&file.path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("file.mkv"),
+                rename_style,
+                library.naming_pattern.as_deref(),
+            );
+
+            let expected_path_str = expected_path.to_string_lossy().to_string();
+
+            // Check if file is already at the expected path (allowing for different extensions)
+            let current_stem = Path::new(&file.path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            let expected_stem = expected_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+
+            // If the stems don't match, this file needs renaming
+            if current_stem != expected_stem {
+                debug!(
+                    file_id = %file.id,
+                    current = %file.path,
+                    expected = %expected_path_str,
+                    "File needs renaming to match naming pattern"
+                );
+
+                // Mark as unorganized so it gets processed
+                if let Err(e) = self.db.media_files().mark_unorganized(file.id).await {
+                    warn!(file_id = %file.id, error = %e, "Failed to mark file as unorganized");
+                    continue;
+                }
+
+                let result = self
+                    .organize_file(
+                        &file,
+                        &show,
+                        &episode,
+                        &library.path,
+                        rename_style,
+                        library.naming_pattern.as_deref(),
+                        &action,
+                        false,
+                    )
+                    .await?;
+                results.push(result);
+            }
         }
 
         Ok(results)
@@ -626,6 +1022,10 @@ impl OrganizerService {
     /// 5. Creates folder structure as needed
     ///
     /// Returns details about what was organized
+    ///
+    /// **DEPRECATED**: Use `TorrentProcessor::process_torrent()` instead for unified processing.
+    /// This function is kept for backwards compatibility but may be removed in a future version.
+    #[deprecated(note = "Use TorrentProcessor::process_torrent() instead")]
     pub async fn organize_torrent(
         &self,
         torrent_info_hash: &str,
@@ -875,6 +1275,7 @@ impl OrganizerService {
                                 bitrate: None,
                                 file_hash: None,
                                 episode_id: Some(ep.id),
+                                movie_id: None,
                                 relative_path: target_path
                                     .strip_prefix(&library.path)
                                     .ok()
@@ -1046,6 +1447,11 @@ impl OrganizerService {
             messages.push(format!("Updated {} media file paths in database", updated));
         }
 
+        // Clean up empty folders (library-type aware)
+        let cleanup_result = self.cleanup_empty_folders(library_id).await?;
+        folders_removed += cleanup_result.folders_removed;
+        messages.extend(cleanup_result.messages);
+
         Ok(ConsolidateResult {
             success: true,
             folders_removed,
@@ -1088,10 +1494,23 @@ impl OrganizerService {
             } else if entry_path.is_file() {
                 // Move file
                 if dest_path.exists() {
-                    messages.push(format!(
-                        "Skipping {}: already exists at destination",
-                        entry_name
-                    ));
+                    // Destination already exists - delete the source (it's a duplicate)
+                    match tokio::fs::remove_file(&entry_path).await {
+                        Ok(_) => {
+                            messages.push(format!(
+                                "Deleted duplicate: {} (already at {})",
+                                entry_path.display(),
+                                dest_path.display()
+                            ));
+                            moved_count += 1; // Count as "handled"
+                        }
+                        Err(e) => {
+                            messages.push(format!(
+                                "Failed to delete duplicate {}: {}",
+                                entry_name, e
+                            ));
+                        }
+                    }
                     continue;
                 }
 
@@ -1277,6 +1696,208 @@ impl OrganizerService {
 
         Ok(updated_count)
     }
+
+    /// Clean up empty folders in a library
+    ///
+    /// This method removes folders that contain no files (recursively).
+    /// For TV libraries, it protects:
+    /// - Show folders that are registered in the database
+    /// - Season folders for registered shows (even if empty)
+    ///
+    /// Returns the number of folders removed
+    pub async fn cleanup_empty_folders(&self, library_id: Uuid) -> Result<CleanupResult> {
+        let library = self
+            .db
+            .libraries()
+            .get_by_id(library_id)
+            .await?
+            .context("Library not found")?;
+
+        let library_path = Path::new(&library.path);
+        if !library_path.exists() {
+            return Ok(CleanupResult {
+                folders_removed: 0,
+                messages: vec!["Library path does not exist".to_string()],
+            });
+        }
+
+        match library.library_type.as_str() {
+            "tv" => self.cleanup_empty_folders_tv(library_id, library_path).await,
+            "movies" => self.cleanup_empty_folders_movies(library_path).await,
+            _ => {
+                // For other library types, do generic cleanup
+                self.cleanup_empty_folders_generic(library_path).await
+            }
+        }
+    }
+
+    /// Clean up empty folders for TV libraries
+    ///
+    /// Protects show and season folders for registered shows
+    async fn cleanup_empty_folders_tv(
+        &self,
+        library_id: Uuid,
+        library_path: &Path,
+    ) -> Result<CleanupResult> {
+        use std::collections::HashSet;
+
+        let mut messages = Vec::new();
+        let mut folders_removed = 0;
+
+        // Build set of protected paths (show folders and their season folders)
+        let mut protected_paths: HashSet<PathBuf> = HashSet::new();
+
+        let shows = self.db.tv_shows().list_by_library(library_id).await?;
+        for show in &shows {
+            // Generate the expected show folder path
+            let show_folder = match show.year {
+                Some(year) => format!("{} ({})", sanitize_for_filename(&show.name), year),
+                None => sanitize_for_filename(&show.name),
+            };
+            let show_path = library_path.join(&show_folder);
+            protected_paths.insert(show_path.clone());
+
+            // Also protect all season folders for this show
+            let episodes = self.db.episodes().list_by_show(show.id).await?;
+            let mut seasons: Vec<i32> = episodes.iter().map(|e| e.season).collect();
+            seasons.sort();
+            seasons.dedup();
+
+            for season in seasons {
+                let season_folder = format!("Season {:02}", season);
+                protected_paths.insert(show_path.join(&season_folder));
+            }
+
+            // Also protect the show's actual path if different from expected
+            if let Some(ref path) = show.path {
+                let actual_path = PathBuf::from(path);
+                protected_paths.insert(actual_path.clone());
+                
+                // And its season folders
+                if actual_path.exists() {
+                    if let Ok(mut entries) = tokio::fs::read_dir(&actual_path).await {
+                        while let Ok(Some(entry)) = entries.next_entry().await {
+                            let entry_path = entry.path();
+                            if entry_path.is_dir() {
+                                let name = entry_path.file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("");
+                                // Protect Season folders
+                                if name.to_lowercase().starts_with("season") {
+                                    protected_paths.insert(entry_path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        debug!(
+            protected_count = protected_paths.len(),
+            "Built protected paths set for TV library cleanup"
+        );
+
+        // Now walk the library and find empty folders to remove
+        // We need to process depth-first (deepest folders first)
+        let folders_to_check = collect_all_folders(library_path).await?;
+        
+        // Sort by depth (deepest first) so we remove children before parents
+        let mut sorted_folders: Vec<_> = folders_to_check.into_iter().collect();
+        sorted_folders.sort_by(|a, b| {
+            let depth_a = a.components().count();
+            let depth_b = b.components().count();
+            depth_b.cmp(&depth_a) // Deepest first
+        });
+
+        for folder in sorted_folders {
+            // Skip the library root itself
+            if folder == library_path {
+                continue;
+            }
+
+            // Skip protected paths
+            if protected_paths.contains(&folder) {
+                debug!(path = %folder.display(), "Skipping protected folder");
+                continue;
+            }
+
+            // Check if folder is empty (no files, may have empty subdirs)
+            if is_folder_empty_of_files(&folder).await? {
+                // Try to remove the folder (will fail if not empty, which is fine)
+                match tokio::fs::remove_dir(&folder).await {
+                    Ok(_) => {
+                        info!(path = %folder.display(), "Removed empty folder");
+                        messages.push(format!("Removed: {}", folder.display()));
+                        folders_removed += 1;
+                    }
+                    Err(e) => {
+                        // If it fails, the folder probably has subdirs that weren't empty
+                        debug!(path = %folder.display(), error = %e, "Could not remove folder");
+                    }
+                }
+            }
+        }
+
+        Ok(CleanupResult {
+            folders_removed,
+            messages,
+        })
+    }
+
+    /// Clean up empty folders for Movie libraries
+    ///
+    /// For movies, we typically have a simpler structure:
+    /// - Movie Name (Year)/movie files
+    /// Remove any folders that are completely empty
+    async fn cleanup_empty_folders_movies(&self, library_path: &Path) -> Result<CleanupResult> {
+        // For now, use generic cleanup for movies
+        // In the future, we could protect registered movie folders
+        self.cleanup_empty_folders_generic(library_path).await
+    }
+
+    /// Generic empty folder cleanup
+    ///
+    /// Removes all folders that contain no files (recursively)
+    async fn cleanup_empty_folders_generic(&self, library_path: &Path) -> Result<CleanupResult> {
+        let mut messages = Vec::new();
+        let mut folders_removed = 0;
+
+        // Collect all folders depth-first
+        let folders_to_check = collect_all_folders(library_path).await?;
+        
+        // Sort by depth (deepest first)
+        let mut sorted_folders: Vec<_> = folders_to_check.into_iter().collect();
+        sorted_folders.sort_by(|a, b| {
+            let depth_a = a.components().count();
+            let depth_b = b.components().count();
+            depth_b.cmp(&depth_a)
+        });
+
+        for folder in sorted_folders {
+            if folder == library_path {
+                continue;
+            }
+
+            if is_folder_empty_of_files(&folder).await? {
+                match tokio::fs::remove_dir(&folder).await {
+                    Ok(_) => {
+                        info!(path = %folder.display(), "Removed empty folder");
+                        messages.push(format!("Removed: {}", folder.display()));
+                        folders_removed += 1;
+                    }
+                    Err(e) => {
+                        debug!(path = %folder.display(), error = %e, "Could not remove folder");
+                    }
+                }
+            }
+        }
+
+        Ok(CleanupResult {
+            folders_removed,
+            messages,
+        })
+    }
 }
 
 /// Result of library consolidation
@@ -1286,6 +1907,55 @@ pub struct ConsolidateResult {
     pub folders_removed: i32,
     pub files_moved: i32,
     pub messages: Vec<String>,
+}
+
+/// Result of empty folder cleanup
+#[derive(Debug, Clone)]
+pub struct CleanupResult {
+    pub folders_removed: i32,
+    pub messages: Vec<String>,
+}
+
+/// Result of deduplication
+#[derive(Debug, Clone)]
+pub struct DeduplicationResult {
+    pub duplicates_removed: i32,
+    pub files_deleted: i32,
+    pub messages: Vec<String>,
+}
+
+/// Collect all folders in a directory tree
+async fn collect_all_folders(root: &Path) -> Result<Vec<PathBuf>> {
+    use walkdir::WalkDir;
+    
+    let mut folders = Vec::new();
+    
+    for entry in WalkDir::new(root)
+        .min_depth(1) // Skip the root itself
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if entry.file_type().is_dir() {
+            folders.push(entry.path().to_path_buf());
+        }
+    }
+    
+    Ok(folders)
+}
+
+/// Check if a folder is empty of files (may contain empty subdirectories)
+///
+/// Returns true if the folder and all its subdirectories contain no files
+async fn is_folder_empty_of_files(path: &Path) -> Result<bool> {
+    use walkdir::WalkDir;
+    
+    for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+        if entry.file_type().is_file() {
+            return Ok(false);
+        }
+    }
+    
+    Ok(true)
 }
 
 /// Find a file by name within a directory tree

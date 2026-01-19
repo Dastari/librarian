@@ -718,6 +718,14 @@ export const STOP_PLAYBACK_MUTATION = `
   }
 `;
 
+export const UPDATE_PLAYBACK_SETTINGS_MUTATION = `
+  mutation UpdatePlaybackSettings($input: UpdatePlaybackSettingsInput!) {
+    updatePlaybackSettings(input: $input) {
+      syncIntervalSeconds
+    }
+  }
+`;
+
 // ============================================================================
 // Filesystem Mutations
 // ============================================================================

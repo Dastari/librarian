@@ -63,14 +63,14 @@ function HomePage() {
     refetch 
   } = useDashboardCache(user?.id ?? null)
 
-  // Subscribe to data changes for live updates
+  // Refresh on window focus (subscriptions in useDashboardCache handle real-time updates)
   useDataReactivity(
     () => {
       if (user && !isLoading) {
         refetch()
       }
     },
-    { onTorrentComplete: true, periodicInterval: 60000, onFocus: true }
+    { onTorrentComplete: false, periodicInterval: false, onFocus: true }
   )
 
   // Open sign-in modal if signin search param is true

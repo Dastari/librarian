@@ -9,6 +9,7 @@ import { Breadcrumbs, BreadcrumbItem } from '@heroui/breadcrumbs'
 import { useDisclosure } from '@heroui/modal'
 import { addToast } from '@heroui/toast'
 import { Tooltip } from '@heroui/tooltip'
+import { Spinner } from '@heroui/spinner'
 import { RouteError } from '../../components/RouteError'
 import { sanitizeError, formatBytes } from '../../lib/format'
 import { useDataReactivity } from '../../hooks/useSubscription'
@@ -17,8 +18,10 @@ import {
   MOVIE_QUERY,
   LIBRARY_QUERY,
   DELETE_MOVIE_MUTATION,
+  MOVIE_MEDIA_FILE_QUERY,
   type Movie,
   type Library,
+  type MediaFile,
 } from '../../lib/graphql'
 import {
   IconMovie,
@@ -33,6 +36,7 @@ import {
   IconX,
 } from '@tabler/icons-react'
 import { ConfirmModal } from '../../components/ConfirmModal'
+import { getMediaStreamUrl } from '../../components/VideoPlayer'
 
 export const Route = createFileRoute('/movies/$movieId')({
   beforeLoad: ({ context, location }) => {
@@ -55,11 +59,15 @@ function MovieDetailPage() {
   const navigate = useNavigate()
   const [movie, setMovie] = useState<Movie | null>(null)
   const [library, setLibrary] = useState<Library | null>(null)
+  const [mediaFile, setMediaFile] = useState<MediaFile | null>(null)
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState(false)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [loadingPlay, setLoadingPlay] = useState(false)
   const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure()
   
   const initialLoadDone = useRef(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
 
   // Update page title
   useEffect(() => {
@@ -84,15 +92,27 @@ function MovieDetailPage() {
       if (movieResult.data?.movie) {
         setMovie(movieResult.data.movie)
 
-        // Fetch library info
-        const libraryResult = await graphqlClient
-          .query<{ library: Library | null }>(LIBRARY_QUERY, {
-            id: movieResult.data.movie.libraryId,
-          })
-          .toPromise()
+        // Fetch library info and media file in parallel
+        const [libraryResult, mediaFileResult] = await Promise.all([
+          graphqlClient
+            .query<{ library: Library | null }>(LIBRARY_QUERY, {
+              id: movieResult.data.movie.libraryId,
+            })
+            .toPromise(),
+          movieResult.data.movie.hasFile
+            ? graphqlClient
+                .query<{ movieMediaFile: MediaFile | null }>(MOVIE_MEDIA_FILE_QUERY, {
+                  movieId,
+                })
+                .toPromise()
+            : Promise.resolve({ data: null }),
+        ])
 
         if (libraryResult.data?.library) {
           setLibrary(libraryResult.data.library)
+        }
+        if (mediaFileResult.data?.movieMediaFile) {
+          setMediaFile(mediaFileResult.data.movieMediaFile)
         }
       }
     } catch (err) {
@@ -115,6 +135,40 @@ function MovieDetailPage() {
     },
     { onTorrentComplete: true, periodicInterval: 30000, onFocus: true }
   )
+
+  const handlePlay = async () => {
+    if (!mediaFile) {
+      // Try to fetch media file if we don't have it
+      setLoadingPlay(true)
+      try {
+        const result = await graphqlClient
+          .query<{ movieMediaFile: MediaFile | null }>(MOVIE_MEDIA_FILE_QUERY, { movieId })
+          .toPromise()
+        
+        if (result.data?.movieMediaFile) {
+          setMediaFile(result.data.movieMediaFile)
+          setIsPlaying(true)
+        } else {
+          addToast({
+            title: 'No media file',
+            description: 'No playable media file found for this movie',
+            color: 'warning',
+          })
+        }
+      } catch (err) {
+        console.error('Failed to get media file:', err)
+        addToast({
+          title: 'Error',
+          description: 'Failed to load media file',
+          color: 'danger',
+        })
+      } finally {
+        setLoadingPlay(false)
+      }
+    } else {
+      setIsPlaying(true)
+    }
+  }
 
   const handleDelete = async () => {
     setDeleting(true)
@@ -192,19 +246,6 @@ function MovieDetailPage() {
 
   return (
     <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 mb-20">
-      {/* Backdrop */}
-      {movie.backdropUrl && (
-        <div className="absolute inset-0 -z-10 overflow-hidden h-[400px]">
-          <Image
-            src={movie.backdropUrl}
-            alt=""
-            className="w-full h-full object-cover opacity-20 blur-sm"
-            removeWrapper
-          />
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background" />
-        </div>
-      )}
-
       {/* Header */}
       <div className="flex flex-col md:flex-row gap-6 mb-8">
         {/* Poster */}
@@ -359,9 +400,11 @@ function MovieDetailPage() {
             {movie.hasFile ? (
               <Button
                 color="success"
-                startContent={<IconPlayerPlay size={16} />}
+                startContent={loadingPlay ? <Spinner size="sm" color="current" /> : <IconPlayerPlay size={16} />}
+                onPress={handlePlay}
+                isDisabled={loadingPlay}
               >
-                Play
+                {loadingPlay ? 'Loading...' : 'Play'}
               </Button>
             ) : (
               <Button
@@ -385,6 +428,40 @@ function MovieDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Video Player */}
+      {isPlaying && mediaFile && (
+        <Card className="bg-black mb-8 overflow-hidden">
+          <CardBody className="p-0">
+            <div className="relative w-full aspect-video">
+              <video
+                ref={videoRef}
+                src={getMediaStreamUrl(mediaFile.id)}
+                className="w-full h-full"
+                controls
+                autoPlay
+                onEnded={() => setIsPlaying(false)}
+              />
+            </div>
+            <div className="p-4 flex justify-between items-center">
+              <div>
+                <h3 className="font-semibold">{movie.title}</h3>
+                <p className="text-sm text-default-500">
+                  {mediaFile.resolution && `${mediaFile.resolution} • `}
+                  {mediaFile.videoCodec && `${mediaFile.videoCodec} • `}
+                  {mediaFile.audioCodec}
+                </p>
+              </div>
+              <Button
+                variant="flat"
+                onPress={() => setIsPlaying(false)}
+              >
+                Close Player
+              </Button>
+            </div>
+          </CardBody>
+        </Card>
+      )}
 
       {/* Collection info */}
       {movie.collectionName && (

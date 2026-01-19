@@ -32,6 +32,7 @@ use walkdir::WalkDir;
 use super::filename_parser::{self, ParsedEpisode};
 use super::metadata::{AddTvShowOptions, MetadataProvider, MetadataService};
 use super::organizer::OrganizerService;
+use super::queues::{MediaAnalysisJob, MediaAnalysisQueue};
 use crate::db::{CreateEpisode, CreateMediaFile, Database};
 
 /// Configuration for scanner concurrency
@@ -74,7 +75,7 @@ const AUDIOBOOK_EXTENSIONS: &[&str] = &[
 ];
 
 /// Get file extensions for a library type
-fn get_extensions_for_library_type(library_type: &str) -> &'static [&'static str] {
+pub fn get_extensions_for_library_type(library_type: &str) -> &'static [&'static str] {
     match library_type {
         "movies" | "tv" => VIDEO_EXTENSIONS,
         "music" => AUDIO_EXTENSIONS,
@@ -109,6 +110,8 @@ struct DiscoveredFile {
 }
 
 /// Scanner service for discovering media files
+use crate::graphql::{Library as GqlLibrary, LibraryChangedEvent, LibraryChangeType};
+
 pub struct ScannerService {
     db: Database,
     metadata_service: Arc<MetadataService>,
@@ -116,6 +119,10 @@ pub struct ScannerService {
     config: ScannerConfig,
     /// Semaphore to limit concurrent metadata fetches
     metadata_semaphore: Arc<Semaphore>,
+    /// Optional queue for FFmpeg analysis of discovered files
+    analysis_queue: Option<Arc<MediaAnalysisQueue>>,
+    /// Optional broadcast sender for library changed events
+    library_changed_tx: Option<broadcast::Sender<LibraryChangedEvent>>,
 }
 
 impl ScannerService {
@@ -138,13 +145,42 @@ impl ScannerService {
             progress_tx,
             config,
             metadata_semaphore,
+            analysis_queue: None,
+            library_changed_tx: None,
         }
+    }
+
+    /// Set the library changed event broadcast channel
+    pub fn with_library_changed_tx(mut self, tx: broadcast::Sender<LibraryChangedEvent>) -> Self {
+        self.library_changed_tx = Some(tx);
+        self
+    }
+
+    /// Set the media analysis queue for FFmpeg metadata extraction
+    pub fn with_analysis_queue(mut self, queue: Arc<MediaAnalysisQueue>) -> Self {
+        self.analysis_queue = Some(queue);
+        self
     }
 
     /// Subscribe to scan progress updates - for GraphQL subscriptions
     #[allow(dead_code)]
     pub fn subscribe(&self) -> broadcast::Receiver<ScanProgress> {
         self.progress_tx.subscribe()
+    }
+
+    /// Broadcast a library changed event (for scan start/stop)
+    async fn broadcast_library_changed(&self, library_id: Uuid) {
+        if let Some(tx) = &self.library_changed_tx {
+            // Fetch the updated library to include in the event
+            if let Ok(Some(lib)) = self.db.libraries().get_by_id(library_id).await {
+                let _ = tx.send(LibraryChangedEvent {
+                    change_type: LibraryChangeType::Updated,
+                    library_id: library_id.to_string(),
+                    library_name: Some(lib.name.clone()),
+                    library: Some(GqlLibrary::from_db(lib)),
+                });
+            }
+        }
     }
 
     /// Scan a specific library
@@ -176,6 +212,7 @@ impl ScannerService {
 
         // Set scanning state to true
         self.db.libraries().set_scanning(library_id, true).await?;
+        self.broadcast_library_changed(library_id).await;
 
         info!(
             library_id = %library_id,
@@ -190,6 +227,7 @@ impl ScannerService {
             warn!(path = %library.path, "Library path does not exist");
             // Set scanning back to false before returning
             let _ = self.db.libraries().set_scanning(library_id, false).await;
+            self.broadcast_library_changed(library_id).await;
             return Ok(ScanProgress {
                 library_id,
                 library_name: library.name,
@@ -202,6 +240,28 @@ impl ScannerService {
                 shows_added: 0,
                 episodes_linked: 0,
             });
+        }
+
+        // For TV libraries, run consolidation first to merge duplicate folders
+        // and delete duplicate files before we discover files
+        if library.library_type == "tv" && library.organize_files {
+            info!(library_id = %library_id, "Running pre-scan consolidation");
+            let organizer = OrganizerService::new(self.db.clone());
+            match organizer.consolidate_library(library_id).await {
+                Ok(result) => {
+                    if result.files_moved > 0 || result.folders_removed > 0 {
+                        info!(
+                            library_id = %library_id,
+                            files_moved = result.files_moved,
+                            folders_removed = result.folders_removed,
+                            "Pre-scan consolidation complete"
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(library_id = %library_id, error = %e, "Pre-scan consolidation failed");
+                }
+            }
         }
 
         // Get extensions for this library type
@@ -305,6 +365,7 @@ impl ScannerService {
 
         // Set scanning state back to false
         self.db.libraries().set_scanning(library_id, false).await?;
+        self.broadcast_library_changed(library_id).await;
 
         // Send final progress
         progress.is_complete = true;
@@ -398,6 +459,7 @@ impl ScannerService {
                 let show_files = show_files.clone();
                 let library_name = progress.library_name.clone();
                 let total_files = progress.total_files;
+                let analysis_queue = self.analysis_queue.clone();
 
                 let handle = tokio::spawn(async move {
                     // Acquire semaphore permit for metadata operations
@@ -465,6 +527,7 @@ impl ScannerService {
                                     &file,
                                     &episodes_linked,
                                     &new_files,
+                                    analysis_queue.as_ref(),
                                 )
                                 .await
                                 {
@@ -479,6 +542,7 @@ impl ScannerService {
                                     &file,
                                     None,
                                     &new_files,
+                                    analysis_queue.as_ref(),
                                 )
                                 .await
                                 {
@@ -594,6 +658,7 @@ impl ScannerService {
         file: &DiscoveredFile,
         episodes_linked: &Arc<AtomicI32>,
         new_files: &Arc<AtomicI32>,
+        analysis_queue: Option<&Arc<MediaAnalysisQueue>>,
     ) -> Result<()> {
         let media_files_repo = db.media_files();
 
@@ -662,7 +727,7 @@ impl ScannerService {
         };
 
         // Create media file record
-        Self::create_media_file_static(db, library_id, file, episode_id, new_files).await
+        Self::create_media_file_static(db, library_id, file, episode_id, new_files, analysis_queue).await
     }
 
     /// Static version of create_media_file for use in spawned tasks
@@ -672,6 +737,7 @@ impl ScannerService {
         file: &DiscoveredFile,
         episode_id: Option<Uuid>,
         new_files: &Arc<AtomicI32>,
+        analysis_queue: Option<&Arc<MediaAnalysisQueue>>,
     ) -> Result<()> {
         let create_input = CreateMediaFile {
             library_id,
@@ -689,6 +755,7 @@ impl ScannerService {
             bitrate: None,
             file_hash: None,
             episode_id,
+            movie_id: None,
             relative_path: file.relative_path.clone(),
             original_name: Some(file.filename.clone()),
             resolution: file.parsed.resolution.clone(),
@@ -707,6 +774,28 @@ impl ScannerService {
                     let episodes_repo = db.episodes();
                     if let Err(e) = episodes_repo.mark_downloaded(ep_id, media_file.id).await {
                         warn!(episode_id = %ep_id, error = %e, "Failed to mark episode as downloaded");
+                    }
+                }
+
+                // Queue for FFmpeg analysis to get real metadata
+                if let Some(queue) = analysis_queue {
+                    let job = MediaAnalysisJob {
+                        media_file_id: media_file.id,
+                        path: std::path::PathBuf::from(&file.path),
+                        check_subtitles: true,
+                    };
+                    if let Err(e) = queue.submit(job).await {
+                        warn!(
+                            media_file_id = %media_file.id,
+                            error = %e,
+                            "Failed to queue file for FFmpeg analysis"
+                        );
+                    } else {
+                        debug!(
+                            media_file_id = %media_file.id,
+                            path = %file.path,
+                            "Queued file for FFmpeg analysis"
+                        );
                     }
                 }
             }
@@ -793,6 +882,7 @@ impl ScannerService {
             bitrate: None,
             file_hash: None,
             episode_id,
+            movie_id: None,
             relative_path: file.relative_path.clone(),
             original_name: Some(file.filename.clone()),
             resolution: file.parsed.resolution.clone(),
@@ -811,6 +901,22 @@ impl ScannerService {
                     let episodes_repo = self.db.episodes();
                     if let Err(e) = episodes_repo.mark_downloaded(ep_id, media_file.id).await {
                         warn!(episode_id = %ep_id, error = %e, "Failed to mark episode as downloaded");
+                    }
+                }
+
+                // Queue for FFmpeg analysis to get real metadata
+                if let Some(ref queue) = self.analysis_queue {
+                    let job = MediaAnalysisJob {
+                        media_file_id: media_file.id,
+                        path: std::path::PathBuf::from(&file.path),
+                        check_subtitles: true,
+                    };
+                    if let Err(e) = queue.submit(job).await {
+                        warn!(
+                            media_file_id = %media_file.id,
+                            error = %e,
+                            "Failed to queue file for FFmpeg analysis"
+                        );
                     }
                 }
             }
@@ -901,7 +1007,29 @@ impl ScannerService {
             }
         }
 
-        // Now organize all unorganized files
+        // Step 1: Deduplicate - remove duplicate files for the same episode
+        // This deletes both the file from disk and the database record
+        match organizer.deduplicate_library(library_id).await {
+            Ok(dedup) => {
+                if dedup.duplicates_removed > 0 {
+                    info!(
+                        library_id = %library_id,
+                        duplicates_removed = dedup.duplicates_removed,
+                        files_deleted = dedup.files_deleted,
+                        "Deduplication complete"
+                    );
+                }
+            }
+            Err(e) => {
+                warn!(
+                    library_id = %library_id,
+                    error = %e,
+                    "Failed to deduplicate library"
+                );
+            }
+        }
+
+        // Step 2: Organize - move/rename files to correct locations
         let results = organizer.organize_library(library_id).await?;
 
         let success_count = results.iter().filter(|r| r.success).count();
@@ -915,6 +1043,46 @@ impl ScannerService {
                 errors = error_count,
                 "Library organization complete"
             );
+        }
+
+        // Step 3: Clean up orphan files (hardlinks left behind after organization)
+        match organizer.cleanup_orphan_files(library_id).await {
+            Ok(cleanup) => {
+                if cleanup.folders_removed > 0 {
+                    info!(
+                        library_id = %library_id,
+                        orphan_files_deleted = cleanup.folders_removed,
+                        "Orphan file cleanup complete"
+                    );
+                }
+            }
+            Err(e) => {
+                warn!(
+                    library_id = %library_id,
+                    error = %e,
+                    "Failed to clean up orphan files"
+                );
+            }
+        }
+
+        // Step 4: Clean up empty folders (library-type aware, protects registered show/season folders)
+        match organizer.cleanup_empty_folders(library_id).await {
+            Ok(cleanup) => {
+                if cleanup.folders_removed > 0 {
+                    info!(
+                        library_id = %library_id,
+                        folders_removed = cleanup.folders_removed,
+                        "Empty folder cleanup complete"
+                    );
+                }
+            }
+            Err(e) => {
+                warn!(
+                    library_id = %library_id,
+                    error = %e,
+                    "Failed to clean up empty folders"
+                );
+            }
         }
 
         Ok(())
