@@ -2,7 +2,9 @@ export { LibraryCard, type LibraryCardProps } from './LibraryCard'
 export { LibraryGridCard, type LibraryGridCardProps } from './LibraryGridCard'
 export { AddLibraryModal, type AddLibraryModalProps } from './AddLibraryModal'
 export { TvShowCard, type TvShowCardProps } from './TvShowCard'
+export { MovieCard, type MovieCardProps } from './MovieCard'
 export { AddShowModal, type AddShowModalProps } from './AddShowModal'
+export { AddMovieModal, type AddMovieModalProps } from './AddMovieModal'
 
 // Shared form component
 export { 
@@ -20,6 +22,7 @@ export {
   type LibraryTab 
 } from './LibraryLayout'
 export { LibraryShowsTab } from './LibraryShowsTab'
+export { LibraryMoviesTab } from './LibraryMoviesTab'
 export { LibraryUnmatchedFilesTab } from './LibraryUnmatchedFilesTab'
 export { LibraryFileBrowserTab } from './LibraryFileBrowserTab'
 export { LibrarySettingsTab } from './LibrarySettingsTab'

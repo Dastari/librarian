@@ -515,4 +515,158 @@ impl MovieRepository {
 
         Ok(records)
     }
+
+    /// Find a movie in a library by title and optional year
+    ///
+    /// This uses fuzzy matching to find movies that match the parsed filename.
+    /// The matching logic:
+    /// 1. If year is provided, prefer exact year matches
+    /// 2. Otherwise use normalized title matching
+    pub async fn find_by_title_in_library(
+        &self,
+        library_id: Uuid,
+        title: &str,
+        year: Option<i32>,
+    ) -> Result<Option<MovieRecord>> {
+        // Normalize the input title for comparison
+        let normalized_title = normalize_title(title);
+
+        // First try exact year match if year is provided
+        if let Some(y) = year {
+            let record = sqlx::query_as::<_, MovieRecord>(
+                r#"
+                SELECT id, library_id, user_id, title, sort_title, original_title, year,
+                       tmdb_id, imdb_id, overview, tagline, runtime, genres,
+                       production_countries, spoken_languages, director, cast_names,
+                       tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
+                       collection_id, collection_name, collection_poster_url,
+                       release_date, certification, status, monitored,
+                       allowed_resolutions_override, allowed_video_codecs_override,
+                       allowed_audio_formats_override, require_hdr_override,
+                       allowed_hdr_types_override, allowed_sources_override,
+                       release_group_blacklist_override, release_group_whitelist_override,
+                       has_file, size_bytes, path, created_at, updated_at
+                FROM movies
+                WHERE library_id = $1 AND year = $2 AND (
+                    LOWER(REPLACE(REPLACE(title, '''', ''), ':', '')) = $3 OR
+                    LOWER(REPLACE(REPLACE(original_title, '''', ''), ':', '')) = $3
+                )
+                LIMIT 1
+                "#,
+            )
+            .bind(library_id)
+            .bind(y)
+            .bind(&normalized_title)
+            .fetch_optional(&self.pool)
+            .await?;
+
+            if record.is_some() {
+                return Ok(record);
+            }
+
+            // Try with year +/- 1 (sometimes metadata years differ slightly)
+            let record = sqlx::query_as::<_, MovieRecord>(
+                r#"
+                SELECT id, library_id, user_id, title, sort_title, original_title, year,
+                       tmdb_id, imdb_id, overview, tagline, runtime, genres,
+                       production_countries, spoken_languages, director, cast_names,
+                       tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
+                       collection_id, collection_name, collection_poster_url,
+                       release_date, certification, status, monitored,
+                       allowed_resolutions_override, allowed_video_codecs_override,
+                       allowed_audio_formats_override, require_hdr_override,
+                       allowed_hdr_types_override, allowed_sources_override,
+                       release_group_blacklist_override, release_group_whitelist_override,
+                       has_file, size_bytes, path, created_at, updated_at
+                FROM movies
+                WHERE library_id = $1 AND year BETWEEN $2 AND $3 AND (
+                    LOWER(REPLACE(REPLACE(title, '''', ''), ':', '')) = $4 OR
+                    LOWER(REPLACE(REPLACE(original_title, '''', ''), ':', '')) = $4
+                )
+                ORDER BY ABS(year - $5)
+                LIMIT 1
+                "#,
+            )
+            .bind(library_id)
+            .bind(y - 1)
+            .bind(y + 1)
+            .bind(&normalized_title)
+            .bind(y)
+            .fetch_optional(&self.pool)
+            .await?;
+
+            if record.is_some() {
+                return Ok(record);
+            }
+        }
+
+        // Try title-only match (less reliable, but may work for unique titles)
+        let record = sqlx::query_as::<_, MovieRecord>(
+            r#"
+            SELECT id, library_id, user_id, title, sort_title, original_title, year,
+                   tmdb_id, imdb_id, overview, tagline, runtime, genres,
+                   production_countries, spoken_languages, director, cast_names,
+                   tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
+                   collection_id, collection_name, collection_poster_url,
+                   release_date, certification, status, monitored,
+                   allowed_resolutions_override, allowed_video_codecs_override,
+                   allowed_audio_formats_override, require_hdr_override,
+                   allowed_hdr_types_override, allowed_sources_override,
+                   release_group_blacklist_override, release_group_whitelist_override,
+                   has_file, size_bytes, path, created_at, updated_at
+            FROM movies
+            WHERE library_id = $1 AND (
+                LOWER(REPLACE(REPLACE(title, '''', ''), ':', '')) = $2 OR
+                LOWER(REPLACE(REPLACE(original_title, '''', ''), ':', '')) = $2
+            )
+            LIMIT 1
+            "#,
+        )
+        .bind(library_id)
+        .bind(&normalized_title)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(record)
+    }
+
+    /// Find movies in a library that need files (monitored and missing files)
+    pub async fn list_wanted(&self, library_id: Uuid) -> Result<Vec<MovieRecord>> {
+        let records = sqlx::query_as::<_, MovieRecord>(
+            r#"
+            SELECT id, library_id, user_id, title, sort_title, original_title, year,
+                   tmdb_id, imdb_id, overview, tagline, runtime, genres,
+                   production_countries, spoken_languages, director, cast_names,
+                   tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
+                   collection_id, collection_name, collection_poster_url,
+                   release_date, certification, status, monitored,
+                   allowed_resolutions_override, allowed_video_codecs_override,
+                   allowed_audio_formats_override, require_hdr_override,
+                   allowed_hdr_types_override, allowed_sources_override,
+                   release_group_blacklist_override, release_group_whitelist_override,
+                   has_file, size_bytes, path, created_at, updated_at
+            FROM movies
+            WHERE library_id = $1 AND monitored = true AND has_file = false
+            ORDER BY COALESCE(sort_title, title)
+            "#,
+        )
+        .bind(library_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(records)
+    }
+}
+
+/// Normalize a title for comparison
+/// - Lowercase
+/// - Remove special characters (apostrophes, colons)
+/// - Collapse whitespace
+fn normalize_title(title: &str) -> String {
+    title
+        .to_lowercase()
+        .replace(['\'', '\u{2019}', ':', '-', '.', '_'], "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }

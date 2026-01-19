@@ -14,7 +14,7 @@ import {
 } from '../data-table'
 import type { Torrent } from '../../lib/graphql'
 import { formatBytes, formatSpeed, formatEta, formatRelativeTime } from '../../lib/format'
-import { IconPlayerPlay, IconPlayerPause, IconTrash, IconPlus, IconInfoCircle, IconFolder, IconArrowDown, IconArrowUp } from '@tabler/icons-react'
+import { IconPlayerPlay, IconPlayerPause, IconTrash, IconPlus, IconInfoCircle, IconFolder, IconArrowDown, IconArrowUp, IconLibrary } from '@tabler/icons-react'
 import { TorrentCard, TORRENT_STATE_INFO } from './TorrentCard'
 
 // ============================================================================
@@ -29,6 +29,7 @@ export interface TorrentTableProps {
   onRemove: (id: number) => void
   onInfo: (id: number) => void
   onOrganize: (id: number) => void
+  onLinkToLibrary: (torrent: Torrent) => void
   onBulkPause: (ids: number[]) => void
   onBulkResume: (ids: number[]) => void
   onBulkRemove: (ids: number[]) => void
@@ -63,6 +64,7 @@ export function TorrentTable({
   onRemove,
   onInfo,
   onOrganize,
+  onLinkToLibrary,
   onBulkPause,
   onBulkResume,
   onBulkRemove,
@@ -352,6 +354,14 @@ export function TorrentTable({
         onAction: (torrent) => onOrganize(torrent.id),
       },
       {
+        key: 'link-library',
+        label: 'Link to Library',
+        icon: <IconLibrary size={16} className="text-blue-400" />,
+        inDropdown: true,
+        isVisible: (torrent) => torrent.state === 'SEEDING' || torrent.progress >= 1,
+        onAction: (torrent) => onLinkToLibrary(torrent),
+      },
+      {
         key: 'remove',
         label: 'Remove',
         icon: <IconTrash size={16} className="text-red-400" />,
@@ -363,7 +373,7 @@ export function TorrentTable({
         },
       },
     ],
-    [onPause, onResume, onInfo, onOrganize, onConfirmOpen]
+    [onPause, onResume, onInfo, onOrganize, onLinkToLibrary, onConfirmOpen]
   )
 
   // Custom search function

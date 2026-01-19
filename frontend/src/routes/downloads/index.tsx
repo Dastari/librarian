@@ -19,7 +19,7 @@ import {
   type TorrentActionResult,
   type OrganizeTorrentResult,
 } from '../../lib/graphql'
-import { TorrentTable, AddTorrentModal, TorrentInfoModal } from '../../components/downloads'
+import { TorrentTable, AddTorrentModal, TorrentInfoModal, LinkToLibraryModal } from '../../components/downloads'
 import { sanitizeError } from '../../lib/format'
 import { RouteError } from '../../components/RouteError'
 
@@ -45,7 +45,9 @@ function DownloadsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const { isOpen, onOpen, onClose } = useDisclosure()
   const { isOpen: isInfoOpen, onOpen: onInfoOpen, onClose: onInfoClose } = useDisclosure()
+  const { isOpen: isLinkOpen, onOpen: onLinkOpen, onClose: onLinkClose } = useDisclosure()
   const [selectedTorrentId, setSelectedTorrentId] = useState<number | null>(null)
+  const [torrentToLink, setTorrentToLink] = useState<Torrent | null>(null)
 
   const fetchTorrents = useCallback(async () => {
     try {
@@ -408,6 +410,10 @@ function DownloadsPage() {
         onRemove={handleRemove}
         onInfo={handleInfo}
         onOrganize={handleOrganize}
+        onLinkToLibrary={(torrent) => {
+          setTorrentToLink(torrent)
+          onLinkOpen()
+        }}
         onBulkPause={handleBulkPause}
         onBulkResume={handleBulkResume}
         onBulkRemove={handleBulkRemove}
@@ -429,6 +435,14 @@ function DownloadsPage() {
         torrentId={selectedTorrentId}
         isOpen={isInfoOpen}
         onClose={onInfoClose}
+      />
+
+      {/* Link to Library Modal */}
+      <LinkToLibraryModal
+        isOpen={isLinkOpen}
+        onClose={onLinkClose}
+        torrent={torrentToLink}
+        onLinked={fetchTorrents}
       />
     </div>
   )

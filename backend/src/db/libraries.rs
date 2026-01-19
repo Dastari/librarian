@@ -109,6 +109,7 @@ pub struct LibraryStats {
     pub file_count: Option<i64>,
     pub total_size_bytes: Option<i64>,
     pub show_count: Option<i64>,
+    pub movie_count: Option<i64>,
 }
 
 pub struct LibraryRepository {
@@ -359,18 +360,37 @@ impl LibraryRepository {
     }
 
     /// Get library statistics
+    ///
+    /// Only counts media files that are actually within the library path,
+    /// not files in other locations (like downloads) that happen to be linked.
     pub async fn get_stats(&self, id: Uuid) -> Result<LibraryStats> {
-        // Use separate queries to ensure proper type handling
-        let file_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM media_files WHERE library_id = $1")
-                .bind(id)
-                .fetch_one(&self.pool)
-                .await?;
-
-        let total_size: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(size), 0)::BIGINT FROM media_files WHERE library_id = $1",
+        // First get the library path to filter files
+        let library_path: Option<String> = sqlx::query_scalar(
+            "SELECT path FROM libraries WHERE id = $1"
         )
         .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let path_pattern = library_path
+            .map(|p| format!("{}%", p))
+            .unwrap_or_else(|| "%".to_string());
+
+        // Count only files that are within the library path
+        let file_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM media_files WHERE library_id = $1 AND path LIKE $2"
+        )
+        .bind(id)
+        .bind(&path_pattern)
+        .fetch_one(&self.pool)
+        .await?;
+
+        // Sum size only for files within the library path
+        let total_size: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(size), 0)::BIGINT FROM media_files WHERE library_id = $1 AND path LIKE $2",
+        )
+        .bind(id)
+        .bind(&path_pattern)
         .fetch_one(&self.pool)
         .await?;
 
@@ -380,11 +400,18 @@ impl LibraryRepository {
                 .fetch_one(&self.pool)
                 .await?;
 
+        let movie_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM movies WHERE library_id = $1")
+                .bind(id)
+                .fetch_one(&self.pool)
+                .await?;
+
         tracing::debug!(
             library_id = %id,
             file_count = file_count,
             total_size = total_size,
             show_count = show_count,
+            movie_count = movie_count,
             "Library stats fetched"
         );
 
@@ -392,6 +419,7 @@ impl LibraryRepository {
             file_count: Some(file_count),
             total_size_bytes: Some(total_size),
             show_count: Some(show_count),
+            movie_count: Some(movie_count),
         })
     }
 }

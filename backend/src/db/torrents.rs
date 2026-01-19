@@ -401,4 +401,50 @@ impl TorrentRepository {
 
         Ok(records)
     }
+
+    /// Update post_process_status
+    pub async fn update_post_process_status(&self, info_hash: &str, status: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE torrents 
+            SET post_process_status = $2,
+                processed_at = CASE WHEN $2 = 'completed' THEN NOW() ELSE processed_at END
+            WHERE info_hash = $1
+            "#,
+        )
+        .bind(info_hash)
+        .bind(status)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// List torrents that completed but weren't matched to items
+    /// These can be retried when a show is added to the library
+    pub async fn list_unmatched(&self) -> Result<Vec<TorrentRecord>> {
+        let records = sqlx::query_as::<_, TorrentRecord>(
+            r#"
+            SELECT id, user_id, info_hash, magnet_uri, name, state, progress,
+                   total_bytes, downloaded_bytes, uploaded_bytes, save_path,
+                   download_path, source_url, library_id, episode_id, movie_id,
+                   track_id, album_id, audiobook_id, source_feed_id,
+                   post_process_status, post_process_error, processed_at, added_at, completed_at
+            FROM torrents 
+            WHERE state = 'seeding' 
+              AND completed_at IS NOT NULL
+              AND (post_process_status = 'unmatched' OR post_process_status IS NULL)
+              AND library_id IS NOT NULL
+              AND episode_id IS NULL
+              AND movie_id IS NULL
+              AND album_id IS NULL
+              AND audiobook_id IS NULL
+            ORDER BY completed_at ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(records)
+    }
 }

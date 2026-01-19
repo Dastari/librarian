@@ -1,4 +1,4 @@
-import { StrictMode, useMemo } from 'react'
+import { StrictMode, useState, useEffect, useMemo } from 'react'
 import ReactDOM from 'react-dom/client'
 import { RouterProvider, createRouter } from '@tanstack/react-router'
 import { HeroUIProvider } from '@heroui/system'
@@ -7,8 +7,8 @@ import { NuqsAdapter } from 'nuqs/adapters/react'
 // Import the generated route tree
 import { routeTree } from './routeTree.gen'
 import { ErrorBoundary } from './components/ErrorBoundary'
-import { DEFAULT_AUTH_STATE } from './lib/auth-context'
-import { useAuthState } from './hooks/useAuth'
+import { supabase, isSupabaseConfigured } from './lib/supabase'
+import type { AuthContext } from './lib/auth-context'
 import { initializeTheme } from './hooks/useTheme'
 
 import './styles.css'
@@ -22,7 +22,11 @@ initializeTheme()
 const router = createRouter({
   routeTree,
   context: {
-    auth: DEFAULT_AUTH_STATE,
+    auth: {
+      isAuthenticated: false,
+      isLoading: true,
+      session: null,
+    } as AuthContext,
   },
   defaultPreload: 'intent',
   scrollRestoration: true,
@@ -38,14 +42,62 @@ declare module '@tanstack/react-router' {
 }
 
 // Inner app component that manages auth state
-// Uses the consolidated useAuthState hook to avoid duplicate auth logic
 function InnerApp() {
-  const auth = useAuthState()
+  const [auth, setAuth] = useState<AuthContext>({
+    isAuthenticated: false,
+    isLoading: true,
+    session: null,
+  })
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setAuth({ isAuthenticated: false, isLoading: false, session: null })
+      return
+    }
+
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setAuth({
+        isAuthenticated: !!session,
+        isLoading: false,
+        session,
+      })
+    })
+
+    // Listen for auth changes - only update on meaningful events
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Skip events that don't change auth status to avoid re-renders
+      // - TOKEN_REFRESHED: token was refreshed but user is still authenticated
+      // These events fire on window focus/visibility changes
+      if (event === 'TOKEN_REFRESHED') {
+        return
+      }
+
+      setAuth((prev) => {
+        // Only update if authentication status actually changed
+        const isAuthenticated = !!session
+        const sessionChanged = prev.session?.access_token !== session?.access_token
+
+        // Skip update if nothing meaningful changed
+        if (prev.isAuthenticated === isAuthenticated && !prev.isLoading && !sessionChanged) {
+          return prev // Return same reference to avoid re-render
+        }
+
+        return {
+          isAuthenticated,
+          isLoading: false,
+          session,
+        }
+      })
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
 
   // Memoize the context object to prevent unnecessary router refreshes
   const routerContext = useMemo(() => ({ auth }), [auth])
 
-  // Show loading spinner while auth is initializing
+  // Show nothing while loading auth
   if (auth.isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">

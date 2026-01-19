@@ -21,19 +21,21 @@ import {
   DOWNLOAD_EPISODE_MUTATION,
   DELETE_TV_SHOW_MUTATION,
   UPDATE_TV_SHOW_MUTATION,
+  MEDIA_FILE_UPDATED_SUBSCRIPTION,
   type TvShow,
   type Library,
   type Episode,
   type EpisodeStatus,
   type DownloadEpisodeResult,
   type TvShowResult,
+  type MediaFileUpdatedEvent,
 } from '../../lib/graphql'
 import { formatBytes, formatDate } from '../../lib/format'
 import { DataTable, type DataTableColumn, type RowAction } from '../../components/data-table'
-import { IconDownload, IconDeviceTv, IconClipboard, IconPlayerPlay, IconRefresh, IconSearch, IconSettings, IconTrash } from '@tabler/icons-react'
+import { IconDownload, IconDeviceTv, IconClipboard, IconPlayerPlay, IconPlayerTrackNext, IconRefresh, IconSearch, IconSettings, IconTrash, IconInfoCircle } from '@tabler/icons-react'
 import { Tooltip } from '@heroui/tooltip'
 import { DeleteShowModal, ShowSettingsModal, type ShowSettingsInput } from '../../components/shows'
-import { 
+import {
   EpisodeStatusChip,
   AutoDownloadBadge,
   AutoHuntBadge,
@@ -42,6 +44,7 @@ import {
   QualityFilterBadge,
 } from '../../components/shared'
 import { usePlaybackContext } from '../../contexts/PlaybackContext'
+import { FilePropertiesModal } from '../../components/FilePropertiesModal'
 
 export const Route = createFileRoute('/shows/$showId')({
   beforeLoad: ({ context, location }) => {
@@ -72,12 +75,43 @@ interface SeasonData {
   totalCount: number
 }
 
+// Helper to format video codec display name
+function formatVideoCodec(codec: string | null): string {
+  if (!codec) return ''
+  const normalized = codec.toLowerCase()
+  if (normalized.includes('hevc') || normalized === 'h265') return 'HEVC'
+  if (normalized.includes('h264') || normalized === 'avc') return 'H.264'
+  if (normalized.includes('av1')) return 'AV1'
+  if (normalized.includes('vp9')) return 'VP9'
+  return codec.toUpperCase()
+}
+
+// Helper to format audio codec display name
+function formatAudioCodec(codec: string | null, channels: string | null): string {
+  if (!codec) return ''
+  const normalized = codec.toLowerCase()
+  let name = codec.toUpperCase()
+  if (normalized.includes('truehd')) name = 'TrueHD'
+  else if (normalized.includes('atmos')) name = 'Atmos'
+  else if (normalized.includes('dts')) name = 'DTS'
+  else if (normalized.includes('aac')) name = 'AAC'
+  else if (normalized.includes('ac3') || normalized.includes('ac-3')) name = 'AC3'
+  else if (normalized.includes('eac3') || normalized.includes('e-ac-3')) name = 'EAC3'
+  else if (normalized.includes('flac')) name = 'FLAC'
+  else if (normalized.includes('opus')) name = 'Opus'
+
+  if (channels) {
+    return `${name} ${channels}`
+  }
+  return name
+}
+
 // Episode table columns
 const episodeColumns: DataTableColumn<Episode>[] = [
   {
     key: 'episode',
     label: '#',
-    width: 80,
+    width: 60,
     sortable: true,
     render: (ep) => (
       <span className="font-mono text-default-500">
@@ -90,26 +124,123 @@ const episodeColumns: DataTableColumn<Episode>[] = [
     label: 'Title',
     sortable: true,
     render: (ep) => (
-      <span className="font-medium">
-        {ep.title || `Episode ${ep.episode}`}
-      </span>
+      <div className="flex items-center gap-2">
+        <span className="font-medium">
+          {ep.title || `Episode ${ep.episode}`}
+        </span>
+        {ep.isWatched && (
+          <span className="text-xs text-success">✓</span>
+        )}
+      </div>
     ),
+  },
+  {
+    key: 'progress',
+    label: 'Progress',
+    width: 100,
+    render: (ep) => {
+      // Show nothing if no media file (not downloaded)
+      if (!ep.mediaFileId) {
+        return <span className="text-default-400">-</span>
+      }
+      // Show checkmark if fully watched
+      if (ep.isWatched) {
+        return <span className="text-success text-sm">Watched</span>
+      }
+      // Show progress bar for partially watched
+      if (ep.watchProgress !== null && ep.watchProgress > 0) {
+        return (
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 w-16 bg-default-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary rounded-full"
+                style={{ width: `${Math.min(ep.watchProgress * 100, 100)}%` }}
+              />
+            </div>
+            <span className="text-xs text-default-400">
+              {Math.round(ep.watchProgress * 100)}%
+            </span>
+          </div>
+        )
+      }
+      // Not started
+      return <span className="text-default-400 text-sm">-</span>
+    },
   },
   {
     key: 'airDate',
     label: 'Air Date',
-    width: 120,
+    width: 130,
     sortable: true,
     render: (ep) => (
-      <span className="text-default-500 text-sm">
+      <span className="text-default-500 text-sm text-nowrap">
         {formatAirDate(ep.airDate)}
       </span>
     ),
   },
   {
+    key: 'quality',
+    label: 'Quality',
+    width: 220,
+    render: (ep) => {
+      if (ep.status !== 'DOWNLOADED' || !ep.mediaFileId) {
+        return <span className="text-default-400">-</span>
+      }
+      return (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {ep.resolution && (
+            <Chip size="sm" variant="flat" color="primary" className="h-5 text-xs">
+              {ep.resolution}
+            </Chip>
+          )}
+          {ep.videoCodec && (
+            <Chip size="sm" variant="flat" color="secondary" className="h-5 text-xs">
+              {formatVideoCodec(ep.videoCodec)}
+            </Chip>
+          )}
+          {ep.isHdr && (
+            <Chip size="sm" variant="flat" color="warning" className="h-5 text-xs">
+              {ep.hdrType || 'HDR'}
+            </Chip>
+          )}
+        </div>
+      )
+    },
+  },
+  {
+    key: 'audio',
+    label: 'Audio',
+    width: 100,
+    render: (ep) => {
+      if (ep.status !== 'DOWNLOADED' || !ep.audioCodec) {
+        return <span className="text-default-400">-</span>
+      }
+      return (
+        <Chip size="sm" variant="flat" color="default" className="h-5 text-xs">
+          {formatAudioCodec(ep.audioCodec, ep.audioChannels)}
+        </Chip>
+      )
+    },
+  },
+  {
+    key: 'size',
+    label: 'Size',
+    width: 100,
+    render: (ep) => {
+      if (ep.status !== 'DOWNLOADED' || !ep.fileSizeFormatted) {
+        return <span className="text-default-400">-</span>
+      }
+      return (
+        <span className="text-default-500 text-sm text-nowrap">
+          {ep.fileSizeFormatted}
+        </span>
+      )
+    },
+  },
+  {
     key: 'status',
     label: 'Status',
-    width: 120,
+    width: 110,
     sortable: true,
     render: (ep) => <EpisodeStatusChip status={ep.status} />,
   },
@@ -122,17 +253,31 @@ interface EpisodeTableProps {
   onDownload: (episodeId: string) => void
   onPlay: (episode: Episode) => void
   onSearch: (episode: Episode) => void
+  onShowProperties: (episode: Episode) => void
 }
 
-function EpisodeTable({ episodes, seasonNumber, downloadingEpisodes, onDownload, onPlay, onSearch }: EpisodeTableProps) {
+function EpisodeTable({ episodes, seasonNumber, downloadingEpisodes, onDownload, onPlay, onSearch, onShowProperties }: EpisodeTableProps) {
+  // Helper to determine if episode has resumable progress (any progress but not fully watched)
+  const hasResumeProgress = (ep: Episode) =>
+    ep.watchProgress !== null && ep.watchProgress > 0 && !ep.isWatched
+
   const rowActions = useMemo<RowAction<Episode>[]>(() => [
+    {
+      key: 'resume',
+      label: 'Resume',
+      icon: <IconPlayerTrackNext size={16} />,
+      color: 'success',
+      inDropdown: false,
+      isVisible: (ep) => ep.status === 'DOWNLOADED' && !!ep.mediaFileId && hasResumeProgress(ep),
+      onAction: (ep) => onPlay(ep),
+    },
     {
       key: 'play',
       label: 'Play',
       icon: <IconPlayerPlay size={16} />,
       color: 'success',
       inDropdown: false,
-      isVisible: (ep) => ep.status === 'DOWNLOADED' && !!ep.mediaFileId,
+      isVisible: (ep) => ep.status === 'DOWNLOADED' && !!ep.mediaFileId && !hasResumeProgress(ep),
       onAction: (ep) => onPlay(ep),
     },
     {
@@ -154,7 +299,16 @@ function EpisodeTable({ episodes, seasonNumber, downloadingEpisodes, onDownload,
       isDisabled: (ep) => downloadingEpisodes.has(ep.id),
       onAction: (ep) => onDownload(ep.id),
     },
-  ], [downloadingEpisodes, onDownload, onPlay, onSearch])
+    {
+      key: 'properties',
+      label: 'File Properties',
+      icon: <IconInfoCircle size={16} />,
+      color: 'default',
+      inDropdown: true,
+      isVisible: (ep) => ep.status === 'DOWNLOADED' && !!ep.mediaFileId,
+      onAction: (ep) => onShowProperties(ep),
+    },
+  ], [downloadingEpisodes, onDownload, onPlay, onSearch, onShowProperties])
 
   return (
     <DataTable
@@ -187,6 +341,8 @@ function ShowDetailPage() {
   const [togglingAutoDownload, setTogglingAutoDownload] = useState(false)
   const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure()
   const { isOpen: isSettingsOpen, onOpen: onSettingsOpen, onClose: onSettingsClose } = useDisclosure()
+  const { isOpen: isPropertiesOpen, onOpen: onPropertiesOpen, onClose: onPropertiesClose } = useDisclosure()
+  const [propertiesEpisode, setPropertiesEpisode] = useState<Episode | null>(null)
   const { startPlayback, setCurrentEpisode, setCurrentShow } = usePlaybackContext()
 
   // Track if initial load is done to avoid showing spinner on background refreshes
@@ -246,14 +402,53 @@ function ShowDetailPage() {
     fetchData()
   }, [fetchData])
 
-  // Subscribe to data changes for live updates (especially episode status changes)
+  // Subscribe to media file updates for real-time quality info updates
+  useEffect(() => {
+    if (!show) return
+
+    // Subscribe to media file updates (FFmpeg analysis completes)
+    const sub = graphqlClient
+      .subscription<{ mediaFileUpdated: MediaFileUpdatedEvent }>(
+        MEDIA_FILE_UPDATED_SUBSCRIPTION,
+        { libraryId: show.libraryId }
+      )
+      .subscribe({
+        next: (result) => {
+          if (result.data?.mediaFileUpdated) {
+            const event = result.data.mediaFileUpdated
+            // Check if this update is for one of our episodes
+            if (event.episodeId) {
+              setEpisodes((prev) =>
+                prev.map((ep) =>
+                  ep.id === event.episodeId
+                    ? {
+                        ...ep,
+                        resolution: event.resolution ?? ep.resolution,
+                        videoCodec: event.videoCodec ?? ep.videoCodec,
+                        audioCodec: event.audioCodec ?? ep.audioCodec,
+                        audioChannels: event.audioChannels ?? ep.audioChannels,
+                        isHdr: event.isHdr ?? ep.isHdr,
+                        hdrType: event.hdrType ?? ep.hdrType,
+                      }
+                    : ep
+                )
+              )
+            }
+          }
+        },
+      })
+
+    return () => sub.unsubscribe()
+  }, [show?.id, show?.libraryId])
+
+  // Subscribe to torrent completions and focus events for data refresh
   useDataReactivity(
     () => {
       if (initialLoadDone.current) {
         fetchData(true)
       }
     },
-    { onTorrentComplete: true, periodicInterval: 15000, onFocus: true }
+    { onTorrentComplete: true, periodicInterval: false, onFocus: true }
   )
 
 
@@ -425,11 +620,26 @@ function ShowDetailPage() {
       // Set metadata for the persistent player
       setCurrentEpisode(episode)
       setCurrentShow(show)
+
+      // Determine start position:
+      // - If watched (>=90%), restart from beginning
+      // - If has progress (5-90%), resume from saved position
+      // - Otherwise, start from beginning
+      let startPosition = 0
+      if (episode.watchPosition && episode.watchProgress !== null) {
+        if (!episode.isWatched && episode.watchProgress > 0) {
+          // Resume from saved position
+          startPosition = episode.watchPosition
+        }
+        // If watched, start from 0 (replay)
+      }
+
       // Start playback (this will trigger the persistent player)
       await startPlayback({
         episodeId: episode.id,
         mediaFileId: episode.mediaFileId,
         tvShowId: show.id,
+        startPosition,
       }, episode, show)
     }
   }, [show, startPlayback, setCurrentEpisode, setCurrentShow])
@@ -437,12 +647,12 @@ function ShowDetailPage() {
   // Navigate to hunt page with pre-filled query for missing episode
   const handleSearchEpisode = useCallback((episode: Episode) => {
     if (!show) return
-    
+
     // Build search query: "Show Name S01E05"
     const seasonPadded = String(episode.season).padStart(2, '0')
     const episodePadded = String(episode.episode).padStart(2, '0')
     const searchQuery = `${show.name} S${seasonPadded}E${episodePadded}`
-    
+
     // Navigate to hunt page with query params
     navigate({
       to: '/hunt',
@@ -452,6 +662,12 @@ function ShowDetailPage() {
       },
     })
   }, [show, navigate])
+
+  // Show file properties modal for an episode
+  const handleShowProperties = useCallback((episode: Episode) => {
+    setPropertiesEpisode(episode)
+    onPropertiesOpen()
+  }, [onPropertiesOpen])
 
   const handleToggleAutoDownload = async (enabled: boolean) => {
     setTogglingAutoDownload(true)
@@ -531,7 +747,7 @@ function ShowDetailPage() {
         <div className="flex flex-col md:flex-row gap-6 mb-8">
           {/* Poster Skeleton */}
           <Skeleton className="w-48 h-72 rounded-lg shrink-0" />
-          
+
           {/* Details Skeleton */}
           <div className="flex-1">
             <Skeleton className="w-48 h-4 rounded mb-4" />
@@ -700,7 +916,7 @@ function ShowDetailPage() {
               const isInherited = show.autoDownloadOverride === null
               const effectiveValue = isInherited ? (library?.autoDownload ?? false) : show.autoDownloadOverride
               const isEnabled = effectiveValue === true
-              
+
               return (
                 <AutoDownloadBadge
                   isInherited={isInherited}
@@ -716,7 +932,7 @@ function ShowDetailPage() {
               const isInherited = show.organizeFilesOverride === null
               const effectiveValue = isInherited ? (library?.organizeFiles ?? false) : show.organizeFilesOverride
               const isEnabled = effectiveValue === true
-              
+
               return (
                 <FileOrganizationBadge
                   isInherited={isInherited}
@@ -730,7 +946,7 @@ function ShowDetailPage() {
               const isInherited = show.autoHuntOverride === null
               const effectiveValue = isInherited ? (library?.autoHunt ?? false) : show.autoHuntOverride
               const isEnabled = effectiveValue === true
-              
+
               return (
                 <AutoHuntBadge
                   isInherited={isInherited}
@@ -745,7 +961,7 @@ function ShowDetailPage() {
             {/* Quality Filter Badge */}
             {(() => {
               const isInherited = show.allowedResolutionsOverride === null
-              const resolutions = isInherited 
+              const resolutions = isInherited
                 ? (library?.allowedResolutions || [])
                 : (show.allowedResolutionsOverride || [])
               const codecs = isInherited
@@ -833,6 +1049,7 @@ function ShowDetailPage() {
                   onDownload={handleDownloadEpisode}
                   onPlay={handlePlay}
                   onSearch={handleSearchEpisode}
+                  onShowProperties={handleShowProperties}
                 />
               </AccordionItem>
             ))}
@@ -856,6 +1073,17 @@ function ShowDetailPage() {
         show={show}
         onSave={handleSaveSettings}
         isLoading={savingSettings}
+      />
+
+      {/* File Properties Modal */}
+      <FilePropertiesModal
+        isOpen={isPropertiesOpen}
+        onClose={() => {
+          onPropertiesClose()
+          setPropertiesEpisode(null)
+        }}
+        mediaFileId={propertiesEpisode?.mediaFileId ?? null}
+        title={propertiesEpisode ? `${show.name} - S${String(propertiesEpisode.season).padStart(2, '0')}E${String(propertiesEpisode.episode).padStart(2, '0')}${propertiesEpisode.title ? ` - ${propertiesEpisode.title}` : ''}` : undefined}
       />
 
     </div>

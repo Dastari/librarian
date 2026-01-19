@@ -19,8 +19,8 @@ use crate::services::{
 use super::auth::AuthGuard;
 use super::types::{
     CastDevice, CastPlayerState, CastSession, DirectoryChangeEvent, LibraryChangedEvent,
-    LogEventSubscription, LogLevel, TorrentAddedEvent, TorrentCompletedEvent, TorrentProgress,
-    TorrentRemovedEvent, TorrentState,
+    LogEventSubscription, LogLevel, MediaFileUpdatedEvent, TorrentAddedEvent,
+    TorrentCompletedEvent, TorrentProgress, TorrentRemovedEvent, TorrentState,
 };
 
 pub struct SubscriptionRoot;
@@ -340,6 +340,42 @@ impl SubscriptionRoot {
         BroadcastStream::new(receiver).filter_map(|result| result.ok())
     }
 
+    /// Subscribe to media file updates (e.g., after FFmpeg analysis completes)
+    ///
+    /// Receives events when media files are analyzed and metadata is updated.
+    /// Useful for updating UI with real quality info after download/scan.
+    #[graphql(guard = "AuthGuard")]
+    async fn media_file_updated<'ctx>(
+        &self,
+        ctx: &Context<'ctx>,
+        #[graphql(desc = "Filter to updates for a specific library")] library_id: Option<String>,
+        #[graphql(desc = "Filter to updates for a specific episode")] episode_id: Option<String>,
+    ) -> impl Stream<Item = MediaFileUpdatedEvent> + 'ctx {
+        let receiver = ctx
+            .data_unchecked::<broadcast::Sender<MediaFileUpdatedEvent>>()
+            .subscribe();
+
+        let filter_library = library_id;
+        let filter_episode = episode_id;
+
+        BroadcastStream::new(receiver).filter_map(move |result| {
+            result.ok().and_then(|event| {
+                // Apply filters if provided
+                if let Some(ref lib_id) = filter_library {
+                    if &event.library_id != lib_id {
+                        return None;
+                    }
+                }
+                if let Some(ref ep_id) = filter_episode {
+                    if event.episode_id.as_ref() != Some(ep_id) {
+                        return None;
+                    }
+                }
+                Some(event)
+            })
+        })
+    }
+
     // ------------------------------------------------------------------------
     // Filesystem Subscriptions
     // ------------------------------------------------------------------------
@@ -380,4 +416,5 @@ impl SubscriptionRoot {
             })
         })
     }
+
 }

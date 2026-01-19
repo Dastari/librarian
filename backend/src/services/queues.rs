@@ -8,12 +8,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use super::ffmpeg::{FfmpegService, MediaAnalysis};
 use super::job_queue::{JobQueueConfig, WorkQueue};
 use crate::db::Database;
+use crate::graphql::types::MediaFileUpdatedEvent;
 
 /// Job payload for media file analysis
 #[derive(Debug, Clone)]
@@ -74,6 +76,7 @@ pub fn create_media_analysis_queue(
     ffmpeg: Arc<FfmpegService>,
     db: Database,
     subtitle_queue: Option<Arc<SubtitleDownloadQueue>>,
+    event_sender: Option<broadcast::Sender<MediaFileUpdatedEvent>>,
 ) -> MediaAnalysisQueue {
     let config = media_analysis_queue_config();
 
@@ -81,9 +84,10 @@ pub fn create_media_analysis_queue(
         let ffmpeg = ffmpeg.clone();
         let db = db.clone();
         let subtitle_queue = subtitle_queue.clone();
+        let event_sender = event_sender.clone();
 
         async move {
-            if let Err(e) = process_media_analysis(ffmpeg, db, subtitle_queue, job).await {
+            if let Err(e) = process_media_analysis(ffmpeg, db, subtitle_queue, event_sender, job).await {
                 error!(error = %e, "Media analysis job failed");
             }
         }
@@ -95,8 +99,20 @@ async fn process_media_analysis(
     ffmpeg: Arc<FfmpegService>,
     db: Database,
     _subtitle_queue: Option<Arc<SubtitleDownloadQueue>>,
+    event_sender: Option<broadcast::Sender<MediaFileUpdatedEvent>>,
     job: MediaAnalysisJob,
 ) -> Result<()> {
+    // First check if the media file still exists before doing any work
+    // (it may have been deleted as a duplicate during organization)
+    if db.media_files().get_by_id(job.media_file_id).await?.is_none() {
+        debug!(
+            media_file_id = %job.media_file_id,
+            path = %job.path.display(),
+            "Media file no longer exists (likely deleted as duplicate), skipping analysis"
+        );
+        return Ok(());
+    }
+
     info!(
         media_file_id = %job.media_file_id,
         path = %job.path.display(),
@@ -117,8 +133,23 @@ async fn process_media_analysis(
         }
     };
 
-    // Store analysis results in database
-    store_media_analysis(&db, job.media_file_id, &analysis).await?;
+    // Store analysis results in database and get updated file info
+    // Note: We check again inside store_media_analysis in case the file was deleted
+    // between our check and now (during the FFmpeg analysis)
+    let updated_info = match store_media_analysis(&db, job.media_file_id, &analysis).await {
+        Ok(info) => info,
+        Err(e) => {
+            // Check if this is due to the media file being deleted (common during reorganization)
+            if e.to_string().contains("no longer exists") {
+                debug!(
+                    media_file_id = %job.media_file_id,
+                    "Media file was deleted during analysis (likely duplicate), skipping storage"
+                );
+                return Ok(());
+            }
+            return Err(e);
+        }
+    };
 
     info!(
         media_file_id = %job.media_file_id,
@@ -128,10 +159,44 @@ async fn process_media_analysis(
         "Media analysis stored"
     );
 
+    // Emit event for subscribers (UI updates)
+    if let Some(sender) = event_sender {
+        let event = MediaFileUpdatedEvent {
+            media_file_id: job.media_file_id.to_string(),
+            library_id: updated_info.library_id.to_string(),
+            episode_id: updated_info.episode_id.map(|id| id.to_string()),
+            movie_id: updated_info.movie_id.map(|id| id.to_string()),
+            resolution: updated_info.resolution,
+            video_codec: updated_info.video_codec,
+            audio_codec: updated_info.audio_codec,
+            audio_channels: updated_info.audio_channels,
+            is_hdr: updated_info.is_hdr,
+            hdr_type: updated_info.hdr_type,
+            duration: updated_info.duration,
+        };
+        if let Err(e) = sender.send(event) {
+            debug!(error = %e, "No subscribers for media file updated event");
+        }
+    }
+
     // TODO: If check_subtitles is true and auto-download is enabled,
     // queue subtitle download jobs for missing languages
 
     Ok(())
+}
+
+/// Info returned after storing analysis (for event emission)
+struct AnalysisStoredInfo {
+    library_id: Uuid,
+    episode_id: Option<Uuid>,
+    movie_id: Option<Uuid>,
+    resolution: Option<String>,
+    video_codec: Option<String>,
+    audio_codec: Option<String>,
+    audio_channels: Option<String>,
+    is_hdr: Option<bool>,
+    hdr_type: Option<String>,
+    duration: Option<i32>,
 }
 
 /// Store media analysis results in the database
@@ -139,8 +204,21 @@ async fn store_media_analysis(
     db: &Database,
     media_file_id: Uuid,
     analysis: &MediaAnalysis,
-) -> Result<()> {
+) -> Result<AnalysisStoredInfo> {
     let pool = db.pool();
+
+    // First, check if the media file still exists (it may have been deleted as a duplicate
+    // during organization that runs concurrently with analysis)
+    let media_file = db
+        .media_files()
+        .get_by_id(media_file_id)
+        .await?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Media file {} no longer exists (likely deleted as duplicate during organization)",
+                media_file_id
+            )
+        })?;
 
     // Get primary video and audio streams for the main file record
     let primary_video = FfmpegService::primary_video_stream(analysis);
@@ -364,7 +442,20 @@ async fn store_media_analysis(
         "Stored all stream and chapter data"
     );
 
-    Ok(())
+    // Use the media_file we already fetched at the start for event emission
+    // (library_id and episode_id won't change during analysis)
+    Ok(AnalysisStoredInfo {
+        library_id: media_file.library_id,
+        episode_id: media_file.episode_id,
+        movie_id: media_file.movie_id,
+        resolution: primary_video.map(|v| FfmpegService::detect_resolution(v.width, v.height).to_string()),
+        video_codec: primary_video.map(|v| v.codec.clone()),
+        audio_codec: primary_audio.map(|a| a.codec.clone()),
+        audio_channels: primary_audio.and_then(|a| a.channel_layout.clone()),
+        is_hdr: primary_video.and_then(|v| v.hdr_type.map(|_| true)),
+        hdr_type: primary_video.and_then(|v| v.hdr_type.map(|h| h.as_str().to_string())),
+        duration: analysis.duration_secs.map(|d| d as i32),
+    })
 }
 
 /// Placeholder for subtitle download queue processor

@@ -20,9 +20,10 @@ import { usePlaybackContext } from '../contexts/PlaybackContext';
 import { CastButton } from './cast';
 import { VolumeControl } from './VolumeControl';
 import { getMediaStreamUrl } from './VideoPlayer';
-import { graphqlClient, TV_SHOW_QUERY, EPISODES_QUERY, type TvShow, type Episode } from '../lib/graphql';
+import { graphqlClient, TV_SHOW_QUERY, EPISODES_QUERY, PLAYBACK_SETTINGS_QUERY, type TvShow, type Episode, type PlaybackSettings } from '../lib/graphql';
 
-const SYNC_INTERVAL = 5000;
+// Default sync interval (will be overridden by settings)
+const DEFAULT_SYNC_INTERVAL = 15000;
 
 function formatTime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -48,11 +49,28 @@ export function PersistentPlayer() {
   const [isMuted, setIsMuted] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [videoReady, setVideoReady] = useState(false);
+  const [syncInterval, setSyncInterval] = useState(DEFAULT_SYNC_INTERVAL);
   const [isPaused, setIsPaused] = useState(true);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Fetch playback settings on mount
+  useEffect(() => {
+    graphqlClient
+      .query<{ playbackSettings: PlaybackSettings }>(PLAYBACK_SETTINGS_QUERY, {})
+      .toPromise()
+      .then((result) => {
+        if (result.data?.playbackSettings) {
+          // Convert seconds to milliseconds
+          setSyncInterval(result.data.playbackSettings.syncIntervalSeconds * 1000);
+        }
+      })
+      .catch(() => {
+        // Use default on error
+      });
+  }, []);
 
   // Expand to dialog view when shouldExpand is set (triggered by startPlayback)
   useEffect(() => {
@@ -93,7 +111,7 @@ export function PersistentPlayer() {
     }
   }, [session?.isPlaying, videoReady]);
 
-  // Sync position periodically
+  // Sync position periodically (using configurable interval from settings)
   useEffect(() => {
     if (session && !isPaused) {
       syncIntervalRef.current = setInterval(() => {
@@ -104,10 +122,10 @@ export function PersistentPlayer() {
             isPlaying: !videoRef.current.paused,
           });
         }
-      }, SYNC_INTERVAL);
+      }, syncInterval);
     }
     return () => { if (syncIntervalRef.current) clearInterval(syncIntervalRef.current); };
-  }, [session, isPaused, updatePlayback]);
+  }, [session, isPaused, updatePlayback, syncInterval]);
 
   // Cleanup video stream when mediaFileId changes or component unmounts
   // This is critical to abort the HTTP connection and stop network traffic

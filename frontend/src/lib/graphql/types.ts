@@ -269,6 +269,21 @@ export interface DirectoryChangeEvent {
   timestamp: string;
 }
 
+/** Event when a media file is updated (e.g., after FFmpeg analysis) */
+export interface MediaFileUpdatedEvent {
+  mediaFileId: string;
+  libraryId: string;
+  episodeId: string | null;
+  movieId: string | null;
+  resolution: string | null;
+  videoCodec: string | null;
+  audioCodec: string | null;
+  audioChannels: string | null;
+  isHdr: boolean | null;
+  hdrType: string | null;
+  duration: number | null;
+}
+
 export interface PathValidationResult {
   isValid: boolean;
   isLibraryPath: boolean;
@@ -325,6 +340,7 @@ export interface Library {
   itemCount: number;
   totalSizeBytes: number;
   showCount: number;
+  movieCount: number;
   lastScannedAt: string | null;
   // Inline quality settings (empty = any)
   /** Allowed resolutions: 2160p, 1080p, 720p, 480p. Empty = any. */
@@ -508,6 +524,34 @@ export interface Episode {
   torrentLinkAddedAt: string | null;
   /** Media file ID if episode has been downloaded (for playback) */
   mediaFileId: string | null;
+
+  // --- Media file metadata (from FFmpeg analysis) ---
+  /** Video resolution (e.g., "1080p", "2160p", "720p") */
+  resolution: string | null;
+  /** Video codec (e.g., "hevc", "h264", "av1") */
+  videoCodec: string | null;
+  /** Audio codec (e.g., "aac", "dts", "truehd", "atmos") */
+  audioCodec: string | null;
+  /** Audio channel layout (e.g., "stereo", "5.1", "7.1") */
+  audioChannels: string | null;
+  /** Whether the video is HDR */
+  isHdr: boolean | null;
+  /** HDR format type (e.g., "HDR10", "Dolby Vision", "HDR10+") */
+  hdrType: string | null;
+  /** Video bitrate in kbps */
+  videoBitrate: number | null;
+  /** File size in bytes */
+  fileSizeBytes: number | null;
+  /** Human-readable file size */
+  fileSizeFormatted: string | null;
+
+  // --- Watch progress (per-user) ---
+  /** User's watch progress (0.0 to 1.0, null if never watched) */
+  watchProgress: number | null;
+  /** User's current position in seconds (for resume) */
+  watchPosition: number | null;
+  /** Whether the user has watched this episode (>=90% or manually marked) */
+  isWatched: boolean | null;
 }
 
 export interface TvShowResult {
@@ -678,6 +722,80 @@ export interface MediaFile {
   episodeId: string | null;
   organized: boolean;
   addedAt: string;
+}
+
+// ============================================================================
+// Detailed Media File Types (for file properties dialog)
+// ============================================================================
+
+/** Video stream information from FFmpeg analysis */
+export interface VideoStreamInfo {
+  id: string;
+  streamIndex: number;
+  codec: string;
+  codecLongName: string | null;
+  width: number;
+  height: number;
+  aspectRatio: string | null;
+  frameRate: string | null;
+  bitrate: number | null;
+  pixelFormat: string | null;
+  hdrType: string | null;
+  bitDepth: number | null;
+  language: string | null;
+  title: string | null;
+  isDefault: boolean;
+}
+
+/** Audio stream information from FFmpeg analysis */
+export interface AudioStreamInfo {
+  id: string;
+  streamIndex: number;
+  codec: string;
+  codecLongName: string | null;
+  channels: number;
+  channelLayout: string | null;
+  sampleRate: number | null;
+  bitrate: number | null;
+  bitDepth: number | null;
+  language: string | null;
+  title: string | null;
+  isDefault: boolean;
+  isCommentary: boolean;
+}
+
+/** Subtitle track information */
+export interface SubtitleInfo {
+  id: string;
+  streamIndex: number | null;
+  sourceType: 'EMBEDDED' | 'EXTERNAL' | 'DOWNLOADED';
+  codec: string | null;
+  codecLongName: string | null;
+  language: string | null;
+  title: string | null;
+  isDefault: boolean;
+  isForced: boolean;
+  isHearingImpaired: boolean;
+  filePath: string | null;
+}
+
+/** Chapter information from media file */
+export interface ChapterInfo {
+  id: string;
+  chapterIndex: number;
+  startSecs: number;
+  endSecs: number;
+  title: string | null;
+}
+
+/** Detailed media file info including all streams */
+export interface MediaFileDetails {
+  id: string;
+  file: MediaFile;
+  videoStreams: VideoStreamInfo[];
+  audioStreams: AudioStreamInfo[];
+  subtitles: SubtitleInfo[];
+  chapters: ChapterInfo[];
 }
 
 // ============================================================================
@@ -1196,6 +1314,18 @@ export interface PlaybackResult {
   success: boolean;
   session: PlaybackSession | null;
   error: string | null;
+}
+
+/** Playback settings (configurable by user) */
+export interface PlaybackSettings {
+  /** How often to sync watch progress to database (in seconds) */
+  syncIntervalSeconds: number;
+}
+
+/** Input for updating playback settings */
+export interface UpdatePlaybackSettingsInput {
+  /** How often to sync watch progress to database (in seconds, 5-60) */
+  syncIntervalSeconds?: number;
 }
 
 /** Input for adding a cast device manually */

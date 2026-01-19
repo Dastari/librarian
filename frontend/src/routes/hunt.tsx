@@ -212,7 +212,7 @@ function SearchPage() {
     // Prefer magnet link, fall back to torrent file URL
     const magnetUri = release.magnetUri
     const torrentUrl = release.link
-    
+
     if (!magnetUri && !torrentUrl) {
       addToast({
         title: 'Download Error',
@@ -422,14 +422,13 @@ function SearchPage() {
           </Select>
 
           <Input
-            label="Search"
             labelPlacement="inside"
             variant="flat"
             placeholder="Search for torrents..."
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            startContent={<IconSearch size={18} className="text-default-400" />}
+            startContent={<IconSearch size={18} />}
             className="flex-1"
             classNames={{
               label: 'text-sm font-medium text-primary!',

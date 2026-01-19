@@ -159,6 +159,8 @@ pub async fn start_scheduler(
     scanner_service: Arc<ScannerService>,
     torrent_service: Arc<TorrentService>,
     pool: PgPool,
+    analysis_queue: Option<Arc<crate::services::MediaAnalysisQueue>>,
+    metadata_service: Option<Arc<crate::services::MetadataService>>,
 ) -> anyhow::Result<JobScheduler> {
     let scheduler = JobScheduler::new().await?;
     let default_retry = JobRetryConfig::default();
@@ -219,15 +221,21 @@ pub async fn start_scheduler(
     let monitor_torrent_svc = torrent_service.clone();
     let monitor_pool = pool.clone();
     let monitor_retry = critical_retry.clone();
+    let monitor_analysis_queue = analysis_queue.clone();
+    let monitor_metadata_service = metadata_service.clone();
     let download_job = Job::new_async("0 * * * * *", move |_uuid, _l| {
         let svc = monitor_torrent_svc.clone();
         let p = monitor_pool.clone();
         let retry_cfg = monitor_retry.clone();
+        let queue = monitor_analysis_queue.clone();
+        let metadata = monitor_metadata_service.clone();
         Box::pin(async move {
             let _ = run_with_retry("download_monitor", &retry_cfg, || {
                 let svc = svc.clone();
                 let p = p.clone();
-                async move { download_monitor::process_completed_torrents(p, svc).await }
+                let q = queue.clone();
+                let m = metadata.clone();
+                async move { download_monitor::process_completed_torrents(p, svc, q, m).await }
             })
             .await;
         })

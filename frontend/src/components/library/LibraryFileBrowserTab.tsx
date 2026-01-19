@@ -7,6 +7,7 @@ import { Skeleton } from '@heroui/skeleton'
 import { addToast } from '@heroui/toast'
 import { useDisclosure } from '@heroui/modal'
 import { ConfirmModal } from '../ConfirmModal'
+import { FilePropertiesModal } from '../FilePropertiesModal'
 import {
   DataTable,
   type DataTableColumn,
@@ -15,8 +16,11 @@ import {
 } from '../data-table'
 import {
   browseDirectory,
+  graphqlClient,
+  MEDIA_FILE_BY_PATH_QUERY,
   type FileEntry,
   type QuickPath,
+  type MediaFile,
 } from '../../lib/graphql'
 import { sanitizeError } from '../../lib/format'
 import { formatBytes } from '../../lib/format'
@@ -80,6 +84,11 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
   // Confirm modal state
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
   const [pathsToDelete, setPathsToDelete] = useState<string[]>([])
+
+  // File properties modal state
+  const { isOpen: isPropertiesOpen, onOpen: onPropertiesOpen, onClose: onPropertiesClose } = useDisclosure()
+  const [propertiesMediaFileId, setPropertiesMediaFileId] = useState<string | null>(null)
+  const [propertiesFileName, setPropertiesFileName] = useState<string | null>(null)
 
   const fetchDirectory = useCallback(async (path: string) => {
     try {
@@ -182,7 +191,31 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
     })
   }
 
-  const handleProperties = (entry: FileEntry) => {
+  // Check if file is a video file
+  const isVideoFile = (filename: string): boolean => {
+    const ext = filename.split('.').pop()?.toLowerCase()
+    return ['mkv', 'mp4', 'avi', 'mov', 'wmv', 'webm', 'm4v', 'ts', 'm2ts', 'flv', 'mpg', 'mpeg'].includes(ext || '')
+  }
+
+  const handleProperties = async (entry: FileEntry) => {
+    // For video files, try to show the detailed FFmpeg analysis
+    if (!entry.isDir && isVideoFile(entry.name)) {
+      // Look up the media file by path
+      const result = await graphqlClient
+        .query<{ mediaFileByPath: MediaFile | null }>(MEDIA_FILE_BY_PATH_QUERY, { path: entry.path })
+        .toPromise()
+
+      if (result.data?.mediaFileByPath) {
+        // File is in the database, show detailed properties modal
+        setPropertiesMediaFileId(result.data.mediaFileByPath.id)
+        setPropertiesFileName(entry.name)
+        onPropertiesOpen()
+        return
+      }
+      // If not in database, fall through to basic toast
+    }
+
+    // For non-video files or files not in database, show basic info toast
     addToast({
       title: entry.name,
       description: `Path: ${entry.path}\nSize: ${formatBytes(entry.size)}\nType: ${entry.isDir ? 'Directory' : 'File'}`,
@@ -494,6 +527,18 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
         description="This action cannot be undone."
         confirmLabel="Delete"
         confirmColor="danger"
+      />
+
+      {/* File Properties Modal */}
+      <FilePropertiesModal
+        isOpen={isPropertiesOpen}
+        onClose={() => {
+          onPropertiesClose()
+          setPropertiesMediaFileId(null)
+          setPropertiesFileName(null)
+        }}
+        mediaFileId={propertiesMediaFileId}
+        title={propertiesFileName ?? undefined}
       />
     </div>
   )

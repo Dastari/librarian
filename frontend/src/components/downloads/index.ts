@@ -2,3 +2,4 @@ export { TorrentCard, TORRENT_STATE_INFO, type TorrentCardProps } from './Torren
 export { TorrentTable, type TorrentTableProps } from './TorrentTable'
 export { AddTorrentModal, type AddTorrentModalProps } from './AddTorrentModal'
 export { TorrentInfoModal } from './TorrentInfoModal'
+export { LinkToLibraryModal, type LinkToLibraryModalProps } from './LinkToLibraryModal'

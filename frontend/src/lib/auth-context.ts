@@ -6,10 +6,3 @@ export interface AuthContext {
   isLoading: boolean
   session: Session | null
 }
-
-// Default auth state
-export const DEFAULT_AUTH_STATE: AuthContext = {
-  isAuthenticated: false,
-  isLoading: true,
-  session: null,
-}

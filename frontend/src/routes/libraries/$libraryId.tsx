@@ -28,11 +28,12 @@ import {
   DELETE_TV_SHOW_MUTATION,
   UPDATE_LIBRARY_MUTATION,
   SCAN_LIBRARY_MUTATION,
-  CONSOLIDATE_LIBRARY_MUTATION,
+  LIBRARY_CHANGED_SUBSCRIPTION,
   getLibraryTypeInfo,
   type Library,
   type TvShow,
   type UpdateLibraryInput,
+  type LibraryChangedEvent,
 } from '../../lib/graphql'
 import { formatBytes } from '../../lib/format'
 
@@ -80,6 +81,7 @@ function LibraryDetailLayout() {
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
   const [showToDelete, setShowToDelete] = useState<{ id: string; name: string } | null>(null)
+  const [isScanning, setIsScanning] = useState(false)
 
   // Determine active tab from current URL
   const getActiveTab = (): LibraryTab => {
@@ -100,7 +102,7 @@ function LibraryDetailLayout() {
     // Audiobook tabs
     if (path.endsWith('/books')) return 'books'
     if (path.endsWith('/authors')) return 'authors'
-    
+
     // Return default based on library type
     if (library) {
       switch (library.libraryType) {
@@ -156,6 +158,17 @@ function LibraryDetailLayout() {
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  // Sync local scanning state with library scanning state
+  useEffect(() => {
+    if (library && !library.scanning && isScanning) {
+      // Library finished scanning, update local state
+      setIsScanning(false)
+    } else if (library?.scanning && !isScanning) {
+      // Library is scanning (e.g., started from elsewhere), sync local state
+      setIsScanning(true)
+    }
+  }, [library?.scanning, isScanning])
 
   // Update page title when library data is loaded
   useEffect(() => {
@@ -264,6 +277,7 @@ function LibraryDetailLayout() {
   const handleScanLibrary = async () => {
     if (!library) return
 
+    setIsScanning(true)
     try {
       const { data, error } = await graphqlClient
         .mutation<{
@@ -277,6 +291,7 @@ function LibraryDetailLayout() {
           description: sanitizeError(error),
           color: 'danger',
         })
+        setIsScanning(false)
         return
       }
 
@@ -285,65 +300,60 @@ function LibraryDetailLayout() {
         description: data?.scanLibrary.message || `Scanning ${library.name}...`,
         color: 'primary',
       })
+      // Scan completion will be detected via subscription
     } catch (err) {
       console.error('Failed to scan library:', err)
+      setIsScanning(false)
     }
   }
 
-  const [isConsolidating, setIsConsolidating] = useState(false)
+  // Track previous scanning state to detect transitions
+  const prevScanningRef = useRef(library?.scanning)
 
-  const handleConsolidateLibrary = async () => {
+  // Subscribe to library changes to detect scan completion
+  useEffect(() => {
     if (!library) return
 
-    setIsConsolidating(true)
-    try {
-      const { data, error } = await graphqlClient
-        .mutation<{
-          consolidateLibrary: {
-            success: boolean
-            foldersRemoved: number
-            filesMoved: number
-            messages: string[]
+    const sub = graphqlClient
+      .subscription<{ libraryChanged: LibraryChangedEvent }>(
+        LIBRARY_CHANGED_SUBSCRIPTION,
+        {}
+      )
+      .subscribe({
+        next: (result) => {
+          if (result.data?.libraryChanged) {
+            const event = result.data.libraryChanged
+            // Only handle events for this library
+            if (event.libraryId === library.id && event.library) {
+              const wasScanning = prevScanningRef.current
+              const nowScanning = event.library.scanning
+
+              // Update local library state
+              setLibrary(event.library)
+              prevScanningRef.current = nowScanning
+
+              // Detect scan completion (was scanning, now not scanning)
+              if (wasScanning && !nowScanning) {
+                setIsScanning(false)
+                addToast({
+                  title: 'Scan Complete',
+                  description: `Finished scanning ${library.name}`,
+                  color: 'success',
+                })
+                // Refresh all data
+                fetchData(true)
+              } else if (!wasScanning && nowScanning) {
+                // Scan started (e.g., from another client)
+                setIsScanning(true)
+              }
+            }
           }
-        }>(CONSOLIDATE_LIBRARY_MUTATION, { id: library.id })
-        .toPromise()
-
-      if (error) {
-        addToast({
-          title: 'Error',
-          description: sanitizeError(error),
-          color: 'danger',
-        })
-        return
-      }
-
-      if (data?.consolidateLibrary.success) {
-        const result = data.consolidateLibrary
-        addToast({
-          title: 'Consolidation Complete',
-          description: `Moved ${result.filesMoved} files, removed ${result.foldersRemoved} folders`,
-          color: 'success',
-        })
-        // Refresh the library data
-        fetchData()
-      } else {
-        addToast({
-          title: 'Consolidation Failed',
-          description: data?.consolidateLibrary.messages[0] || 'Unknown error',
-          color: 'danger',
-        })
-      }
-    } catch (err) {
-      console.error('Failed to consolidate library:', err)
-      addToast({
-        title: 'Error',
-        description: 'Failed to consolidate library',
-        color: 'danger',
+        },
       })
-    } finally {
-      setIsConsolidating(false)
-    }
-  }
+
+    return () => sub.unsubscribe()
+  }, [library?.id, library?.name, fetchData])
+
 
   // Loading skeleton for library detail page
   if (loading) {
@@ -435,7 +445,13 @@ function LibraryDetailLayout() {
               <div>
                 <h1 className="text-2xl font-bold">{library.name}</h1>
                 <div className="flex items-center gap-3 text-sm text-default-500 mt-1">
-                  <span>{tvShows.length} shows</span>
+                  <span>
+                    {library.libraryType === 'TV'
+                      ? `${library.showCount} shows`
+                      : library.libraryType === 'MOVIES'
+                        ? `${library.movieCount} movies`
+                        : `${library.itemCount} items`}
+                  </span>
                   <span>•</span>
                   <span>{formatBytes(library.totalSizeBytes)}</span>
                   <span>•</span>
@@ -454,33 +470,23 @@ function LibraryDetailLayout() {
                 codecs={library.allowedVideoCodecs || []}
                 requireHdr={library.requireHdr || false}
               />
-            <Button
-              color="primary"
-              variant="flat"
-              size="sm"
-              onPress={handleScanLibrary}
-              isLoading={library.scanning}
-              isDisabled={library.scanning || isConsolidating}
-            >
-              {library.scanning ? 'Scanning...' : 'Scan Now'}
-            </Button>
-            <Button
-              color="warning"
-              variant="flat"
-              size="sm"
-              onPress={handleConsolidateLibrary}
-              isLoading={isConsolidating}
-              isDisabled={library.scanning || isConsolidating}
-            >
-              {isConsolidating ? 'Consolidating...' : 'Consolidate'}
-            </Button>
+              <Button
+                color="primary"
+                variant="flat"
+                size="sm"
+                onPress={handleScanLibrary}
+                isLoading={isScanning || library.scanning}
+                isDisabled={isScanning || library.scanning}
+              >
+                {isScanning || library.scanning ? 'Scanning...' : 'Scan Now'}
+              </Button>
             </div>
           </div>
         </div>
 
         {/* Tabbed Content with Outlet for subroutes */}
-        <LibraryLayout 
-          activeTab={getActiveTab()} 
+        <LibraryLayout
+          activeTab={getActiveTab()}
           libraryId={libraryId}
           libraryType={library.libraryType}
         >

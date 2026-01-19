@@ -23,6 +23,7 @@ pub mod scanner;
 pub mod supabase_storage;
 pub mod tmdb;
 pub mod torrent;
+pub mod torrent_processor;
 pub mod tvmaze;
 
 pub use artwork::ArtworkService;
@@ -43,7 +44,7 @@ pub use metadata::{
 pub use opensubtitles::{
     DownloadedSubtitle, OpenSubtitlesClient, SubtitleSearchQuery, SubtitleSearchResult,
 };
-pub use organizer::{OrganizerService, TorrentFileForOrganize};
+pub use organizer::{CleanupResult, ConsolidateResult, DeduplicationResult, OrganizerService, TorrentFileForOrganize};
 pub use queues::{
     MediaAnalysisJob, MediaAnalysisQueue, SubtitleDownloadJob, SubtitleDownloadQueue,
     create_media_analysis_queue, create_subtitle_download_queue,
@@ -61,6 +62,7 @@ pub use torrent::{
     PeerStats, TorrentDetails, TorrentEvent, TorrentInfo, TorrentService, TorrentServiceConfig,
     TorrentState,
 };
+pub use torrent_processor::{ProcessTorrentResult, TorrentProcessor};
 pub use file_utils::{
     format_bytes, format_bytes_i64, get_container, is_archive_file, is_audio_file,
     is_subtitle_file, is_video_file, sanitize_for_filename, ARCHIVE_EXTENSIONS,

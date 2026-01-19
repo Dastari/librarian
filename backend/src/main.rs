@@ -35,11 +35,12 @@ use crate::db::Database;
 use crate::graphql::{AuthUser, LibrarianSchema, verify_token};
 use crate::services::{
     ArtworkService, CastService, CastServiceConfig, DatabaseLoggerConfig,
-    FilesystemService, FilesystemServiceConfig, MetadataServiceConfig,
-    ScannerService, StorageClient, TorrentService, TorrentServiceConfig,
-    artwork::ensure_artwork_bucket, create_database_layer, create_metadata_service_with_artwork,
-    create_scanner_service,
+    FfmpegService, FilesystemService, FilesystemServiceConfig, MediaAnalysisQueue,
+    MetadataServiceConfig, ScannerService, StorageClient, TorrentService, TorrentServiceConfig,
+    artwork::ensure_artwork_bucket, create_database_layer, create_media_analysis_queue,
+    create_metadata_service_with_artwork, create_scanner_service,
 };
+use crate::graphql::{LibraryChangedEvent, MediaFileUpdatedEvent};
 
 /// Application state shared across all handlers
 #[derive(Clone)]
@@ -51,6 +52,7 @@ pub struct AppState {
     pub scanner_service: Arc<ScannerService>,
     pub cast_service: Arc<CastService>,
     pub filesystem_service: Arc<FilesystemService>,
+    pub analysis_queue: Arc<MediaAnalysisQueue>,
 }
 
 #[tokio::main]
@@ -128,18 +130,69 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Artwork service initialized");
 
     // Initialize metadata service with artwork caching
+    // Check environment variables first, then fall back to database settings
+    let tmdb_api_key = match std::env::var("TMDB_API_KEY").ok() {
+        Some(key) if !key.is_empty() => Some(key),
+        _ => {
+            // Try to read from database settings
+            match db.settings().get_value::<String>("metadata.tmdb_api_key").await {
+                Ok(Some(key)) if !key.is_empty() => {
+                    tracing::info!("Using TMDB API key from database settings");
+                    Some(key)
+                }
+                _ => None,
+            }
+        }
+    };
+    let tvdb_api_key = match std::env::var("TVDB_API_KEY").ok() {
+        Some(key) if !key.is_empty() => Some(key),
+        _ => db.settings().get_value::<String>("metadata.tvdb_api_key").await.ok().flatten(),
+    };
+    let openai_api_key = match std::env::var("OPENAI_API_KEY").ok() {
+        Some(key) if !key.is_empty() => Some(key),
+        _ => db.settings().get_value::<String>("metadata.openai_api_key").await.ok().flatten(),
+    };
+    
     let metadata_config = MetadataServiceConfig {
-        tmdb_api_key: std::env::var("TMDB_API_KEY").ok(),
-        tvdb_api_key: std::env::var("TVDB_API_KEY").ok(),
-        openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
+        tmdb_api_key,
+        tvdb_api_key,
+        openai_api_key,
     };
     let metadata_service =
         create_metadata_service_with_artwork(db.clone(), metadata_config, artwork_service);
     tracing::info!("Metadata service initialized with artwork caching");
 
-    // Initialize scanner service (needs metadata service for auto-discovery)
-    let scanner_service = create_scanner_service(db.clone(), metadata_service.clone());
-    tracing::info!("Scanner service initialized");
+    // Initialize FFmpeg service for media analysis
+    let ffmpeg_service = Arc::new(FfmpegService::new());
+    if ffmpeg_service.is_available().await {
+        tracing::info!("FFmpeg service initialized (ffprobe available)");
+    } else {
+        tracing::warn!("FFmpeg service initialized but ffprobe not found in PATH - media analysis will fail");
+    }
+
+    // Create media file updated broadcast channel for real-time UI updates
+    let (media_file_tx, _) = tokio::sync::broadcast::channel::<MediaFileUpdatedEvent>(100);
+
+    // Initialize media analysis queue for FFmpeg metadata extraction
+    let analysis_queue = Arc::new(create_media_analysis_queue(
+        ffmpeg_service,
+        db.clone(),
+        None, // subtitle_queue - TODO: wire up when subtitle download is implemented
+        Some(media_file_tx.clone()), // Clone so we can also use it in GraphQL schema
+    ));
+    tracing::info!("Media analysis queue initialized");
+
+    // Create library changed broadcast channel for real-time scan status updates
+    let (library_changed_tx, _) = tokio::sync::broadcast::channel::<LibraryChangedEvent>(100);
+
+    // Initialize scanner service with analysis queue and library broadcast
+    let scanner_service = {
+        let scanner = ScannerService::new(db.clone(), metadata_service.clone())
+            .with_analysis_queue(analysis_queue.clone())
+            .with_library_changed_tx(library_changed_tx.clone());
+        Arc::new(scanner)
+    };
+    tracing::info!("Scanner service initialized with FFmpeg analysis");
 
     // Initialize cast service for Chromecast/AirPlay support
     let cast_config = CastServiceConfig {
@@ -165,12 +218,15 @@ async fn main() -> anyhow::Result<()> {
     // Build GraphQL schema
     let schema = graphql::build_schema(
         torrent_service.clone(),
-        metadata_service,
+        metadata_service.clone(),
         scanner_service.clone(),
         cast_service.clone(),
         filesystem_service.clone(),
         db.clone(),
+        analysis_queue.clone(),
         Some(log_broadcast_sender),
+        Some(library_changed_tx),
+        Some(media_file_tx),
     );
     tracing::info!("GraphQL schema built");
 
@@ -179,6 +235,8 @@ async fn main() -> anyhow::Result<()> {
         scanner_service.clone(),
         torrent_service.clone(),
         db.pool().clone(),
+        Some(analysis_queue.clone()),
+        Some(metadata_service.clone()),
     )
     .await?;
     tracing::info!("Job scheduler started");
@@ -199,17 +257,35 @@ async fn main() -> anyhow::Result<()> {
     // This catches torrents that completed while the server was down
     let startup_pool2 = db.pool().clone();
     let startup_torrent_service = torrent_service.clone();
+    let startup_analysis_queue = analysis_queue.clone();
+    let startup_metadata_service = metadata_service.clone();
     tokio::spawn(async move {
         // Short delay to ensure everything is initialized
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        
+        // First, process any pending torrents (newly completed)
         tracing::info!("Checking for unprocessed completed torrents...");
         if let Err(e) = jobs::download_monitor::process_completed_torrents(
-            startup_pool2,
-            startup_torrent_service,
+            startup_pool2.clone(),
+            startup_torrent_service.clone(),
+            Some(startup_analysis_queue.clone()),
+            Some(startup_metadata_service.clone()),
         ).await {
             tracing::warn!("Startup torrent processing failed (will retry on schedule): {}", e);
         } else {
             tracing::info!("Startup torrent processing completed");
+        }
+        
+        // Then, retry matching for previously unmatched torrents
+        // (e.g., shows that were added after the torrent completed)
+        tracing::info!("Checking for unmatched torrents to retry...");
+        if let Err(e) = jobs::download_monitor::process_unmatched_on_startup(
+            startup_pool2,
+            startup_torrent_service,
+            Some(startup_analysis_queue),
+            Some(startup_metadata_service),
+        ).await {
+            tracing::warn!("Unmatched torrent processing failed: {}", e);
         }
     });
 
@@ -222,6 +298,7 @@ async fn main() -> anyhow::Result<()> {
         scanner_service,
         cast_service,
         filesystem_service,
+        analysis_queue,
     };
     
     // Build media state for streaming routes

@@ -8,7 +8,8 @@
 pub mod auth;
 mod schema;
 mod subscriptions;
-mod types;
+pub mod types;
 
 pub use auth::{AuthUser, verify_token};
 pub use schema::{LibrarianSchema, build_schema};
+pub use types::{Library, LibraryChangedEvent, LibraryChangeType, MediaFileUpdatedEvent};
