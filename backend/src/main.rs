@@ -414,6 +414,8 @@ async fn main() -> anyhow::Result<()> {
             }
             result = tui_app.run() => {
                 result?;
+                // TUI exited (user pressed q), terminate the process
+                std::process::exit(0);
             }
         }
     } else {

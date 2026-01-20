@@ -3,26 +3,30 @@
 //! Each panel renders a specific section of the dashboard.
 
 mod database;
+mod libraries;
 mod logs;
 mod system;
 mod torrents;
-pub mod users;
 
-pub use database::DatabasePanel;
+pub use database::{DatabasePanel, SharedTableCounts, TableCounts, create_shared_table_counts, spawn_table_counts_updater};
+pub use libraries::{LibrariesPanel, SharedLibraries, LibraryStats, create_shared_libraries, spawn_libraries_updater};
 pub use logs::LogsPanel;
 pub use system::SystemPanel;
-pub use torrents::{TorrentsPanel, spawn_torrent_updater};
-pub use users::UsersPanel;
+pub use torrents::{TorrentsPanel, spawn_torrent_updater, create_shared_torrents};
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 
 use crate::tui::input::Action;
+use crate::tui::theme::PanelKind;
 
 /// Trait for TUI panels
 pub trait Panel {
-    /// Get the panel title
+    /// Get the panel title (short name like "logs", "net")
     fn title(&self) -> &str;
+
+    /// Get the panel kind for theming
+    fn kind(&self) -> PanelKind;
 
     /// Render the panel content
     fn render(&self, frame: &mut Frame, area: Rect, focused: bool);
@@ -36,5 +40,10 @@ pub trait Panel {
     /// Get current scroll position (for status display)
     fn scroll_position(&self) -> Option<(usize, usize)> {
         None
+    }
+
+    /// Check if panel is visible (for toggle functionality)
+    fn is_visible(&self) -> bool {
+        true
     }
 }

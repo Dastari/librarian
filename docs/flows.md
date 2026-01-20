@@ -2,14 +2,108 @@
 
 This document describes the key backend flows in Librarian using Mermaid diagrams.
 
+> **Note**: See [media-pipeline.md](./media-pipeline.md) for the comprehensive unified pipeline architecture.
+
 ## Table of Contents
 
+- [Unified Media Pipeline](#unified-media-pipeline)
 - [Library Scanning](#library-scanning)
 - [Adding a New Library](#adding-a-new-library)
 - [Torrent Lifecycle](#torrent-lifecycle)
 - [File Organization](#file-organization)
 - [Auto-Hunt System](#auto-hunt-system)
 - [Content Acquisition Workflows](#content-acquisition-workflows)
+- [Quality Verification](#quality-verification)
+
+---
+
+## Unified Media Pipeline
+
+The core principle: **Every file is matched individually**. A torrent with 10 episodes creates 10 separate matches, each updating its own item's status.
+
+### File Matching at Add Time
+
+```mermaid
+flowchart TD
+    A[Torrent Added] --> B[Get File List from Metadata]
+    B --> C[For Each File in Torrent]
+    
+    C --> D{Is Media File?}
+    D -->|No| E[Skip - Sample/NFO/etc]
+    D -->|Yes| F[Parse Filename]
+    
+    F --> G{Has Explicit Item Link?}
+    G -->|Yes| H[Use Provided Item ID]
+    G -->|No| I[Search Wanted Items]
+    
+    I --> J{Match Found?}
+    J -->|No| K[Mark as Unmatched]
+    J -->|Yes| L[Check Quality vs Target]
+    
+    H --> L
+    
+    L --> M{Quality Acceptable?}
+    M -->|Below Minimum| N[Skip File in Torrent]
+    M -->|Suboptimal| O[Create Match - Flag Suboptimal]
+    M -->|Meets Target| P[Create Match - Standard]
+    M -->|Is Upgrade| Q[Create Match - Upgrade]
+    
+    O --> R[Update Item: status = downloading]
+    P --> R
+    Q --> R
+    
+    R --> S[Add to torrent_file_matches]
+    
+    N --> T{Already Have File?}
+    T -->|Yes| U[Exclude from Download]
+    T -->|No| V[Allow Download Anyway]
+```
+
+### Post-Download Processing
+
+```mermaid
+flowchart TD
+    A[Download Complete] --> B{Has Archives?}
+    
+    B -->|Yes| C[Extract to _extracted/]
+    B -->|No| D[Process Files Directly]
+    
+    C --> D
+    
+    D --> E[For Each Media File]
+    
+    E --> F[Run FFprobe Analysis]
+    F --> G[Get Actual Quality]
+    
+    G --> H{Matches Filename Parse?}
+    H -->|Yes| I[Keep Original Match]
+    H -->|No| J[Update Quality Data]
+    
+    I --> K{Quality vs Target?}
+    J --> K
+    
+    K -->|Below Target| L[Set Item: status = suboptimal]
+    K -->|Meets Target| M[Set Item: status = downloaded]
+    
+    L --> N[Create/Update media_file Record]
+    M --> N
+    
+    N --> O{Library organize_files?}
+    O -->|No| P[Leave in Downloads]
+    O -->|Yes| Q[Run Organizer]
+    
+    Q --> R{Target Exists?}
+    R -->|No| S[Move/Copy/Hardlink File]
+    R -->|Yes| T{Better Quality?}
+    
+    T -->|Yes| U[Move Existing to _conflicts/]
+    T -->|No| V[Leave New in Downloads]
+    
+    U --> S
+    S --> W[Update media_file.path]
+```
+
+---
 
 ---
 
@@ -716,3 +810,126 @@ flowchart TD
 | Auto-Hunt | Required | Not used |
 | auto_add_discovered | Optional | Required |
 | Use case | "I want this movie" | "Found a good release, add it" |
+
+---
+
+## Quality Verification
+
+Every media file MUST be analyzed with FFprobe to determine its true quality. Filename parsing is only used for initial matching decisions - the real quality data comes from analysis.
+
+### FFprobe Analysis Flow
+
+```mermaid
+flowchart TD
+    A[Media File Ready] --> B[Queue for FFprobe Analysis]
+    B --> C[MediaAnalysisQueue Worker]
+    
+    C --> D[Run FFprobe on File]
+    D --> E{Success?}
+    
+    E -->|No| F[Log Error, Mark for Retry]
+    E -->|Yes| G[Extract Quality Data]
+    
+    G --> H[Update media_file Record]
+    
+    H --> I{Detected Quality vs Target?}
+    
+    I -->|Meets/Exceeds| J[Item status = downloaded]
+    I -->|Below Target| K[Item status = suboptimal]
+    
+    K --> L{Auto-Hunt Enabled?}
+    L -->|Yes| M[Add to Hunt Queue]
+    L -->|No| N[Flag for Manual Review]
+```
+
+### Quality Data Extracted
+
+| Property | Source | Usage |
+|----------|--------|-------|
+| Resolution (height) | Video stream | Compare to allowed_resolutions |
+| Video Codec | Video stream | Compare to allowed_video_codecs |
+| HDR Type | Video stream metadata | Check require_hdr, allowed_hdr_types |
+| Audio Codec | Audio stream | Compare to allowed_audio_formats |
+| Audio Channels | Audio stream | Informational |
+| Audio Languages | Audio streams | For multi-language support |
+| Embedded Subtitles | Subtitle streams | Flag has_subtitles |
+| Duration | Format | Verify not corrupted |
+| Bitrate | Format | Quality indicator |
+
+### Suboptimal Status Triggers
+
+An item is marked `suboptimal` (not `downloaded`) when:
+
+1. **Resolution below target** - Library wants 1080p but file is 720p
+2. **Codec not preferred** - Library wants x265 but file is x264 (if strictly required)
+3. **HDR missing** - Library requires HDR but file is SDR
+4. **Source quality low** - Library prefers BluRay but file is HDTV
+
+Items with `suboptimal` status:
+- Still appear in the library as "downloaded" (they have a playable file)
+- Are visually distinguished in the UI (e.g., quality badge shows warning)
+- Are included in Auto-Hunt searches for upgrades
+- Can be manually triggered for re-search
+
+---
+
+## Item Status Reference
+
+### Episode Status Values
+
+| Status | Description | Auto-Hunt? | Has File? |
+|--------|-------------|------------|-----------|
+| `missing` | Not yet aired, no file | No | No |
+| `wanted` | Aired, actively seeking | Yes | No |
+| `downloading` | In torrent download queue | No | No (pending) |
+| `downloaded` | File in library, meets quality | No | Yes |
+| `suboptimal` | File in library, below quality target | Yes (upgrade) | Yes |
+| `ignored` | User explicitly skipped | No | No |
+| `available` | Found in RSS, ready to download | Pending | No |
+
+### Track Status Values (Music)
+
+Same as episodes, but:
+- `missing` = album added but track has no file
+- No `available` status (RSS not used for music)
+
+### Chapter Status Values (Audiobooks)
+
+Same as episodes, but:
+- `missing` = audiobook added but chapter has no file
+- No `available` status
+
+### Movie Status
+
+Movies use a combination:
+- `has_file: bool` - Whether any file is linked
+- `monitored: bool` - Whether to auto-hunt
+- Quality status is derived from linked media_file
+
+---
+
+## File Type Handling
+
+### By Extension
+
+| Type | Extensions | Action |
+|------|------------|--------|
+| Video | mkv, mp4, avi, m4v, mov, wmv, ts, m2ts | Match to episode/movie |
+| Audio | mp3, flac, m4a, ogg, opus, wav, aac | Match to track/chapter |
+| Subtitle | srt, sub, ass, ssa, vtt, idx | Copy with video file |
+| Archive | zip, rar, 7z, tar.gz | Extract, then process contents |
+| Image | jpg, jpeg, png | Album art (music), otherwise skip |
+| Sample | *sample* in name, <100MB video | Skip organization |
+| Other | txt, nfo, exe, etc. | Ignore |
+
+### Sample Detection
+
+A file is considered a "sample" if:
+1. Filename contains "sample" (case-insensitive), OR
+2. Video file < 100MB AND duration < 5 minutes
+
+Samples are:
+- Left in torrent folder for seeding
+- NOT organized to library
+- NOT linked to episodes
+- NOT given a media_file record

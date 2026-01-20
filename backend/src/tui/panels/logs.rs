@@ -137,6 +137,16 @@ impl LogsPanel {
         self.level_filter = level;
     }
 
+    /// Toggle a level filter (on if off, off if on)
+    pub fn toggle_level_filter(&mut self, level: &str) {
+        if self.level_filter.as_deref() == Some(level) {
+            self.level_filter = None;
+        } else {
+            self.level_filter = Some(level.to_string());
+        }
+        self.list_state.select(Some(0));
+    }
+
     /// Set search filter
     #[allow(dead_code)]
     pub fn set_search_filter(&mut self, search: Option<String>) {
@@ -176,7 +186,11 @@ impl LogsPanel {
 
 impl Panel for LogsPanel {
     fn title(&self) -> &str {
-        "Logs"
+        "logs"
+    }
+
+    fn kind(&self) -> PanelKind {
+        PanelKind::Logs
     }
 
     fn render(&self, frame: &mut Frame, area: Rect, focused: bool) {
@@ -205,24 +219,56 @@ impl Panel for LogsPanel {
             })
             .collect();
 
-        // Build title with status
-        let status = if self.paused {
-            " [PAUSED]"
-        } else if self.auto_scroll {
-            " [LIVE]"
-        } else {
-            ""
+        // Build title with decorators
+        let status = if self.paused { " ⏸" } else { "" };
+        let border_style = if focused { Theme::border(PanelKind::Logs) } else { Theme::border_dim() };
+        
+        // Current time
+        let now = chrono::Local::now();
+        let time_str = now.format("%H:%M:%S").to_string();
+        
+        // Level filter indicator
+        let filter_indicator = match self.level_filter.as_deref() {
+            Some("WARN") => " [W]",
+            Some("INFO") => " [I]",
+            Some("ERROR") => " [E]",
+            _ => "",
         };
-        let title = format!(" Logs{} ({}) ", status, filtered.len());
+        
+        // Left title: panel name and options
+        let left_title = Line::from(vec![
+            Span::styled("┐", border_style),
+            Span::styled(PanelKind::Logs.superscript(), Theme::panel_number()),
+            Span::styled("logs", Theme::panel_title(PanelKind::Logs)),
+            Span::styled(format!(" ({}){}{}", filtered.len(), status, filter_indicator), Theme::dim()),
+            Span::styled("┌─┐", border_style),
+            Span::styled("p", Theme::keybind_key()),
+            Span::styled("ause", Theme::keybind()),
+            Span::styled("┌─┐", border_style),
+            Span::styled("c", Theme::keybind_key()),
+            Span::styled("lear", Theme::keybind()),
+            Span::styled("┌─┐", border_style),
+            Span::styled("w", Theme::keybind_key()),
+            Span::styled("arn", Theme::keybind()),
+            Span::styled("┌─┐", border_style),
+            Span::styled("i", Theme::keybind_key()),
+            Span::styled("nfo", Theme::keybind()),
+            Span::styled("┌─┐", border_style),
+            Span::styled("e", Theme::keybind_key()),
+            Span::styled("rror", Theme::keybind()),
+            Span::styled("┌", border_style),
+        ]);
 
-        let border_style = if focused {
-            Theme::border_focused()
-        } else {
-            Theme::border()
-        };
+        // Center title: clock
+        let center_title = Line::from(vec![
+            Span::styled("┐", border_style),
+            Span::styled(&time_str, Theme::text()),
+            Span::styled("┌", border_style),
+        ]);
 
         let block = Block::default()
-            .title(Span::styled(title, Theme::panel_title(PanelKind::Logs)))
+            .title(left_title)
+            .title_top(center_title.alignment(ratatui::layout::Alignment::Center))
             .borders(Borders::ALL)
             .border_type(ratatui::widgets::BorderType::Rounded)
             .border_style(border_style);
@@ -287,6 +333,15 @@ impl Panel for LogsPanel {
             }
             Action::Clear => {
                 self.clear();
+            }
+            Action::FilterWarn => {
+                self.toggle_level_filter("WARN");
+            }
+            Action::FilterInfo => {
+                self.toggle_level_filter("INFO");
+            }
+            Action::FilterError => {
+                self.toggle_level_filter("ERROR");
             }
             _ => {}
         }

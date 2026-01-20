@@ -392,14 +392,7 @@ impl TorrentProcessor {
                 continue;
             }
 
-            // Create media file record
             let file_path = &file_info.path;
-            if self.db.media_files().exists_by_path(file_path).await? {
-                debug!(path = %file_path, "Media file already exists");
-                result.files_processed += 1;
-                continue;
-            }
-
             let parsed = filename_parser::parse_movie(
                 Path::new(file_path)
                     .file_name()
@@ -407,10 +400,21 @@ impl TorrentProcessor {
                     .unwrap_or(""),
             );
 
-            let media_file = self
+            // Use upsert to create or update the media file record
+            // This handles the case where a record already exists at this path
+            // (e.g., from a previous attempt or a library scan)
+            info!(
+                movie = %movie.title,
+                movie_id = %movie_id,
+                path = %file_path,
+                size = file_info.size,
+                "Upserting media file record for movie"
+            );
+
+            let media_file = match self
                 .db
                 .media_files()
-                .create(crate::db::CreateMediaFile {
+                .upsert(crate::db::CreateMediaFile {
                     library_id: library.id,
                     path: file_path.clone(),
                     size_bytes: file_info.size as i64,
@@ -433,7 +437,32 @@ impl TorrentProcessor {
                     is_hdr: parsed.hdr.is_some().then_some(true),
                     hdr_type: parsed.hdr.clone(),
                 })
-                .await?;
+                .await
+            {
+                Ok(mf) => {
+                    debug!(
+                        media_file_id = %mf.id,
+                        movie = %movie.title,
+                        path = %file_path,
+                        "Media file record upserted successfully"
+                    );
+                    mf
+                }
+                Err(e) => {
+                    error!(
+                        movie = %movie.title,
+                        path = %file_path,
+                        error = %e,
+                        "Failed to upsert media file record"
+                    );
+                    result.files_failed += 1;
+                    result.messages.push(format!(
+                        "Failed to create media file for {}: {}",
+                        movie.title, e
+                    ));
+                    continue;
+                }
+            };
 
             // Queue for FFmpeg analysis to get real metadata
             self.queue_for_analysis(&media_file).await;
@@ -442,6 +471,8 @@ impl TorrentProcessor {
             if library.organize_files {
                 info!(
                     movie = %movie.title,
+                    movie_id = %movie_id,
+                    media_file_id = %media_file.id,
                     library_path = %library.path,
                     source_path = %file_path,
                     post_download_action = %library.post_download_action,
@@ -462,6 +493,7 @@ impl TorrentProcessor {
                     Ok(org_result) if org_result.success => {
                         info!(
                             movie = %movie.title,
+                            media_file_id = %media_file.id,
                             original_path = %org_result.original_path,
                             new_path = %org_result.new_path,
                             "Movie file organized successfully"
@@ -471,14 +503,30 @@ impl TorrentProcessor {
                     Ok(org_result) => {
                         warn!(
                             movie = %movie.title,
+                            media_file_id = %media_file.id,
                             original_path = %org_result.original_path,
                             new_path = %org_result.new_path,
                             error = ?org_result.error,
                             "Failed to organize movie file"
                         );
+                        result.messages.push(format!(
+                            "Failed to organize {}: {}",
+                            movie.title,
+                            org_result.error.unwrap_or_else(|| "Unknown error".to_string())
+                        ));
                     }
                     Err(e) => {
-                        error!(movie = %movie.title, error = %e, "Error organizing movie file");
+                        error!(
+                            movie = %movie.title,
+                            media_file_id = %media_file.id,
+                            source_path = %file_path,
+                            error = %e,
+                            "Error organizing movie file"
+                        );
+                        result.messages.push(format!(
+                            "Error organizing {}: {}",
+                            movie.title, e
+                        ));
                     }
                 }
             } else {
@@ -562,15 +610,12 @@ impl TorrentProcessor {
             }
 
             let file_path = &file_info.path;
-            if self.db.media_files().exists_by_path(file_path).await? {
-                result.files_processed += 1;
-                continue;
-            }
 
+            // Use upsert to handle existing records gracefully
             let media_file = self
                 .db
                 .media_files()
-                .create(crate::db::CreateMediaFile {
+                .upsert(crate::db::CreateMediaFile {
                     library_id: library.id,
                     path: file_path.clone(),
                     size_bytes: file_info.size as i64,
@@ -595,7 +640,7 @@ impl TorrentProcessor {
                 })
                 .await?;
 
-            // Link to album
+            // Link to album (will update if already linked)
             if let Some(album_id) = torrent.album_id {
                 self.db
                     .media_files()
@@ -738,15 +783,12 @@ impl TorrentProcessor {
             }
 
             let file_path = &file_info.path;
-            if self.db.media_files().exists_by_path(file_path).await? {
-                result.files_processed += 1;
-                continue;
-            }
 
+            // Use upsert to handle existing records gracefully
             let media_file = self
                 .db
                 .media_files()
-                .create(crate::db::CreateMediaFile {
+                .upsert(crate::db::CreateMediaFile {
                     library_id: library.id,
                     path: file_path.clone(),
                     size_bytes: file_info.size as i64,
@@ -771,7 +813,7 @@ impl TorrentProcessor {
                 })
                 .await?;
 
-            // Link to audiobook
+            // Link to audiobook (will update if already linked)
             self.db
                 .media_files()
                 .link_to_audiobook(media_file.id, audiobook_id)
@@ -1836,17 +1878,11 @@ impl TorrentProcessor {
                 .unwrap_or(""),
         );
 
-        // Check if file already exists
-        if self.db.media_files().exists_by_path(file_path).await? {
-            debug!(path = %file_path, "Media file already exists for movie");
-            return Ok(false);
-        }
-
-        // Create media file record
+        // Use upsert to handle existing records gracefully
         let media_file = self
             .db
             .media_files()
-            .create(crate::db::CreateMediaFile {
+            .upsert(crate::db::CreateMediaFile {
                 library_id: library.id,
                 path: file_path.to_string(),
                 size_bytes,
@@ -1875,7 +1911,7 @@ impl TorrentProcessor {
             file_id = %media_file.id,
             movie_id = %movie.id,
             path = %file_path,
-            "Created media file record for movie"
+            "Upserted media file record for movie"
         );
 
         // Queue for FFmpeg analysis to get real metadata
@@ -1943,11 +1979,11 @@ impl TorrentProcessor {
                 .unwrap_or(""),
         );
 
-        // Create media file record
+        // Use upsert to handle existing records gracefully
         let media_file = self
             .db
             .media_files()
-            .create(crate::db::CreateMediaFile {
+            .upsert(crate::db::CreateMediaFile {
                 library_id: library.id,
                 path: file_path.to_string(),
                 size_bytes,
@@ -1976,7 +2012,7 @@ impl TorrentProcessor {
             file_id = %media_file.id,
             path = %file_path,
             episode = ?episode.map(|e| e.id),
-            "Created media file record"
+            "Upserted media file record"
         );
 
         // Queue for FFmpeg analysis to get real metadata (resolution, codec, HDR, etc.)
@@ -2078,7 +2114,7 @@ impl TorrentProcessor {
         }
     }
 
-    /// Create an unlinked media file record
+    /// Create or update an unlinked media file record
     async fn create_unlinked_media_file(
         &self,
         file_path: &str,
@@ -2092,10 +2128,11 @@ impl TorrentProcessor {
                 .unwrap_or(""),
         );
 
+        // Use upsert to handle existing records gracefully
         let media_file = self
             .db
             .media_files()
-            .create(crate::db::CreateMediaFile {
+            .upsert(crate::db::CreateMediaFile {
                 library_id: library.id,
                 path: file_path.to_string(),
                 size_bytes,
@@ -2123,7 +2160,7 @@ impl TorrentProcessor {
         debug!(
             file_id = %media_file.id,
             path = %file_path,
-            "Created unlinked media file"
+            "Upserted unlinked media file"
         );
 
         // Queue for FFmpeg analysis to get real metadata
@@ -2132,23 +2169,24 @@ impl TorrentProcessor {
         Ok(media_file)
     }
 
-    /// Create an unlinked audio file record (for music/audiobooks)
+    /// Create or update an unlinked audio file record (for music/audiobooks)
     async fn create_unlinked_audio_file(
         &self,
         file_path: &str,
         size_bytes: i64,
         library: &crate::db::libraries::LibraryRecord,
     ) -> Result<crate::db::MediaFileRecord> {
+        // Use upsert to handle existing records gracefully
         let media_file = self
             .db
             .media_files()
-            .create(crate::db::CreateMediaFile {
+            .upsert(crate::db::CreateMediaFile {
                 library_id: library.id,
                 path: file_path.to_string(),
                 size_bytes,
                 container: get_container(file_path),
                 video_codec: None,
-                audio_codec: None, // TODO: Parse audio codec from filename or file
+                audio_codec: None,
                 width: None,
                 height: None,
                 duration: None,
@@ -2170,7 +2208,7 @@ impl TorrentProcessor {
         debug!(
             file_id = %media_file.id,
             path = %file_path,
-            "Created unlinked audio file"
+            "Upserted unlinked audio file"
         );
 
         // Queue for FFmpeg analysis to get real audio metadata
@@ -2360,7 +2398,7 @@ impl TorrentProcessor {
         Ok(None)
     }
 
-    /// Create a media file linked to a music album
+    /// Create or update a media file linked to a music album
     async fn create_linked_music_file(
         &self,
         file_path: &str,
@@ -2368,7 +2406,8 @@ impl TorrentProcessor {
         library: &crate::db::libraries::LibraryRecord,
         album: &crate::db::AlbumRecord,
     ) -> Result<crate::db::MediaFileRecord> {
-        let media_file = self.db.media_files().create(crate::db::CreateMediaFile {
+        // Use upsert to handle existing records gracefully
+        let media_file = self.db.media_files().upsert(crate::db::CreateMediaFile {
             library_id: library.id,
             path: file_path.to_string(),
             size_bytes,
@@ -2392,7 +2431,7 @@ impl TorrentProcessor {
             hdr_type: None,
         }).await?;
 
-        // Link to album
+        // Link to album (will update if already linked)
         self.db.media_files().link_to_album(media_file.id, album.id).await?;
 
         // Update album has_files
@@ -2405,13 +2444,13 @@ impl TorrentProcessor {
             file_id = %media_file.id,
             album_id = %album.id,
             path = %file_path,
-            "Created linked music file"
+            "Upserted linked music file"
         );
 
         Ok(media_file)
     }
 
-    /// Create a media file linked to an audiobook
+    /// Create or update a media file linked to an audiobook
     async fn create_linked_audiobook_file(
         &self,
         file_path: &str,
@@ -2419,7 +2458,8 @@ impl TorrentProcessor {
         library: &crate::db::libraries::LibraryRecord,
         audiobook: &crate::db::AudiobookRecord,
     ) -> Result<crate::db::MediaFileRecord> {
-        let media_file = self.db.media_files().create(crate::db::CreateMediaFile {
+        // Use upsert to handle existing records gracefully
+        let media_file = self.db.media_files().upsert(crate::db::CreateMediaFile {
             library_id: library.id,
             path: file_path.to_string(),
             size_bytes,
@@ -2443,7 +2483,7 @@ impl TorrentProcessor {
             hdr_type: None,
         }).await?;
 
-        // Link to audiobook
+        // Link to audiobook (will update if already linked)
         self.db.media_files().link_to_audiobook(media_file.id, audiobook.id).await?;
 
         // Update audiobook has_files
@@ -2456,7 +2496,7 @@ impl TorrentProcessor {
             file_id = %media_file.id,
             audiobook_id = %audiobook.id,
             path = %file_path,
-            "Created linked audiobook file"
+            "Upserted linked audiobook file"
         );
 
         Ok(media_file)

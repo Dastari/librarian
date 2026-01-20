@@ -38,6 +38,12 @@ pub enum Action {
     FocusPanel(usize),
     /// Toggle help overlay
     ToggleHelp,
+    /// Filter by warn level
+    FilterWarn,
+    /// Filter by info level
+    FilterInfo,
+    /// Filter by error level
+    FilterError,
     /// Mouse click at position
     Click(u16, u16),
     /// Mouse scroll at position
@@ -95,7 +101,7 @@ impl InputHandler {
             }
             KeyCode::BackTab => Action::PrevPanel,
 
-            // Number keys to focus panels directly
+            // Number keys to focus panels directly (1-5)
             KeyCode::Char('1') => Action::FocusPanel(0),
             KeyCode::Char('2') => Action::FocusPanel(1),
             KeyCode::Char('3') => Action::FocusPanel(2),
@@ -117,6 +123,11 @@ impl InputHandler {
             KeyCode::Char('c') => Action::Clear,
             KeyCode::Char('r') => Action::Refresh,
             KeyCode::Char('?') | KeyCode::F(1) => Action::ToggleHelp,
+
+            // Log level filters
+            KeyCode::Char('w') => Action::FilterWarn,
+            KeyCode::Char('i') => Action::FilterInfo,
+            KeyCode::Char('e') => Action::FilterError,
 
             _ => Action::Tick,
         }
