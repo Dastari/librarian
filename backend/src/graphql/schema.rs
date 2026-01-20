@@ -10,20 +10,22 @@ use async_graphql::{Context, Object, Result, Schema};
 use uuid::Uuid;
 
 use crate::db::{
-    CreateLibrary, CreateQualityProfile, CreateRssFeed, Database, LibraryStats, LogFilter,
-    UpdateLibrary, UpdateQualityProfile, UpdateRssFeed, UpdateTvShow,
+    CreateLibrary, CreateRssFeed, Database, LibraryStats, LogFilter,
+    UpdateLibrary, UpdateRssFeed, UpdateTvShow,
 };
 use crate::services::{
     CastService, FilesystemService, LogEvent, MetadataService, ScannerService, TorrentService,
 };
 
 use super::auth::AuthExt;
+use super::pagination::{Connection, parse_pagination_args};
 use super::subscriptions::SubscriptionRoot;
 use super::types::{
     AddTorrentInput,
     AddTorrentResult,
     AddTvShowInput,
     AnalyzeMediaFileResult,
+    AutoHuntResult,
     AppSetting,
     AudioStreamInfo,
     ChapterInfo,
@@ -40,6 +42,7 @@ use super::types::{
     UpdateCastSettingsInput,
     ClearLogsResult,
     // Playback types
+    PlaybackContentType,
     PlaybackSession,
     PlaybackResult,
     PlaybackSettings,
@@ -61,7 +64,6 @@ use super::types::{
     // Indexer types
     CreateIndexerInput,
     CreateLibraryInput,
-    CreateQualityProfileInput,
     CreateRssFeedInput,
     CreateSubscriptionInput,
     DownloadEpisodeResult,
@@ -89,6 +91,8 @@ use super::types::{
     LogEntry,
     LogFilterInput,
     LogLevel,
+    LogOrderByInput,
+    LogSortField,
     LogStats,
     MediaFile,
     MediaFileUpdatedEvent,
@@ -96,12 +100,54 @@ use super::types::{
     MonitorType,
     // Movie types
     Movie,
+    MovieConnection,
+    MovieOrderByInput,
     MovieResult,
     MovieSearchResult,
+    MovieSortField,
     MovieStatus,
+    MovieWhereInput,
     AddMovieInput,
     UpdateMovieInput,
+    // TV Show connection types
+    TvShowConnection,
+    TvShowOrderByInput,
+    TvShowSortField,
+    TvShowWhereInput,
+    // Album connection types
+    AlbumConnection,
+    AlbumOrderByInput,
+    AlbumSortField,
+    AlbumWhereInput,
+    // Artist connection types
+    ArtistConnection,
+    ArtistOrderByInput,
+    ArtistSortField,
+    ArtistWhereInput,
     MutationResult,
+    // Album/Music types
+    Album,
+    AlbumResult,
+    AlbumSearchResult,
+    AlbumWithTracks,
+    AddAlbumInput,
+    Artist,
+    Track,
+    // Audiobook types
+    Audiobook,
+    AudiobookResult,
+    AudiobookSearchResult,
+    AddAudiobookInput,
+    AudiobookAuthor,
+    // Audiobook connection types
+    AudiobookConnection,
+    AudiobookOrderByInput,
+    AudiobookSortField,
+    AudiobookWhereInput,
+    AudiobookAuthorConnection,
+    AudiobookAuthorOrderByInput,
+    AudiobookAuthorSortField,
+    AudiobookAuthorWhereInput,
     // Naming pattern types
     CreateNamingPatternInput,
     NamingPattern,
@@ -111,8 +157,6 @@ use super::types::{
     ParseAndIdentifyMediaResult,
     ParsedEpisodeInfo,
     PostDownloadAction,
-    QualityProfile,
-    QualityProfileResult,
     RssFeed,
     RssFeedResult,
     RssFeedTestResult,
@@ -122,12 +166,9 @@ use super::types::{
     SearchResult,
     // Subtitle types
     MediaFileDetails,
-    SearchSubtitlesInput,
     Subtitle,
-    SubtitleSearchResult as GqlSubtitleSearchResult,
     SubtitleSettings,
     SubtitleSettingsInput,
-    SubtitleSourceType,
     VideoStreamInfo,
     // Security types
     SecuritySettings,
@@ -152,7 +193,6 @@ use super::types::{
     UpdateIndexerInput,
     UpdateLibraryInput,
     UpdatePreferencesInput,
-    UpdateQualityProfileInput,
     UpdateRssFeedInput,
     UpdateSubscriptionInput,
     UpdateTorrentSettingsInput,
@@ -210,6 +250,63 @@ fn movie_record_to_graphql(r: crate::db::MovieRecord) -> Movie {
         allowed_sources_override: r.allowed_sources_override,
         release_group_blacklist_override: r.release_group_blacklist_override,
         release_group_whitelist_override: r.release_group_whitelist_override,
+    }
+}
+
+/// Convert MovieSortField enum to database column name
+fn sort_field_to_column(field: MovieSortField) -> String {
+    match field {
+        MovieSortField::Title => "title".to_string(),
+        MovieSortField::SortTitle => "sort_title".to_string(),
+        MovieSortField::Year => "year".to_string(),
+        MovieSortField::CreatedAt => "created_at".to_string(),
+        MovieSortField::ReleaseDate => "release_date".to_string(),
+    }
+}
+
+/// Convert TvShowSortField enum to database column name
+fn tv_sort_field_to_column(field: TvShowSortField) -> String {
+    match field {
+        TvShowSortField::Name => "name".to_string(),
+        TvShowSortField::SortName => "sort_name".to_string(),
+        TvShowSortField::Year => "year".to_string(),
+        TvShowSortField::CreatedAt => "created_at".to_string(),
+    }
+}
+
+/// Convert AlbumSortField enum to database column name
+fn album_sort_field_to_column(field: AlbumSortField) -> String {
+    match field {
+        AlbumSortField::Name => "name".to_string(),
+        AlbumSortField::SortName => "sort_name".to_string(),
+        AlbumSortField::Year => "year".to_string(),
+        AlbumSortField::CreatedAt => "created_at".to_string(),
+        AlbumSortField::Artist => "artist_id".to_string(),
+    }
+}
+
+/// Convert ArtistSortField enum to database column name
+fn artist_sort_field_to_column(field: ArtistSortField) -> String {
+    match field {
+        ArtistSortField::Name => "name".to_string(),
+        ArtistSortField::SortName => "sort_name".to_string(),
+    }
+}
+
+/// Convert AudiobookSortField enum to database column name
+fn audiobook_sort_field_to_column(field: AudiobookSortField) -> String {
+    match field {
+        AudiobookSortField::Title => "title".to_string(),
+        AudiobookSortField::SortTitle => "sort_title".to_string(),
+        AudiobookSortField::CreatedAt => "created_at".to_string(),
+    }
+}
+
+/// Convert AudiobookAuthorSortField enum to database column name
+fn audiobook_author_sort_field_to_column(field: AudiobookAuthorSortField) -> String {
+    match field {
+        AudiobookAuthorSortField::Name => "name".to_string(),
+        AudiobookAuthorSortField::SortName => "sort_name".to_string(),
     }
 }
 
@@ -284,7 +381,6 @@ impl QueryRoot {
         // TODO: Fetch from database
         Ok(UserPreferences {
             theme: "system".to_string(),
-            default_quality_profile: None,
             notifications_enabled: true,
         })
     }
@@ -379,6 +475,69 @@ impl QueryRoot {
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         Ok(records.into_iter().map(TvShow::from).collect())
+    }
+
+    /// Get TV shows in a library with cursor-based pagination and filtering
+    async fn tv_shows_connection(
+        &self,
+        ctx: &Context<'_>,
+        library_id: String,
+        #[graphql(default = 50)] first: Option<i32>,
+        after: Option<String>,
+        r#where: Option<TvShowWhereInput>,
+        order_by: Option<TvShowOrderByInput>,
+    ) -> Result<TvShowConnection> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        let (offset, limit) = parse_pagination_args(first, after)
+            .map_err(|e| async_graphql::Error::new(e))?;
+
+        // Build filter conditions
+        let name_filter = r#where.as_ref().and_then(|w| {
+            w.name.as_ref().and_then(|f| f.contains.clone())
+        });
+        let year_filter = r#where.as_ref().and_then(|w| {
+            w.year.as_ref().and_then(|f| f.eq)
+        });
+        let monitored_filter = r#where.as_ref().and_then(|w| {
+            w.monitored.as_ref().and_then(|f| f.eq)
+        });
+        let status_filter = r#where.as_ref().and_then(|w| {
+            w.status.as_ref().and_then(|f| f.eq.clone())
+        });
+
+        let sort_field = order_by
+            .as_ref()
+            .and_then(|o| o.field)
+            .unwrap_or(TvShowSortField::SortName);
+        let sort_dir = order_by
+            .as_ref()
+            .and_then(|o| o.direction)
+            .unwrap_or(super::filters::OrderDirection::Asc);
+
+        let (records, total) = db
+            .tv_shows()
+            .list_by_library_paginated(
+                lib_id,
+                offset,
+                limit,
+                name_filter.as_deref(),
+                year_filter,
+                monitored_filter,
+                status_filter.as_deref(),
+                &tv_sort_field_to_column(sort_field),
+                sort_dir == super::filters::OrderDirection::Asc,
+            )
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let shows: Vec<TvShow> = records.into_iter().map(TvShow::from).collect();
+        let connection = Connection::from_items(shows, offset, limit, total);
+        
+        Ok(TvShowConnection::from_connection(connection))
     }
 
     /// Get a specific TV show by ID
@@ -505,6 +664,72 @@ impl QueryRoot {
         Ok(records.into_iter().map(movie_record_to_graphql).collect())
     }
 
+    /// Get movies in a library with cursor-based pagination and filtering
+    async fn movies_connection(
+        &self,
+        ctx: &Context<'_>,
+        library_id: String,
+        #[graphql(default = 50)] first: Option<i32>,
+        after: Option<String>,
+        r#where: Option<MovieWhereInput>,
+        order_by: Option<MovieOrderByInput>,
+    ) -> Result<MovieConnection> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        // Parse pagination args
+        let (offset, limit) = parse_pagination_args(first, after)
+            .map_err(|e| async_graphql::Error::new(e))?;
+
+        // Build filter conditions
+        let title_filter = r#where.as_ref().and_then(|w| {
+            w.title.as_ref().and_then(|f| f.contains.clone())
+        });
+        let year_filter = r#where.as_ref().and_then(|w| {
+            w.year.as_ref().and_then(|f| f.eq)
+        });
+        let monitored_filter = r#where.as_ref().and_then(|w| {
+            w.monitored.as_ref().and_then(|f| f.eq)
+        });
+        let has_file_filter = r#where.as_ref().and_then(|w| {
+            w.has_file.as_ref().and_then(|f| f.eq)
+        });
+
+        // Determine sort field and direction
+        let sort_field = order_by
+            .as_ref()
+            .and_then(|o| o.field)
+            .unwrap_or(MovieSortField::SortTitle);
+        let sort_dir = order_by
+            .as_ref()
+            .and_then(|o| o.direction)
+            .unwrap_or(super::filters::OrderDirection::Asc);
+
+        // Get paginated movies from database
+        let (records, total) = db
+            .movies()
+            .list_by_library_paginated(
+                lib_id,
+                offset,
+                limit,
+                title_filter.as_deref(),
+                year_filter,
+                monitored_filter,
+                has_file_filter,
+                &sort_field_to_column(sort_field),
+                sort_dir == super::filters::OrderDirection::Asc,
+            )
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let movies: Vec<Movie> = records.into_iter().map(movie_record_to_graphql).collect();
+        let connection = Connection::from_items(movies, offset, limit, total);
+        
+        Ok(MovieConnection::from_connection(connection))
+    }
+
     /// Get a specific movie by ID
     async fn movie(&self, ctx: &Context<'_>, id: String) -> Result<Option<Movie>> {
         let _user = ctx.auth_user()?;
@@ -561,6 +786,430 @@ impl QueryRoot {
     }
 
     // ------------------------------------------------------------------------
+    // Albums/Music
+    // ------------------------------------------------------------------------
+
+    /// Get all albums in a library
+    async fn albums(&self, ctx: &Context<'_>, library_id: String) -> Result<Vec<Album>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        let records = db
+            .albums()
+            .list_by_library(lib_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(records.into_iter().map(Album::from).collect())
+    }
+
+    /// Get albums in a library with cursor-based pagination and filtering
+    async fn albums_connection(
+        &self,
+        ctx: &Context<'_>,
+        library_id: String,
+        #[graphql(default = 50)] first: Option<i32>,
+        after: Option<String>,
+        r#where: Option<AlbumWhereInput>,
+        order_by: Option<AlbumOrderByInput>,
+    ) -> Result<AlbumConnection> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        let (offset, limit) = parse_pagination_args(first, after)
+            .map_err(|e| async_graphql::Error::new(e))?;
+
+        let name_filter = r#where.as_ref().and_then(|w| {
+            w.name.as_ref().and_then(|f| f.contains.clone())
+        });
+        let year_filter = r#where.as_ref().and_then(|w| {
+            w.year.as_ref().and_then(|f| f.eq)
+        });
+        let has_files_filter = r#where.as_ref().and_then(|w| {
+            w.has_files.as_ref().and_then(|f| f.eq)
+        });
+
+        let sort_field = order_by
+            .as_ref()
+            .and_then(|o| o.field)
+            .unwrap_or(AlbumSortField::Name);
+        let sort_dir = order_by
+            .as_ref()
+            .and_then(|o| o.direction)
+            .unwrap_or(super::filters::OrderDirection::Asc);
+
+        let (records, total) = db
+            .albums()
+            .list_by_library_paginated(
+                lib_id,
+                offset,
+                limit,
+                name_filter.as_deref(),
+                year_filter,
+                has_files_filter,
+                &album_sort_field_to_column(sort_field),
+                sort_dir == super::filters::OrderDirection::Asc,
+            )
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let albums: Vec<Album> = records.into_iter().map(Album::from).collect();
+        let connection = Connection::from_items(albums, offset, limit, total);
+        
+        Ok(AlbumConnection::from_connection(connection))
+    }
+
+    /// Get a specific album by ID
+    async fn album(&self, ctx: &Context<'_>, id: String) -> Result<Option<Album>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let album_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid album ID: {}", e)))?;
+
+        let record = db
+            .albums()
+            .get_by_id(album_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(record.map(Album::from))
+    }
+
+    /// Get all artists in a library
+    async fn artists(&self, ctx: &Context<'_>, library_id: String) -> Result<Vec<Artist>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        let records = db
+            .albums()
+            .list_artists_by_library(lib_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(records.into_iter().map(Artist::from).collect())
+    }
+
+    /// Get artists in a library with cursor-based pagination and filtering
+    async fn artists_connection(
+        &self,
+        ctx: &Context<'_>,
+        library_id: String,
+        #[graphql(default = 50)] first: Option<i32>,
+        after: Option<String>,
+        r#where: Option<ArtistWhereInput>,
+        order_by: Option<ArtistOrderByInput>,
+    ) -> Result<ArtistConnection> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        let (offset, limit) = parse_pagination_args(first, after)
+            .map_err(|e| async_graphql::Error::new(e))?;
+
+        let name_filter = r#where.as_ref().and_then(|w| {
+            w.name.as_ref().and_then(|f| f.contains.clone())
+        });
+
+        let sort_field = order_by
+            .as_ref()
+            .and_then(|o| o.field)
+            .unwrap_or(ArtistSortField::Name);
+        let sort_dir = order_by
+            .as_ref()
+            .and_then(|o| o.direction)
+            .unwrap_or(super::filters::OrderDirection::Asc);
+
+        let (records, total) = db
+            .albums()
+            .list_artists_by_library_paginated(
+                lib_id,
+                offset,
+                limit,
+                name_filter.as_deref(),
+                &artist_sort_field_to_column(sort_field),
+                sort_dir == super::filters::OrderDirection::Asc,
+            )
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let artists: Vec<Artist> = records.into_iter().map(Artist::from).collect();
+        let connection = Connection::from_items(artists, offset, limit, total);
+        
+        Ok(ArtistConnection::from_connection(connection))
+    }
+
+    /// Get an album with all its tracks and file status
+    async fn album_with_tracks(&self, ctx: &Context<'_>, id: String) -> Result<Option<AlbumWithTracks>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let album_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid album ID: {}", e)))?;
+
+        let album_record = db
+            .albums()
+            .get_by_id(album_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let Some(album_record) = album_record else {
+            return Ok(None);
+        };
+
+        let tracks_with_status = db
+            .tracks()
+            .list_with_status(album_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let track_count = tracks_with_status.len() as i32;
+        let tracks_with_files = tracks_with_status.iter().filter(|t| t.has_file).count() as i32;
+        let missing_tracks = track_count - tracks_with_files;
+        let completion_percent = if track_count > 0 {
+            (tracks_with_files as f64 / track_count as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        Ok(Some(AlbumWithTracks {
+            album: album_record.into(),
+            tracks: tracks_with_status.into_iter().map(|t| t.into()).collect(),
+            track_count,
+            tracks_with_files,
+            missing_tracks,
+            completion_percent,
+        }))
+    }
+
+    /// Get tracks for an album
+    async fn tracks(&self, ctx: &Context<'_>, album_id: String) -> Result<Vec<Track>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let album_uuid = Uuid::parse_str(&album_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid album ID: {}", e)))?;
+
+        let records = db
+            .tracks()
+            .list_by_album(album_uuid)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(records.into_iter().map(Track::from).collect())
+    }
+
+    /// Search for albums on MusicBrainz
+    async fn search_albums(&self, ctx: &Context<'_>, query: String) -> Result<Vec<AlbumSearchResult>> {
+        let _user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        let results = metadata
+            .search_albums(&query)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(results
+            .into_iter()
+            .map(|a| AlbumSearchResult {
+                provider: "musicbrainz".to_string(),
+                provider_id: a.provider_id.to_string(),
+                title: a.title,
+                artist_name: a.artist_name,
+                year: a.year,
+                album_type: a.album_type,
+                cover_url: a.cover_url,
+                score: a.score,
+            })
+            .collect())
+    }
+
+    // ------------------------------------------------------------------------
+    // Audiobooks
+    // ------------------------------------------------------------------------
+
+    /// Get all audiobooks in a library
+    async fn audiobooks(&self, ctx: &Context<'_>, library_id: String) -> Result<Vec<Audiobook>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        let records = db
+            .audiobooks()
+            .list_by_library(lib_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(records.into_iter().map(Audiobook::from).collect())
+    }
+
+    /// Get audiobooks in a library with cursor-based pagination and filtering
+    async fn audiobooks_connection(
+        &self,
+        ctx: &Context<'_>,
+        library_id: String,
+        #[graphql(default = 50)] first: Option<i32>,
+        after: Option<String>,
+        r#where: Option<AudiobookWhereInput>,
+        order_by: Option<AudiobookOrderByInput>,
+    ) -> Result<AudiobookConnection> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        let (offset, limit) = parse_pagination_args(first, after)
+            .map_err(|e| async_graphql::Error::new(e))?;
+
+        let title_filter = r#where.as_ref().and_then(|w| {
+            w.title.as_ref().and_then(|f| f.contains.clone())
+        });
+        let has_files_filter = r#where.as_ref().and_then(|w| {
+            w.has_files.as_ref().and_then(|f| f.eq)
+        });
+
+        let sort_field = order_by
+            .as_ref()
+            .and_then(|o| o.field)
+            .unwrap_or(AudiobookSortField::Title);
+        let sort_dir = order_by
+            .as_ref()
+            .and_then(|o| o.direction)
+            .unwrap_or(super::filters::OrderDirection::Asc);
+
+        let (records, total) = db
+            .audiobooks()
+            .list_by_library_paginated(
+                lib_id,
+                offset,
+                limit,
+                title_filter.as_deref(),
+                has_files_filter,
+                &audiobook_sort_field_to_column(sort_field),
+                sort_dir == super::filters::OrderDirection::Asc,
+            )
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let audiobooks: Vec<Audiobook> = records.into_iter().map(Audiobook::from).collect();
+        let connection = Connection::from_items(audiobooks, offset, limit, total);
+        
+        Ok(AudiobookConnection::from_connection(connection))
+    }
+
+    /// Get a specific audiobook by ID
+    async fn audiobook(&self, ctx: &Context<'_>, id: String) -> Result<Option<Audiobook>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let audiobook_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid audiobook ID: {}", e)))?;
+
+        let record = db
+            .audiobooks()
+            .get_by_id(audiobook_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(record.map(Audiobook::from))
+    }
+
+    /// Get all audiobook authors in a library
+    async fn audiobook_authors(&self, ctx: &Context<'_>, library_id: String) -> Result<Vec<AudiobookAuthor>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        let records = db
+            .audiobooks()
+            .list_authors_by_library(lib_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(records.into_iter().map(AudiobookAuthor::from).collect())
+    }
+
+    /// Get audiobook authors in a library with cursor-based pagination and filtering
+    async fn audiobook_authors_connection(
+        &self,
+        ctx: &Context<'_>,
+        library_id: String,
+        #[graphql(default = 50)] first: Option<i32>,
+        after: Option<String>,
+        r#where: Option<AudiobookAuthorWhereInput>,
+        order_by: Option<AudiobookAuthorOrderByInput>,
+    ) -> Result<AudiobookAuthorConnection> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        let (offset, limit) = parse_pagination_args(first, after)
+            .map_err(|e| async_graphql::Error::new(e))?;
+
+        let name_filter = r#where.as_ref().and_then(|w| {
+            w.name.as_ref().and_then(|f| f.contains.clone())
+        });
+
+        let sort_field = order_by
+            .as_ref()
+            .and_then(|o| o.field)
+            .unwrap_or(AudiobookAuthorSortField::Name);
+        let sort_dir = order_by
+            .as_ref()
+            .and_then(|o| o.direction)
+            .unwrap_or(super::filters::OrderDirection::Asc);
+
+        let (records, total) = db
+            .audiobooks()
+            .list_authors_by_library_paginated(
+                lib_id,
+                offset,
+                limit,
+                name_filter.as_deref(),
+                &audiobook_author_sort_field_to_column(sort_field),
+                sort_dir == super::filters::OrderDirection::Asc,
+            )
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let authors: Vec<AudiobookAuthor> = records.into_iter().map(AudiobookAuthor::from).collect();
+        let connection = Connection::from_items(authors, offset, limit, total);
+        
+        Ok(AudiobookAuthorConnection::from_connection(connection))
+    }
+
+    /// Search for audiobooks on OpenLibrary
+    async fn search_audiobooks(&self, ctx: &Context<'_>, query: String) -> Result<Vec<AudiobookSearchResult>> {
+        let _user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        let results = metadata
+            .search_audiobooks(&query)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(results
+            .into_iter()
+            .map(|a| AudiobookSearchResult {
+                provider: "openlibrary".to_string(),
+                provider_id: a.provider_id,
+                title: a.title,
+                author_name: a.author_name,
+                year: a.year,
+                cover_url: a.cover_url,
+                isbn: a.isbn,
+                description: a.description,
+            })
+            .collect())
+    }
+
+    // ------------------------------------------------------------------------
     // Episodes
     // ------------------------------------------------------------------------
 
@@ -583,13 +1232,15 @@ impl QueryRoot {
         let episode_ids: Vec<Uuid> = records.iter().map(|r| r.id).collect();
         let watch_progress_list = db
             .watch_progress()
-            .get_progress_batch(user_id, &episode_ids)
+            .get_episode_progress_batch(user_id, &episode_ids)
             .await
             .unwrap_or_default();
         
         // Create a map for quick lookup
         let progress_map: std::collections::HashMap<Uuid, crate::db::WatchProgressRecord> = 
-            watch_progress_list.into_iter().map(|wp| (wp.episode_id, wp)).collect();
+            watch_progress_list.into_iter()
+                .filter_map(|wp| wp.episode_id.map(|eid| (eid, wp)))
+                .collect();
 
         // For downloaded episodes, look up the media file with its metadata
         let mut episodes = Vec::with_capacity(records.len());
@@ -801,84 +1452,6 @@ impl QueryRoot {
             auto_download: library.auto_download_subtitles.unwrap_or(false),
             languages: library.preferred_subtitle_languages.unwrap_or_default(),
         })
-    }
-
-    // ------------------------------------------------------------------------
-    // Quality Profiles
-    // ------------------------------------------------------------------------
-
-    /// Get all quality profiles for the current user
-    async fn quality_profiles(&self, ctx: &Context<'_>) -> Result<Vec<QualityProfile>> {
-        let user = ctx.auth_user()?;
-        let db = ctx.data_unchecked::<Database>();
-        let user_id = Uuid::parse_str(&user.user_id)
-            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
-
-        // Create default profiles if none exist
-        let profiles = db.quality_profiles();
-        if !profiles.has_profiles(user_id).await.unwrap_or(true) {
-            let _ = profiles.create_defaults(user_id).await;
-        }
-
-        let records = profiles
-            .list_by_user(user_id)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-
-        Ok(records
-            .into_iter()
-            .map(|r| QualityProfile {
-                id: r.id.to_string(),
-                name: r.name,
-                preferred_resolution: r.preferred_resolution,
-                min_resolution: r.min_resolution,
-                preferred_codec: r.preferred_codec,
-                preferred_audio: r.preferred_audio,
-                require_hdr: r.require_hdr,
-                hdr_types: r.hdr_types,
-                preferred_language: r.preferred_language,
-                max_size_gb: r.max_size_gb.map(|d| d.to_string().parse().unwrap_or(0.0)),
-                min_seeders: r.min_seeders,
-                release_group_whitelist: r.release_group_whitelist,
-                release_group_blacklist: r.release_group_blacklist,
-                upgrade_until: r.upgrade_until,
-            })
-            .collect())
-    }
-
-    /// Get a specific quality profile by ID
-    async fn quality_profile(
-        &self,
-        ctx: &Context<'_>,
-        id: String,
-    ) -> Result<Option<QualityProfile>> {
-        let _user = ctx.auth_user()?;
-        let db = ctx.data_unchecked::<Database>();
-        let profile_id = Uuid::parse_str(&id)
-            .map_err(|e| async_graphql::Error::new(format!("Invalid profile ID: {}", e)))?;
-
-        let record = db
-            .quality_profiles()
-            .get_by_id(profile_id)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-
-        Ok(record.map(|r| QualityProfile {
-            id: r.id.to_string(),
-            name: r.name,
-            preferred_resolution: r.preferred_resolution,
-            min_resolution: r.min_resolution,
-            preferred_codec: r.preferred_codec,
-            preferred_audio: r.preferred_audio,
-            require_hdr: r.require_hdr,
-            hdr_types: r.hdr_types,
-            preferred_language: r.preferred_language,
-            max_size_gb: r.max_size_gb.map(|d| d.to_string().parse().unwrap_or(0.0)),
-            min_seeders: r.min_seeders,
-            release_group_whitelist: r.release_group_whitelist,
-            release_group_blacklist: r.release_group_blacklist,
-            upgrade_until: r.upgrade_until,
-        }))
     }
 
     // ------------------------------------------------------------------------
@@ -1393,6 +1966,7 @@ impl QueryRoot {
         &self,
         ctx: &Context<'_>,
         #[graphql(desc = "Filter options")] filter: Option<LogFilterInput>,
+        #[graphql(desc = "Sort order")] order_by: Option<LogOrderByInput>,
         #[graphql(default = 50, desc = "Number of logs to return")] limit: i32,
         #[graphql(default = 0, desc = "Offset for pagination")] offset: i32,
     ) -> Result<PaginatedLogResult> {
@@ -1433,9 +2007,29 @@ impl QueryRoot {
             })
             .unwrap_or_default();
 
+        // Convert order_by to database format
+        let order = order_by.map(|o| {
+            use crate::db::logs::LogOrderBy;
+            use crate::graphql::filters::OrderDirection;
+            
+            let field = match o.field.unwrap_or_default() {
+                LogSortField::TIMESTAMP => "timestamp",
+                LogSortField::LEVEL => "level",
+                LogSortField::TARGET => "target",
+            };
+            let direction = match o.direction.unwrap_or(OrderDirection::Desc) {
+                OrderDirection::Asc => "ASC",
+                OrderDirection::Desc => "DESC",
+            };
+            LogOrderBy {
+                field: field.to_string(),
+                direction: direction.to_string(),
+            }
+        });
+
         let result = db
             .logs()
-            .list(log_filter, limit as i64, offset as i64)
+            .list(log_filter, order, limit as i64, offset as i64)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
@@ -2170,7 +2764,6 @@ impl MutationRoot {
         // TODO: Update in database
         Ok(UserPreferences {
             theme: input.theme.unwrap_or_else(|| "system".to_string()),
-            default_quality_profile: input.default_quality_profile,
             notifications_enabled: input.notifications_enabled.unwrap_or(true),
         })
     }
@@ -2222,9 +2815,6 @@ impl MutationRoot {
                 organize_files: input.organize_files.unwrap_or(true),
                 rename_style: input.rename_style.unwrap_or_else(|| "none".to_string()),
                 naming_pattern: input.naming_pattern,
-                default_quality_profile_id: input
-                    .default_quality_profile_id
-                    .and_then(|id| Uuid::parse_str(&id).ok()),
                 auto_add_discovered: input.auto_add_discovered.unwrap_or(true),
                 auto_download: input.auto_download.unwrap_or(true),
                 auto_hunt: input.auto_hunt.unwrap_or(false),
@@ -2336,9 +2926,6 @@ impl MutationRoot {
                     organize_files: input.organize_files,
                     rename_style: input.rename_style,
                     naming_pattern: input.naming_pattern,
-                    default_quality_profile_id: input
-                        .default_quality_profile_id
-                        .and_then(|id| Uuid::parse_str(&id).ok()),
                     auto_add_discovered: input.auto_add_discovered,
                     auto_download: input.auto_download,
                     auto_hunt: input.auto_hunt,
@@ -2760,9 +3347,6 @@ impl MutationRoot {
                 user_id,
                 monitored: true,
                 monitor_type,
-                quality_profile_id: input
-                    .quality_profile_id
-                    .and_then(|id| Uuid::parse_str(&id).ok()),
                 path: input.path,
             })
             .await
@@ -2849,7 +3433,6 @@ impl MutationRoot {
                     "future" => MonitorType::Future,
                     _ => MonitorType::None,
                 },
-                quality_profile_id: record.quality_profile_id.map(|id| id.to_string()),
                 path: record.path,
                 auto_download_override: record.auto_download_override,
                 backfill_existing: record.backfill_existing,
@@ -2901,9 +3484,6 @@ impl MutationRoot {
                 UpdateTvShow {
                     monitored: input.monitored,
                     monitor_type,
-                    quality_profile_id: input
-                        .quality_profile_id
-                        .and_then(|id| Uuid::parse_str(&id).ok()),
                     path: input.path,
                     auto_download_override: input.auto_download_override,
                     backfill_existing: input.backfill_existing,
@@ -2955,7 +3535,6 @@ impl MutationRoot {
                         "future" => MonitorType::Future,
                         _ => MonitorType::None,
                     },
-                    quality_profile_id: record.quality_profile_id.map(|id| id.to_string()),
                     path: record.path,
                     auto_download_override: record.auto_download_override,
                     backfill_existing: record.backfill_existing,
@@ -3169,7 +3748,6 @@ impl MutationRoot {
                     "future" => MonitorType::Future,
                     _ => MonitorType::None,
                 },
-                quality_profile_id: record.quality_profile_id.map(|id| id.to_string()),
                 path: record.path,
                 auto_download_override: record.auto_download_override,
                 backfill_existing: record.backfill_existing,
@@ -3205,7 +3783,9 @@ impl MutationRoot {
         input: AddMovieInput,
     ) -> Result<MovieResult> {
         let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>().clone();
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+        let torrent_service = ctx.data_unchecked::<Arc<TorrentService>>().clone();
 
         let lib_id = Uuid::parse_str(&library_id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
@@ -3220,13 +3800,15 @@ impl MutationRoot {
             });
         }
 
+        let is_monitored = input.monitored.unwrap_or(true);
+
         match metadata
             .add_movie_from_provider(crate::services::AddMovieOptions {
                 provider: crate::services::MetadataProvider::Tmdb,
                 provider_id: input.tmdb_id as u32,
                 library_id: lib_id,
                 user_id,
-                monitored: input.monitored.unwrap_or(true),
+                monitored: is_monitored,
                 path: input.path,
             })
             .await
@@ -3240,6 +3822,101 @@ impl MutationRoot {
                     "User added movie: {}",
                     record.title
                 );
+
+                // Trigger immediate auto-hunt if the library has auto_hunt enabled and movie is monitored
+                if is_monitored {
+                    let db_clone = db.clone();
+                    let movie_record = record.clone();
+                    let torrent_svc = torrent_service.clone();
+
+                    tokio::spawn(async move {
+                        // Check if library has auto_hunt enabled
+                        let library = match db_clone.libraries().get_by_id(lib_id).await {
+                            Ok(Some(lib)) => lib,
+                            Ok(None) => {
+                                tracing::warn!(library_id = %lib_id, "Library not found for auto-hunt");
+                                return;
+                            }
+                            Err(e) => {
+                                tracing::warn!(library_id = %lib_id, error = %e, "Failed to get library for auto-hunt");
+                                return;
+                            }
+                        };
+
+                        if !library.auto_hunt {
+                            tracing::debug!(
+                                library_id = %lib_id,
+                                movie_title = %movie_record.title,
+                                "Library does not have auto_hunt enabled, skipping immediate hunt"
+                            );
+                            return;
+                        }
+
+                        tracing::info!(
+                            movie_id = %movie_record.id,
+                            movie_title = %movie_record.title,
+                            "Triggering immediate auto-hunt for newly added movie"
+                        );
+
+                        // Get encryption key and create IndexerManager
+                        let encryption_key = match db_clone.settings().get_or_create_indexer_encryption_key().await {
+                            Ok(key) => key,
+                            Err(e) => {
+                                tracing::warn!(error = %e, "Failed to get encryption key for auto-hunt");
+                                return;
+                            }
+                        };
+
+                        let indexer_manager = match crate::indexer::manager::IndexerManager::new(db_clone.clone(), &encryption_key).await {
+                            Ok(mgr) => std::sync::Arc::new(mgr),
+                            Err(e) => {
+                                tracing::warn!(error = %e, "Failed to create IndexerManager for auto-hunt");
+                                return;
+                            }
+                        };
+
+                        // Load user's indexers
+                        if let Err(e) = indexer_manager.load_user_indexers(user_id).await {
+                            tracing::warn!(user_id = %user_id, error = %e, "Failed to load indexers for auto-hunt");
+                            return;
+                        }
+
+                        // Run hunt for this specific movie
+                        match crate::jobs::auto_hunt::hunt_single_movie(
+                            &db_clone,
+                            &movie_record,
+                            &library,
+                            &torrent_svc,
+                            &indexer_manager,
+                        ).await {
+                            Ok(result) => {
+                                if result.downloaded > 0 {
+                                    tracing::info!(
+                                        movie_title = %movie_record.title,
+                                        "Immediate auto-hunt successful, download started"
+                                    );
+                                } else if result.matched > 0 {
+                                    tracing::info!(
+                                        movie_title = %movie_record.title,
+                                        "Found matching releases but download failed"
+                                    );
+                                } else {
+                                    tracing::info!(
+                                        movie_title = %movie_record.title,
+                                        "No matching releases found for immediate auto-hunt"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    movie_title = %movie_record.title,
+                                    error = %e,
+                                    "Immediate auto-hunt failed"
+                                );
+                            }
+                        }
+                    });
+                }
 
                 Ok(MovieResult {
                     success: true,
@@ -3327,161 +4004,180 @@ impl MutationRoot {
     }
 
     // ------------------------------------------------------------------------
-    // Quality Profiles
+    // Albums/Music
     // ------------------------------------------------------------------------
 
-    /// Create a quality profile
-    async fn create_quality_profile(
+    /// Add an album to a library from MusicBrainz
+    async fn add_album(
         &self,
         ctx: &Context<'_>,
-        input: CreateQualityProfileInput,
-    ) -> Result<QualityProfileResult> {
+        input: AddAlbumInput,
+    ) -> Result<AlbumResult> {
         let user = ctx.auth_user()?;
         let db = ctx.data_unchecked::<Database>();
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        let lib_id = Uuid::parse_str(&input.library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
         let user_id = Uuid::parse_str(&user.user_id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+        let mbid = Uuid::parse_str(&input.musicbrainz_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid MusicBrainz ID: {}", e)))?;
 
-        let record = db
-            .quality_profiles()
-            .create(CreateQualityProfile {
+        // Verify library exists and belongs to user
+        let library = db
+            .libraries()
+            .get_by_id(lib_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            .ok_or_else(|| async_graphql::Error::new("Library not found"))?;
+
+        if library.user_id != user_id {
+            return Err(async_graphql::Error::new("Not authorized to access this library"));
+        }
+
+        // Add album from MusicBrainz
+        use crate::services::metadata::AddAlbumOptions;
+        match metadata
+            .add_album_from_provider(AddAlbumOptions {
+                musicbrainz_id: mbid,
+                library_id: lib_id,
                 user_id,
-                name: input.name,
-                preferred_resolution: input.preferred_resolution,
-                min_resolution: input.min_resolution,
-                preferred_codec: input.preferred_codec,
-                preferred_audio: input.preferred_audio,
-                require_hdr: input.require_hdr.unwrap_or(false),
-                hdr_types: input.hdr_types.unwrap_or_default(),
-                preferred_language: input.preferred_language,
-                max_size_gb: input
-                    .max_size_gb
-                    .and_then(|f| rust_decimal::Decimal::try_from(f).ok()),
-                min_seeders: input.min_seeders,
-                release_group_whitelist: input.release_group_whitelist.unwrap_or_default(),
-                release_group_blacklist: input.release_group_blacklist.unwrap_or_default(),
-                upgrade_until: input.upgrade_until,
+                monitored: true,
             })
             .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        {
+            Ok(record) => {
+                tracing::info!(
+                    user_id = %user.user_id,
+                    album_name = %record.name,
+                    album_id = %record.id,
+                    library_id = %lib_id,
+                    "User added album: {}",
+                    record.name
+                );
 
-        Ok(QualityProfileResult {
-            success: true,
-            quality_profile: Some(QualityProfile {
-                id: record.id.to_string(),
-                name: record.name,
-                preferred_resolution: record.preferred_resolution,
-                min_resolution: record.min_resolution,
-                preferred_codec: record.preferred_codec,
-                preferred_audio: record.preferred_audio,
-                require_hdr: record.require_hdr,
-                hdr_types: record.hdr_types,
-                preferred_language: record.preferred_language,
-                max_size_gb: record
-                    .max_size_gb
-                    .map(|d| d.to_string().parse().unwrap_or(0.0)),
-                min_seeders: record.min_seeders,
-                release_group_whitelist: record.release_group_whitelist,
-                release_group_blacklist: record.release_group_blacklist,
-                upgrade_until: record.upgrade_until,
-            }),
-            error: None,
-        })
-    }
-
-    /// Update a quality profile
-    async fn update_quality_profile(
-        &self,
-        ctx: &Context<'_>,
-        id: String,
-        input: UpdateQualityProfileInput,
-    ) -> Result<QualityProfileResult> {
-        let _user = ctx.auth_user()?;
-        let db = ctx.data_unchecked::<Database>();
-        let profile_id = Uuid::parse_str(&id)
-            .map_err(|e| async_graphql::Error::new(format!("Invalid profile ID: {}", e)))?;
-
-        let result = db
-            .quality_profiles()
-            .update(
-                profile_id,
-                UpdateQualityProfile {
-                    name: input.name,
-                    preferred_resolution: input.preferred_resolution,
-                    min_resolution: input.min_resolution,
-                    preferred_codec: input.preferred_codec,
-                    preferred_audio: input.preferred_audio,
-                    require_hdr: input.require_hdr,
-                    hdr_types: input.hdr_types,
-                    preferred_language: input.preferred_language,
-                    max_size_gb: input
-                        .max_size_gb
-                        .and_then(|f| rust_decimal::Decimal::try_from(f).ok()),
-                    min_seeders: input.min_seeders,
-                    release_group_whitelist: input.release_group_whitelist,
-                    release_group_blacklist: input.release_group_blacklist,
-                    upgrade_until: input.upgrade_until,
-                },
-            )
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-
-        if let Some(record) = result {
-            Ok(QualityProfileResult {
-                success: true,
-                quality_profile: Some(QualityProfile {
-                    id: record.id.to_string(),
-                    name: record.name,
-                    preferred_resolution: record.preferred_resolution,
-                    min_resolution: record.min_resolution,
-                    preferred_codec: record.preferred_codec,
-                    preferred_audio: record.preferred_audio,
-                    require_hdr: record.require_hdr,
-                    hdr_types: record.hdr_types,
-                    preferred_language: record.preferred_language,
-                    max_size_gb: record
-                        .max_size_gb
-                        .map(|d| d.to_string().parse().unwrap_or(0.0)),
-                    min_seeders: record.min_seeders,
-                    release_group_whitelist: record.release_group_whitelist,
-                    release_group_blacklist: record.release_group_blacklist,
-                    upgrade_until: record.upgrade_until,
-                }),
-                error: None,
-            })
-        } else {
-            Ok(QualityProfileResult {
+                Ok(AlbumResult {
+                    success: true,
+                    album: Some(Album::from(record)),
+                    error: None,
+                })
+            }
+            Err(e) => Ok(AlbumResult {
                 success: false,
-                quality_profile: None,
-                error: Some("Quality profile not found".to_string()),
-            })
+                album: None,
+                error: Some(e.to_string()),
+            }),
         }
     }
 
-    /// Delete a quality profile
-    async fn delete_quality_profile(
-        &self,
-        ctx: &Context<'_>,
-        id: String,
-    ) -> Result<MutationResult> {
+    /// Delete an album from a library
+    async fn delete_album(&self, ctx: &Context<'_>, id: String) -> Result<MutationResult> {
         let _user = ctx.auth_user()?;
         let db = ctx.data_unchecked::<Database>();
-        let profile_id = Uuid::parse_str(&id)
-            .map_err(|e| async_graphql::Error::new(format!("Invalid profile ID: {}", e)))?;
 
-        let deleted = db
-            .quality_profiles()
-            .delete(profile_id)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let album_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid album ID: {}", e)))?;
 
-        Ok(MutationResult {
-            success: deleted,
-            error: if deleted {
-                None
-            } else {
-                Some("Quality profile not found".to_string())
-            },
-        })
+        // Verify album exists
+        let album = db.albums().get_by_id(album_id).await.map_err(|e| {
+            async_graphql::Error::new(format!("Failed to get album: {}", e))
+        })?;
+
+        if album.is_none() {
+            return Ok(MutationResult {
+                success: false,
+                error: Some("Album not found".to_string()),
+            });
+        }
+
+        // Delete the album and all associated data
+        match db.albums().delete(album_id).await {
+            Ok(deleted) => {
+                if deleted {
+                    tracing::info!(album_id = %album_id, "Deleted album");
+                    Ok(MutationResult {
+                        success: true,
+                        error: None,
+                    })
+                } else {
+                    Ok(MutationResult {
+                        success: false,
+                        error: Some("Album not found".to_string()),
+                    })
+                }
+            }
+            Err(e) => {
+                tracing::error!(album_id = %album_id, error = %e, "Failed to delete album");
+                Ok(MutationResult {
+                    success: false,
+                    error: Some(format!("Failed to delete album: {}", e)),
+                })
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Audiobooks
+    // ------------------------------------------------------------------------
+
+    /// Add an audiobook to a library from OpenLibrary
+    async fn add_audiobook(&self, ctx: &Context<'_>, input: AddAudiobookInput) -> Result<AudiobookResult> {
+        let user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+        let library_id = Uuid::parse_str(&input.library_id).map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+        let user_id = Uuid::parse_str(&user.user_id).map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+        use crate::services::metadata::AddAudiobookOptions;
+        match metadata.add_audiobook_from_provider(AddAudiobookOptions { openlibrary_id: input.openlibrary_id, library_id, user_id, monitored: true }).await {
+            Ok(record) => Ok(AudiobookResult { success: true, audiobook: Some(Audiobook::from(record)), error: None }),
+            Err(e) => Ok(AudiobookResult { success: false, audiobook: None, error: Some(e.to_string()) }),
+        }
+    }
+
+    /// Delete an audiobook from a library
+    async fn delete_audiobook(&self, ctx: &Context<'_>, id: String) -> Result<MutationResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let audiobook_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid audiobook ID: {}", e)))?;
+
+        // Verify audiobook exists
+        let audiobook = db.audiobooks().get_by_id(audiobook_id).await.map_err(|e| {
+            async_graphql::Error::new(format!("Failed to get audiobook: {}", e))
+        })?;
+
+        if audiobook.is_none() {
+            return Ok(MutationResult {
+                success: false,
+                error: Some("Audiobook not found".to_string()),
+            });
+        }
+
+        // Delete the audiobook and all associated data
+        match db.audiobooks().delete(audiobook_id).await {
+            Ok(deleted) => {
+                if deleted {
+                    tracing::info!(audiobook_id = %audiobook_id, "Deleted audiobook");
+                    Ok(MutationResult {
+                        success: true,
+                        error: None,
+                    })
+                } else {
+                    Ok(MutationResult {
+                        success: false,
+                        error: Some("Audiobook not found".to_string()),
+                    })
+                }
+            }
+            Err(e) => {
+                tracing::error!(audiobook_id = %audiobook_id, error = %e, "Failed to delete audiobook");
+                Ok(MutationResult {
+                    success: false,
+                    error: Some(format!("Failed to delete audiobook: {}", e)),
+                })
+            }
+        }
     }
 
     // ------------------------------------------------------------------------
@@ -4275,7 +4971,7 @@ impl MutationRoot {
     // Playback Sessions
     // ------------------------------------------------------------------------
 
-    /// Start or resume playback of an episode
+    /// Start or resume playback of any content type
     async fn start_playback(
         &self,
         ctx: &Context<'_>,
@@ -4285,18 +4981,32 @@ impl MutationRoot {
         let db = ctx.data_unchecked::<Database>();
         let user_id = Uuid::parse_str(&user.user_id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
-        let episode_id = Uuid::parse_str(&input.episode_id)
-            .map_err(|e| async_graphql::Error::new(format!("Invalid episode ID: {}", e)))?;
+        let content_id = Uuid::parse_str(&input.content_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid content ID: {}", e)))?;
         let media_file_id = Uuid::parse_str(&input.media_file_id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid media file ID: {}", e)))?;
-        let tv_show_id = Uuid::parse_str(&input.tv_show_id)
-            .map_err(|e| async_graphql::Error::new(format!("Invalid TV show ID: {}", e)))?;
+        let parent_id = input.parent_id.as_ref().map(|id| {
+            Uuid::parse_str(id)
+        }).transpose().map_err(|e| async_graphql::Error::new(format!("Invalid parent ID: {}", e)))?;
+
+        // Set the appropriate IDs based on content type
+        let (episode_id, movie_id, track_id, audiobook_id, tv_show_id, album_id) = match input.content_type {
+            PlaybackContentType::Episode => (Some(content_id), None, None, None, parent_id, None),
+            PlaybackContentType::Movie => (None, Some(content_id), None, None, None, None),
+            PlaybackContentType::Track => (None, None, Some(content_id), None, None, parent_id),
+            PlaybackContentType::Audiobook => (None, None, None, Some(content_id), None, None),
+        };
 
         let db_input = crate::db::UpsertPlaybackSession {
             user_id,
-            episode_id: Some(episode_id),
+            content_type: input.content_type.as_str().to_string(),
             media_file_id: Some(media_file_id),
-            tv_show_id: Some(tv_show_id),
+            episode_id,
+            movie_id,
+            track_id,
+            audiobook_id,
+            tv_show_id,
+            album_id,
             current_position: input.start_position.unwrap_or(0.0),
             duration: input.duration,
             volume: 1.0,
@@ -4325,6 +5035,8 @@ impl MutationRoot {
         ctx: &Context<'_>,
         input: UpdatePlaybackInput,
     ) -> Result<PlaybackResult> {
+        use crate::db::watch_progress::ContentType as WPContentType;
+        
         let user = ctx.auth_user()?;
         let db = ctx.data_unchecked::<Database>();
         let user_id = Uuid::parse_str(&user.user_id)
@@ -4340,33 +5052,47 @@ impl MutationRoot {
 
         match db.playback().update_position(user_id, db_input).await {
             Ok(Some(session)) => {
-                // Also persist to watch_progress table for resume functionality
-                if let (Some(episode_id), Some(position)) = (session.episode_id, input.current_position) {
-                    tracing::info!(
-                        "Persisting watch progress: user={}, episode={}, position={:.1}s, duration={:?}",
-                        user_id, episode_id, position, input.duration.or(session.duration)
-                    );
-                    
-                    let wp_input = crate::db::UpsertWatchProgress {
-                        user_id,
-                        episode_id,
-                        media_file_id: session.media_file_id,
-                        current_position: position,
-                        duration: input.duration.or(session.duration),
+                // Persist watch progress for all content types
+                if let Some(position) = input.current_position {
+                    // Determine content type and ID from session
+                    let content_info: Option<(WPContentType, Uuid)> = match session.content_type.as_deref() {
+                        Some("episode") => session.episode_id.map(|id| (WPContentType::Episode, id)),
+                        Some("movie") => session.movie_id.map(|id| (WPContentType::Movie, id)),
+                        Some("track") => session.track_id.map(|id| (WPContentType::Track, id)),
+                        Some("audiobook") => session.audiobook_id.map(|id| (WPContentType::Audiobook, id)),
+                        _ => {
+                            // Fallback to old behavior for backwards compatibility
+                            session.episode_id.map(|id| (WPContentType::Episode, id))
+                        }
                     };
-                    
-                    match db.watch_progress().upsert_progress(wp_input).await {
-                        Ok(wp) => tracing::info!(
-                            "Watch progress saved: episode={}, progress={:.1}%, is_watched={}",
-                            episode_id, wp.progress_percent * 100.0, wp.is_watched
-                        ),
-                        Err(e) => tracing::warn!("Failed to persist watch progress: {}", e),
+
+                    if let Some((content_type, content_id)) = content_info {
+                        tracing::info!(
+                            "Persisting watch progress: user={}, type={:?}, content={}, position={:.1}s",
+                            user_id, content_type, content_id, position
+                        );
+                        
+                        let wp_input = crate::db::UpsertWatchProgress {
+                            user_id,
+                            content_type,
+                            content_id,
+                            media_file_id: session.media_file_id,
+                            current_position: position,
+                            duration: input.duration.or(session.duration),
+                        };
+                        
+                        match db.watch_progress().upsert_progress(wp_input).await {
+                            Ok(wp) => tracing::info!(
+                                "Watch progress saved: content={}, progress={:.1}%, is_watched={}",
+                                content_id, wp.progress_percent * 100.0, wp.is_watched
+                            ),
+                            Err(e) => tracing::warn!("Failed to persist watch progress: {}", e),
+                        }
+                    } else {
+                        tracing::debug!(
+                            "Skipping watch progress: no content ID found in session"
+                        );
                     }
-                } else {
-                    tracing::debug!(
-                        "Skipping watch progress: episode_id={:?}, position={:?}",
-                        session.episode_id, input.current_position
-                    );
                 }
                 
                 Ok(PlaybackResult {
@@ -4754,6 +5480,8 @@ impl MutationRoot {
             desc = "Optional library ID to organize into (links torrent to library first)"
         )]
         library_id: Option<String>,
+        #[graphql(desc = "Optional album ID for music torrents")]
+        album_id: Option<String>,
     ) -> Result<OrganizeTorrentResult> {
         let _user = ctx.auth_user()?;
         let db = ctx.data_unchecked::<Database>();
@@ -4781,6 +5509,19 @@ impl MutationRoot {
                     .await
                 {
                     tracing::warn!(error = %e, "Failed to link torrent to library");
+                }
+            }
+        }
+
+        // If album_id provided, link the torrent to that album
+        if let Some(ref album) = album_id {
+            if let Ok(album_uuid) = Uuid::parse_str(album) {
+                if let Err(e) = db
+                    .torrents()
+                    .link_to_album(&torrent_info.info_hash, album_uuid)
+                    .await
+                {
+                    tracing::warn!(error = %e, "Failed to link torrent to album");
                 }
             }
         }
@@ -4958,7 +5699,6 @@ impl MutationRoot {
             name: input.name,
             tvdb_id: input.tvdb_id,
             tmdb_id: input.tmdb_id,
-            quality_profile_id: input.quality_profile_id,
             monitored: input.monitored.unwrap_or(true),
             last_checked_at: None,
             episode_count: 0,
@@ -5925,6 +6665,130 @@ impl MutationRoot {
                 affected_count: 0,
                 messages: vec![],
                 path: None,
+            }),
+        }
+    }
+
+    // ========================================================================
+    // Auto-Hunt Mutations
+    // ========================================================================
+
+    /// Manually trigger auto-hunt for a specific library
+    ///
+    /// This immediately searches indexers for missing content in the library.
+    /// Returns the number of items searched, matched, and downloaded.
+    async fn trigger_auto_hunt(
+        &self,
+        ctx: &Context<'_>,
+        library_id: String,
+    ) -> Result<AutoHuntResult> {
+        let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let torrent_service = ctx.data_unchecked::<Arc<TorrentService>>();
+
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        // Verify the library exists and belongs to this user
+        let library = db
+            .libraries()
+            .get_by_id(lib_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Database error: {}", e)))?
+            .ok_or_else(|| async_graphql::Error::new("Library not found"))?;
+
+        let user_id = Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        if library.user_id != user_id {
+            return Err(async_graphql::Error::new("Library not found"));
+        }
+
+        // Get encryption key and create IndexerManager
+        let encryption_key = db
+            .settings()
+            .get_or_create_indexer_encryption_key()
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to get encryption key: {}", e)))?;
+
+        let indexer_manager = crate::indexer::manager::IndexerManager::new(db.clone(), &encryption_key)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to create IndexerManager: {}", e)))?;
+
+        // Load user's indexers
+        indexer_manager
+            .load_user_indexers(user_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to load indexers: {}", e)))?;
+
+        let indexer_manager = std::sync::Arc::new(indexer_manager);
+
+        // Run auto-hunt for this library (case-insensitive)
+        let result = match library.library_type.to_lowercase().as_str() {
+            "movies" => {
+                crate::jobs::auto_hunt::hunt_movies_for_library(
+                    db,
+                    &library,
+                    torrent_service,
+                    &indexer_manager,
+                )
+                .await
+            }
+            "tv" => {
+                crate::jobs::auto_hunt::hunt_tv_for_library(
+                    db,
+                    &library,
+                    torrent_service,
+                    &indexer_manager,
+                )
+                .await
+            }
+            _ => {
+                return Ok(AutoHuntResult {
+                    success: false,
+                    error: Some(format!(
+                        "Auto-hunt not yet supported for {} libraries",
+                        library.library_type
+                    )),
+                    searched: 0,
+                    matched: 0,
+                    downloaded: 0,
+                    skipped: 0,
+                    failed: 0,
+                });
+            }
+        };
+
+        match result {
+            Ok(hunt_result) => {
+                tracing::info!(
+                    user_id = %user.user_id,
+                    library_id = %library_id,
+                    library_name = %library.name,
+                    searched = hunt_result.searched,
+                    matched = hunt_result.matched,
+                    downloaded = hunt_result.downloaded,
+                    "Manual auto-hunt completed"
+                );
+
+                Ok(AutoHuntResult {
+                    success: true,
+                    error: None,
+                    searched: hunt_result.searched,
+                    matched: hunt_result.matched,
+                    downloaded: hunt_result.downloaded,
+                    skipped: hunt_result.skipped,
+                    failed: hunt_result.failed,
+                })
+            }
+            Err(e) => Ok(AutoHuntResult {
+                success: false,
+                error: Some(e.to_string()),
+                searched: 0,
+                matched: 0,
+                downloaded: 0,
+                skipped: 0,
+                failed: 0,
             }),
         }
     }

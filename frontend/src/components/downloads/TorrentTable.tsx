@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
+import { useQueryState, parseAsString } from 'nuqs'
 import { Progress } from '@heroui/progress'
 import { Chip } from '@heroui/chip'
 import { Button, ButtonGroup } from '@heroui/button'
@@ -74,8 +75,9 @@ export function TorrentTable({
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
   const [torrentToRemove, setTorrentToRemove] = useState<Torrent | null>(null)
   
-  // State filter (managed locally)
-  const [stateFilter, setStateFilter] = useState<string | null>(null)
+  // State filter - persisted in URL via nuqs
+  const [stateFilter, setStateFilter] = useQueryState('state', parseAsString.withDefault(''))
+  const normalizedStateFilter = stateFilter === '' ? null : stateFilter
 
   // Calculate state counts for filter badges
   const stateCounts = useMemo(() => {
@@ -88,9 +90,9 @@ export function TorrentTable({
   
   // Filter torrents by state
   const filteredTorrents = useMemo(() => {
-    if (!stateFilter) return torrents
-    return torrents.filter((t) => t.state === stateFilter)
-  }, [torrents, stateFilter])
+    if (!normalizedStateFilter) return torrents
+    return torrents.filter((t) => t.state === normalizedStateFilter)
+  }, [torrents, normalizedStateFilter])
 
   // Column definitions with skeleton support
   const columns: DataTableColumn<Torrent>[] = useMemo(
@@ -257,9 +259,9 @@ export function TorrentTable({
     () => (
       <ButtonGroup size="sm" variant="solid">
         <Button
-          variant={stateFilter === null ? 'solid' : 'flat'}
-          color={stateFilter === null ? 'primary' : 'default'}
-          onPress={() => setStateFilter(null)}
+          variant={normalizedStateFilter === null ? 'solid' : 'flat'}
+          color={normalizedStateFilter === null ? 'primary' : 'default'}
+          onPress={() => setStateFilter('')}
         >
           All ({torrents.length})
         </Button>
@@ -269,9 +271,9 @@ export function TorrentTable({
           return (
             <Button
               key={option.key}
-              variant={stateFilter === option.key ? 'solid' : 'flat'}
-              color={stateFilter === option.key ? option.color : 'default'}
-              onPress={() => setStateFilter(stateFilter === option.key ? null : option.key)}
+              variant={normalizedStateFilter === option.key ? 'solid' : 'flat'}
+              color={normalizedStateFilter === option.key ? option.color : 'default'}
+              onPress={() => setStateFilter(normalizedStateFilter === option.key ? '' : option.key)}
               className="gap-1"
             >
               <span>{option.label}</span>
@@ -283,7 +285,7 @@ export function TorrentTable({
         })}
       </ButtonGroup>
     ),
-    [stateFilter, stateCounts, torrents.length]
+    [normalizedStateFilter, stateCounts, torrents.length, setStateFilter]
   )
 
   // Bulk actions

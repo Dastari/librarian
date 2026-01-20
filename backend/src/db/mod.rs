@@ -1,5 +1,11 @@
 //! Database connection and operations
+//!
+//! Re-exports are provided for convenience, even if not all are used within the crate.
 
+#![allow(unused_imports)]
+
+pub mod albums;
+pub mod audiobooks;
 pub mod cast;
 pub mod episodes;
 pub mod indexers;
@@ -9,12 +15,12 @@ pub mod media_files;
 pub mod movies;
 pub mod naming_patterns;
 pub mod playback;
-pub mod quality_profiles;
 pub mod rss_feeds;
 pub mod schedule;
 pub mod settings;
 pub mod subtitles;
 pub mod torrents;
+pub mod tracks;
 pub mod tv_shows;
 pub mod watch_progress;
 
@@ -22,6 +28,8 @@ use anyhow::Result;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
+pub use albums::{AlbumRecord, AlbumRepository, ArtistRecord};
+pub use audiobooks::{AudiobookAuthorRecord, AudiobookRecord, AudiobookRepository, CreateAudiobook};
 pub use cast::{
     CastDeviceRecord, CastRepository, CastSessionRecord, CastSettingsRecord, CreateCastDevice,
     CreateCastSession, UpdateCastDevice, UpdateCastSession, UpdateCastSettings,
@@ -34,7 +42,6 @@ pub use media_files::{CreateMediaFile, MediaFileRecord, MediaFileRepository};
 pub use movies::{CreateMovie, MovieCollectionRecord, MovieRecord, MovieRepository, UpdateMovie};
 pub use naming_patterns::{CreateNamingPattern, NamingPatternRecord, NamingPatternRepository};
 pub use playback::{PlaybackRepository, PlaybackSessionRecord, UpdatePlaybackPosition, UpsertPlaybackSession};
-pub use quality_profiles::{CreateQualityProfile, QualityProfileRepository, UpdateQualityProfile};
 pub use schedule::{ScheduleCacheRecord, ScheduleRepository, ScheduleSyncStateRecord, UpsertScheduleEntry};
 pub use rss_feeds::{
     CreateRssFeed, CreateRssFeedItem, RssFeedRecord, RssFeedRepository, UpdateRssFeed,
@@ -46,6 +53,7 @@ pub use subtitles::{
     SubtitleSourceType, VideoStreamRecord,
 };
 pub use torrents::{CreateTorrent, TorrentRecord, TorrentRepository};
+pub use tracks::{CreateTrack, TrackRecord, TrackRepository, TrackWithStatus, UpdateTrack};
 pub use tv_shows::{CreateTvShow, TvShowRecord, TvShowRepository, UpdateTvShow};
 pub use watch_progress::{UpsertWatchProgress, WatchProgressRecord, WatchProgressRepository};
 
@@ -139,11 +147,6 @@ impl Database {
         EpisodeRepository::new(self.pool.clone())
     }
 
-    /// Get a quality profile repository
-    pub fn quality_profiles(&self) -> QualityProfileRepository {
-        QualityProfileRepository::new(self.pool.clone())
-    }
-
     /// Get an RSS feed repository
     pub fn rss_feeds(&self) -> RssFeedRepository {
         RssFeedRepository::new(self.pool.clone())
@@ -202,6 +205,21 @@ impl Database {
     /// Get a watch progress repository
     pub fn watch_progress(&self) -> WatchProgressRepository {
         WatchProgressRepository::new(self.pool.clone())
+    }
+
+    /// Get an albums repository
+    pub fn albums(&self) -> AlbumRepository {
+        AlbumRepository::new(self.pool.clone())
+    }
+
+    /// Get an audiobooks repository
+    pub fn audiobooks(&self) -> AudiobookRepository {
+        AudiobookRepository::new(self.pool.clone())
+    }
+
+    /// Get a tracks repository
+    pub fn tracks(&self) -> TrackRepository {
+        TrackRepository::new(self.pool.clone())
     }
 
     /// Run database migrations

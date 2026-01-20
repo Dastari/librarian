@@ -1,4 +1,8 @@
 //! External service integrations
+//!
+//! Re-exports are provided for convenience, even if not all are used within the crate.
+
+#![allow(unused_imports)]
 
 pub mod artwork;
 pub mod audible;
@@ -12,10 +16,10 @@ pub mod filesystem;
 pub mod job_queue;
 pub mod logging;
 pub mod metadata;
+pub mod metrics;
 pub mod musicbrainz;
 pub mod opensubtitles;
 pub mod organizer;
-pub mod prowlarr;
 pub mod queues;
 pub mod rate_limiter;
 pub mod rss;
@@ -23,7 +27,9 @@ pub mod scanner;
 pub mod supabase_storage;
 pub mod tmdb;
 pub mod torrent;
+pub mod torrent_metadata;
 pub mod torrent_processor;
+pub mod track_matcher;
 pub mod tvmaze;
 
 pub use artwork::ArtworkService;
@@ -37,6 +43,10 @@ pub use job_queue::{
     process_concurrent, process_in_chunks,
 };
 pub use logging::{DatabaseLoggerConfig, LogEvent, create_database_layer};
+pub use metrics::{
+    DatabaseSnapshot, MetricsCollector, SharedMetrics, SystemSnapshot,
+    create_metrics_collector, format_bytes_short, format_uptime,
+};
 pub use metadata::{
     AddMovieOptions, AddTvShowOptions, MetadataProvider, MetadataService, MetadataServiceConfig,
     MovieDetails, MovieSearchResult, create_metadata_service_with_artwork,
@@ -63,6 +73,8 @@ pub use torrent::{
     TorrentState,
 };
 pub use torrent_processor::{ProcessTorrentResult, TorrentProcessor};
+pub use torrent_metadata::{TorrentFileInfo, parse_torrent_files, extract_audio_files, is_single_file_album, audio_summary};
+pub use track_matcher::{TrackMatchResult, TrackMatch, MatchType, match_tracks};
 pub use file_utils::{
     format_bytes, format_bytes_i64, get_container, is_archive_file, is_audio_file,
     is_subtitle_file, is_video_file, sanitize_for_filename, ARCHIVE_EXTENSIONS,

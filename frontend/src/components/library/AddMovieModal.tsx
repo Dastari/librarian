@@ -273,7 +273,9 @@ export function AddMovieModal({
                 <div>
                   <p className="font-medium">Monitor Movie</p>
                   <p className="text-xs text-default-500">
-                    Automatically hunt for and download this movie
+                    {monitored
+                      ? 'Auto-hunt will search indexers for this movie'
+                      : 'Movie will be tracked but not auto-downloaded'}
                   </p>
                 </div>
                 <Switch

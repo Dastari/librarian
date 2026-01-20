@@ -98,6 +98,74 @@ pub struct MusicBrainzRecording {
     pub isrcs: Option<Vec<String>>,
 }
 
+/// Release (specific pressing/edition of an album)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MusicBrainzRelease {
+    pub id: Uuid,
+    pub title: String,
+    pub status: Option<String>,
+    pub date: Option<String>,
+    pub country: Option<String>,
+    pub barcode: Option<String>,
+    #[serde(rename = "release-group")]
+    pub release_group: Option<MusicBrainzReleaseGroupRef>,
+    #[serde(rename = "artist-credit")]
+    pub artist_credit: Option<Vec<MusicBrainzArtistCredit>>,
+    pub media: Option<Vec<MusicBrainzMedium>>,
+}
+
+/// Simplified release group reference
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MusicBrainzReleaseGroupRef {
+    pub id: Uuid,
+    pub title: String,
+    #[serde(rename = "primary-type")]
+    pub primary_type: Option<String>,
+}
+
+/// Medium (disc) in a release
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MusicBrainzMedium {
+    pub position: Option<i32>,
+    pub format: Option<String>,
+    #[serde(rename = "track-count")]
+    pub track_count: Option<i32>,
+    pub tracks: Option<Vec<MusicBrainzTrack>>,
+}
+
+/// Track position on a medium
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MusicBrainzTrack {
+    pub id: Uuid,
+    pub number: String,
+    pub position: Option<i32>,
+    pub title: String,
+    pub length: Option<i64>, // milliseconds
+    pub recording: MusicBrainzRecording,
+}
+
+/// Release browse result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MusicBrainzReleaseBrowse {
+    #[serde(rename = "release-count")]
+    pub release_count: i32,
+    #[serde(rename = "release-offset")]
+    pub release_offset: Option<i32>,
+    pub releases: Vec<MusicBrainzRelease>,
+}
+
+/// Track information for creating database records
+#[derive(Debug, Clone)]
+pub struct TrackInfo {
+    pub musicbrainz_id: Uuid,
+    pub title: String,
+    pub track_number: i32,
+    pub disc_number: i32,
+    pub duration_secs: Option<i32>,
+    pub isrc: Option<String>,
+    pub artist_name: Option<String>,
+}
+
 /// Cover Art Archive result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoverArtArchiveResult {
@@ -393,6 +461,172 @@ impl MusicBrainzClient {
             .or_else(|| None);
 
         Ok(front_cover.and_then(|img| img.thumbnails.large.or(Some(img.image))))
+    }
+
+    /// Get releases for a release group, including track listings
+    /// 
+    /// This fetches all releases (editions) of an album and their track listings.
+    /// We use the "Official" status release with the most complete track listing.
+    pub async fn get_releases_for_release_group(
+        &self,
+        release_group_id: Uuid,
+    ) -> Result<Vec<MusicBrainzRelease>> {
+        info!(release_group_id = %release_group_id, "Fetching releases with tracks from MusicBrainz");
+
+        let url = format!("{}/release", self.base_url);
+        let client = self.client.clone();
+        let user_agent = self.user_agent.clone();
+        let retry_config = self.retry_config.clone();
+        let rg_id = release_group_id.to_string();
+
+        retry_async(
+            || {
+                let url = url.clone();
+                let client = client.clone();
+                let ua = user_agent.clone();
+                let rg = rg_id.clone();
+                async move {
+                    // Query releases belonging to this release group, with media and recordings
+                    let query_params = [
+                        ("release-group", rg),
+                        ("fmt", "json".to_string()),
+                        ("inc", "recordings+artist-credits+isrcs".to_string()),
+                        ("limit", "100".to_string()),
+                    ];
+
+                    let response = client
+                        .get_with_headers_and_query(&url, &[("User-Agent", &ua)], &query_params)
+                        .await?;
+
+                    if response.status().as_u16() == 503 {
+                        anyhow::bail!("Rate limited (503)");
+                    }
+
+                    if !response.status().is_success() {
+                        anyhow::bail!(
+                            "MusicBrainz get releases failed with status: {}",
+                            response.status()
+                        );
+                    }
+
+                    let browse_result: MusicBrainzReleaseBrowse = response
+                        .json()
+                        .await
+                        .context("Failed to parse MusicBrainz release browse results")?;
+
+                    Ok(browse_result.releases)
+                }
+            },
+            &retry_config,
+            "musicbrainz_get_releases",
+        )
+        .await
+    }
+
+    /// Get tracks for a release group
+    ///
+    /// Fetches the track listing from the best available release.
+    /// Prefers "Official" status releases with complete track listings.
+    pub async fn get_tracks_for_release_group(
+        &self,
+        release_group_id: Uuid,
+    ) -> Result<Vec<TrackInfo>> {
+        let releases = self.get_releases_for_release_group(release_group_id).await?;
+
+        if releases.is_empty() {
+            warn!(release_group_id = %release_group_id, "No releases found for release group");
+            return Ok(vec![]);
+        }
+
+        // Find the best release (prefer Official, then by track count)
+        let best_release = releases
+            .iter()
+            .filter(|r| r.status.as_deref() == Some("Official"))
+            .max_by_key(|r| {
+                r.media
+                    .as_ref()
+                    .map(|media| media.iter().filter_map(|m| m.track_count).sum::<i32>())
+                    .unwrap_or(0)
+            })
+            .or_else(|| {
+                // Fallback to any release with the most tracks
+                releases.iter().max_by_key(|r| {
+                    r.media
+                        .as_ref()
+                        .map(|media| media.iter().filter_map(|m| m.track_count).sum::<i32>())
+                        .unwrap_or(0)
+                })
+            });
+
+        let Some(release) = best_release else {
+            return Ok(vec![]);
+        };
+
+        info!(
+            release_id = %release.id,
+            release_title = %release.title,
+            status = ?release.status,
+            "Selected release for track listing"
+        );
+
+        // Extract tracks from all media (discs)
+        let mut tracks = Vec::new();
+
+        if let Some(ref media) = release.media {
+            for medium in media {
+                let disc_number = medium.position.unwrap_or(1);
+
+                if let Some(ref medium_tracks) = medium.tracks {
+                    for track in medium_tracks {
+                        let track_number = track.position.unwrap_or_else(|| {
+                            track.number.parse().unwrap_or(1)
+                        });
+
+                        // Get artist name from recording's artist credit
+                        let artist_name = track
+                            .recording
+                            .artist_credit
+                            .as_ref()
+                            .and_then(|credits| {
+                                credits.first().map(|c| {
+                                    c.name.clone().unwrap_or_else(|| c.artist.name.clone())
+                                })
+                            });
+
+                        // Get first ISRC if available
+                        let isrc = track
+                            .recording
+                            .isrcs
+                            .as_ref()
+                            .and_then(|isrcs| isrcs.first().cloned());
+
+                        // Convert duration from milliseconds to seconds
+                        let duration_secs = track
+                            .recording
+                            .length
+                            .or(track.length)
+                            .map(|ms| (ms / 1000) as i32);
+
+                        tracks.push(TrackInfo {
+                            musicbrainz_id: track.recording.id,
+                            title: track.recording.title.clone(),
+                            track_number,
+                            disc_number,
+                            duration_secs,
+                            isrc,
+                            artist_name,
+                        });
+                    }
+                }
+            }
+        }
+
+        info!(
+            track_count = tracks.len(),
+            "Extracted tracks from release"
+        );
+
+        Ok(tracks)
     }
 }
 

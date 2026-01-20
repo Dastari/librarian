@@ -27,6 +27,7 @@ import { Route as SettingsCastingRouteImport } from './routes/settings/casting'
 import { Route as MoviesMovieIdRouteImport } from './routes/movies/$movieId'
 import { Route as LibrariesLibraryIdRouteImport } from './routes/libraries/$libraryId'
 import { Route as AuthLoginRouteImport } from './routes/auth/login'
+import { Route as AlbumsAlbumIdRouteImport } from './routes/albums/$albumId'
 import { Route as LibrariesLibraryIdIndexRouteImport } from './routes/libraries/$libraryId/index'
 import { Route as LibrariesLibraryIdUnmatchedRouteImport } from './routes/libraries/$libraryId/unmatched'
 import { Route as LibrariesLibraryIdTracksRouteImport } from './routes/libraries/$libraryId/tracks'
@@ -130,6 +131,11 @@ const AuthLoginRoute = AuthLoginRouteImport.update({
   path: '/auth/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AlbumsAlbumIdRoute = AlbumsAlbumIdRouteImport.update({
+  id: '/albums/$albumId',
+  path: '/albums/$albumId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LibrariesLibraryIdIndexRoute = LibrariesLibraryIdIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -205,6 +211,7 @@ export interface FileRoutesByFullPath {
   '/hunt': typeof HuntRoute
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/albums/$albumId': typeof AlbumsAlbumIdRoute
   '/auth/login': typeof AuthLoginRoute
   '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
   '/movies/$movieId': typeof MoviesMovieIdRoute
@@ -236,6 +243,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/hunt': typeof HuntRoute
   '/search': typeof SearchRoute
+  '/albums/$albumId': typeof AlbumsAlbumIdRoute
   '/auth/login': typeof AuthLoginRoute
   '/movies/$movieId': typeof MoviesMovieIdRoute
   '/settings/casting': typeof SettingsCastingRoute
@@ -268,6 +276,7 @@ export interface FileRoutesById {
   '/hunt': typeof HuntRoute
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/albums/$albumId': typeof AlbumsAlbumIdRoute
   '/auth/login': typeof AuthLoginRoute
   '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
   '/movies/$movieId': typeof MoviesMovieIdRoute
@@ -302,6 +311,7 @@ export interface FileRouteTypes {
     | '/hunt'
     | '/search'
     | '/settings'
+    | '/albums/$albumId'
     | '/auth/login'
     | '/libraries/$libraryId'
     | '/movies/$movieId'
@@ -333,6 +343,7 @@ export interface FileRouteTypes {
     | '/'
     | '/hunt'
     | '/search'
+    | '/albums/$albumId'
     | '/auth/login'
     | '/movies/$movieId'
     | '/settings/casting'
@@ -364,6 +375,7 @@ export interface FileRouteTypes {
     | '/hunt'
     | '/search'
     | '/settings'
+    | '/albums/$albumId'
     | '/auth/login'
     | '/libraries/$libraryId'
     | '/movies/$movieId'
@@ -397,6 +409,7 @@ export interface RootRouteChildren {
   HuntRoute: typeof HuntRoute
   SearchRoute: typeof SearchRoute
   SettingsRoute: typeof SettingsRouteWithChildren
+  AlbumsAlbumIdRoute: typeof AlbumsAlbumIdRoute
   AuthLoginRoute: typeof AuthLoginRoute
   LibrariesLibraryIdRoute: typeof LibrariesLibraryIdRouteWithChildren
   MoviesMovieIdRoute: typeof MoviesMovieIdRoute
@@ -531,6 +544,13 @@ declare module '@tanstack/react-router' {
       path: '/auth/login'
       fullPath: '/auth/login'
       preLoaderRoute: typeof AuthLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/albums/$albumId': {
+      id: '/albums/$albumId'
+      path: '/albums/$albumId'
+      fullPath: '/albums/$albumId'
+      preLoaderRoute: typeof AlbumsAlbumIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/libraries/$libraryId/': {
@@ -684,6 +704,7 @@ const rootRouteChildren: RootRouteChildren = {
   HuntRoute: HuntRoute,
   SearchRoute: SearchRoute,
   SettingsRoute: SettingsRouteWithChildren,
+  AlbumsAlbumIdRoute: AlbumsAlbumIdRoute,
   AuthLoginRoute: AuthLoginRoute,
   LibrariesLibraryIdRoute: LibrariesLibraryIdRouteWithChildren,
   MoviesMovieIdRoute: MoviesMovieIdRoute,

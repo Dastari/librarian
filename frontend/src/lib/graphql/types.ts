@@ -58,7 +58,6 @@ export interface Subscription {
   name: string;
   tvdbId: number | null;
   tmdbId: number | null;
-  qualityProfileId: string | null;
   monitored: boolean;
   lastCheckedAt: string | null;
   episodeCount: number;
@@ -330,7 +329,6 @@ export interface Library {
   organizeFiles: boolean;
   renameStyle: string;
   namingPattern: string | null;
-  defaultQualityProfileId: string | null;
   autoAddDiscovered: boolean;
   autoDownload: boolean;
   /** Automatically hunt for missing episodes using indexers */
@@ -388,7 +386,6 @@ export interface CreateLibraryInput {
   postDownloadAction?: PostDownloadAction;
   organizeFiles?: boolean;
   namingPattern?: string;
-  defaultQualityProfileId?: string;
   autoAddDiscovered?: boolean;
   autoDownload?: boolean;
   autoHunt?: boolean;
@@ -414,7 +411,6 @@ export interface UpdateLibraryInput {
   postDownloadAction?: PostDownloadAction;
   organizeFiles?: boolean;
   namingPattern?: string;
-  defaultQualityProfileId?: string | null;
   autoAddDiscovered?: boolean;
   autoDownload?: boolean;
   autoHunt?: boolean;
@@ -456,7 +452,6 @@ export interface TvShow {
   backdropUrl: string | null;
   monitored: boolean;
   monitorType: MonitorType;
-  qualityProfileId: string | null;
   path: string | null;
   /** Override library auto-download setting (null = inherit) */
   autoDownloadOverride: boolean | null;
@@ -570,14 +565,12 @@ export interface AddTvShowInput {
   provider: string;
   providerId: number;
   monitorType?: MonitorType;
-  qualityProfileId?: string;
   path?: string;
 }
 
 export interface UpdateTvShowInput {
   monitored?: boolean;
   monitorType?: MonitorType;
-  qualityProfileId?: string;
   path?: string;
   /** Override library auto-download (null = inherit, true/false = override) */
   autoDownloadOverride?: boolean | null;
@@ -698,6 +691,154 @@ export interface UpdateMovieInput {
 }
 
 // ============================================================================
+// Album/Music Types
+// ============================================================================
+
+export interface Artist {
+  id: string;
+  libraryId: string;
+  name: string;
+  sortName: string | null;
+  musicbrainzId: string | null;
+}
+
+export interface Album {
+  id: string;
+  artistId: string;
+  libraryId: string;
+  name: string;
+  sortName: string | null;
+  year: number | null;
+  musicbrainzId: string | null;
+  albumType: string | null;
+  genres: string[];
+  label: string | null;
+  country: string | null;
+  releaseDate: string | null;
+  coverUrl: string | null;
+  trackCount: number | null;
+  discCount: number | null;
+  totalDurationSecs: number | null;
+  hasFiles: boolean;
+  sizeBytes: number | null;
+  path: string | null;
+}
+
+export interface AlbumSearchResult {
+  provider: string;
+  providerId: string;
+  title: string;
+  artistName: string | null;
+  year: number | null;
+  albumType: string | null;
+  coverUrl: string | null;
+  score: number | null;
+}
+
+export interface AlbumResult {
+  success: boolean;
+  album: Album | null;
+  error: string | null;
+}
+
+export interface AddAlbumInput {
+  musicbrainzId: string;
+  libraryId: string;
+}
+
+// ============================================================================
+// Track Types
+// ============================================================================
+
+export interface Track {
+  id: string;
+  albumId: string;
+  libraryId: string;
+  title: string;
+  trackNumber: number;
+  discNumber: number;
+  musicbrainzId: string | null;
+  isrc: string | null;
+  durationSecs: number | null;
+  explicit: boolean;
+  artistName: string | null;
+  artistId: string | null;
+  mediaFileId: string | null;
+  hasFile: boolean;
+}
+
+export interface TrackWithStatus {
+  track: Track;
+  hasFile: boolean;
+  filePath: string | null;
+  fileSize: number | null;
+}
+
+export interface AlbumWithTracks {
+  album: Album;
+  tracks: TrackWithStatus[];
+  trackCount: number;
+  tracksWithFiles: number;
+  missingTracks: number;
+  completionPercent: number;
+}
+
+// ============================================================================
+// Audiobook Types
+// ============================================================================
+
+export interface AudiobookAuthor {
+  id: string;
+  libraryId: string;
+  name: string;
+  sortName: string | null;
+  openlibraryId: string | null;
+}
+
+export interface Audiobook {
+  id: string;
+  authorId: string;
+  libraryId: string;
+  title: string;
+  sortTitle: string | null;
+  subtitle: string | null;
+  openlibraryId: string | null;
+  isbn: string | null;
+  description: string | null;
+  publisher: string | null;
+  language: string | null;
+  narrators: string[];
+  seriesName: string | null;
+  durationSecs: number | null;
+  coverUrl: string | null;
+  hasFiles: boolean;
+  sizeBytes: number | null;
+  path: string | null;
+}
+
+export interface AudiobookSearchResult {
+  provider: string;
+  providerId: string;
+  title: string;
+  authorName: string | null;
+  year: number | null;
+  coverUrl: string | null;
+  isbn: string | null;
+  description: string | null;
+}
+
+export interface AudiobookResult {
+  success: boolean;
+  audiobook: Audiobook | null;
+  error: string | null;
+}
+
+export interface AddAudiobookInput {
+  openlibraryId: string;
+  libraryId: string;
+}
+
+// ============================================================================
 // Media File Types
 // ============================================================================
 
@@ -796,27 +937,6 @@ export interface MediaFileDetails {
   audioStreams: AudioStreamInfo[];
   subtitles: SubtitleInfo[];
   chapters: ChapterInfo[];
-}
-
-// ============================================================================
-// Quality Profile Types
-// ============================================================================
-
-export interface QualityProfile {
-  id: string;
-  name: string;
-  preferredResolution: string | null;
-  minResolution: string | null;
-  preferredCodec: string | null;
-  preferredAudio: string | null;
-  requireHdr: boolean;
-  hdrTypes: string[];
-  preferredLanguage: string | null;
-  maxSizeGb: number | null;
-  minSeeders: number | null;
-  releaseGroupWhitelist: string[];
-  releaseGroupBlacklist: string[];
-  upgradeUntil: string | null;
 }
 
 // ============================================================================
@@ -1275,13 +1395,31 @@ export interface CastSettings {
 // Playback Session Types
 // ============================================================================
 
-/** A user's playback session (what they're currently watching) */
+/** Content type for playback */
+export type PlaybackContentType = 'EPISODE' | 'MOVIE' | 'TRACK' | 'AUDIOBOOK';
+
+/** A user's playback session (what they're currently watching/listening) */
 export interface PlaybackSession {
   id: string;
   userId: string;
-  episodeId: string | null;
+  /** Content type being played */
+  contentType: PlaybackContentType | null;
+  /** Media file being played */
   mediaFileId: string | null;
+  /** Content ID (the episode/movie/track/audiobook ID) */
+  contentId: string | null;
+  /** Episode being played (for episodes) */
+  episodeId: string | null;
+  /** Movie being played (for movies) */
+  movieId: string | null;
+  /** Track being played (for music) */
+  trackId: string | null;
+  /** Audiobook being played (for audiobooks) */
+  audiobookId: string | null;
+  /** TV show ID (parent for episodes) */
   tvShowId: string | null;
+  /** Album ID (parent for tracks) */
+  albumId: string | null;
   currentPosition: number;
   duration: number | null;
   volume: number;
@@ -1291,12 +1429,19 @@ export interface PlaybackSession {
   lastUpdatedAt: string;
 }
 
-/** Input for starting playback */
+/** Input for starting playback (unified for all content types) */
 export interface StartPlaybackInput {
-  episodeId: string;
+  /** Content type being played */
+  contentType: PlaybackContentType;
+  /** Media file ID */
   mediaFileId: string;
-  tvShowId: string;
+  /** Content ID (the episode/movie/track/audiobook ID) */
+  contentId: string;
+  /** Parent ID for context (TV show for episodes, album for tracks) */
+  parentId?: string;
+  /** Starting position in seconds */
   startPosition?: number;
+  /** Duration in seconds */
   duration?: number;
 }
 
@@ -1377,4 +1522,162 @@ export interface CastSettingsResult {
   success: boolean;
   settings: CastSettings | null;
   error: string | null;
+}
+
+// ============================================================================
+// Auto-Hunt Types
+// ============================================================================
+
+/** Result of an auto-hunt operation */
+export interface AutoHuntResult {
+  success: boolean;
+  error: string | null;
+  searched: number;
+  matched: number;
+  downloaded: number;
+  skipped: number;
+  failed: number;
+}
+
+// ============================================================================
+// Filter Types (for GraphQL where clauses)
+// ============================================================================
+
+/** Filter for string fields */
+export interface StringFilter {
+  eq?: string;
+  ne?: string;
+  contains?: string;
+  startsWith?: string;
+  endsWith?: string;
+  in?: string[];
+  notIn?: string[];
+}
+
+/** Filter for integer fields */
+export interface IntFilter {
+  eq?: number;
+  ne?: number;
+  lt?: number;
+  lte?: number;
+  gt?: number;
+  gte?: number;
+  in?: number[];
+  notIn?: number[];
+}
+
+/** Filter for boolean fields */
+export interface BoolFilter {
+  eq?: boolean;
+  ne?: boolean;
+}
+
+/** Date range for between queries */
+export interface DateRange {
+  start?: string;
+  end?: string;
+}
+
+/** Filter for date/timestamp fields */
+export interface DateFilter {
+  eq?: string;
+  ne?: string;
+  lt?: string;
+  lte?: string;
+  gt?: string;
+  gte?: string;
+  between?: DateRange;
+}
+
+// ============================================================================
+// Pagination Types (cursor-based)
+// ============================================================================
+
+/** Order direction for sorting */
+export type OrderDirection = 'ASC' | 'DESC';
+
+/** Pagination info for connections */
+export interface PageInfo {
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+  startCursor: string | null;
+  endCursor: string | null;
+  totalCount: number | null;
+}
+
+/** Generic edge type for paginated results */
+export interface Edge<T> {
+  node: T;
+  cursor: string;
+}
+
+/** Generic connection type for paginated results */
+export interface Connection<T> {
+  edges: Edge<T>[];
+  pageInfo: PageInfo;
+}
+
+// ============================================================================
+// Entity-specific Filter Inputs
+// ============================================================================
+
+/** Filter input for movies query */
+export interface MovieWhereInput {
+  title?: StringFilter;
+  year?: IntFilter;
+  monitored?: BoolFilter;
+  hasFile?: BoolFilter;
+  status?: StringFilter;
+  createdAt?: DateFilter;
+}
+
+/** Order by input for movies */
+export interface MovieOrderByInput {
+  field: 'title' | 'year' | 'releaseDate' | 'createdAt' | 'sortTitle';
+  direction?: OrderDirection;
+}
+
+/** Filter input for TV shows query */
+export interface TvShowWhereInput {
+  name?: StringFilter;
+  year?: IntFilter;
+  status?: StringFilter;
+  monitored?: BoolFilter;
+  network?: StringFilter;
+  createdAt?: DateFilter;
+}
+
+/** Order by input for TV shows */
+export interface TvShowOrderByInput {
+  field: 'name' | 'year' | 'createdAt' | 'sortName';
+  direction?: OrderDirection;
+}
+
+/** Filter input for albums query */
+export interface AlbumWhereInput {
+  name?: StringFilter;
+  year?: IntFilter;
+  artistName?: StringFilter;
+  hasFiles?: BoolFilter;
+  albumType?: StringFilter;
+}
+
+/** Order by input for albums */
+export interface AlbumOrderByInput {
+  field: 'name' | 'year' | 'createdAt' | 'sortName';
+  direction?: OrderDirection;
+}
+
+/** Filter input for audiobooks query */
+export interface AudiobookWhereInput {
+  title?: StringFilter;
+  authorName?: StringFilter;
+  hasFiles?: BoolFilter;
+  language?: StringFilter;
+}
+
+/** Order by input for audiobooks */
+export interface AudiobookOrderByInput {
+  field: 'title' | 'createdAt' | 'sortTitle';
+  direction?: OrderDirection;
 }

@@ -322,6 +322,55 @@ impl IndexerManager {
         indexer.test_connection().await
     }
 
+    /// Download a torrent file using the appropriate indexer's authentication
+    ///
+    /// This method downloads the torrent file with proper cookies/headers for
+    /// private trackers. It should be used instead of directly fetching URLs.
+    ///
+    /// # Arguments
+    /// * `indexer_id` - The indexer ID (string, from ReleaseInfo.indexer_id)
+    /// * `link` - The download URL for the torrent file
+    ///
+    /// # Returns
+    /// The torrent file bytes on success
+    pub async fn download_torrent(&self, indexer_id: &str, link: &str) -> Result<Vec<u8>> {
+        // Parse the indexer ID
+        let config_id = Uuid::parse_str(indexer_id)
+            .map_err(|e| anyhow!("Invalid indexer ID '{}': {}", indexer_id, e))?;
+
+        // Get the indexer
+        let indexer = self
+            .get_indexer(config_id)
+            .ok_or_else(|| anyhow!("Indexer not loaded: {}", indexer_id))?;
+
+        tracing::debug!(
+            indexer_id = %indexer_id,
+            indexer_name = %indexer.name(),
+            link = %link,
+            "Downloading torrent via indexer"
+        );
+
+        // Use the indexer's download method (includes authentication)
+        indexer.download(link).await
+    }
+
+    /// Download a torrent from a release
+    ///
+    /// Convenience method that extracts the indexer_id and link from a ReleaseInfo
+    pub async fn download_release(&self, release: &ReleaseInfo) -> Result<Vec<u8>> {
+        let indexer_id = release
+            .indexer_id
+            .as_ref()
+            .ok_or_else(|| anyhow!("Release has no indexer_id"))?;
+
+        let link = release
+            .link
+            .as_ref()
+            .ok_or_else(|| anyhow!("Release has no download link"))?;
+
+        self.download_torrent(indexer_id, link).await
+    }
+
     /// Get the encryption service (for database operations)
     pub fn encryption(&self) -> &CredentialEncryption {
         &self.encryption

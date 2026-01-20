@@ -36,7 +36,7 @@ import {
   IconX,
 } from '@tabler/icons-react'
 import { ConfirmModal } from '../../components/ConfirmModal'
-import { getMediaStreamUrl } from '../../components/VideoPlayer'
+import { usePlaybackContext } from '../../contexts/PlaybackContext'
 
 export const Route = createFileRoute('/movies/$movieId')({
   beforeLoad: ({ context, location }) => {
@@ -62,12 +62,11 @@ function MovieDetailPage() {
   const [mediaFile, setMediaFile] = useState<MediaFile | null>(null)
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState(false)
-  const [isPlaying, setIsPlaying] = useState(false)
   const [loadingPlay, setLoadingPlay] = useState(false)
   const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure()
+  const { startMoviePlayback } = usePlaybackContext()
   
   const initialLoadDone = useRef(false)
-  const videoRef = useRef<HTMLVideoElement>(null)
 
   // Update page title
   useEffect(() => {
@@ -137,36 +136,42 @@ function MovieDetailPage() {
   )
 
   const handlePlay = async () => {
-    if (!mediaFile) {
-      // Try to fetch media file if we don't have it
-      setLoadingPlay(true)
-      try {
+    if (!movie) return
+    
+    setLoadingPlay(true)
+    try {
+      // If we don't have media file, fetch it first
+      let fileToPlay = mediaFile
+      if (!fileToPlay) {
         const result = await graphqlClient
           .query<{ movieMediaFile: MediaFile | null }>(MOVIE_MEDIA_FILE_QUERY, { movieId })
           .toPromise()
         
         if (result.data?.movieMediaFile) {
-          setMediaFile(result.data.movieMediaFile)
-          setIsPlaying(true)
+          fileToPlay = result.data.movieMediaFile
+          setMediaFile(fileToPlay)
         } else {
           addToast({
             title: 'No media file',
             description: 'No playable media file found for this movie',
             color: 'warning',
           })
+          return
         }
-      } catch (err) {
-        console.error('Failed to get media file:', err)
-        addToast({
-          title: 'Error',
-          description: 'Failed to load media file',
-          color: 'danger',
-        })
-      } finally {
-        setLoadingPlay(false)
       }
-    } else {
-      setIsPlaying(true)
+
+      // Start playback using the PersistentPlayer
+      // TODO: Add watch progress resume once backend returns it for movies
+      await startMoviePlayback(movie.id, fileToPlay.id, movie, 0, fileToPlay.duration || undefined)
+    } catch (err) {
+      console.error('Failed to start playback:', err)
+      addToast({
+        title: 'Error',
+        description: 'Failed to start playback',
+        color: 'danger',
+      })
+    } finally {
+      setLoadingPlay(false)
     }
   }
 
@@ -428,40 +433,6 @@ function MovieDetailPage() {
           </div>
         </div>
       </div>
-
-      {/* Video Player */}
-      {isPlaying && mediaFile && (
-        <Card className="bg-black mb-8 overflow-hidden">
-          <CardBody className="p-0">
-            <div className="relative w-full aspect-video">
-              <video
-                ref={videoRef}
-                src={getMediaStreamUrl(mediaFile.id)}
-                className="w-full h-full"
-                controls
-                autoPlay
-                onEnded={() => setIsPlaying(false)}
-              />
-            </div>
-            <div className="p-4 flex justify-between items-center">
-              <div>
-                <h3 className="font-semibold">{movie.title}</h3>
-                <p className="text-sm text-default-500">
-                  {mediaFile.resolution && `${mediaFile.resolution} • `}
-                  {mediaFile.videoCodec && `${mediaFile.videoCodec} • `}
-                  {mediaFile.audioCodec}
-                </p>
-              </div>
-              <Button
-                variant="flat"
-                onPress={() => setIsPlaying(false)}
-              >
-                Close Player
-              </Button>
-            </div>
-          </CardBody>
-        </Card>
-      )}
 
       {/* Collection info */}
       {movie.collectionName && (

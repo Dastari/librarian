@@ -46,6 +46,15 @@ pub struct LogFilter {
     pub to_timestamp: Option<OffsetDateTime>,
 }
 
+/// Order by options for logs
+#[derive(Debug, Clone)]
+pub struct LogOrderBy {
+    /// Field to sort by (timestamp, level, target)
+    pub field: String,
+    /// Sort direction (ASC or DESC)
+    pub direction: String,
+}
+
 /// Result for paginated log queries
 #[derive(Debug, Clone)]
 pub struct PaginatedLogs {
@@ -116,8 +125,14 @@ impl LogsRepository {
         Ok(count)
     }
 
-    /// Get logs with filtering and pagination
-    pub async fn list(&self, filter: LogFilter, limit: i64, offset: i64) -> Result<PaginatedLogs> {
+    /// Get logs with filtering, ordering, and pagination
+    pub async fn list(
+        &self,
+        filter: LogFilter,
+        order_by: Option<LogOrderBy>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<PaginatedLogs> {
         // Build the WHERE clause dynamically
         let mut conditions = Vec::new();
         let mut params_count = 0;
@@ -154,13 +169,33 @@ impl LogsRepository {
             format!("WHERE {}", conditions.join(" AND "))
         };
 
+        // Build ORDER BY clause - validate field names to prevent SQL injection
+        let order_clause = match &order_by {
+            Some(order) => {
+                let field = match order.field.as_str() {
+                    "timestamp" => "timestamp",
+                    "level" => "level",
+                    "target" => "target",
+                    _ => "timestamp", // Default to timestamp for unknown fields
+                };
+                let direction = if order.direction.to_uppercase() == "ASC" {
+                    "ASC"
+                } else {
+                    "DESC"
+                };
+                format!("ORDER BY {} {}", field, direction)
+            }
+            None => "ORDER BY timestamp DESC".to_string(),
+        };
+
         // Count query
         let count_sql = format!("SELECT COUNT(*) as count FROM app_logs {}", where_clause);
 
         // Data query with limit/offset
         let data_sql = format!(
-            "SELECT * FROM app_logs {} ORDER BY timestamp DESC LIMIT ${} OFFSET ${}",
+            "SELECT * FROM app_logs {} {} LIMIT ${} OFFSET ${}",
             where_clause,
+            order_clause,
             params_count + 1,
             params_count + 2
         );

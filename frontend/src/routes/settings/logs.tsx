@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
+import { useQueryState, parseAsString, parseAsStringLiteral } from 'nuqs'
 import { Button, ButtonGroup } from '@heroui/button'
 import { Chip } from '@heroui/chip'
 import { Skeleton } from '@heroui/skeleton'
@@ -102,13 +103,28 @@ function LogsSettingsPage() {
   // Live feed state
   const [isLiveFeedEnabled, setIsLiveFeedEnabled] = useState(true)
   const [liveEventCount, setLiveEventCount] = useState(0)
+  const liveIdCounter = useRef(0)
 
-  // Source filter
+  // Source filter - persisted in URL via nuqs
   const [sources, setSources] = useState<string[]>([])
-  const [selectedSource, setSelectedSource] = useState<string>('')
+  const [selectedSource, setSelectedSource] = useQueryState('source', 
+    parseAsString.withDefault('')
+  )
   
-  // Level filter (managed locally)
-  const [levelFilter, setLevelFilter] = useState<LogLevel | null>(null)
+  // Level filter - persisted in URL via nuqs
+  const [levelFilter, setLevelFilter] = useQueryState('level',
+    parseAsStringLiteral(['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR'] as const).withDefault(null as unknown as 'INFO')
+  )
+  // Convert to LogLevel | null (nuqs returns the literal type)
+  const normalizedLevelFilter: LogLevel | null = levelFilter as LogLevel | null
+
+  // Sort state - persisted in URL via nuqs
+  const [sortColumn, setSortColumn] = useQueryState('sort',
+    parseAsStringLiteral(['timestamp', 'level', 'target'] as const).withDefault('timestamp')
+  )
+  const [sortDirection, setSortDirection] = useQueryState('order',
+    parseAsStringLiteral(['asc', 'desc'] as const).withDefault('desc')
+  )
 
   // Pagination
   const pageSize = 50
@@ -129,7 +145,25 @@ function LogsSettingsPage() {
     }
   }, [])
 
-  const fetchLogs = useCallback(async (reset = true) => {
+  // Create a ref to track if this is the initial mount
+  const isInitialMount = useRef(true)
+  
+  // Refs to store current values for use in fetchLogs (avoids stale closures)
+  const selectedSourceRef = useRef(selectedSource)
+  const sortColumnRef = useRef(sortColumn)
+  const sortDirectionRef = useRef(sortDirection)
+  
+  useEffect(() => {
+    selectedSourceRef.current = selectedSource
+  }, [selectedSource])
+  
+  useEffect(() => {
+    sortColumnRef.current = sortColumn
+    sortDirectionRef.current = sortDirection
+  }, [sortColumn, sortDirection])
+
+  // Updated fetchLogs that reads from ref
+  const fetchLogsWithCurrentSource = useCallback(async (reset = true) => {
     try {
       if (reset) {
         setIsLoading(true)
@@ -138,14 +172,24 @@ function LogsSettingsPage() {
         setIsLoadingMore(true)
       }
 
-      const filter: { levels?: LogLevel[]; targets?: string[] } = {}
-      if (selectedSource) {
-        filter.targets = [selectedSource]
+      const currentSource = selectedSourceRef.current
+      const filter: { levels?: LogLevel[]; target?: string } = {}
+      if (currentSource) {
+        filter.target = currentSource
+      }
+
+      // Build orderBy from current sort state
+      const currentSortColumn = sortColumnRef.current
+      const currentSortDirection = sortDirectionRef.current
+      const orderBy = {
+        field: currentSortColumn.toUpperCase(),
+        direction: currentSortDirection.toUpperCase(),
       }
 
       const result = await graphqlClient
         .query<{ logs: PaginatedLogResult }>(LOGS_QUERY, {
           filter: Object.keys(filter).length > 0 ? filter : null,
+          orderBy,
           limit: pageSize,
           offset: offsetRef.current,
         })
@@ -179,25 +223,29 @@ function LogsSettingsPage() {
       setIsLoading(false)
       setIsLoadingMore(false)
     }
-  }, [selectedSource])
+  }, [])
 
   // Load more for infinite scroll
   const loadMore = useCallback(() => {
     if (!isLoadingMore && hasMore) {
-      fetchLogs(false)
+      fetchLogsWithCurrentSource(false)
     }
-  }, [fetchLogs, isLoadingMore, hasMore])
+  }, [fetchLogsWithCurrentSource, isLoadingMore, hasMore])
 
   // Initial load
   useEffect(() => {
     fetchSources()
-    fetchLogs(true)
-  }, [fetchLogs, fetchSources])
+    fetchLogsWithCurrentSource(true)
+  }, [fetchLogsWithCurrentSource, fetchSources])
 
-  // Re-fetch when source filter changes
+  // Re-fetch when source filter or sort changes (skip initial mount)
   useEffect(() => {
-    fetchLogs(true)
-  }, [selectedSource]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (isInitialMount.current) {
+      isInitialMount.current = false
+      return
+    }
+    fetchLogsWithCurrentSource(true)
+  }, [selectedSource, sortColumn, sortDirection, fetchLogsWithCurrentSource])
 
   // Subscribe to live log events
   useEffect(() => {
@@ -218,7 +266,7 @@ function LogsSettingsPage() {
 
           // Create a log entry from the live event
           const newLog: LogEntry = {
-            id: `live-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            id: `live-${++liveIdCounter.current}`,
             timestamp: event.timestamp,
             level: event.level,
             target: event.target,
@@ -293,7 +341,7 @@ function LogsSettingsPage() {
           description: `Deleted ${result.data.clearOldLogs.deletedCount} logs older than ${days} days`,
           color: 'success',
         })
-        fetchLogs(true)
+        fetchLogsWithCurrentSource(true)
       } else {
         addToast({
           title: 'Error',
@@ -327,11 +375,12 @@ function LogsSettingsPage() {
   
   // Filter logs by level
   const filteredLogs = useMemo(() => {
-    if (!levelFilter) return logs
-    return logs.filter((log) => log.level === levelFilter)
-  }, [logs, levelFilter])
+    if (!normalizedLevelFilter) return logs
+    return logs.filter((log) => log.level === normalizedLevelFilter)
+  }, [logs, normalizedLevelFilter])
 
   // Column definitions with skeleton support
+  // Server-side sorting is now supported for timestamp, level, and target
   const columns: DataTableColumn<LogEntry>[] = useMemo(
     () => [
       {
@@ -348,7 +397,6 @@ function LogsSettingsPage() {
             </span>
           </Tooltip>
         ),
-        sortFn: (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
       },
       {
         key: 'level',
@@ -367,10 +415,6 @@ function LogsSettingsPage() {
             {LOG_LEVEL_INFO[log.level]?.label || log.level}
           </Chip>
         ),
-        sortFn: (a, b) => {
-          const order = ['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE']
-          return order.indexOf(a.level) - order.indexOf(b.level)
-        },
       },
       {
         key: 'target',
@@ -385,21 +429,26 @@ function LogsSettingsPage() {
             </span>
           </Tooltip>
         ),
-        sortFn: (a, b) => a.target.localeCompare(b.target),
       },
       {
         key: 'message',
         label: 'MESSAGE',
         // No width specified - will grow to fill remaining space
-        // Truncation is now automatic via the DataTable component
-        sortable: true,
+        sortable: false, // Message is not sortable
         skeleton: () => <Skeleton className="w-full h-4 rounded" />,
         render: (log) => log.message,
-        sortFn: (a, b) => a.message.localeCompare(b.message),
       },
     ],
     []
   )
+
+  // Handle sort change from DataTable
+  const handleSortChange = useCallback((column: string | null, direction: 'asc' | 'desc') => {
+    if (column && ['timestamp', 'level', 'target'].includes(column)) {
+      setSortColumn(column as 'timestamp' | 'level' | 'target')
+      setSortDirection(direction)
+    }
+  }, [setSortColumn, setSortDirection])
 
   // Level filter options
   const levelFilterOptions: { key: LogLevel; label: string; color: 'danger' | 'warning' | 'primary' | 'default' }[] = [
@@ -444,8 +493,8 @@ function LogsSettingsPage() {
         </span>
         <ButtonGroup size="sm" variant="solid">
           <Button
-            variant={levelFilter === null ? 'solid' : 'flat'}
-            color={levelFilter === null ? 'primary' : 'default'}
+            variant={normalizedLevelFilter === null ? 'solid' : 'flat'}
+            color={normalizedLevelFilter === null ? 'primary' : 'default'}
             onPress={() => setLevelFilter(null)}
           >
             All
@@ -455,9 +504,9 @@ function LogsSettingsPage() {
             return (
               <Button
                 key={option.key}
-                variant={levelFilter === option.key ? 'solid' : 'flat'}
-                color={levelFilter === option.key ? option.color : 'default'}
-                onPress={() => setLevelFilter(levelFilter === option.key ? null : option.key)}
+                variant={normalizedLevelFilter === option.key ? 'solid' : 'flat'}
+                color={normalizedLevelFilter === option.key ? option.color : 'default'}
+                onPress={() => setLevelFilter(normalizedLevelFilter === option.key ? null : option.key)}
                 className="gap-1"
               >
                 <span>{option.label}</span>
@@ -475,21 +524,29 @@ function LogsSettingsPage() {
           placeholder="All Sources"
           aria-label="Filter by source"
           className="w-52"
-          selectedKeys={selectedSource ? [selectedSource] : []}
+          selectedKeys={
+            // Only set selected key if it exists in sources or is the special __all__ key
+            selectedSource && sources.includes(selectedSource)
+              ? [selectedSource]
+              : ['__all__']
+          }
           onSelectionChange={(keys) => {
             const selected = Array.from(keys)[0] as string
-            setSelectedSource(selected || '')
+            setSelectedSource(selected === '__all__' ? '' : (selected || ''))
           }}
         >
-          {sources.map((source) => (
-            <SelectItem key={source}>
-              {simplifyTarget(source)}
-            </SelectItem>
-          ))}
+          {[
+            <SelectItem key="__all__">All Sources</SelectItem>,
+            ...sources.map((source) => (
+              <SelectItem key={source}>
+                {simplifyTarget(source)}
+              </SelectItem>
+            ))
+          ]}
         </Select>
       </>
     ),
-    [levelFilter, levelCounts, selectedSource, sources]
+    [normalizedLevelFilter, levelCounts, selectedSource, sources, setLevelFilter, setSelectedSource]
   )
 
   // Toolbar content - actions on the right side of the search bar
@@ -516,7 +573,7 @@ function LogsSettingsPage() {
       </div>
 
       <Tooltip content="Refresh">
-        <Button isIconOnly variant="flat" size="sm" onPress={() => fetchLogs(true)}>
+        <Button isIconOnly variant="flat" size="sm" onPress={() => fetchLogsWithCurrentSource(true)}>
           <IconRefresh size={16} />
         </Button>
       </Tooltip>
@@ -558,18 +615,23 @@ function LogsSettingsPage() {
         selectionMode="multiple"
         searchFn={searchFn}
         searchPlaceholder="Search logs..."
-        defaultSortColumn="timestamp"
-        defaultSortDirection="desc"
         rowActions={rowActions}
         isCompact
         fillHeight={true}
         showItemCount
         ariaLabel="Application logs"
         filterRowContent={filterRowContent}
+        // Server-side mode with server-side sorting
+        serverSide
+        serverTotalCount={totalCount}
         paginationMode="infinite"
         onLoadMore={loadMore}
         hasMore={hasMore}
         isLoadingMore={isLoadingMore}
+        // Controlled server-side sorting
+        sortColumn={sortColumn}
+        sortDirection={sortDirection}
+        onSortChange={handleSortChange}
       />
 
       {/* Log Detail Modal */}

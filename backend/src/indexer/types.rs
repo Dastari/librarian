@@ -346,6 +346,16 @@ impl TorznabQuery {
         }
     }
 
+    /// Create a music search query
+    pub fn music_search(term: &str) -> Self {
+        Self {
+            query_type: QueryType::MusicSearch,
+            search_term: Some(term.to_string()),
+            cache: true,
+            ..Default::default()
+        }
+    }
+
     /// Add season/episode to a TV search
     pub fn with_season_episode(mut self, season: i32, episode: Option<&str>) -> Self {
         self.season = Some(season);

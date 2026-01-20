@@ -1,8 +1,8 @@
 //! Quality profile matching for torrent selection
 //!
-//! NOTE: This is a local quality profile for torrent matching. The database-backed
-//! quality profiles are in `db/quality_profiles.rs`. This module will be used for
-//! the actual torrent quality filtering in Stage 3B quality enhancement.
+//! NOTE: This is a local quality profile for torrent matching used for
+//! the actual torrent quality filtering. Quality settings are now stored
+//! inline on libraries and tv_shows tables (allowed_resolutions, etc.).
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};

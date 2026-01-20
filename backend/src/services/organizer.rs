@@ -228,13 +228,23 @@ impl OrganizerService {
             .and_then(|n| n.to_str())
             .unwrap_or("unknown.mkv");
 
+        // Get pattern from library, or fetch default from database for TV
+        let effective_pattern = match naming_pattern {
+            Some(p) if !p.is_empty() => Some(p.to_string()),
+            _ => {
+                // Fetch default from database
+                let pattern = self.db.naming_patterns().get_default_pattern_for_type("tv").await?;
+                Some(pattern)
+            }
+        };
+
         let new_path = self.generate_organized_path(
             library_path,
             show,
             episode,
             original_filename,
             rename_style,
-            naming_pattern,
+            effective_pattern.as_deref(),
         );
 
         let new_path_str = new_path.to_string_lossy().to_string();
@@ -507,6 +517,681 @@ impl OrganizerService {
             original = %original_path,
             new = %new_path_str,
             "Successfully organized file"
+        );
+
+        Ok(OrganizeResult {
+            file_id: file.id,
+            original_path,
+            new_path: new_path_str,
+            success: true,
+            error: None,
+        })
+    }
+
+    /// Generate the organized path for a movie file
+    ///
+    /// Uses the library's naming_pattern if set, otherwise falls back to DEFAULT_MOVIE_NAMING_PATTERN.
+    pub fn generate_movie_organized_path(
+        &self,
+        library_path: &str,
+        movie: &crate::db::MovieRecord,
+        original_filename: &str,
+        naming_pattern: Option<&str>,
+    ) -> PathBuf {
+        let ext = Path::new(original_filename)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("mkv");
+
+        // Use provided pattern or default movie pattern
+        let pattern = naming_pattern.unwrap_or(DEFAULT_MOVIE_NAMING_PATTERN);
+
+        let relative_path = apply_movie_naming_pattern(pattern, movie, original_filename, ext);
+        PathBuf::from(library_path).join(relative_path)
+    }
+
+    /// Organize a movie file
+    ///
+    /// `action` specifies how to handle the file:
+    /// - "copy": Copy file to new location, keep original (for seeding)
+    /// - "move": Move file to new location, delete original
+    /// - "hardlink": Create hard link to new location, keep original
+    pub async fn organize_movie_file(
+        &self,
+        file: &MediaFileRecord,
+        movie: &crate::db::MovieRecord,
+        library_path: &str,
+        naming_pattern: Option<&str>,
+        action: &str,
+        dry_run: bool,
+    ) -> Result<OrganizeResult> {
+        let original_path = file.path.clone();
+        let original_filename = Path::new(&original_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown.mkv");
+
+        // Get pattern from library, or fetch default from database
+        let effective_pattern = match naming_pattern {
+            Some(p) => p.to_string(),
+            None => self.db.naming_patterns().get_default_pattern_for_type("movies").await?,
+        };
+
+        let new_path = self.generate_movie_organized_path(
+            library_path,
+            movie,
+            original_filename,
+            Some(&effective_pattern),
+        );
+
+        let new_path_str = new_path.to_string_lossy().to_string();
+
+        // Skip if already at the correct location
+        if original_path == new_path_str {
+            debug!(
+                file_id = %file.id,
+                path = %original_path,
+                "Movie file already at correct location"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: true,
+                error: None,
+            });
+        }
+
+        if dry_run {
+            info!(
+                file_id = %file.id,
+                original = %original_path,
+                new = %new_path_str,
+                action = %action,
+                "[DRY RUN] Would organize movie file"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: true,
+                error: None,
+            });
+        }
+
+        // Create parent directories
+        if let Some(parent) = new_path.parent()
+            && let Err(e) = tokio::fs::create_dir_all(parent).await
+        {
+            error!(
+                file_id = %file.id,
+                path = %parent.display(),
+                error = %e,
+                "Failed to create directory for movie"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: false,
+                error: Some(format!("Failed to create directory: {}", e)),
+            });
+        }
+
+        let source_path = Path::new(&original_path);
+
+        // Check for conflicts - if target exists with different size, it's a conflict
+        if new_path.exists() {
+            let target_size = tokio::fs::metadata(&new_path)
+                .await
+                .map(|m| m.len() as i64)
+                .unwrap_or(0);
+            let source_size = file.size_bytes;
+
+            if target_size != source_size {
+                // Different file - conflict!
+                let error_msg = format!(
+                    "Target file exists with different size (source: {} bytes, target: {} bytes)",
+                    source_size, target_size
+                );
+                warn!(
+                    file_id = %file.id,
+                    source_path = %original_path,
+                    target_path = %new_path_str,
+                    source_size = source_size,
+                    target_size = target_size,
+                    "Movie file conflict detected"
+                );
+
+                // Mark as conflicted in database
+                self.db
+                    .media_files()
+                    .mark_conflicted(file.id, &error_msg)
+                    .await?;
+
+                return Ok(OrganizeResult {
+                    file_id: file.id,
+                    original_path,
+                    new_path: new_path_str,
+                    success: false,
+                    error: Some(error_msg),
+                });
+            } else {
+                // Same size - assume it's the same file, just update the database
+                info!(
+                    file_id = %file.id,
+                    path = %new_path_str,
+                    "Movie target file already exists with same size, marking as organized"
+                );
+
+                self.db
+                    .media_files()
+                    .mark_organized(file.id, &new_path_str, &original_path)
+                    .await?;
+
+                return Ok(OrganizeResult {
+                    file_id: file.id,
+                    original_path,
+                    new_path: new_path_str,
+                    success: true,
+                    error: None,
+                });
+            }
+        }
+
+        // Determine the effective action:
+        // - If source is already in the library folder, use "move" (rename in-place)
+        // - If source is in downloads folder, use the specified action
+        let source_in_library = source_path.starts_with(library_path);
+        let effective_action = if source_in_library {
+            "move"
+        } else {
+            action
+        };
+
+        if source_in_library && effective_action != action {
+            debug!(
+                file_id = %file.id,
+                original_action = %action,
+                effective_action = %effective_action,
+                "Movie file is already in library, using move instead of {}", action
+            );
+        }
+
+        // Perform file operation based on effective action
+        let operation_result = match effective_action {
+            "move" => {
+                match tokio::fs::rename(source_path, &new_path).await {
+                    Ok(_) => Ok(()),
+                    Err(_) => {
+                        // Cross-filesystem: copy then delete
+                        tokio::fs::copy(source_path, &new_path).await?;
+                        tokio::fs::remove_file(source_path).await?;
+                        Ok(())
+                    }
+                }
+            }
+            "hardlink" => {
+                #[cfg(unix)]
+                {
+                    match tokio::fs::hard_link(source_path, &new_path).await {
+                        Ok(_) => Ok(()),
+                        Err(e) => {
+                            warn!(
+                                file_id = %file.id,
+                                error = %e,
+                                "Hardlink failed for movie, falling back to copy"
+                            );
+                            tokio::fs::copy(source_path, &new_path).await.map(|_| ())
+                        }
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    tokio::fs::copy(source_path, &new_path).await.map(|_| ())
+                }
+            }
+            _ => {
+                // Default: copy
+                tokio::fs::copy(source_path, &new_path).await.map(|_| ())
+            }
+        };
+
+        if let Err(e) = operation_result {
+            error!(
+                file_id = %file.id,
+                action = %effective_action,
+                error = %e,
+                "Failed to organize movie file"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: false,
+                error: Some(format!("Failed to {} file: {}", effective_action, e)),
+            });
+        }
+
+        // Update database
+        self.db
+            .media_files()
+            .mark_organized(file.id, &new_path_str, &original_path)
+            .await?;
+
+        info!(
+            file_id = %file.id,
+            movie = %movie.title,
+            action = %effective_action,
+            original = %original_path,
+            new = %new_path_str,
+            "Successfully organized movie file"
+        );
+
+        Ok(OrganizeResult {
+            file_id: file.id,
+            original_path,
+            new_path: new_path_str,
+            success: true,
+            error: None,
+        })
+    }
+
+    /// Generate the organized path for a music album file
+    pub fn generate_music_organized_path(
+        &self,
+        library_path: &str,
+        artist_name: &str,
+        album: &crate::db::AlbumRecord,
+        original_filename: &str,
+        naming_pattern: Option<&str>,
+    ) -> PathBuf {
+        let ext = Path::new(original_filename)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("mp3");
+
+        let pattern = naming_pattern.unwrap_or(DEFAULT_MUSIC_NAMING_PATTERN);
+        let relative_path = apply_music_naming_pattern(pattern, artist_name, album, original_filename, ext);
+        PathBuf::from(library_path).join(relative_path)
+    }
+
+    /// Organize a music file (album track)
+    pub async fn organize_music_file(
+        &self,
+        file: &MediaFileRecord,
+        artist_name: &str,
+        album: &crate::db::AlbumRecord,
+        library_path: &str,
+        naming_pattern: Option<&str>,
+        action: &str,
+        dry_run: bool,
+    ) -> Result<OrganizeResult> {
+        let original_path = file.path.clone();
+        let original_filename = Path::new(&original_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown.mp3");
+
+        // Get pattern from library, or fetch default from database
+        let effective_pattern = match naming_pattern {
+            Some(p) => p.to_string(),
+            None => self.db.naming_patterns().get_default_pattern_for_type("music").await?,
+        };
+
+        let new_path = self.generate_music_organized_path(
+            library_path,
+            artist_name,
+            album,
+            original_filename,
+            Some(&effective_pattern),
+        );
+
+        let new_path_str = new_path.to_string_lossy().to_string();
+
+        // Skip if already at the correct location
+        if original_path == new_path_str {
+            debug!(
+                file_id = %file.id,
+                path = %original_path,
+                "Music file already at correct location"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: true,
+                error: None,
+            });
+        }
+
+        if dry_run {
+            info!(
+                file_id = %file.id,
+                original = %original_path,
+                new = %new_path_str,
+                action = %action,
+                "[DRY RUN] Would organize music file"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: true,
+                error: None,
+            });
+        }
+
+        // Create parent directories
+        if let Some(parent) = new_path.parent()
+            && let Err(e) = tokio::fs::create_dir_all(parent).await
+        {
+            error!(
+                file_id = %file.id,
+                path = %parent.display(),
+                error = %e,
+                "Failed to create directory for music"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: false,
+                error: Some(format!("Failed to create directory: {}", e)),
+            });
+        }
+
+        let source_path = Path::new(&original_path);
+
+        // Skip conflict checking for simplicity - just check if target exists
+        if new_path.exists() {
+            info!(
+                file_id = %file.id,
+                path = %new_path_str,
+                "Music target file already exists, marking as organized"
+            );
+
+            self.db
+                .media_files()
+                .mark_organized(file.id, &new_path_str, &original_path)
+                .await?;
+
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: true,
+                error: None,
+            });
+        }
+
+        // Determine effective action
+        let source_in_library = source_path.starts_with(library_path);
+        let effective_action = if source_in_library { "move" } else { action };
+
+        // Perform file operation
+        let operation_result = match effective_action {
+            "move" => {
+                match tokio::fs::rename(source_path, &new_path).await {
+                    Ok(_) => Ok(()),
+                    Err(_) => {
+                        tokio::fs::copy(source_path, &new_path).await?;
+                        tokio::fs::remove_file(source_path).await?;
+                        Ok(())
+                    }
+                }
+            }
+            "hardlink" => {
+                #[cfg(unix)]
+                {
+                    match tokio::fs::hard_link(source_path, &new_path).await {
+                        Ok(_) => Ok(()),
+                        Err(e) => {
+                            warn!(file_id = %file.id, error = %e, "Hardlink failed for music, falling back to copy");
+                            tokio::fs::copy(source_path, &new_path).await.map(|_| ())
+                        }
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    tokio::fs::copy(source_path, &new_path).await.map(|_| ())
+                }
+            }
+            _ => tokio::fs::copy(source_path, &new_path).await.map(|_| ()),
+        };
+
+        if let Err(e) = operation_result {
+            error!(
+                file_id = %file.id,
+                action = %effective_action,
+                error = %e,
+                "Failed to organize music file"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: false,
+                error: Some(format!("Failed to {} file: {}", effective_action, e)),
+            });
+        }
+
+        // Update database
+        self.db
+            .media_files()
+            .mark_organized(file.id, &new_path_str, &original_path)
+            .await?;
+
+        info!(
+            file_id = %file.id,
+            artist = %artist_name,
+            album = %album.name,
+            action = %effective_action,
+            new = %new_path_str,
+            "Successfully organized music file"
+        );
+
+        Ok(OrganizeResult {
+            file_id: file.id,
+            original_path,
+            new_path: new_path_str,
+            success: true,
+            error: None,
+        })
+    }
+
+    /// Generate the organized path for an audiobook file
+    pub fn generate_audiobook_organized_path(
+        &self,
+        library_path: &str,
+        author_name: &str,
+        audiobook: &crate::db::AudiobookRecord,
+        original_filename: &str,
+        naming_pattern: Option<&str>,
+    ) -> PathBuf {
+        let ext = Path::new(original_filename)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("m4b");
+
+        let pattern = naming_pattern.unwrap_or(DEFAULT_AUDIOBOOK_NAMING_PATTERN);
+        let relative_path = apply_audiobook_naming_pattern(pattern, author_name, audiobook, original_filename, ext);
+        PathBuf::from(library_path).join(relative_path)
+    }
+
+    /// Organize an audiobook file
+    pub async fn organize_audiobook_file(
+        &self,
+        file: &MediaFileRecord,
+        author_name: &str,
+        audiobook: &crate::db::AudiobookRecord,
+        library_path: &str,
+        naming_pattern: Option<&str>,
+        action: &str,
+        dry_run: bool,
+    ) -> Result<OrganizeResult> {
+        let original_path = file.path.clone();
+        let original_filename = Path::new(&original_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown.m4b");
+
+        // Get pattern from library, or fetch default from database
+        let effective_pattern = match naming_pattern {
+            Some(p) => p.to_string(),
+            None => self.db.naming_patterns().get_default_pattern_for_type("audiobooks").await?,
+        };
+
+        let new_path = self.generate_audiobook_organized_path(
+            library_path,
+            author_name,
+            audiobook,
+            original_filename,
+            Some(&effective_pattern),
+        );
+
+        let new_path_str = new_path.to_string_lossy().to_string();
+
+        // Skip if already at the correct location
+        if original_path == new_path_str {
+            debug!(
+                file_id = %file.id,
+                path = %original_path,
+                "Audiobook file already at correct location"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: true,
+                error: None,
+            });
+        }
+
+        if dry_run {
+            info!(
+                file_id = %file.id,
+                original = %original_path,
+                new = %new_path_str,
+                action = %action,
+                "[DRY RUN] Would organize audiobook file"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: true,
+                error: None,
+            });
+        }
+
+        // Create parent directories
+        if let Some(parent) = new_path.parent()
+            && let Err(e) = tokio::fs::create_dir_all(parent).await
+        {
+            error!(
+                file_id = %file.id,
+                path = %parent.display(),
+                error = %e,
+                "Failed to create directory for audiobook"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: false,
+                error: Some(format!("Failed to create directory: {}", e)),
+            });
+        }
+
+        let source_path = Path::new(&original_path);
+
+        // Check if target exists
+        if new_path.exists() {
+            info!(
+                file_id = %file.id,
+                path = %new_path_str,
+                "Audiobook target file already exists, marking as organized"
+            );
+
+            self.db
+                .media_files()
+                .mark_organized(file.id, &new_path_str, &original_path)
+                .await?;
+
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: true,
+                error: None,
+            });
+        }
+
+        // Determine effective action
+        let source_in_library = source_path.starts_with(library_path);
+        let effective_action = if source_in_library { "move" } else { action };
+
+        // Perform file operation
+        let operation_result = match effective_action {
+            "move" => {
+                match tokio::fs::rename(source_path, &new_path).await {
+                    Ok(_) => Ok(()),
+                    Err(_) => {
+                        tokio::fs::copy(source_path, &new_path).await?;
+                        tokio::fs::remove_file(source_path).await?;
+                        Ok(())
+                    }
+                }
+            }
+            "hardlink" => {
+                #[cfg(unix)]
+                {
+                    match tokio::fs::hard_link(source_path, &new_path).await {
+                        Ok(_) => Ok(()),
+                        Err(e) => {
+                            warn!(file_id = %file.id, error = %e, "Hardlink failed for audiobook, falling back to copy");
+                            tokio::fs::copy(source_path, &new_path).await.map(|_| ())
+                        }
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    tokio::fs::copy(source_path, &new_path).await.map(|_| ())
+                }
+            }
+            _ => tokio::fs::copy(source_path, &new_path).await.map(|_| ()),
+        };
+
+        if let Err(e) = operation_result {
+            error!(
+                file_id = %file.id,
+                action = %effective_action,
+                error = %e,
+                "Failed to organize audiobook file"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: false,
+                error: Some(format!("Failed to {} file: {}", effective_action, e)),
+            });
+        }
+
+        // Update database
+        self.db
+            .media_files()
+            .mark_organized(file.id, &new_path_str, &original_path)
+            .await?;
+
+        info!(
+            file_id = %file.id,
+            author = %author_name,
+            audiobook = %audiobook.title,
+            action = %effective_action,
+            new = %new_path_str,
+            "Successfully organized audiobook file"
         );
 
         Ok(OrganizeResult {
@@ -2128,9 +2813,210 @@ pub fn apply_naming_pattern(
     PathBuf::from(result)
 }
 
-/// Default naming pattern used when library doesn't have one set
+/// Apply a naming pattern to generate a movie file path
+///
+/// Supported variables:
+/// - `{title}` - Movie title (sanitized for filesystem)
+/// - `{year}` - Release year
+/// - `{ext}` - File extension (without dot)
+/// - `{quality}` - Quality info extracted from original filename
+/// - `{original}` - Original filename without extension
+pub fn apply_movie_naming_pattern(
+    pattern: &str,
+    movie: &crate::db::MovieRecord,
+    original_filename: &str,
+    extension: &str,
+) -> PathBuf {
+    let mut result = pattern.to_string();
+
+    // Replace {title} with sanitized movie title
+    result = result.replace("{title}", &sanitize_for_filename(&movie.title));
+
+    // Replace {year} with movie year
+    let year_str = movie.year.map(|y| y.to_string()).unwrap_or_else(|| "Unknown".to_string());
+    result = result.replace("{year}", &year_str);
+
+    // Replace {ext} with extension (without leading dot)
+    let ext = extension.trim_start_matches('.');
+    result = result.replace("{ext}", ext);
+
+    // Replace {quality} with extracted quality info
+    let quality_info = extract_quality_info(original_filename);
+    result = result.replace("{quality}", &quality_info);
+
+    // Replace {original} with original filename without extension
+    let original_stem = Path::new(original_filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(original_filename);
+    result = result.replace("{original}", original_stem);
+
+    PathBuf::from(result)
+}
+
+/// Apply a naming pattern to generate a music album file path
+///
+/// Supported variables:
+/// - `{artist}` - Artist name
+/// - `{album}` - Album name
+/// - `{year}` - Release year
+/// - `{track}` - Track number
+/// - `{title}` - Track title (extracted from filename)
+/// - `{ext}` - File extension (without dot)
+/// - `{original}` - Original filename without extension
+pub fn apply_music_naming_pattern(
+    pattern: &str,
+    artist_name: &str,
+    album: &crate::db::AlbumRecord,
+    original_filename: &str,
+    extension: &str,
+) -> PathBuf {
+    use regex::Regex;
+
+    let mut result = pattern.to_string();
+
+    // Replace {artist} with sanitized artist name
+    result = result.replace("{artist}", &sanitize_for_filename(artist_name));
+
+    // Replace {album} with sanitized album name
+    result = result.replace("{album}", &sanitize_for_filename(&album.name));
+
+    // Replace {year} with album year
+    let year_str = album.year.map(|y| y.to_string()).unwrap_or_else(|| "Unknown".to_string());
+    result = result.replace("{year}", &year_str);
+
+    // Replace {ext} with extension (without leading dot)
+    let ext = extension.trim_start_matches('.');
+    result = result.replace("{ext}", ext);
+
+    // Replace {original} with original filename without extension
+    let original_stem = Path::new(original_filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(original_filename);
+    result = result.replace("{original}", original_stem);
+
+    // Try to extract track number and title from filename
+    // Common patterns: "01 - Track Title.mp3", "01. Track Title.mp3", "01 Track Title.mp3"
+    let track_re = Regex::new(r"^(\d+)[.\-\s]+(.+)$").unwrap();
+    let (track_num, track_title) = if let Some(caps) = track_re.captures(original_stem) {
+        let num: i32 = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+        let title = caps.get(2).map(|m| m.as_str()).unwrap_or(original_stem);
+        (num, sanitize_for_filename(title))
+    } else {
+        (0, sanitize_for_filename(original_stem))
+    };
+
+    // Replace track with format specifier: {track:02} -> zero-padded, {track} -> raw
+    let track_fmt_re = Regex::new(r"\{track(?::(\d+))?\}").unwrap();
+    result = track_fmt_re
+        .replace_all(&result, |caps: &regex::Captures| {
+            if let Some(width) = caps.get(1) {
+                let w: usize = width.as_str().parse().unwrap_or(2);
+                format!("{:0>width$}", track_num, width = w)
+            } else {
+                track_num.to_string()
+            }
+        })
+        .to_string();
+
+    // Replace {title} with extracted track title
+    result = result.replace("{title}", &track_title);
+
+    PathBuf::from(result)
+}
+
+/// Apply a naming pattern to generate an audiobook file path
+///
+/// Supported variables:
+/// - `{author}` - Author name
+/// - `{title}` - Audiobook title
+/// - `{series}` - Series name (empty if none)
+/// - `{series_position}` - Position in series (empty if none)
+/// - `{narrator}` - Primary narrator (first in list)
+/// - `{ext}` - File extension (without dot)
+/// - `{original}` - Original filename without extension
+pub fn apply_audiobook_naming_pattern(
+    pattern: &str,
+    author_name: &str,
+    audiobook: &crate::db::AudiobookRecord,
+    original_filename: &str,
+    extension: &str,
+) -> PathBuf {
+    let mut result = pattern.to_string();
+
+    // Replace {author} with sanitized author name
+    result = result.replace("{author}", &sanitize_for_filename(author_name));
+
+    // Replace {title} with sanitized audiobook title
+    result = result.replace("{title}", &sanitize_for_filename(&audiobook.title));
+
+    // Replace {series} with series name (or empty)
+    let series_name = audiobook.series_name.as_ref()
+        .map(|s| sanitize_for_filename(s))
+        .unwrap_or_default();
+    result = result.replace("{series}", &series_name);
+
+    // Replace {series_position} with position
+    let series_pos = audiobook.series_position
+        .map(|p| p.to_string())
+        .unwrap_or_default();
+    result = result.replace("{series_position}", &series_pos);
+
+    // Replace {narrator} with first narrator
+    let narrator = audiobook.narrators.first()
+        .map(|n| sanitize_for_filename(n))
+        .unwrap_or_default();
+    result = result.replace("{narrator}", &narrator);
+
+    // Replace {ext} with extension (without leading dot)
+    let ext = extension.trim_start_matches('.');
+    result = result.replace("{ext}", ext);
+
+    // Replace {original} with original filename without extension
+    let original_stem = Path::new(original_filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(original_filename);
+    result = result.replace("{original}", original_stem);
+
+    PathBuf::from(result)
+}
+
+/// Default naming pattern used when library doesn't have one set (TV shows)
 pub const DEFAULT_NAMING_PATTERN: &str =
     "{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}";
+
+/// Default naming pattern for movies
+/// Supported variables:
+/// - `{title}` - Movie title
+/// - `{year}` - Release year
+/// - `{ext}` - File extension (without dot)
+/// - `{quality}` - Quality info (resolution, codec, etc.)
+/// - `{original}` - Original filename (without extension)
+pub const DEFAULT_MOVIE_NAMING_PATTERN: &str = "{title} ({year})/{title} ({year}).{ext}";
+
+/// Default naming pattern for music albums
+/// Supported variables:
+/// - `{artist}` - Artist name
+/// - `{album}` - Album name
+/// - `{year}` - Release year
+/// - `{track}` - Track number (zero-padded)
+/// - `{title}` - Track title
+/// - `{ext}` - File extension (without dot)
+/// - `{original}` - Original filename (without extension)
+pub const DEFAULT_MUSIC_NAMING_PATTERN: &str = "{artist}/{album} ({year})/{track:02} - {title}.{ext}";
+
+/// Default naming pattern for audiobooks
+/// Supported variables:
+/// - `{author}` - Author name
+/// - `{title}` - Audiobook title
+/// - `{series}` - Series name (if any)
+/// - `{series_position}` - Position in series
+/// - `{narrator}` - Primary narrator
+/// - `{ext}` - File extension (without dot)
+/// - `{original}` - Original filename (without extension)
+pub const DEFAULT_AUDIOBOOK_NAMING_PATTERN: &str = "{author}/{title}/{original}.{ext}";
 
 #[cfg(test)]
 mod tests {
@@ -2187,7 +3073,6 @@ mod tests {
             backdrop_url: None,
             monitored: true,
             monitor_type: "all".to_string(),
-            quality_profile_id: None,
             path: None,
             auto_download_override: None,
             backfill_existing: false,

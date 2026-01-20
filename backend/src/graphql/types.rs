@@ -978,8 +978,6 @@ pub struct Subscription {
     pub tvdb_id: Option<i32>,
     /// TMDB ID
     pub tmdb_id: Option<i32>,
-    /// Quality profile ID
-    pub quality_profile_id: String,
     /// Whether actively monitoring
     pub monitored: bool,
     /// Last checked timestamp
@@ -997,8 +995,6 @@ pub struct CreateSubscriptionInput {
     pub tvdb_id: Option<i32>,
     /// TMDB ID
     pub tmdb_id: Option<i32>,
-    /// Quality profile ID
-    pub quality_profile_id: String,
     /// Enable monitoring (default: true)
     pub monitored: Option<bool>,
 }
@@ -1006,8 +1002,6 @@ pub struct CreateSubscriptionInput {
 /// Input for updating a subscription
 #[derive(Debug, InputObject)]
 pub struct UpdateSubscriptionInput {
-    /// New quality profile ID
-    pub quality_profile_id: Option<String>,
     /// Enable/disable monitoring
     pub monitored: Option<bool>,
 }
@@ -1055,8 +1049,6 @@ pub struct User {
 pub struct UserPreferences {
     /// Preferred theme (light/dark/system)
     pub theme: String,
-    /// Default quality profile for downloads
-    pub default_quality_profile: Option<String>,
     /// Enable notifications
     pub notifications_enabled: bool,
 }
@@ -1065,7 +1057,6 @@ pub struct UserPreferences {
 #[derive(Debug, InputObject)]
 pub struct UpdatePreferencesInput {
     pub theme: Option<String>,
-    pub default_quality_profile: Option<String>,
     pub notifications_enabled: Option<bool>,
 }
 
@@ -1269,7 +1260,6 @@ pub struct TvShow {
     pub backdrop_url: Option<String>,
     pub monitored: bool,
     pub monitor_type: MonitorType,
-    pub quality_profile_id: Option<String>,
     pub path: Option<String>,
     /// Override library auto-download setting (null = inherit)
     pub auto_download_override: Option<bool>,
@@ -1335,7 +1325,6 @@ impl TvShow {
                 "none" => MonitorType::None,
                 _ => MonitorType::All,
             },
-            quality_profile_id: r.quality_profile_id.map(|id| id.to_string()),
             path: r.path,
             auto_download_override: r.auto_download_override,
             backfill_existing: r.backfill_existing,
@@ -1388,8 +1377,6 @@ pub struct AddTvShowInput {
     pub provider_id: i32,
     /// Monitor type
     pub monitor_type: Option<MonitorType>,
-    /// Quality profile to use (null = library default)
-    pub quality_profile_id: Option<String>,
     /// Custom path within the library
     pub path: Option<String>,
 }
@@ -1399,7 +1386,6 @@ pub struct AddTvShowInput {
 pub struct UpdateTvShowInput {
     pub monitored: Option<bool>,
     pub monitor_type: Option<MonitorType>,
-    pub quality_profile_id: Option<String>,
     pub path: Option<String>,
     /// Override library auto-download setting (null = inherit, Some(true/false) = override)
     pub auto_download_override: Option<Option<bool>>,
@@ -1437,6 +1423,51 @@ pub struct TvShowResult {
     pub tv_show: Option<TvShow>,
     pub error: Option<String>,
 }
+
+// ============================================================================
+// TV Show Connection Types (for cursor-based pagination)
+// ============================================================================
+
+/// Filter input for TV shows query
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct TvShowWhereInput {
+    /// Filter by name (contains, case-insensitive)
+    pub name: Option<crate::graphql::filters::StringFilter>,
+    /// Filter by year
+    pub year: Option<crate::graphql::filters::IntFilter>,
+    /// Filter by monitored status
+    pub monitored: Option<crate::graphql::filters::BoolFilter>,
+    /// Filter by status
+    pub status: Option<crate::graphql::filters::StringFilter>,
+    /// Filter by network
+    pub network: Option<crate::graphql::filters::StringFilter>,
+}
+
+/// Sortable fields for TV shows
+#[derive(async_graphql::Enum, Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum TvShowSortField {
+    /// Sort by name
+    #[default]
+    Name,
+    /// Sort by sort name
+    SortName,
+    /// Sort by year
+    Year,
+    /// Sort by date added
+    CreatedAt,
+}
+
+/// Order by input for TV shows
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct TvShowOrderByInput {
+    /// Field to sort by
+    pub field: Option<TvShowSortField>,
+    /// Sort direction
+    pub direction: Option<crate::graphql::filters::OrderDirection>,
+}
+
+// Define the TvShowConnection and TvShowEdge types
+crate::define_connection!(TvShowConnection, TvShowEdge, TvShow);
 
 // ============================================================================
 // Movie Types
@@ -1566,6 +1597,483 @@ pub struct MovieResult {
     pub movie: Option<Movie>,
     pub error: Option<String>,
 }
+
+// ============================================================================
+// Movie Connection Types (for cursor-based pagination)
+// ============================================================================
+
+/// Filter input for movies query
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct MovieWhereInput {
+    /// Filter by title (contains, case-insensitive)
+    pub title: Option<crate::graphql::filters::StringFilter>,
+    /// Filter by year
+    pub year: Option<crate::graphql::filters::IntFilter>,
+    /// Filter by monitored status
+    pub monitored: Option<crate::graphql::filters::BoolFilter>,
+    /// Filter by whether movie has a file
+    pub has_file: Option<crate::graphql::filters::BoolFilter>,
+    /// Filter by status
+    pub status: Option<crate::graphql::filters::StringFilter>,
+}
+
+/// Sortable fields for movies
+#[derive(async_graphql::Enum, Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum MovieSortField {
+    /// Sort by title
+    #[default]
+    Title,
+    /// Sort by sort title
+    SortTitle,
+    /// Sort by year
+    Year,
+    /// Sort by date added
+    CreatedAt,
+    /// Sort by release date
+    ReleaseDate,
+}
+
+/// Order by input for movies
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct MovieOrderByInput {
+    /// Field to sort by
+    pub field: Option<MovieSortField>,
+    /// Sort direction
+    pub direction: Option<crate::graphql::filters::OrderDirection>,
+}
+
+// Define the MovieConnection and MovieEdge types
+crate::define_connection!(MovieConnection, MovieEdge, Movie);
+
+// ============================================================================
+// Album/Music Types
+// ============================================================================
+
+/// An artist in a music library
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct Artist {
+    pub id: String,
+    pub library_id: String,
+    pub name: String,
+    pub sort_name: Option<String>,
+    pub musicbrainz_id: Option<String>,
+}
+
+impl From<crate::db::ArtistRecord> for Artist {
+    fn from(r: crate::db::ArtistRecord) -> Self {
+        Self {
+            id: r.id.to_string(),
+            library_id: r.library_id.to_string(),
+            name: r.name,
+            sort_name: r.sort_name,
+            musicbrainz_id: r.musicbrainz_id.map(|id| id.to_string()),
+        }
+    }
+}
+
+// ============================================================================
+// Artist Connection Types (for cursor-based pagination)
+// ============================================================================
+
+/// Filter input for artists query
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct ArtistWhereInput {
+    /// Filter by name (contains, case-insensitive)
+    pub name: Option<crate::graphql::filters::StringFilter>,
+}
+
+/// Sortable fields for artists
+#[derive(async_graphql::Enum, Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum ArtistSortField {
+    /// Sort by name
+    #[default]
+    Name,
+    /// Sort by sort name
+    SortName,
+}
+
+/// Order by input for artists
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct ArtistOrderByInput {
+    /// Field to sort by
+    pub field: Option<ArtistSortField>,
+    /// Sort direction
+    pub direction: Option<crate::graphql::filters::OrderDirection>,
+}
+
+// Define the ArtistConnection and ArtistEdge types
+crate::define_connection!(ArtistConnection, ArtistEdge, Artist);
+
+/// An album in a music library
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct Album {
+    pub id: String,
+    pub artist_id: String,
+    pub library_id: String,
+    pub name: String,
+    pub sort_name: Option<String>,
+    pub year: Option<i32>,
+    pub musicbrainz_id: Option<String>,
+    pub album_type: Option<String>,
+    pub genres: Vec<String>,
+    pub label: Option<String>,
+    pub country: Option<String>,
+    pub release_date: Option<String>,
+    pub cover_url: Option<String>,
+    pub track_count: Option<i32>,
+    pub disc_count: Option<i32>,
+    pub total_duration_secs: Option<i32>,
+    pub has_files: bool,
+    pub size_bytes: Option<i64>,
+    pub path: Option<String>,
+}
+
+impl From<crate::db::AlbumRecord> for Album {
+    fn from(r: crate::db::AlbumRecord) -> Self {
+        Self {
+            id: r.id.to_string(),
+            artist_id: r.artist_id.to_string(),
+            library_id: r.library_id.to_string(),
+            name: r.name,
+            sort_name: r.sort_name,
+            year: r.year,
+            musicbrainz_id: r.musicbrainz_id.map(|id| id.to_string()),
+            album_type: r.album_type,
+            genres: r.genres,
+            label: r.label,
+            country: r.country,
+            release_date: r.release_date.map(|d| d.to_string()),
+            cover_url: r.cover_url,
+            track_count: r.track_count,
+            disc_count: r.disc_count,
+            total_duration_secs: r.total_duration_secs,
+            has_files: r.has_files,
+            size_bytes: r.size_bytes,
+            path: r.path,
+        }
+    }
+}
+
+/// Album search result from MusicBrainz
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct AlbumSearchResult {
+    pub provider: String,
+    pub provider_id: String,
+    pub title: String,
+    pub artist_name: Option<String>,
+    pub year: Option<i32>,
+    pub album_type: Option<String>,
+    pub cover_url: Option<String>,
+    pub score: Option<i32>,
+}
+
+/// Input for adding an album from MusicBrainz
+#[derive(Debug, Clone, InputObject)]
+pub struct AddAlbumInput {
+    /// MusicBrainz release group ID (UUID string)
+    pub musicbrainz_id: String,
+    /// Library to add the album to
+    pub library_id: String,
+}
+
+/// Result of album mutation
+#[derive(Debug, SimpleObject)]
+pub struct AlbumResult {
+    pub success: bool,
+    pub album: Option<Album>,
+    pub error: Option<String>,
+}
+
+// ============================================================================
+// Album Connection Types (for cursor-based pagination)
+// ============================================================================
+
+/// Filter input for albums query
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct AlbumWhereInput {
+    /// Filter by name (contains, case-insensitive)
+    pub name: Option<crate::graphql::filters::StringFilter>,
+    /// Filter by year
+    pub year: Option<crate::graphql::filters::IntFilter>,
+    /// Filter by artist name
+    pub artist_name: Option<crate::graphql::filters::StringFilter>,
+    /// Filter by whether album has files
+    pub has_files: Option<crate::graphql::filters::BoolFilter>,
+}
+
+/// Sortable fields for albums
+#[derive(async_graphql::Enum, Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum AlbumSortField {
+    /// Sort by name
+    #[default]
+    Name,
+    /// Sort by sort name
+    SortName,
+    /// Sort by year
+    Year,
+    /// Sort by date added
+    CreatedAt,
+    /// Sort by artist
+    Artist,
+}
+
+/// Order by input for albums
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct AlbumOrderByInput {
+    /// Field to sort by
+    pub field: Option<AlbumSortField>,
+    /// Sort direction
+    pub direction: Option<crate::graphql::filters::OrderDirection>,
+}
+
+// Define the AlbumConnection and AlbumEdge types
+crate::define_connection!(AlbumConnection, AlbumEdge, Album);
+
+// ============================================================================
+// Track Types
+// ============================================================================
+
+/// A track/song in an album
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct Track {
+    pub id: String,
+    pub album_id: String,
+    pub library_id: String,
+    pub title: String,
+    pub track_number: i32,
+    pub disc_number: i32,
+    pub musicbrainz_id: Option<String>,
+    pub isrc: Option<String>,
+    pub duration_secs: Option<i32>,
+    pub explicit: bool,
+    pub artist_name: Option<String>,
+    pub artist_id: Option<String>,
+    pub media_file_id: Option<String>,
+    /// Whether this track has a linked media file
+    pub has_file: bool,
+}
+
+impl From<crate::db::TrackRecord> for Track {
+    fn from(r: crate::db::TrackRecord) -> Self {
+        Self {
+            id: r.id.to_string(),
+            album_id: r.album_id.to_string(),
+            library_id: r.library_id.to_string(),
+            title: r.title,
+            track_number: r.track_number,
+            disc_number: r.disc_number,
+            musicbrainz_id: r.musicbrainz_id.map(|id| id.to_string()),
+            isrc: r.isrc,
+            duration_secs: r.duration_secs,
+            explicit: r.explicit,
+            artist_name: r.artist_name,
+            artist_id: r.artist_id.map(|id| id.to_string()),
+            media_file_id: r.media_file_id.map(|id| id.to_string()),
+            has_file: r.media_file_id.is_some(),
+        }
+    }
+}
+
+/// Track with file status details
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct TrackWithStatus {
+    pub track: Track,
+    pub has_file: bool,
+    pub file_path: Option<String>,
+    pub file_size: Option<i64>,
+}
+
+impl From<crate::db::TrackWithStatus> for TrackWithStatus {
+    fn from(r: crate::db::TrackWithStatus) -> Self {
+        Self {
+            has_file: r.has_file,
+            file_path: r.file_path,
+            file_size: r.file_size,
+            track: r.track.into(),
+        }
+    }
+}
+
+/// Album with tracks
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct AlbumWithTracks {
+    pub album: Album,
+    pub tracks: Vec<TrackWithStatus>,
+    pub track_count: i32,
+    pub tracks_with_files: i32,
+    pub missing_tracks: i32,
+    pub completion_percent: f64,
+}
+
+// ============================================================================
+// Audiobook Types
+// ============================================================================
+
+/// An audiobook author
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct AudiobookAuthor {
+    pub id: String,
+    pub library_id: String,
+    pub name: String,
+    pub sort_name: Option<String>,
+    pub openlibrary_id: Option<String>,
+}
+
+impl From<crate::db::AudiobookAuthorRecord> for AudiobookAuthor {
+    fn from(r: crate::db::AudiobookAuthorRecord) -> Self {
+        Self {
+            id: r.id.to_string(),
+            library_id: r.library_id.to_string(),
+            name: r.name,
+            sort_name: r.sort_name,
+            openlibrary_id: r.openlibrary_id,
+        }
+    }
+}
+
+/// An audiobook
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct Audiobook {
+    pub id: String,
+    pub author_id: String,
+    pub library_id: String,
+    pub title: String,
+    pub sort_title: Option<String>,
+    pub subtitle: Option<String>,
+    pub openlibrary_id: Option<String>,
+    pub isbn: Option<String>,
+    pub description: Option<String>,
+    pub publisher: Option<String>,
+    pub language: Option<String>,
+    pub narrators: Vec<String>,
+    pub series_name: Option<String>,
+    pub duration_secs: Option<i32>,
+    pub cover_url: Option<String>,
+    pub has_files: bool,
+    pub size_bytes: Option<i64>,
+    pub path: Option<String>,
+}
+
+impl From<crate::db::AudiobookRecord> for Audiobook {
+    fn from(r: crate::db::AudiobookRecord) -> Self {
+        Self {
+            id: r.id.to_string(),
+            author_id: r.author_id.to_string(),
+            library_id: r.library_id.to_string(),
+            title: r.title,
+            sort_title: r.sort_title,
+            subtitle: r.subtitle,
+            openlibrary_id: r.openlibrary_id,
+            isbn: r.isbn,
+            description: r.description,
+            publisher: r.publisher,
+            language: r.language,
+            narrators: r.narrators,
+            series_name: r.series_name,
+            duration_secs: r.duration_secs,
+            cover_url: r.cover_url,
+            has_files: r.has_files,
+            size_bytes: r.size_bytes,
+            path: r.path,
+        }
+    }
+}
+
+/// Audiobook search result from OpenLibrary
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct AudiobookSearchResult {
+    pub provider: String,
+    pub provider_id: String,
+    pub title: String,
+    pub author_name: Option<String>,
+    pub year: Option<i32>,
+    pub cover_url: Option<String>,
+    pub isbn: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Input for adding an audiobook from OpenLibrary
+#[derive(Debug, Clone, InputObject)]
+pub struct AddAudiobookInput {
+    /// OpenLibrary work ID
+    pub openlibrary_id: String,
+    /// Library to add the audiobook to
+    pub library_id: String,
+}
+
+/// Result of audiobook mutation
+#[derive(Debug, SimpleObject)]
+pub struct AudiobookResult {
+    pub success: bool,
+    pub audiobook: Option<Audiobook>,
+    pub error: Option<String>,
+}
+
+// ============================================================================
+// Audiobook Connection Types (for cursor-based pagination)
+// ============================================================================
+
+/// Filter input for audiobooks query
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct AudiobookWhereInput {
+    /// Filter by title (contains, case-insensitive)
+    pub title: Option<crate::graphql::filters::StringFilter>,
+    /// Filter by whether audiobook has files
+    pub has_files: Option<crate::graphql::filters::BoolFilter>,
+}
+
+/// Sortable fields for audiobooks
+#[derive(async_graphql::Enum, Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum AudiobookSortField {
+    /// Sort by title
+    #[default]
+    Title,
+    /// Sort by sort title
+    SortTitle,
+    /// Sort by date added
+    CreatedAt,
+}
+
+/// Order by input for audiobooks
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct AudiobookOrderByInput {
+    /// Field to sort by
+    pub field: Option<AudiobookSortField>,
+    /// Sort direction
+    pub direction: Option<crate::graphql::filters::OrderDirection>,
+}
+
+// Define the AudiobookConnection and AudiobookEdge types
+crate::define_connection!(AudiobookConnection, AudiobookEdge, Audiobook);
+
+/// Filter input for audiobook authors query
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct AudiobookAuthorWhereInput {
+    /// Filter by name (contains, case-insensitive)
+    pub name: Option<crate::graphql::filters::StringFilter>,
+}
+
+/// Sortable fields for audiobook authors
+#[derive(async_graphql::Enum, Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum AudiobookAuthorSortField {
+    /// Sort by name
+    #[default]
+    Name,
+    /// Sort by sort name
+    SortName,
+}
+
+/// Order by input for audiobook authors
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct AudiobookAuthorOrderByInput {
+    /// Field to sort by
+    pub field: Option<AudiobookAuthorSortField>,
+    /// Sort direction
+    pub direction: Option<crate::graphql::filters::OrderDirection>,
+}
+
+// Define the AudiobookAuthorConnection and AudiobookAuthorEdge types
+crate::define_connection!(AudiobookAuthorConnection, AudiobookAuthorEdge, AudiobookAuthor);
 
 // ============================================================================
 // Episode Types
@@ -1748,73 +2256,6 @@ pub struct WantedEpisode {
 pub struct DownloadEpisodeResult {
     pub success: bool,
     pub episode: Option<Episode>,
-    pub error: Option<String>,
-}
-
-// ============================================================================
-// Quality Profile Types
-// ============================================================================
-
-/// A quality profile for downloads
-#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
-pub struct QualityProfile {
-    pub id: String,
-    pub name: String,
-    pub preferred_resolution: Option<String>,
-    pub min_resolution: Option<String>,
-    pub preferred_codec: Option<String>,
-    pub preferred_audio: Option<String>,
-    pub require_hdr: bool,
-    pub hdr_types: Vec<String>,
-    pub preferred_language: Option<String>,
-    pub max_size_gb: Option<f64>,
-    pub min_seeders: Option<i32>,
-    pub release_group_whitelist: Vec<String>,
-    pub release_group_blacklist: Vec<String>,
-    pub upgrade_until: Option<String>,
-}
-
-/// Input for creating a quality profile
-#[derive(Debug, InputObject)]
-pub struct CreateQualityProfileInput {
-    pub name: String,
-    pub preferred_resolution: Option<String>,
-    pub min_resolution: Option<String>,
-    pub preferred_codec: Option<String>,
-    pub preferred_audio: Option<String>,
-    pub require_hdr: Option<bool>,
-    pub hdr_types: Option<Vec<String>>,
-    pub preferred_language: Option<String>,
-    pub max_size_gb: Option<f64>,
-    pub min_seeders: Option<i32>,
-    pub release_group_whitelist: Option<Vec<String>>,
-    pub release_group_blacklist: Option<Vec<String>>,
-    pub upgrade_until: Option<String>,
-}
-
-/// Input for updating a quality profile
-#[derive(Debug, InputObject)]
-pub struct UpdateQualityProfileInput {
-    pub name: Option<String>,
-    pub preferred_resolution: Option<String>,
-    pub min_resolution: Option<String>,
-    pub preferred_codec: Option<String>,
-    pub preferred_audio: Option<String>,
-    pub require_hdr: Option<bool>,
-    pub hdr_types: Option<Vec<String>>,
-    pub preferred_language: Option<String>,
-    pub max_size_gb: Option<f64>,
-    pub min_seeders: Option<i32>,
-    pub release_group_whitelist: Option<Vec<String>>,
-    pub release_group_blacklist: Option<Vec<String>>,
-    pub upgrade_until: Option<String>,
-}
-
-/// Result of quality profile mutation
-#[derive(Debug, SimpleObject)]
-pub struct QualityProfileResult {
-    pub success: bool,
-    pub quality_profile: Option<QualityProfile>,
     pub error: Option<String>,
 }
 
@@ -2008,7 +2449,6 @@ pub struct LibraryFull {
     pub organize_files: bool,
     pub rename_style: String,
     pub naming_pattern: Option<String>,
-    pub default_quality_profile_id: Option<String>,
     pub auto_add_discovered: bool,
     pub auto_download: bool,
     /// Automatically hunt for missing episodes using indexers
@@ -2069,7 +2509,6 @@ impl LibraryFull {
             organize_files: r.organize_files,
             rename_style: r.rename_style,
             naming_pattern: r.naming_pattern,
-            default_quality_profile_id: r.default_quality_profile_id.map(|id| id.to_string()),
             auto_add_discovered: r.auto_add_discovered,
             auto_download: r.auto_download,
             auto_hunt: r.auto_hunt,
@@ -2108,7 +2547,6 @@ pub struct CreateLibraryInput {
     /// How to rename files: none, clean, preserve_info (default: none)
     pub rename_style: Option<String>,
     pub naming_pattern: Option<String>,
-    pub default_quality_profile_id: Option<String>,
     pub auto_add_discovered: Option<bool>,
     /// Enable auto-download of available episodes (default: true)
     pub auto_download: Option<bool>,
@@ -2149,7 +2587,6 @@ pub struct UpdateLibraryInput {
     /// How to rename files: none, clean, preserve_info
     pub rename_style: Option<String>,
     pub naming_pattern: Option<String>,
-    pub default_quality_profile_id: Option<String>,
     pub auto_add_discovered: Option<bool>,
     /// Enable auto-download of available episodes
     pub auto_download: Option<bool>,
@@ -2249,6 +2686,27 @@ pub struct LogFilterInput {
     pub to_timestamp: Option<String>,
 }
 
+/// Sort field for logs
+#[derive(Debug, Clone, Copy, Default, Enum, Eq, PartialEq)]
+pub enum LogSortField {
+    /// Sort by timestamp
+    #[default]
+    TIMESTAMP,
+    /// Sort by log level
+    LEVEL,
+    /// Sort by target/source
+    TARGET,
+}
+
+/// Order by input for logs
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct LogOrderByInput {
+    /// Field to sort by
+    pub field: Option<LogSortField>,
+    /// Sort direction
+    pub direction: Option<crate::graphql::filters::OrderDirection>,
+}
+
 /// Log statistics by level
 #[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
 pub struct LogStats {
@@ -2298,19 +2756,66 @@ pub struct LogEventSubscription {
 // Playback Session Types
 // ============================================================================
 
-/// A user's playback session (what they're currently watching)
+/// Content type for playback (what kind of media is being played)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum PlaybackContentType {
+    /// TV episode
+    Episode,
+    /// Movie
+    Movie,
+    /// Music track
+    Track,
+    /// Audiobook
+    Audiobook,
+}
+
+impl PlaybackContentType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PlaybackContentType::Episode => "episode",
+            PlaybackContentType::Movie => "movie",
+            PlaybackContentType::Track => "track",
+            PlaybackContentType::Audiobook => "audiobook",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "episode" => Some(PlaybackContentType::Episode),
+            "movie" => Some(PlaybackContentType::Movie),
+            "track" => Some(PlaybackContentType::Track),
+            "audiobook" => Some(PlaybackContentType::Audiobook),
+            _ => None,
+        }
+    }
+}
+
+/// A user's playback session (what they're currently watching/listening)
 #[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
 pub struct PlaybackSession {
     /// Session ID
     pub id: String,
     /// User ID
     pub user_id: String,
-    /// Episode being played
-    pub episode_id: Option<String>,
+    /// Content type being played
+    pub content_type: Option<PlaybackContentType>,
     /// Media file being played
     pub media_file_id: Option<String>,
-    /// TV show ID
+    /// Content ID (the episode/movie/track/audiobook ID)
+    pub content_id: Option<String>,
+    /// Episode being played (for episodes)
+    pub episode_id: Option<String>,
+    /// Movie being played (for movies)
+    pub movie_id: Option<String>,
+    /// Track being played (for music)
+    pub track_id: Option<String>,
+    /// Audiobook being played (for audiobooks)
+    pub audiobook_id: Option<String>,
+    /// TV show ID (parent for episodes)
     pub tv_show_id: Option<String>,
+    /// Album ID (parent for tracks)
+    pub album_id: Option<String>,
     /// Current playback position in seconds
     pub current_position: f64,
     /// Total duration in seconds
@@ -2329,12 +2834,27 @@ pub struct PlaybackSession {
 
 impl PlaybackSession {
     pub fn from_record(record: crate::db::PlaybackSessionRecord) -> Self {
+        let content_type = record.content_type.as_deref().and_then(PlaybackContentType::from_str);
+        let content_id = match content_type {
+            Some(PlaybackContentType::Episode) => record.episode_id.map(|id| id.to_string()),
+            Some(PlaybackContentType::Movie) => record.movie_id.map(|id| id.to_string()),
+            Some(PlaybackContentType::Track) => record.track_id.map(|id| id.to_string()),
+            Some(PlaybackContentType::Audiobook) => record.audiobook_id.map(|id| id.to_string()),
+            None => None,
+        };
+
         Self {
             id: record.id.to_string(),
             user_id: record.user_id.to_string(),
-            episode_id: record.episode_id.map(|id| id.to_string()),
+            content_type,
             media_file_id: record.media_file_id.map(|id| id.to_string()),
+            content_id,
+            episode_id: record.episode_id.map(|id| id.to_string()),
+            movie_id: record.movie_id.map(|id| id.to_string()),
+            track_id: record.track_id.map(|id| id.to_string()),
+            audiobook_id: record.audiobook_id.map(|id| id.to_string()),
             tv_show_id: record.tv_show_id.map(|id| id.to_string()),
+            album_id: record.album_id.map(|id| id.to_string()),
             current_position: record.current_position,
             duration: record.duration,
             volume: record.volume,
@@ -2346,15 +2866,17 @@ impl PlaybackSession {
     }
 }
 
-/// Input for starting/updating playback
+/// Input for starting playback (unified for all content types)
 #[derive(Debug, InputObject)]
 pub struct StartPlaybackInput {
-    /// Episode ID to play
-    pub episode_id: String,
+    /// Content type being played
+    pub content_type: PlaybackContentType,
     /// Media file ID
     pub media_file_id: String,
-    /// TV show ID
-    pub tv_show_id: String,
+    /// Content ID (the episode/movie/track/audiobook ID)
+    pub content_id: String,
+    /// Parent ID for context (TV show for episodes, album for tracks)
+    pub parent_id: Option<String>,
     /// Starting position in seconds
     pub start_position: Option<f64>,
     /// Duration in seconds
@@ -3399,4 +3921,27 @@ pub struct PathValidationResult {
     pub library_name: Option<String>,
     /// Error message if path is invalid
     pub error: Option<String>,
+}
+
+// ============================================================================
+// Auto-Hunt Types
+// ============================================================================
+
+/// Result of an auto-hunt operation
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct AutoHuntResult {
+    /// Whether the operation succeeded
+    pub success: bool,
+    /// Error message if failed
+    pub error: Option<String>,
+    /// Number of items searched
+    pub searched: i32,
+    /// Number of items that matched indexer results
+    pub matched: i32,
+    /// Number of downloads started
+    pub downloaded: i32,
+    /// Number of items skipped (no match or already available)
+    pub skipped: i32,
+    /// Number of items that failed to download
+    pub failed: i32,
 }

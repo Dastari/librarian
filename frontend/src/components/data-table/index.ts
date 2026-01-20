@@ -1,6 +1,9 @@
 // Main component
 export { DataTable } from './DataTable'
 
+// Alphabet filter component and utilities
+export { AlphabetFilter, getFirstLetter, useAlphabetFilter, type AlphabetFilterProps } from './AlphabetFilter'
+
 // Types
 export type {
   DataTableProps,

@@ -15,12 +15,18 @@ import {
   graphqlClient,
   LIBRARIES_QUERY,
   TV_SHOWS_QUERY,
+  MOVIES_QUERY,
+  ALBUMS_QUERY,
+  AUDIOBOOKS_QUERY,
   CREATE_LIBRARY_MUTATION,
   SCAN_LIBRARY_MUTATION,
   DELETE_LIBRARY_MUTATION,
   LIBRARY_CHANGED_SUBSCRIPTION,
   type Library,
   type TvShow,
+  type Movie,
+  type Album,
+  type Audiobook,
   type CreateLibraryInput,
   type LibraryChangedEvent,
 } from '../../lib/graphql'
@@ -46,6 +52,9 @@ function LibrariesPage() {
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
   const [libraries, setLibraries] = useState<Library[]>([])
   const [showsByLibrary, setShowsByLibrary] = useState<Record<string, TvShow[]>>({})
+  const [moviesByLibrary, setMoviesByLibrary] = useState<Record<string, Movie[]>>({})
+  const [albumsByLibrary, setAlbumsByLibrary] = useState<Record<string, Album[]>>({})
+  const [audiobooksByLibrary, setAudiobooksByLibrary] = useState<Record<string, Audiobook[]>>({})
   const [libraryToDelete, setLibraryToDelete] = useState<{ id: string; name: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
@@ -97,6 +106,66 @@ function LibrariesPage() {
           showsMap[result.libraryId] = result.shows
         }
         setShowsByLibrary(showsMap)
+
+        // Fetch movies for Movie libraries (for artwork)
+        const movieLibraries = data.libraries.filter((l) => l.libraryType === 'MOVIES')
+        const moviesPromises = movieLibraries.map(async (lib) => {
+          try {
+            const result = await graphqlClient
+              .query<{ movies: Movie[] }>(MOVIES_QUERY, { libraryId: lib.id })
+              .toPromise()
+            return { libraryId: lib.id, movies: result.data?.movies || [] }
+          } catch {
+            return { libraryId: lib.id, movies: [] }
+          }
+        })
+
+        const moviesResults = await Promise.all(moviesPromises)
+        const moviesMap: Record<string, Movie[]> = {}
+        for (const result of moviesResults) {
+          moviesMap[result.libraryId] = result.movies
+        }
+        setMoviesByLibrary(moviesMap)
+
+        // Fetch albums for Music libraries (for artwork)
+        const musicLibraries = data.libraries.filter((l) => l.libraryType === 'MUSIC')
+        const albumsPromises = musicLibraries.map(async (lib) => {
+          try {
+            const result = await graphqlClient
+              .query<{ albums: Album[] }>(ALBUMS_QUERY, { libraryId: lib.id })
+              .toPromise()
+            return { libraryId: lib.id, albums: result.data?.albums || [] }
+          } catch {
+            return { libraryId: lib.id, albums: [] }
+          }
+        })
+
+        const albumsResults = await Promise.all(albumsPromises)
+        const albumsMap: Record<string, Album[]> = {}
+        for (const result of albumsResults) {
+          albumsMap[result.libraryId] = result.albums
+        }
+        setAlbumsByLibrary(albumsMap)
+
+        // Fetch audiobooks for Audiobook libraries (for artwork)
+        const audiobookLibraries = data.libraries.filter((l) => l.libraryType === 'AUDIOBOOKS')
+        const audiobooksPromises = audiobookLibraries.map(async (lib) => {
+          try {
+            const result = await graphqlClient
+              .query<{ audiobooks: Audiobook[] }>(AUDIOBOOKS_QUERY, { libraryId: lib.id })
+              .toPromise()
+            return { libraryId: lib.id, audiobooks: result.data?.audiobooks || [] }
+          } catch {
+            return { libraryId: lib.id, audiobooks: [] }
+          }
+        })
+
+        const audiobooksResults = await Promise.all(audiobooksPromises)
+        const audiobooksMap: Record<string, Audiobook[]> = {}
+        for (const result of audiobooksResults) {
+          audiobooksMap[result.libraryId] = result.audiobooks
+        }
+        setAudiobooksByLibrary(audiobooksMap)
       }
     } catch (err) {
       console.error('Failed to fetch libraries:', err)
@@ -312,6 +381,9 @@ function LibrariesPage() {
               key={library.id}
               library={library}
               shows={showsByLibrary[library.id] || []}
+              movies={moviesByLibrary[library.id] || []}
+              albums={albumsByLibrary[library.id] || []}
+              audiobooks={audiobooksByLibrary[library.id] || []}
               onScan={() => handleScan(library.id, library.name)}
               onDelete={() => handleDeleteClick(library.id, library.name)}
             />

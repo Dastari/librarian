@@ -1,6 +1,7 @@
 //! Playback sessions database repository
 //!
-//! Manages user playback state for persistent video player.
+//! Manages user playback state for persistent video/audio player.
+//! Supports all content types: episodes, movies, tracks, and audiobooks.
 
 use anyhow::Result;
 use sqlx::PgPool;
@@ -15,6 +16,11 @@ pub struct PlaybackSessionRecord {
     pub episode_id: Option<Uuid>,
     pub media_file_id: Option<Uuid>,
     pub tv_show_id: Option<Uuid>,
+    pub movie_id: Option<Uuid>,
+    pub track_id: Option<Uuid>,
+    pub audiobook_id: Option<Uuid>,
+    pub album_id: Option<Uuid>,
+    pub content_type: Option<String>,
     pub current_position: f64,
     pub duration: Option<f64>,
     pub volume: f32,
@@ -27,13 +33,43 @@ pub struct PlaybackSessionRecord {
     pub updated_at: OffsetDateTime,
 }
 
+impl PlaybackSessionRecord {
+    /// Get the content ID based on content type
+    pub fn content_id(&self) -> Option<Uuid> {
+        match self.content_type.as_deref() {
+            Some("episode") => self.episode_id,
+            Some("movie") => self.movie_id,
+            Some("track") => self.track_id,
+            Some("audiobook") => self.audiobook_id,
+            _ => None,
+        }
+    }
+
+    /// Get the parent ID (show for episodes, album for tracks, etc.)
+    pub fn parent_id(&self) -> Option<Uuid> {
+        match self.content_type.as_deref() {
+            Some("episode") => self.tv_show_id,
+            Some("track") => self.album_id,
+            _ => None,
+        }
+    }
+}
+
 /// Input for creating/updating a playback session
 #[derive(Debug)]
 pub struct UpsertPlaybackSession {
     pub user_id: Uuid,
-    pub episode_id: Option<Uuid>,
+    pub content_type: String,
     pub media_file_id: Option<Uuid>,
+    // Content IDs (only one should be set based on content_type)
+    pub episode_id: Option<Uuid>,
+    pub movie_id: Option<Uuid>,
+    pub track_id: Option<Uuid>,
+    pub audiobook_id: Option<Uuid>,
+    // Parent IDs for context
     pub tv_show_id: Option<Uuid>,
+    pub album_id: Option<Uuid>,
+    // Playback state
     pub current_position: f64,
     pub duration: Option<f64>,
     pub volume: f32,
@@ -65,6 +101,7 @@ impl PlaybackRepository {
         let record = sqlx::query_as::<_, PlaybackSessionRecord>(
             r#"
             SELECT id, user_id, episode_id, media_file_id, tv_show_id,
+                   movie_id, track_id, audiobook_id, album_id, content_type,
                    current_position, duration, volume, is_muted, is_playing,
                    started_at, last_updated_at, completed_at, created_at, updated_at
             FROM playback_sessions
@@ -85,22 +122,33 @@ impl PlaybackRepository {
         let record = sqlx::query_as::<_, PlaybackSessionRecord>(
             r#"
             INSERT INTO playback_sessions (
-                user_id, episode_id, media_file_id, tv_show_id,
+                user_id, content_type, media_file_id,
+                episode_id, movie_id, track_id, audiobook_id,
+                tv_show_id, album_id,
                 current_position, duration, volume, is_muted, is_playing,
                 started_at, last_updated_at, completed_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW(), NULL)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW(), NULL)
             ON CONFLICT (user_id) DO UPDATE SET
-                episode_id = EXCLUDED.episode_id,
+                content_type = EXCLUDED.content_type,
                 media_file_id = EXCLUDED.media_file_id,
+                episode_id = EXCLUDED.episode_id,
+                movie_id = EXCLUDED.movie_id,
+                track_id = EXCLUDED.track_id,
+                audiobook_id = EXCLUDED.audiobook_id,
                 tv_show_id = EXCLUDED.tv_show_id,
+                album_id = EXCLUDED.album_id,
                 current_position = EXCLUDED.current_position,
                 duration = EXCLUDED.duration,
                 volume = EXCLUDED.volume,
                 is_muted = EXCLUDED.is_muted,
                 is_playing = EXCLUDED.is_playing,
                 started_at = CASE 
-                    WHEN playback_sessions.episode_id != EXCLUDED.episode_id 
+                    WHEN playback_sessions.content_type != EXCLUDED.content_type 
+                         OR COALESCE(playback_sessions.episode_id, playback_sessions.movie_id, 
+                                     playback_sessions.track_id, playback_sessions.audiobook_id) 
+                            != COALESCE(EXCLUDED.episode_id, EXCLUDED.movie_id, 
+                                        EXCLUDED.track_id, EXCLUDED.audiobook_id)
                     THEN NOW() 
                     ELSE playback_sessions.started_at 
                 END,
@@ -108,14 +156,20 @@ impl PlaybackRepository {
                 completed_at = NULL,
                 updated_at = NOW()
             RETURNING id, user_id, episode_id, media_file_id, tv_show_id,
+                      movie_id, track_id, audiobook_id, album_id, content_type,
                       current_position, duration, volume, is_muted, is_playing,
                       started_at, last_updated_at, completed_at, created_at, updated_at
             "#,
         )
         .bind(input.user_id)
-        .bind(input.episode_id)
+        .bind(&input.content_type)
         .bind(input.media_file_id)
+        .bind(input.episode_id)
+        .bind(input.movie_id)
+        .bind(input.track_id)
+        .bind(input.audiobook_id)
         .bind(input.tv_show_id)
+        .bind(input.album_id)
         .bind(input.current_position)
         .bind(input.duration)
         .bind(input.volume)
@@ -145,6 +199,7 @@ impl PlaybackRepository {
                 updated_at = NOW()
             WHERE user_id = $1 AND completed_at IS NULL
             RETURNING id, user_id, episode_id, media_file_id, tv_show_id,
+                      movie_id, track_id, audiobook_id, album_id, content_type,
                       current_position, duration, volume, is_muted, is_playing,
                       started_at, last_updated_at, completed_at, created_at, updated_at
             "#,
@@ -171,6 +226,7 @@ impl PlaybackRepository {
                 updated_at = NOW()
             WHERE user_id = $1 AND completed_at IS NULL
             RETURNING id, user_id, episode_id, media_file_id, tv_show_id,
+                      movie_id, track_id, audiobook_id, album_id, content_type,
                       current_position, duration, volume, is_muted, is_playing,
                       started_at, last_updated_at, completed_at, created_at, updated_at
             "#,

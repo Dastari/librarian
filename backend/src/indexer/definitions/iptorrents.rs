@@ -30,8 +30,8 @@ use scraper::{Html, Selector};
 
 use crate::indexer::categories::CategoryMapping;
 use crate::indexer::{
-    Indexer, IndexerType, MovieSearchParam, ReleaseInfo, TorznabCapabilities, TorznabQuery,
-    TrackerType, TvSearchParam, categories::cats,
+    BookSearchParam, Indexer, IndexerType, MovieSearchParam, MusicSearchParam, ReleaseInfo,
+    TorznabCapabilities, TorznabQuery, TrackerType, TvSearchParam, categories::cats,
 };
 
 /// IPTorrents alternative site links (for future use)
@@ -145,6 +145,17 @@ impl IPTorrentsIndexer {
                 MovieSearchParam::Q,
                 MovieSearchParam::ImdbId,
                 MovieSearchParam::Genre,
+            ],
+            music_search_params: vec![
+                MusicSearchParam::Q,
+                MusicSearchParam::Artist,
+                MusicSearchParam::Album,
+                MusicSearchParam::Year,
+            ],
+            book_search_params: vec![
+                BookSearchParam::Q,
+                BookSearchParam::Title,
+                BookSearchParam::Author,
             ],
             ..Default::default()
         };

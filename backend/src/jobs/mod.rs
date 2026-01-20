@@ -7,6 +7,7 @@
 
 pub mod artwork;
 pub mod auto_download;
+pub mod auto_hunt;
 pub mod download_monitor;
 pub mod rss_poller;
 pub mod scanner;
@@ -21,6 +22,7 @@ use sqlx::PgPool;
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::{error, info, warn};
 
+use crate::indexer::manager::IndexerManager;
 use crate::services::{ScannerService, TorrentService};
 
 /// Configuration for job retry behavior
@@ -161,6 +163,7 @@ pub async fn start_scheduler(
     pool: PgPool,
     analysis_queue: Option<Arc<crate::services::MediaAnalysisQueue>>,
     metadata_service: Option<Arc<crate::services::MetadataService>>,
+    indexer_manager: Option<Arc<IndexerManager>>,
 ) -> anyhow::Result<JobScheduler> {
     let scheduler = JobScheduler::new().await?;
     let default_retry = JobRetryConfig::default();
@@ -269,6 +272,18 @@ pub async fn start_scheduler(
         })
     })?;
     scheduler.add(schedule_job).await?;
+
+    // NOTE: Auto-hunt no longer runs on an independent schedule.
+    // It now runs in two scenarios:
+    // 1. Immediately when a new movie is added (via add_movie mutation)
+    // 2. After each library scan completes (via ScannerService)
+    // This ensures auto-hunt runs on the same schedule as library scans
+    // and provides immediate hunting for newly added content.
+    if indexer_manager.is_some() {
+        info!("Auto-hunt enabled: will run after library scans and when movies are added");
+    } else {
+        warn!("IndexerManager not provided - auto-hunt will be disabled");
+    }
 
     scheduler.start().await?;
 

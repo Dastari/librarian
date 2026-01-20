@@ -174,6 +174,130 @@ impl MovieRepository {
         Ok(records)
     }
 
+    /// List movies in a library with pagination and filtering
+    ///
+    /// Returns (records, total_count)
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_by_library_paginated(
+        &self,
+        library_id: Uuid,
+        offset: i64,
+        limit: i64,
+        title_filter: Option<&str>,
+        year_filter: Option<i32>,
+        monitored_filter: Option<bool>,
+        has_file_filter: Option<bool>,
+        sort_column: &str,
+        sort_asc: bool,
+    ) -> Result<(Vec<MovieRecord>, i64)> {
+        // Build dynamic WHERE clause conditions
+        let mut conditions = vec!["library_id = $1".to_string()];
+        let mut param_idx = 2;
+
+        if title_filter.is_some() {
+            conditions.push(format!("LOWER(title) LIKE ${}", param_idx));
+            param_idx += 1;
+        }
+        if year_filter.is_some() {
+            conditions.push(format!("year = ${}", param_idx));
+            param_idx += 1;
+        }
+        if monitored_filter.is_some() {
+            conditions.push(format!("monitored = ${}", param_idx));
+            param_idx += 1;
+        }
+        if has_file_filter.is_some() {
+            conditions.push(format!("has_file = ${}", param_idx));
+            // param_idx += 1; // Not needed after last
+        }
+
+        let where_clause = conditions.join(" AND ");
+
+        // Validate sort column to prevent SQL injection
+        let valid_sort_columns = [
+            "title",
+            "sort_title",
+            "year",
+            "created_at",
+            "release_date",
+        ];
+        let sort_col = if valid_sort_columns.contains(&sort_column) {
+            sort_column
+        } else {
+            "sort_title"
+        };
+        let order_dir = if sort_asc { "ASC" } else { "DESC" };
+        let order_clause = format!(
+            "ORDER BY COALESCE({}, title) {} NULLS LAST",
+            sort_col, order_dir
+        );
+
+        // Build count query
+        let count_query = format!(
+            "SELECT COUNT(*) FROM movies WHERE {}",
+            where_clause
+        );
+
+        // Build data query
+        let data_query = format!(
+            r#"
+            SELECT id, library_id, user_id, title, sort_title, original_title, year,
+                   tmdb_id, imdb_id, overview, tagline, runtime, genres,
+                   production_countries, spoken_languages, director, cast_names,
+                   tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
+                   collection_id, collection_name, collection_poster_url,
+                   release_date, certification, status, monitored,
+                   allowed_resolutions_override, allowed_video_codecs_override,
+                   allowed_audio_formats_override, require_hdr_override,
+                   allowed_hdr_types_override, allowed_sources_override,
+                   release_group_blacklist_override, release_group_whitelist_override,
+                   has_file, size_bytes, path, created_at, updated_at
+            FROM movies
+            WHERE {}
+            {}
+            LIMIT {} OFFSET {}
+            "#,
+            where_clause, order_clause, limit, offset
+        );
+
+        // Build and execute count query with bindings
+        let mut count_builder = sqlx::query_scalar::<_, i64>(&count_query).bind(library_id);
+        if let Some(title) = title_filter {
+            count_builder = count_builder.bind(format!("%{}%", title.to_lowercase()));
+        }
+        if let Some(year) = year_filter {
+            count_builder = count_builder.bind(year);
+        }
+        if let Some(monitored) = monitored_filter {
+            count_builder = count_builder.bind(monitored);
+        }
+        if let Some(has_file) = has_file_filter {
+            count_builder = count_builder.bind(has_file);
+        }
+
+        let total: i64 = count_builder.fetch_one(&self.pool).await?;
+
+        // Build and execute data query with bindings
+        let mut data_builder =
+            sqlx::query_as::<_, MovieRecord>(&data_query).bind(library_id);
+        if let Some(title) = title_filter {
+            data_builder = data_builder.bind(format!("%{}%", title.to_lowercase()));
+        }
+        if let Some(year) = year_filter {
+            data_builder = data_builder.bind(year);
+        }
+        if let Some(monitored) = monitored_filter {
+            data_builder = data_builder.bind(monitored);
+        }
+        if let Some(has_file) = has_file_filter {
+            data_builder = data_builder.bind(has_file);
+        }
+
+        let records = data_builder.fetch_all(&self.pool).await?;
+
+        Ok((records, total))
+    }
+
     /// List all movies for a user (across all libraries)
     pub async fn list_by_user(&self, user_id: Uuid) -> Result<Vec<MovieRecord>> {
         let records = sqlx::query_as::<_, MovieRecord>(

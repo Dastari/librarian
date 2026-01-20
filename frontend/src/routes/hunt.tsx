@@ -93,6 +93,19 @@ function SearchPage() {
     'type',
     parseAsStringLiteral(['all', 'tv', 'movies', 'music', 'audiobooks'] as const).withDefault('all')
   )
+  
+  // Table sorting state - persisted in URL
+  const [sortColumn, setSortColumn] = useQueryState('sort', parseAsString.withDefault('seeders'))
+  const [sortDirection, setSortDirection] = useQueryState(
+    'order',
+    parseAsStringLiteral(['asc', 'desc'] as const).withDefault('desc')
+  )
+
+  // Handle sort change for URL persistence
+  const handleSortChange = useCallback((column: string, direction: 'asc' | 'desc') => {
+    setSortColumn(column)
+    setSortDirection(direction)
+  }, [setSortColumn, setSortDirection])
 
   // Local state
   const [searchInput, setSearchInput] = useState(query)
@@ -487,8 +500,9 @@ function SearchPage() {
             columns={columns}
             getRowKey={(release) => release.guid}
             searchPlaceholder="Filter results..."
-            defaultSortColumn="seeders"
-            defaultSortDirection="desc"
+            sortColumn={sortColumn ?? 'seeders'}
+            sortDirection={sortDirection}
+            onSortChange={handleSortChange}
             rowActions={rowActions}
             showItemCount
             ariaLabel="Search results"

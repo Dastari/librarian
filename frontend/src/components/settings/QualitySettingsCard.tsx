@@ -19,7 +19,8 @@ export const VIDEO_CODEC_OPTIONS = [
   { value: 'xvid', label: 'XviD' },
 ]
 
-export const AUDIO_FORMAT_OPTIONS = [
+// Audio formats for video content (surround sound)
+export const VIDEO_AUDIO_FORMAT_OPTIONS = [
   { value: 'atmos', label: 'Dolby Atmos' },
   { value: 'truehd', label: 'TrueHD' },
   { value: 'dtshd', label: 'DTS-HD MA' },
@@ -28,6 +29,35 @@ export const AUDIO_FORMAT_OPTIONS = [
   { value: 'dd', label: 'Dolby Digital 5.1' },
   { value: 'aac', label: 'AAC' },
 ]
+
+// Audio formats for music content
+export const MUSIC_AUDIO_FORMAT_OPTIONS = [
+  { value: 'flac', label: 'FLAC (Lossless)' },
+  { value: 'alac', label: 'ALAC (Apple Lossless)' },
+  { value: 'wav', label: 'WAV' },
+  { value: 'aiff', label: 'AIFF' },
+  { value: '320', label: 'MP3 320kbps' },
+  { value: 'v0', label: 'MP3 V0 (VBR)' },
+  { value: 'aac', label: 'AAC' },
+  { value: 'ogg', label: 'OGG Vorbis' },
+]
+
+// Bit depth options for music
+export const BIT_DEPTH_OPTIONS = [
+  { value: '24bit', label: '24-bit' },
+  { value: '16bit', label: '16-bit' },
+]
+
+// Sample rate options for music
+export const SAMPLE_RATE_OPTIONS = [
+  { value: '192', label: '192 kHz' },
+  { value: '96', label: '96 kHz' },
+  { value: '48', label: '48 kHz' },
+  { value: '44.1', label: '44.1 kHz' },
+]
+
+// Legacy export for backwards compatibility
+export const AUDIO_FORMAT_OPTIONS = VIDEO_AUDIO_FORMAT_OPTIONS
 
 export const HDR_TYPE_OPTIONS = [
   { value: 'dolbyvision', label: 'Dolby Vision' },
@@ -145,6 +175,8 @@ export interface QualitySettingsCardProps {
   description?: string
   /** If true, render without the Card wrapper (for use inside modals) */
   noCard?: boolean
+  /** Library type - determines which quality options are shown */
+  libraryType?: 'TV' | 'MOVIES' | 'MUSIC' | 'AUDIOBOOKS' | 'OTHER'
 }
 
 export function QualitySettingsCard({
@@ -156,8 +188,10 @@ export function QualitySettingsCard({
   title = 'Quality Filters',
   description,
   noCard = false,
+  libraryType = 'TV',
 }: QualitySettingsCardProps) {
   const isDisabled = isOverrideMode && isInheriting
+  const isAudioLibrary = libraryType === 'MUSIC' || libraryType === 'AUDIOBOOKS'
 
   const header = (
     <div className="flex items-center gap-2 w-full justify-between">
@@ -177,127 +211,203 @@ export function QualitySettingsCard({
     </div>
   )
 
+  // Render video quality filters (TV/Movies)
+  const renderVideoFilters = () => (
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+      {/* Resolution */}
+      <CheckboxGroup
+        label={
+          <div className="flex items-center gap-2">
+            <IconDeviceTv size={16} className="text-blue-400" />
+            <span className="text-sm font-medium">Resolution</span>
+            {settings.allowedResolutions.length === 0 && (
+              <span className="text-xs text-default-400">(Any)</span>
+            )}
+          </div>
+        }
+        value={settings.allowedResolutions}
+        onValueChange={(val) => onChange({ ...settings, allowedResolutions: val })}
+        classNames={{ wrapper: 'gap-1.5 mt-2' }}
+      >
+        {RESOLUTION_OPTIONS.map((opt) => (
+          <Checkbox key={opt.value} value={opt.value} size="sm">
+            {opt.label}
+          </Checkbox>
+        ))}
+      </CheckboxGroup>
+
+      {/* Video Codec */}
+      <CheckboxGroup
+        label={
+          <div className="flex items-center gap-2">
+            <IconVideo size={16} className="text-purple-400" />
+            <span className="text-sm font-medium">Video Codec</span>
+            {settings.allowedVideoCodecs.length === 0 && (
+              <span className="text-xs text-default-400">(Any)</span>
+            )}
+          </div>
+        }
+        value={settings.allowedVideoCodecs}
+        onValueChange={(val) => onChange({ ...settings, allowedVideoCodecs: val })}
+        classNames={{ wrapper: 'gap-1.5 mt-2' }}
+      >
+        {VIDEO_CODEC_OPTIONS.map((opt) => (
+          <Checkbox key={opt.value} value={opt.value} size="sm">
+            {opt.label}
+          </Checkbox>
+        ))}
+      </CheckboxGroup>
+
+      {/* Audio Format (for video) */}
+      <CheckboxGroup
+        label={
+          <div className="flex items-center gap-2">
+            <IconMusic size={16} className="text-green-400" />
+            <span className="text-sm font-medium">Audio Format</span>
+            {settings.allowedAudioFormats.length === 0 && (
+              <span className="text-xs text-default-400">(Any)</span>
+            )}
+          </div>
+        }
+        value={settings.allowedAudioFormats}
+        onValueChange={(val) => onChange({ ...settings, allowedAudioFormats: val })}
+        classNames={{ wrapper: 'gap-1.5 mt-2' }}
+      >
+        {VIDEO_AUDIO_FORMAT_OPTIONS.map((opt) => (
+          <Checkbox key={opt.value} value={opt.value} size="sm">
+            {opt.label}
+          </Checkbox>
+        ))}
+      </CheckboxGroup>
+
+      {/* Source */}
+      <CheckboxGroup
+        label={
+          <div className="flex items-center gap-2">
+            <IconDeviceTv size={16} className="text-cyan-400" />
+            <span className="text-sm font-medium">Source</span>
+            {settings.allowedSources.length === 0 && (
+              <span className="text-xs text-default-400">(Any)</span>
+            )}
+          </div>
+        }
+        value={settings.allowedSources}
+        onValueChange={(val) => onChange({ ...settings, allowedSources: val })}
+        classNames={{ wrapper: 'gap-1.5 mt-2' }}
+      >
+        {SOURCE_OPTIONS.map((opt) => (
+          <Checkbox key={opt.value} value={opt.value} size="sm">
+            {opt.label}
+          </Checkbox>
+        ))}
+      </CheckboxGroup>
+
+      {/* HDR Settings */}
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <IconSun size={16} className="text-amber-400" />
+          <span className="text-sm font-medium">HDR</span>
+        </div>
+        <Switch
+          isSelected={settings.requireHdr}
+          onValueChange={(val) => onChange({ ...settings, requireHdr: val })}
+          size="sm"
+        >
+          Require HDR
+        </Switch>
+        {settings.requireHdr && (
+          <CheckboxGroup
+            value={settings.allowedHdrTypes}
+            onValueChange={(val) => onChange({ ...settings, allowedHdrTypes: val })}
+            classNames={{ wrapper: 'gap-1.5 ml-1' }}
+            size="sm"
+            description="Empty = any HDR type"
+          >
+            {HDR_TYPE_OPTIONS.map((opt) => (
+              <Checkbox key={opt.value} value={opt.value} size="sm">
+                {opt.label}
+              </Checkbox>
+            ))}
+          </CheckboxGroup>
+        )}
+      </div>
+    </div>
+  )
+
+  // Render audio quality filters (Music/Audiobooks)
+  const renderAudioFilters = () => (
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+      {/* Audio Format (for music) */}
+      <CheckboxGroup
+        label={
+          <div className="flex items-center gap-2">
+            <IconMusic size={16} className="text-green-400" />
+            <span className="text-sm font-medium">Audio Format</span>
+            {settings.allowedAudioFormats.length === 0 && (
+              <span className="text-xs text-default-400">(Any)</span>
+            )}
+          </div>
+        }
+        value={settings.allowedAudioFormats}
+        onValueChange={(val) => onChange({ ...settings, allowedAudioFormats: val })}
+        classNames={{ wrapper: 'gap-1.5 mt-2' }}
+      >
+        {MUSIC_AUDIO_FORMAT_OPTIONS.map((opt) => (
+          <Checkbox key={opt.value} value={opt.value} size="sm">
+            {opt.label}
+          </Checkbox>
+        ))}
+      </CheckboxGroup>
+
+      {/* Bit Depth */}
+      <CheckboxGroup
+        label={
+          <div className="flex items-center gap-2">
+            <IconVideo size={16} className="text-purple-400" />
+            <span className="text-sm font-medium">Bit Depth</span>
+            {settings.allowedResolutions.length === 0 && (
+              <span className="text-xs text-default-400">(Any)</span>
+            )}
+          </div>
+        }
+        value={settings.allowedResolutions}
+        onValueChange={(val) => onChange({ ...settings, allowedResolutions: val })}
+        classNames={{ wrapper: 'gap-1.5 mt-2' }}
+      >
+        {BIT_DEPTH_OPTIONS.map((opt) => (
+          <Checkbox key={opt.value} value={opt.value} size="sm">
+            {opt.label}
+          </Checkbox>
+        ))}
+      </CheckboxGroup>
+
+      {/* Sample Rate */}
+      <CheckboxGroup
+        label={
+          <div className="flex items-center gap-2">
+            <IconDeviceTv size={16} className="text-cyan-400" />
+            <span className="text-sm font-medium">Sample Rate</span>
+            {settings.allowedSources.length === 0 && (
+              <span className="text-xs text-default-400">(Any)</span>
+            )}
+          </div>
+        }
+        value={settings.allowedSources}
+        onValueChange={(val) => onChange({ ...settings, allowedSources: val })}
+        classNames={{ wrapper: 'gap-1.5 mt-2' }}
+      >
+        {SAMPLE_RATE_OPTIONS.map((opt) => (
+          <Checkbox key={opt.value} value={opt.value} size="sm">
+            {opt.label}
+          </Checkbox>
+        ))}
+      </CheckboxGroup>
+    </div>
+  )
+
   const content = (
     <div className={`flex flex-col gap-6 ${isDisabled ? 'opacity-50 pointer-events-none' : ''}`}>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
-        {/* Resolution */}
-        <CheckboxGroup
-          label={
-            <div className="flex items-center gap-2">
-              <IconDeviceTv size={16} className="text-blue-400" />
-              <span className="text-sm font-medium">Resolution</span>
-              {settings.allowedResolutions.length === 0 && (
-                <span className="text-xs text-default-400">(Any)</span>
-              )}
-            </div>
-          }
-          value={settings.allowedResolutions}
-          onValueChange={(val) => onChange({ ...settings, allowedResolutions: val })}
-          classNames={{ wrapper: 'gap-1.5 mt-2' }}
-        >
-          {RESOLUTION_OPTIONS.map((opt) => (
-            <Checkbox key={opt.value} value={opt.value} size="sm">
-              {opt.label}
-            </Checkbox>
-          ))}
-        </CheckboxGroup>
-
-        {/* Video Codec */}
-        <CheckboxGroup
-          label={
-            <div className="flex items-center gap-2">
-              <IconVideo size={16} className="text-purple-400" />
-              <span className="text-sm font-medium">Video Codec</span>
-              {settings.allowedVideoCodecs.length === 0 && (
-                <span className="text-xs text-default-400">(Any)</span>
-              )}
-            </div>
-          }
-          value={settings.allowedVideoCodecs}
-          onValueChange={(val) => onChange({ ...settings, allowedVideoCodecs: val })}
-          classNames={{ wrapper: 'gap-1.5 mt-2' }}
-        >
-          {VIDEO_CODEC_OPTIONS.map((opt) => (
-            <Checkbox key={opt.value} value={opt.value} size="sm">
-              {opt.label}
-            </Checkbox>
-          ))}
-        </CheckboxGroup>
-
-        {/* Audio Format */}
-        <CheckboxGroup
-          label={
-            <div className="flex items-center gap-2">
-              <IconMusic size={16} className="text-green-400" />
-              <span className="text-sm font-medium">Audio Format</span>
-              {settings.allowedAudioFormats.length === 0 && (
-                <span className="text-xs text-default-400">(Any)</span>
-              )}
-            </div>
-          }
-          value={settings.allowedAudioFormats}
-          onValueChange={(val) => onChange({ ...settings, allowedAudioFormats: val })}
-          classNames={{ wrapper: 'gap-1.5 mt-2' }}
-        >
-          {AUDIO_FORMAT_OPTIONS.map((opt) => (
-            <Checkbox key={opt.value} value={opt.value} size="sm">
-              {opt.label}
-            </Checkbox>
-          ))}
-        </CheckboxGroup>
-
-        {/* Source */}
-        <CheckboxGroup
-          label={
-            <div className="flex items-center gap-2">
-              <IconDeviceTv size={16} className="text-cyan-400" />
-              <span className="text-sm font-medium">Source</span>
-              {settings.allowedSources.length === 0 && (
-                <span className="text-xs text-default-400">(Any)</span>
-              )}
-            </div>
-          }
-          value={settings.allowedSources}
-          onValueChange={(val) => onChange({ ...settings, allowedSources: val })}
-          classNames={{ wrapper: 'gap-1.5 mt-2' }}
-        >
-          {SOURCE_OPTIONS.map((opt) => (
-            <Checkbox key={opt.value} value={opt.value} size="sm">
-              {opt.label}
-            </Checkbox>
-          ))}
-        </CheckboxGroup>
-
-        {/* HDR Settings */}
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2">
-            <IconSun size={16} className="text-amber-400" />
-            <span className="text-sm font-medium">HDR</span>
-          </div>
-          <Switch
-            isSelected={settings.requireHdr}
-            onValueChange={(val) => onChange({ ...settings, requireHdr: val })}
-            size="sm"
-          >
-            Require HDR
-          </Switch>
-          {settings.requireHdr && (
-            <CheckboxGroup
-              value={settings.allowedHdrTypes}
-              onValueChange={(val) => onChange({ ...settings, allowedHdrTypes: val })}
-              classNames={{ wrapper: 'gap-1.5 ml-1' }}
-              size="sm"
-              description="Empty = any HDR type"
-            >
-              {HDR_TYPE_OPTIONS.map((opt) => (
-                <Checkbox key={opt.value} value={opt.value} size="sm">
-                  {opt.label}
-                </Checkbox>
-              ))}
-            </CheckboxGroup>
-          )}
-        </div>
-      </div>
+      {isAudioLibrary ? renderAudioFilters() : renderVideoFilters()}
 
       {/* Release Groups - full width row */}
       <div className="flex flex-col gap-3">

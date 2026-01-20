@@ -122,7 +122,7 @@ function RowActionsDropdown<T>({ item, actions }: RowActionsDropdownProps<T>) {
   return (
     <Dropdown>
       <DropdownTrigger>
-        <Button isIconOnly size="sm" variant="light">
+        <Button isIconOnly size="sm" variant="light" aria-label="More actions">
           <IconDotsVertical size={18} />
         </Button>
       </DropdownTrigger>
@@ -183,18 +183,41 @@ interface TableViewWrapperProps {
   fillHeight: boolean
   className?: string
   children: ReactNode
+  /** Ref for infinite scroll sentinel - placed at the bottom of scroll area */
+  sentinelRef?: React.RefObject<HTMLDivElement | null>
+  /** Whether to show the sentinel */
+  showSentinel?: boolean
 }
 
-function TableViewWrapper({ fillHeight, className, children }: TableViewWrapperProps) {
+function TableViewWrapper({ 
+  fillHeight, 
+  className, 
+  children, 
+  sentinelRef,
+  showSentinel = false,
+}: TableViewWrapperProps) {
   if (!fillHeight) {
-    return <div className={className}>{children}</div>
+    return (
+      <div className={className}>
+        {children}
+        {/* Sentinel for infinite scroll - outside table, inside scroll area */}
+        {showSentinel && (
+          <div ref={sentinelRef} className="h-px w-full" />
+        )}
+      </div>
+    )
   }
 
-  // Using the flex-grow pattern with min-h-0 to allow proper scrolling
-  // The table inside handles its own overflow-auto for scrolling
+  // For fillHeight: we create our own scroll container that wraps the table
+  // Apply the Table's wrapper styling here since we use removeWrapper on the Table
+  // The sentinel is placed INSIDE the scroll container, after the table
   return (
-    <div className={`grow h-0 ${className ?? ''}`}>
+    <div className={`grow h-0 overflow-auto p-4 bg-content1 shadow-small rounded-large ${className ?? ''}`}>
       {children}
+      {/* Sentinel for infinite scroll - inside our scroll container, after table */}
+      {showSentinel && (
+        <div ref={sentinelRef} className="h-px w-full" />
+      )}
     </div>
   )
 }
@@ -255,6 +278,11 @@ export function DataTable<T>({
   onLoadMore,
   hasMore = false,
   isLoadingMore = false,
+
+  // Server-side mode
+  serverSide = false,
+  serverTotalCount,
+  onSearchChange,
 
   // Layout
   headerContent,
@@ -389,8 +417,12 @@ export function DataTable<T>({
   const handleSearchChange = useCallback(
     (value: string) => {
       setSearchTerm(value)
+      // In server-side mode, notify parent of search changes
+      if (serverSide && onSearchChange) {
+        onSearchChange(value)
+      }
     },
-    []
+    [serverSide, onSearchChange]
   )
 
   const handleViewModeChange = useCallback(
@@ -421,10 +453,23 @@ export function DataTable<T>({
   // Data Processing
   // ============================================================================
 
-  const filteredData = useFilteredData(data, searchTerm, searchFn)
-  const baseSortedData = useSortedData(filteredData, columns, sortColumn, sortDirection, defaultSortFn)
+  // In server-side mode, skip client-side filtering (server already filtered)
+  const filteredData = useFilteredData(
+    data,
+    serverSide ? '' : searchTerm, // Skip search filter in server-side mode
+    serverSide ? undefined : searchFn
+  )
+  
+  // In server-side mode, skip client-side sorting (server already sorted)
+  const baseSortedData = useSortedData(
+    filteredData,
+    columns,
+    serverSide ? null : sortColumn, // Skip sorting in server-side mode
+    sortDirection,
+    serverSide ? undefined : defaultSortFn
+  )
 
-  // Move pinned items to the top (after sorting)
+  // Move pinned items to the top (after sorting) - still works in server-side mode
   const sortedData = useMemo(() => {
     if (!isPinned) return baseSortedData
     const pinned = baseSortedData.filter((item) => isPinned(item))
@@ -453,6 +498,8 @@ export function DataTable<T>({
     isLoading: isLoadingMore || isLoading,
     onLoadMore: onLoadMore ?? (() => { }),
     dataLength: paginatedData.length,
+    // Pass totalCount to prevent loading when we already have all items
+    totalCount: serverTotalCount ?? null,
   })
 
   // Normalize selected keys to strings for consistent comparison (HeroUI may convert keys to strings)
@@ -665,6 +712,7 @@ export function DataTable<T>({
                   <Tooltip content="Table view">
                     <Button
                       isIconOnly
+                      aria-label="Table view"
                       variant={viewMode === 'table' ? 'solid' : 'flat'}
                       onPress={() => handleViewModeChange('table')}
                     >
@@ -674,6 +722,7 @@ export function DataTable<T>({
                   <Tooltip content="Card view">
                     <Button
                       isIconOnly
+                      aria-label="Card view"
                       variant={viewMode === 'cards' ? 'solid' : 'flat'}
                       onPress={() => handleViewModeChange('cards')}
                     >
@@ -712,25 +761,32 @@ export function DataTable<T>({
 
       {/* Table View - always show table structure, empty state is inside TableBody */}
       {viewMode === 'table' && (
-        <TableViewWrapper fillHeight={fillHeight} className={classNames.tableContainer}>
+        <TableViewWrapper 
+          fillHeight={fillHeight} 
+          className={classNames.tableContainer}
+          sentinelRef={sentinelRef}
+          showSentinel={paginationMode === 'infinite' && hasMore}
+        >
           <Table
             aria-label={ariaLabel}
             selectionMode={selectionMode === 'none' || checkboxSelectionOnly ? 'none' : selectionMode}
             selectedKeys={checkboxSelectionOnly ? undefined : selectedKeyStrings}
             onSelectionChange={checkboxSelectionOnly ? undefined : handleSelectionChange}
             disabledKeys={checkboxSelectionOnly ? undefined : disabledKeys as any}
-            removeWrapper={removeWrapper}
+            removeWrapper={fillHeight || removeWrapper}
             isStriped={isStriped}
             isCompact={isCompact}
             sortDescriptor={sortDescriptor}
             onSortChange={handleTableSortChange}
             isHeaderSticky={fillHeight}
             classNames={{
-              base: `${fillHeight ? 'h-full' : ''} w-full max-w-full ${resizingColumn ? 'select-none' : ''}`,
-              wrapper: `${classNames.table ?? ''} ${fillHeight ? 'h-full overflow-auto' : ''} max-w-full`,
+              // When fillHeight: TableViewWrapper provides the wrapper styling
+              // Table's wrapper is removed so we control scrolling and styling
+              base: `w-full max-w-full ${resizingColumn ? 'select-none' : ''}`,
+              wrapper: fillHeight ? '' : `${classNames.table ?? ''} max-w-full`,
               table: 'table-fixed w-full',
               th: `text-default-600 first:rounded-l-lg last:rounded-r-lg relative group ${selectionMode !== 'none' && !checkboxSelectionOnly ? 'first:w-[50px] first:min-w-[50px] first:max-w-[50px]' : ''}`,
-              thead: '',
+              thead: fillHeight ? 'sticky top-0 z-20 bg-content1' : '',
               td: `overflow-hidden ${selectionMode !== 'none' && !checkboxSelectionOnly ? 'first:w-[50px] first:min-w-[50px] first:max-w-[50px]' : ''}`,
             }}
           >
@@ -814,10 +870,8 @@ export function DataTable<T>({
                   items.push(...loadingSkeletons)
                 }
                 
-                // Add sentinel row at the end for infinite scroll (only when not loading and has more)
-                if (paginationMode === 'infinite' && hasMore && !isLoadingMore) {
-                  items.push({ _sentinelRow: true } as unknown as T)
-                }
+                // Note: Sentinel is now placed OUTSIDE the table via TableViewWrapper
+                // This ensures it's truly invisible and doesn't affect table layout
                 
                 return items
               })()}
@@ -888,66 +942,7 @@ export function DataTable<T>({
                   )
                 }
 
-                // Check if this is the sentinel row for infinite scroll
-                const isSentinel = '_sentinelRow' in (item as object)
-                
-                if (isSentinel) {
-                  return (
-                    <TableRow key="_sentinel" className="hover:bg-transparent data-[selected=true]:bg-transparent">
-                      {[
-                        // Empty checkbox cell if in checkbox-only mode
-                        ...(checkboxSelectionOnly && selectionMode !== 'none'
-                          ? [
-                            <TableCell
-                              key="_sentinel_checkbox"
-                              style={{ width: 50, minWidth: 50, maxWidth: 50, flexGrow: 0, flexShrink: 0 }}
-                            >
-                              <div ref={sentinelRef} className="h-px" />
-                            </TableCell>,
-                            // First data cell (no sentinel ref since it's in checkbox cell)
-                            <TableCell key={`_sentinel_${visibleColumns[0].key}`} style={getColumnStyle(parseColumnSizing(visibleColumns[0]))}>
-                              {''}
-                            </TableCell>,
-                            // Rest of the data columns
-                            ...visibleColumns.slice(1).map((column) => (
-                              <TableCell 
-                                key={`_sentinel_${column.key}`}
-                                style={getColumnStyle(parseColumnSizing(column))}
-                              >
-                                {''}
-                              </TableCell>
-                            )),
-                          ]
-                          : [
-                            // First cell contains the sentinel observer (invisible, just for triggering)
-                            <TableCell key="_sentinel_observer" style={getColumnStyle(parseColumnSizing(visibleColumns[0]))}>
-                              <div ref={sentinelRef} className="h-px" />
-                            </TableCell>,
-                            // Empty cells for remaining columns
-                            ...visibleColumns.slice(1).map((column) => (
-                              <TableCell 
-                                key={`_sentinel_${column.key}`}
-                                style={getColumnStyle(parseColumnSizing(column))}
-                              >
-                                {''}
-                              </TableCell>
-                            )),
-                          ]),
-                        // Empty cell for actions column if present
-                        ...(rowActions.length > 0
-                          ? [
-                            <TableCell 
-                              key="_sentinel_actions"
-                              style={{ width: 100, minWidth: 100, maxWidth: 100, flexGrow: 0, flexShrink: 0 }}
-                            >
-                              {''}
-                            </TableCell>
-                          ]
-                          : []),
-                      ]}
-                    </TableRow>
-                  )
-                }
+                // Note: Sentinel is now rendered outside the table via TableViewWrapper
                 
                 const index = paginatedData.indexOf(item)
                 const rowKey = getRowKey(item)
@@ -1055,6 +1050,7 @@ export function DataTable<T>({
                           <Checkbox
                             color="danger"
                             isSelected={isSelected}
+                            aria-label={`Select item ${key}`}
                             onValueChange={(checked) => {
                               const newKeys = new Set(selectedKeys)
                               if (checked) {
@@ -1149,6 +1145,7 @@ export function DataTable<T>({
                                 <Checkbox
                                   color="danger"
                                   isSelected={isSelected}
+                                  aria-label={`Select item ${key}`}
                                   onValueChange={(checked) => {
                                     const newKeys = new Set(selectedKeys)
                                     if (checked) {
@@ -1232,9 +1229,13 @@ export function DataTable<T>({
       {showItemCount && paginationMode !== 'pagination' && (
         <div className={`h-14 flex justify-between items-center text-sm text-default-500 px-2 ${classNames.footer ?? ''}`}>
           <span className="flex items-center gap-2">
-            {sortedData.length === data.length
-              ? `${data.length} item${data.length !== 1 ? 's' : ''}`
-              : `${sortedData.length} of ${data.length} items`}
+            {serverSide && serverTotalCount !== undefined
+              ? // Server-side mode: show loaded/total
+                `${data.length} of ${serverTotalCount} item${serverTotalCount !== 1 ? 's' : ''}`
+              : // Client-side mode: show filtered/total or just total
+                sortedData.length === data.length
+                  ? `${data.length} item${data.length !== 1 ? 's' : ''}`
+                  : `${sortedData.length} of ${data.length} items`}
             {(isLoadingMore || (paginationMode === 'infinite' && isLoading && data.length > 0)) && (
               <span className="flex items-center gap-1 text-default-400">
                 <Spinner size="sm" />

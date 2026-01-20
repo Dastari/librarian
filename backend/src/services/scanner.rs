@@ -30,7 +30,7 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 use super::filename_parser::{self, ParsedEpisode};
-use super::metadata::{AddTvShowOptions, MetadataProvider, MetadataService};
+use super::metadata::{AddAlbumOptions, AddAudiobookOptions, AddMovieOptions, AddTvShowOptions, MetadataProvider, MetadataService};
 use super::organizer::OrganizerService;
 use super::queues::{MediaAnalysisJob, MediaAnalysisQueue};
 use crate::db::{CreateEpisode, CreateMediaFile, Database};
@@ -109,8 +109,22 @@ struct DiscoveredFile {
     relative_path: Option<String>,
 }
 
+/// Audio file metadata extracted from ID3 tags
+#[derive(Debug, Clone)]
+struct AudioMetadata {
+    artist: Option<String>,
+    album: Option<String>,
+    title: Option<String>,
+    track_number: Option<u32>,
+    disc_number: Option<u32>,
+    year: Option<u32>,
+    genre: Option<String>,
+}
+
 /// Scanner service for discovering media files
 use crate::graphql::{Library as GqlLibrary, LibraryChangedEvent, LibraryChangeType};
+use crate::indexer::manager::IndexerManager;
+use crate::services::TorrentService;
 
 pub struct ScannerService {
     db: Database,
@@ -123,6 +137,10 @@ pub struct ScannerService {
     analysis_queue: Option<Arc<MediaAnalysisQueue>>,
     /// Optional broadcast sender for library changed events
     library_changed_tx: Option<broadcast::Sender<LibraryChangedEvent>>,
+    /// Optional TorrentService for auto-hunt after scans
+    torrent_service: Option<Arc<TorrentService>>,
+    /// Optional IndexerManager for auto-hunt after scans
+    indexer_manager: Option<Arc<IndexerManager>>,
 }
 
 impl ScannerService {
@@ -147,6 +165,8 @@ impl ScannerService {
             metadata_semaphore,
             analysis_queue: None,
             library_changed_tx: None,
+            torrent_service: None,
+            indexer_manager: None,
         }
     }
 
@@ -159,6 +179,18 @@ impl ScannerService {
     /// Set the media analysis queue for FFmpeg metadata extraction
     pub fn with_analysis_queue(mut self, queue: Arc<MediaAnalysisQueue>) -> Self {
         self.analysis_queue = Some(queue);
+        self
+    }
+
+    /// Set the torrent service for auto-hunt after scans
+    pub fn with_torrent_service(mut self, service: Arc<TorrentService>) -> Self {
+        self.torrent_service = Some(service);
+        self
+    }
+
+    /// Set the indexer manager for auto-hunt after scans
+    pub fn with_indexer_manager(mut self, manager: Arc<IndexerManager>) -> Self {
+        self.indexer_manager = Some(manager);
         self
     }
 
@@ -328,12 +360,15 @@ impl ScannerService {
         };
         let _ = self.progress_tx.send(progress.clone());
 
-        // Check if this is a TV library with auto_add_discovered enabled
-        let is_tv_library = library.library_type == "tv";
+        // Check library type and auto_add setting
+        let library_type = library.library_type.as_str();
+        let is_tv_library = library_type == "tv";
+        let is_movie_library = library_type == "movies";
         let auto_add = library.auto_add_discovered;
 
-        // If auto-add is enabled for a TV library, group files by show name and process
+        // Process files based on library type and auto_add setting
         if is_tv_library && auto_add {
+            // TV library with auto-add: group by show and match metadata
             progress = self
                 .process_tv_library_with_auto_add(
                     library_id,
@@ -342,8 +377,38 @@ impl ScannerService {
                     progress,
                 )
                 .await?;
+        } else if is_movie_library && auto_add {
+            // Movie library with auto-add: group by title+year and match TMDB
+            progress = self
+                .process_movie_library_with_auto_add(
+                    library_id,
+                    library.user_id,
+                    video_files,
+                    progress,
+                )
+                .await?;
+        } else if library_type == "music" && auto_add {
+            // Music library with auto-add: parse ID3 tags, match MusicBrainz
+            progress = self
+                .process_music_library_with_auto_add(
+                    library_id,
+                    library.user_id,
+                    video_files, // Contains audio files for music libraries
+                    progress,
+                )
+                .await?;
+        } else if library_type == "audiobook" && auto_add {
+            // Audiobook library with auto-add: parse audio files, match OpenLibrary
+            progress = self
+                .process_audiobook_library_with_auto_add(
+                    library_id,
+                    library.user_id,
+                    video_files, // Contains audio files for audiobook libraries
+                    progress,
+                )
+                .await?;
         } else {
-            // Simple processing - just add files without show matching
+            // Simple processing - just add files without metadata matching
             progress = self
                 .process_files_simple(library_id, &library.path, video_files, progress)
                 .await?;
@@ -356,7 +421,9 @@ impl ScannerService {
         self.db.libraries().update_last_scanned(library_id).await?;
 
         // Auto-organize files if the library has organize_files enabled
-        if library.organize_files && is_tv_library {
+        let is_music_library = library_type == "music";
+        let is_audiobook_library = library_type == "audiobook";
+        if library.organize_files && (is_tv_library || is_movie_library || is_music_library || is_audiobook_library) {
             info!(library_id = %library_id, "Running automatic file organization");
             if let Err(e) = self.organize_library_files(library_id).await {
                 error!(library_id = %library_id, error = %e, "Failed to organize library files");
@@ -381,6 +448,49 @@ impl ScannerService {
             episodes_linked = progress.episodes_linked,
             "Library scan completed"
         );
+
+        // Trigger auto-hunt for this library if enabled and we have the required services
+        if library.auto_hunt {
+            if let (Some(torrent_svc), Some(indexer_mgr)) = (&self.torrent_service, &self.indexer_manager) {
+                info!(library_id = %library_id, "Triggering auto-hunt after scan");
+                
+                let pool = self.db.pool().clone();
+                let torrent_svc = torrent_svc.clone();
+                let indexer_mgr = indexer_mgr.clone();
+                
+                // Run auto-hunt in background to not block scan completion
+                tokio::spawn(async move {
+                    match crate::jobs::auto_hunt::run_auto_hunt_for_library(
+                        pool,
+                        library_id,
+                        torrent_svc,
+                        indexer_mgr,
+                    ).await {
+                        Ok(result) => {
+                            info!(
+                                library_id = %library_id,
+                                searched = result.searched,
+                                matched = result.matched,
+                                downloaded = result.downloaded,
+                                "Post-scan auto-hunt completed"
+                            );
+                        }
+                        Err(e) => {
+                            error!(
+                                library_id = %library_id,
+                                error = %e,
+                                "Post-scan auto-hunt failed"
+                            );
+                        }
+                    }
+                });
+            } else {
+                debug!(
+                    library_id = %library_id,
+                    "Auto-hunt enabled but TorrentService or IndexerManager not available"
+                );
+            }
+        }
 
         Ok(progress)
     }
@@ -440,7 +550,7 @@ impl ScannerService {
         for chunk in show_groups.chunks(chunk_size) {
             let mut handles = Vec::with_capacity(chunk.len());
             
-            for (normalized_name, show_files) in chunk {
+            for (_normalized_name, show_files) in chunk {
                 if show_files.is_empty() {
                     continue;
                 }
@@ -592,6 +702,969 @@ impl ScannerService {
         Ok(progress)
     }
 
+    /// Process movie library with auto-add discovered movies
+    ///
+    /// Groups discovered files by parsed title+year, searches TMDB for matches,
+    /// creates movie records, and links media files to them.
+    async fn process_movie_library_with_auto_add(
+        &self,
+        library_id: Uuid,
+        user_id: Uuid,
+        files: Vec<DiscoveredFile>,
+        mut progress: ScanProgress,
+    ) -> Result<ScanProgress> {
+        // Group files by parsed movie title+year
+        // Key is (normalized_title, year) tuple
+        let mut files_by_movie: HashMap<(String, Option<u32>), Vec<DiscoveredFile>> = HashMap::new();
+        let mut unlinked_files: Vec<DiscoveredFile> = Vec::new();
+
+        for file in files {
+            if let Some(ref title) = file.parsed.show_name {
+                // Use title + year as the grouping key
+                let normalized = title.to_lowercase();
+                let key = (normalized, file.parsed.year);
+                files_by_movie.entry(key).or_default().push(file);
+            } else {
+                // No title parsed, add without linking
+                unlinked_files.push(file);
+            }
+        }
+
+        // Process unlinked files first (no API calls needed)
+        for file in unlinked_files {
+            self.add_unlinked_file(library_id, &file, &mut progress)
+                .await?;
+        }
+
+        let movie_count = files_by_movie.len();
+        info!(
+            movie_groups = movie_count,
+            max_concurrent = self.config.max_concurrent_metadata,
+            "Processing movie groups with bounded concurrency"
+        );
+
+        // Use atomic counters for thread-safe progress tracking
+        let movies_added = Arc::new(AtomicI32::new(0));
+        let scanned_files = Arc::new(AtomicI32::new(progress.scanned_files));
+        let files_linked = Arc::new(AtomicI32::new(0));
+        let new_files = Arc::new(AtomicI32::new(progress.new_files));
+
+        // Collect movie groups into a vec for parallel processing
+        let movie_groups: Vec<((String, Option<u32>), Vec<DiscoveredFile>)> =
+            files_by_movie.into_iter().collect();
+
+        // Process movies in chunks to avoid overwhelming the system
+        let chunk_size = self.config.max_concurrent_metadata;
+        let mut processed_movies = 0;
+
+        for chunk in movie_groups.chunks(chunk_size) {
+            let mut handles = Vec::with_capacity(chunk.len());
+
+            for ((_normalized_title, year), movie_files) in chunk {
+                if movie_files.is_empty() {
+                    continue;
+                }
+
+                // Clone values for the spawned task
+                let library_id = library_id;
+                let user_id = user_id;
+                let db = self.db.clone();
+                let metadata_service = self.metadata_service.clone();
+                let semaphore = self.metadata_semaphore.clone();
+                let progress_tx = self.progress_tx.clone();
+                let movies_added = movies_added.clone();
+                let scanned_files = scanned_files.clone();
+                let files_linked = files_linked.clone();
+                let new_files = new_files.clone();
+                let movie_files = movie_files.clone();
+                let library_name = progress.library_name.clone();
+                let total_files = progress.total_files;
+                let analysis_queue = self.analysis_queue.clone();
+                let year = *year;
+
+                let handle = tokio::spawn(async move {
+                    // Acquire semaphore permit for metadata operations
+                    let _permit = semaphore.acquire().await.expect("Semaphore closed");
+
+                    let title = movie_files[0]
+                        .parsed
+                        .show_name
+                        .clone()
+                        .unwrap_or_default();
+
+                    info!(title = %title, year = ?year, file_count = movie_files.len(), "Processing movie group");
+
+                    // Try to find or create the movie
+                    let movie_id = match Self::find_or_create_movie_static(
+                        &db,
+                        &metadata_service,
+                        library_id,
+                        user_id,
+                        &title,
+                        year.map(|y| y as i32),
+                    )
+                    .await
+                    {
+                        Ok(Some((id, is_new))) => {
+                            if is_new {
+                                movies_added.fetch_add(1, Ordering::SeqCst);
+                            }
+                            Some(id)
+                        }
+                        Ok(None) => {
+                            warn!(title = %title, year = ?year, "Could not find movie in TMDB");
+                            None
+                        }
+                        Err(e) => {
+                            error!(title = %title, year = ?year, error = %e, "Error finding/creating movie");
+                            None
+                        }
+                    };
+
+                    // Calculate total size before consuming movie_files
+                    let total_size: i64 = movie_files.iter().map(|f| f.size as i64).sum();
+
+                    // Process files for this movie
+                    for file in movie_files {
+                        let current_scanned = scanned_files.fetch_add(1, Ordering::SeqCst) + 1;
+
+                        // Send progress update every 10 files
+                        if current_scanned % 10 == 0 {
+                            let _ = progress_tx.send(ScanProgress {
+                                library_id,
+                                library_name: library_name.clone(),
+                                total_files,
+                                scanned_files: current_scanned,
+                                current_file: Some(file.path.clone()),
+                                is_complete: false,
+                                new_files: new_files.load(Ordering::SeqCst),
+                                removed_files: 0,
+                                shows_added: movies_added.load(Ordering::SeqCst),
+                                episodes_linked: files_linked.load(Ordering::SeqCst),
+                            });
+                        }
+
+                        // Process file based on whether we have a movie
+                        match movie_id {
+                            Some(movie_id) => {
+                                if let Err(e) = Self::process_file_for_movie(
+                                    &db,
+                                    library_id,
+                                    movie_id,
+                                    &file,
+                                    &files_linked,
+                                    &new_files,
+                                    analysis_queue.as_ref(),
+                                )
+                                .await
+                                {
+                                    warn!(path = %file.path, error = %e, "Failed to process file for movie");
+                                }
+                            }
+                            None => {
+                                // Add as unlinked file
+                                if let Err(e) = Self::create_media_file_static(
+                                    &db,
+                                    library_id,
+                                    &file,
+                                    None,
+                                    &new_files,
+                                    analysis_queue.as_ref(),
+                                )
+                                .await
+                                {
+                                    warn!(path = %file.path, error = %e, "Failed to create unlinked file");
+                                }
+                            }
+                        }
+                    }
+
+                    // Update movie stats if we have a movie
+                    if let Some(movie_id) = movie_id {
+                        if let Err(e) = db.movies().update_file_status(movie_id, true, Some(total_size)).await {
+                            warn!(movie_id = %movie_id, error = %e, "Failed to update movie file status");
+                        }
+                    }
+                });
+
+                handles.push(handle);
+            }
+
+            // Wait for all movies in this chunk to complete
+            for handle in handles {
+                if let Err(e) = handle.await {
+                    error!(error = %e, "Movie processing task panicked");
+                }
+            }
+
+            processed_movies += chunk.len();
+            info!(
+                processed = processed_movies,
+                total = movie_count,
+                "Processed movie chunk"
+            );
+
+            // Small delay between chunks
+            if self.config.metadata_batch_delay_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(self.config.metadata_batch_delay_ms)).await;
+            }
+        }
+
+        // Update progress with final counts (reuse shows_added for movies_added)
+        progress.shows_added = movies_added.load(Ordering::SeqCst);
+        progress.scanned_files = scanned_files.load(Ordering::SeqCst);
+        progress.episodes_linked = files_linked.load(Ordering::SeqCst);
+        progress.new_files = new_files.load(Ordering::SeqCst);
+
+        Ok(progress)
+    }
+
+    /// Static version of find_or_create_movie for use in spawned tasks
+    async fn find_or_create_movie_static(
+        db: &Database,
+        metadata_service: &Arc<MetadataService>,
+        library_id: Uuid,
+        user_id: Uuid,
+        title: &str,
+        year: Option<i32>,
+    ) -> Result<Option<(Uuid, bool)>> {
+        let movies_repo = db.movies();
+
+        // Search for the movie using metadata service
+        let search_results = metadata_service.search_movies(title, year).await?;
+
+        if search_results.is_empty() {
+            // Try without year
+            let retry_results = metadata_service.search_movies(title, None).await?;
+            if retry_results.is_empty() {
+                return Ok(None);
+            }
+            // Use first result from retry
+            let best_match = &retry_results[0];
+
+            // Check if we already have this movie in the library
+            if let Some(existing) = movies_repo
+                .get_by_tmdb_id(library_id, best_match.provider_id as i32)
+                .await?
+            {
+                info!(movie_title = %existing.title, "Movie already exists in library");
+                return Ok(Some((existing.id, false)));
+            }
+
+            // Add the movie from provider
+            let movie = metadata_service
+                .add_movie_from_provider(AddMovieOptions {
+                    provider: MetadataProvider::Tmdb,
+                    provider_id: best_match.provider_id,
+                    library_id,
+                    user_id,
+                    monitored: true,
+                    path: None,
+                })
+                .await?;
+
+            return Ok(Some((movie.id, true)));
+        }
+
+        // Get the best match
+        let best_match = &search_results[0];
+
+        // Check if we already have this movie in the library
+        if let Some(existing) = movies_repo
+            .get_by_tmdb_id(library_id, best_match.provider_id as i32)
+            .await?
+        {
+            info!(movie_title = %existing.title, "Movie already exists in library");
+            return Ok(Some((existing.id, false)));
+        }
+
+        // Add the movie from provider
+        let movie = metadata_service
+            .add_movie_from_provider(AddMovieOptions {
+                provider: MetadataProvider::Tmdb,
+                provider_id: best_match.provider_id,
+                library_id,
+                user_id,
+                monitored: true,
+                path: None,
+            })
+            .await?;
+
+        Ok(Some((movie.id, true)))
+    }
+
+    /// Process a single file for a movie
+    async fn process_file_for_movie(
+        db: &Database,
+        library_id: Uuid,
+        movie_id: Uuid,
+        file: &DiscoveredFile,
+        files_linked: &Arc<AtomicI32>,
+        new_files: &Arc<AtomicI32>,
+        analysis_queue: Option<&Arc<MediaAnalysisQueue>>,
+    ) -> Result<()> {
+        let media_files_repo = db.media_files();
+
+        // Check if file already exists
+        if let Some(existing_file) = media_files_repo.get_by_path(&file.path).await? {
+            // File exists - check if it needs to be linked to the movie
+            if existing_file.movie_id.is_none() {
+                // Link the existing file to the movie
+                media_files_repo
+                    .link_to_movie(existing_file.id, movie_id)
+                    .await?;
+                info!(path = %file.path, movie_id = %movie_id, "Linked existing file to movie");
+                files_linked.fetch_add(1, Ordering::SeqCst);
+            } else {
+                debug!(path = %file.path, "File already linked to movie, skipping");
+            }
+            return Ok(());
+        }
+
+        // Create new media file record linked to the movie
+        let create_input = CreateMediaFile {
+            library_id,
+            path: file.path.clone(),
+            size_bytes: file.size as i64,
+            container: Path::new(&file.path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|s| s.to_lowercase()),
+            video_codec: file.parsed.codec.clone(),
+            audio_codec: file.parsed.audio.clone(),
+            width: None,
+            height: None,
+            duration: None,
+            bitrate: None,
+            file_hash: None,
+            episode_id: None,
+            movie_id: Some(movie_id),
+            relative_path: file.relative_path.clone(),
+            original_name: Some(file.filename.clone()),
+            resolution: file.parsed.resolution.clone(),
+            is_hdr: file.parsed.hdr.is_some().then_some(true),
+            hdr_type: file.parsed.hdr.clone(),
+        };
+
+        match media_files_repo.create(create_input).await {
+            Ok(media_file) => {
+                new_files.fetch_add(1, Ordering::SeqCst);
+                files_linked.fetch_add(1, Ordering::SeqCst);
+                debug!(path = %file.path, movie_id = %movie_id, "Added new media file linked to movie");
+
+                // Queue for FFmpeg analysis to get real metadata
+                if let Some(queue) = analysis_queue {
+                    let job = MediaAnalysisJob {
+                        media_file_id: media_file.id,
+                        path: std::path::PathBuf::from(&file.path),
+                        check_subtitles: true,
+                    };
+                    if let Err(e) = queue.submit(job).await {
+                        warn!(
+                            media_file_id = %media_file.id,
+                            error = %e,
+                            "Failed to queue file for FFmpeg analysis"
+                        );
+                    } else {
+                        debug!(
+                            media_file_id = %media_file.id,
+                            path = %file.path,
+                            "Queued file for FFmpeg analysis"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                error!(path = %file.path, error = %e, "Failed to create media file record");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Process music library with auto-add discovered albums
+    ///
+    /// Parses audio files for ID3 tags, groups by artist/album,
+    /// searches MusicBrainz for matches, creates records, and links files.
+    async fn process_music_library_with_auto_add(
+        &self,
+        library_id: Uuid,
+        user_id: Uuid,
+        files: Vec<DiscoveredFile>,
+        mut progress: ScanProgress,
+    ) -> Result<ScanProgress> {
+        // Parse ID3 tags and group files by album
+        // Key is (artist_name, album_name) tuple
+        let mut files_by_album: HashMap<(String, String), Vec<(DiscoveredFile, AudioMetadata)>> =
+            HashMap::new();
+        let mut unlinked_files: Vec<DiscoveredFile> = Vec::new();
+
+        for file in files {
+            // Try to read ID3 tags
+            match Self::read_audio_metadata(&file.path) {
+                Some(meta) if meta.artist.is_some() && meta.album.is_some() => {
+                    let key = (
+                        meta.artist.clone().unwrap().to_lowercase(),
+                        meta.album.clone().unwrap().to_lowercase(),
+                    );
+                    files_by_album.entry(key).or_default().push((file, meta));
+                }
+                _ => {
+                    // No tags or incomplete, add as unlinked
+                    unlinked_files.push(file);
+                }
+            }
+        }
+
+        // Process unlinked files first (no API calls needed)
+        for file in unlinked_files {
+            self.add_unlinked_file(library_id, &file, &mut progress)
+                .await?;
+        }
+
+        let album_count = files_by_album.len();
+        info!(
+            album_groups = album_count,
+            max_concurrent = self.config.max_concurrent_metadata,
+            "Processing album groups with bounded concurrency"
+        );
+
+        // Use atomic counters for thread-safe progress tracking
+        let albums_added = Arc::new(AtomicI32::new(0));
+        let scanned_files = Arc::new(AtomicI32::new(progress.scanned_files));
+        let files_linked = Arc::new(AtomicI32::new(0));
+        let new_files = Arc::new(AtomicI32::new(progress.new_files));
+
+        // Collect album groups into a vec for parallel processing
+        let album_groups: Vec<((String, String), Vec<(DiscoveredFile, AudioMetadata)>)> =
+            files_by_album.into_iter().collect();
+
+        // Process albums in chunks to avoid overwhelming the system
+        let chunk_size = self.config.max_concurrent_metadata;
+        let mut processed_albums = 0;
+
+        for chunk in album_groups.chunks(chunk_size) {
+            let mut handles = Vec::with_capacity(chunk.len());
+
+            for ((_artist_key, _album_key), album_files) in chunk {
+                if album_files.is_empty() {
+                    continue;
+                }
+
+                // Get the first file's metadata for the search
+                let first_meta = &album_files[0].1;
+                let artist_name = first_meta.artist.clone().unwrap_or_default();
+                let album_name = first_meta.album.clone().unwrap_or_default();
+
+                // Clone values for the spawned task
+                let library_id = library_id;
+                let user_id = user_id;
+                let db = self.db.clone();
+                let metadata_service = self.metadata_service.clone();
+                let semaphore = self.metadata_semaphore.clone();
+                let progress_tx = self.progress_tx.clone();
+                let albums_added = albums_added.clone();
+                let scanned_files = scanned_files.clone();
+                let files_linked = files_linked.clone();
+                let new_files = new_files.clone();
+                let album_files: Vec<_> = album_files.clone();
+                let library_name = progress.library_name.clone();
+                let total_files = progress.total_files;
+                let analysis_queue = self.analysis_queue.clone();
+
+                let handle = tokio::spawn(async move {
+                    // Acquire semaphore permit for metadata operations
+                    let _permit = semaphore.acquire().await.expect("Semaphore closed");
+
+                    info!(
+                        artist = %artist_name,
+                        album = %album_name,
+                        file_count = album_files.len(),
+                        "Processing album group"
+                    );
+
+                    // Try to find or create the album
+                    let album_id = match Self::find_or_create_album_static(
+                        &db,
+                        &metadata_service,
+                        library_id,
+                        user_id,
+                        &artist_name,
+                        &album_name,
+                    )
+                    .await
+                    {
+                        Ok(Some((id, is_new))) => {
+                            if is_new {
+                                albums_added.fetch_add(1, Ordering::SeqCst);
+                            }
+                            Some(id)
+                        }
+                        Ok(None) => {
+                            warn!(
+                                artist = %artist_name,
+                                album = %album_name,
+                                "Could not find album in MusicBrainz"
+                            );
+                            None
+                        }
+                        Err(e) => {
+                            error!(
+                                artist = %artist_name,
+                                album = %album_name,
+                                error = %e,
+                                "Error finding/creating album"
+                            );
+                            None
+                        }
+                    };
+
+                    // Process files for this album
+                    for (file, _meta) in &album_files {
+                        let current_scanned = scanned_files.fetch_add(1, Ordering::SeqCst) + 1;
+
+                        // Send progress update every 10 files
+                        if current_scanned % 10 == 0 {
+                            let _ = progress_tx.send(ScanProgress {
+                                library_id,
+                                library_name: library_name.clone(),
+                                total_files,
+                                scanned_files: current_scanned,
+                                current_file: Some(file.path.clone()),
+                                is_complete: false,
+                                new_files: new_files.load(Ordering::SeqCst),
+                                removed_files: 0,
+                                shows_added: albums_added.load(Ordering::SeqCst),
+                                episodes_linked: files_linked.load(Ordering::SeqCst),
+                            });
+                        }
+
+                        // Create media file record (linked to album if we have one)
+                        if let Err(e) = Self::create_media_file_static(
+                            &db,
+                            library_id,
+                            file,
+                            None, // No episode ID for music
+                            &new_files,
+                            analysis_queue.as_ref(),
+                        )
+                        .await
+                        {
+                            warn!(path = %file.path, error = %e, "Failed to create media file");
+                        } else {
+                            files_linked.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+
+                    // Update album stats if we have an album
+                    if let Some(album_id) = album_id {
+                        // Calculate total size from all files
+                        let total_size: i64 = album_files.iter().map(|(f, _)| f.size as i64).sum();
+                        if let Err(e) = db.albums().update_has_files(album_id, true).await {
+                            warn!(album_id = %album_id, error = %e, "Failed to update album has_files");
+                        }
+                        // Update size_bytes would require adding that method
+                        let _ = total_size; // Suppress unused warning
+                    }
+                });
+
+                handles.push(handle);
+            }
+
+            // Wait for all albums in this chunk to complete
+            for handle in handles {
+                if let Err(e) = handle.await {
+                    error!(error = %e, "Album processing task panicked");
+                }
+            }
+
+            processed_albums += chunk.len();
+            info!(
+                processed = processed_albums,
+                total = album_count,
+                "Processed album chunk"
+            );
+
+            // Small delay between chunks
+            if self.config.metadata_batch_delay_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(self.config.metadata_batch_delay_ms)).await;
+            }
+        }
+
+        // Update progress with final counts (reuse shows_added for albums_added)
+        progress.shows_added = albums_added.load(Ordering::SeqCst);
+        progress.scanned_files = scanned_files.load(Ordering::SeqCst);
+        progress.episodes_linked = files_linked.load(Ordering::SeqCst);
+        progress.new_files = new_files.load(Ordering::SeqCst);
+
+        Ok(progress)
+    }
+
+    /// Process audiobook library with auto-add discovered audiobooks
+    ///
+    /// Parses audio files, groups by folder structure (assumed one audiobook per folder),
+    /// searches OpenLibrary for matches, creates records, and links files.
+    async fn process_audiobook_library_with_auto_add(
+        &self,
+        library_id: Uuid,
+        user_id: Uuid,
+        files: Vec<DiscoveredFile>,
+        mut progress: ScanProgress,
+    ) -> Result<ScanProgress> {
+        use std::path::Path;
+
+        // Group files by parent folder (each folder is treated as one audiobook)
+        // This is common for audiobook organization where chapters are separate files
+        let mut files_by_folder: HashMap<String, Vec<DiscoveredFile>> = HashMap::new();
+
+        for file in files {
+            // Get the parent folder name as the key
+            let path = Path::new(&file.path);
+            let folder_key = path
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_lowercase())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            files_by_folder.entry(folder_key).or_default().push(file);
+        }
+
+        let folder_count = files_by_folder.len();
+        info!(
+            audiobook_folders = folder_count,
+            max_concurrent = self.config.max_concurrent_metadata,
+            "Processing audiobook folders with bounded concurrency"
+        );
+
+        // Use atomic counters for thread-safe progress tracking
+        let audiobooks_added = Arc::new(AtomicI32::new(0));
+        let scanned_files = Arc::new(AtomicI32::new(progress.scanned_files));
+        let files_linked = Arc::new(AtomicI32::new(0));
+        let new_files = Arc::new(AtomicI32::new(progress.new_files));
+
+        // Collect folder groups into a vec for parallel processing
+        let folder_groups: Vec<(String, Vec<DiscoveredFile>)> =
+            files_by_folder.into_iter().collect();
+
+        // Process folders in chunks to avoid overwhelming the system
+        let chunk_size = self.config.max_concurrent_metadata;
+        let mut processed_folders = 0;
+
+        for chunk in folder_groups.chunks(chunk_size) {
+            let mut handles = Vec::with_capacity(chunk.len());
+
+            for (folder_name, audiobook_files) in chunk {
+                if audiobook_files.is_empty() {
+                    continue;
+                }
+
+                // Try to extract book title/author from folder name or file tags
+                // Common patterns: "Author - Title", "Title (Author)", "Author/Title"
+                let search_query = Self::extract_audiobook_info(folder_name, audiobook_files);
+
+                // Clone values for the spawned task
+                let library_id = library_id;
+                let user_id = user_id;
+                let db = self.db.clone();
+                let metadata_service = self.metadata_service.clone();
+                let semaphore = self.metadata_semaphore.clone();
+                let progress_tx = self.progress_tx.clone();
+                let audiobooks_added = audiobooks_added.clone();
+                let scanned_files = scanned_files.clone();
+                let files_linked = files_linked.clone();
+                let new_files = new_files.clone();
+                let audiobook_files: Vec<_> = audiobook_files.clone();
+                let library_name = progress.library_name.clone();
+                let total_files = progress.total_files;
+                let analysis_queue = self.analysis_queue.clone();
+                let search_query = search_query.clone();
+
+                let handle = tokio::spawn(async move {
+                    // Acquire semaphore permit for metadata operations
+                    let _permit = semaphore.acquire().await.expect("Semaphore closed");
+
+                    info!(
+                        search_query = %search_query,
+                        file_count = audiobook_files.len(),
+                        "Processing audiobook folder"
+                    );
+
+                    // Try to find or create the audiobook
+                    let audiobook_id = match Self::find_or_create_audiobook_static(
+                        &db,
+                        &metadata_service,
+                        library_id,
+                        user_id,
+                        &search_query,
+                    )
+                    .await
+                    {
+                        Ok(Some((id, is_new))) => {
+                            if is_new {
+                                audiobooks_added.fetch_add(1, Ordering::SeqCst);
+                            }
+                            Some(id)
+                        }
+                        Ok(None) => {
+                            warn!(
+                                search_query = %search_query,
+                                "Could not find audiobook in OpenLibrary"
+                            );
+                            None
+                        }
+                        Err(e) => {
+                            error!(
+                                search_query = %search_query,
+                                error = %e,
+                                "Error finding/creating audiobook"
+                            );
+                            None
+                        }
+                    };
+
+                    // Process files for this audiobook
+                    for file in &audiobook_files {
+                        let current_scanned = scanned_files.fetch_add(1, Ordering::SeqCst) + 1;
+
+                        // Send progress update every 10 files
+                        if current_scanned % 10 == 0 {
+                            let _ = progress_tx.send(ScanProgress {
+                                library_id,
+                                library_name: library_name.clone(),
+                                total_files,
+                                scanned_files: current_scanned,
+                                current_file: Some(file.path.clone()),
+                                is_complete: false,
+                                new_files: new_files.load(Ordering::SeqCst),
+                                removed_files: 0,
+                                shows_added: audiobooks_added.load(Ordering::SeqCst),
+                                episodes_linked: files_linked.load(Ordering::SeqCst),
+                            });
+                        }
+
+                        // Create media file record (linked to audiobook if we have one)
+                        if let Err(e) = Self::create_media_file_static(
+                            &db,
+                            library_id,
+                            file,
+                            None, // No episode ID for audiobooks
+                            &new_files,
+                            analysis_queue.as_ref(),
+                        )
+                        .await
+                        {
+                            warn!(path = %file.path, error = %e, "Failed to create media file");
+                        } else {
+                            files_linked.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+
+                    // Update audiobook stats if we have an audiobook
+                    if let Some(audiobook_id) = audiobook_id {
+                        // Calculate total size from all files
+                        let total_size: i64 = audiobook_files.iter().map(|f| f.size as i64).sum();
+                        if let Err(e) = db.audiobooks().update_has_files(audiobook_id, true).await {
+                            warn!(audiobook_id = %audiobook_id, error = %e, "Failed to update audiobook has_files");
+                        }
+                        let _ = total_size; // Suppress unused warning
+                    }
+                });
+
+                handles.push(handle);
+            }
+
+            // Wait for all audiobooks in this chunk to complete
+            for handle in handles {
+                if let Err(e) = handle.await {
+                    error!(error = %e, "Audiobook processing task panicked");
+                }
+            }
+
+            processed_folders += chunk.len();
+            info!(
+                processed = processed_folders,
+                total = folder_count,
+                "Processed audiobook chunk"
+            );
+
+            // Small delay between chunks
+            if self.config.metadata_batch_delay_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(self.config.metadata_batch_delay_ms)).await;
+            }
+        }
+
+        // Update progress with final counts (reuse shows_added for audiobooks_added)
+        progress.shows_added = audiobooks_added.load(Ordering::SeqCst);
+        progress.scanned_files = scanned_files.load(Ordering::SeqCst);
+        progress.episodes_linked = files_linked.load(Ordering::SeqCst);
+        progress.new_files = new_files.load(Ordering::SeqCst);
+
+        Ok(progress)
+    }
+
+    /// Extract audiobook info from folder name and files for searching
+    fn extract_audiobook_info(folder_name: &str, files: &[DiscoveredFile]) -> String {
+        // Try to read ID3 tags from first file for album/artist info
+        if let Some(file) = files.first() {
+            if let Some(meta) = Self::read_audio_metadata(&file.path) {
+                // If we have album name, use it (often the audiobook title)
+                if let Some(album) = meta.album {
+                    // If we also have artist, include it (often the author)
+                    if let Some(artist) = meta.artist {
+                        return format!("{} {}", artist, album);
+                    }
+                    return album;
+                }
+                // If we have title, use it
+                if let Some(title) = meta.title {
+                    return title;
+                }
+            }
+        }
+
+        // Fall back to folder name, cleaning up common patterns
+        let cleaned = folder_name
+            .replace("_", " ")
+            .replace("-", " ")
+            .replace("  ", " ")
+            .trim()
+            .to_string();
+
+        cleaned
+    }
+
+    /// Find or create an audiobook from OpenLibrary (static method for async context)
+    async fn find_or_create_audiobook_static(
+        db: &Database,
+        metadata_service: &Arc<crate::services::metadata::MetadataService>,
+        library_id: Uuid,
+        user_id: Uuid,
+        search_query: &str,
+    ) -> Result<Option<(Uuid, bool)>> {
+        // Search OpenLibrary
+        let search_results = metadata_service.search_audiobooks(search_query).await?;
+
+        let best_match = search_results.into_iter().next();
+
+        let Some(result) = best_match else {
+            return Ok(None);
+        };
+
+        // Check if audiobook already exists
+        if let Some(existing) = db
+            .audiobooks()
+            .get_by_openlibrary_id(library_id, &result.provider_id)
+            .await?
+        {
+            return Ok(Some((existing.id, false)));
+        }
+
+        // Add the audiobook from OpenLibrary
+        let audiobook = metadata_service
+            .add_audiobook_from_provider(AddAudiobookOptions {
+                openlibrary_id: result.provider_id,
+                library_id,
+                user_id,
+                monitored: true,
+            })
+            .await?;
+
+        Ok(Some((audiobook.id, true)))
+    }
+
+    /// Read audio metadata (ID3 tags) from a file
+    fn read_audio_metadata(path: &str) -> Option<AudioMetadata> {
+        use lofty::prelude::*;
+        use lofty::probe::Probe;
+
+        let tagged_file = Probe::open(path).ok()?.read().ok()?;
+        let tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag())?;
+
+        Some(AudioMetadata {
+            artist: tag.artist().map(|s| s.to_string()),
+            album: tag.album().map(|s| s.to_string()),
+            title: tag.title().map(|s| s.to_string()),
+            track_number: tag.track(),
+            disc_number: tag.disk(),
+            year: tag.year(),
+            genre: tag.genre().map(|s| s.to_string()),
+        })
+    }
+
+    /// Static version of find_or_create_album for use in spawned tasks
+    async fn find_or_create_album_static(
+        db: &Database,
+        metadata_service: &Arc<MetadataService>,
+        library_id: Uuid,
+        user_id: Uuid,
+        artist_name: &str,
+        album_name: &str,
+    ) -> Result<Option<(Uuid, bool)>> {
+        let albums_repo = db.albums();
+
+        // Build search query combining artist and album
+        let query = format!("{} {}", artist_name, album_name);
+
+        // Search for the album using metadata service
+        let search_results = metadata_service.search_albums(&query).await?;
+
+        if search_results.is_empty() {
+            // Try album name only
+            let retry_results = metadata_service.search_albums(album_name).await?;
+            if retry_results.is_empty() {
+                return Ok(None);
+            }
+            // Use first result from retry
+            let best_match = &retry_results[0];
+
+            // Check if we already have this album in the library
+            if let Some(existing) = albums_repo
+                .get_by_musicbrainz_id(library_id, best_match.provider_id)
+                .await?
+            {
+                info!(album_name = %existing.name, "Album already exists in library");
+                return Ok(Some((existing.id, false)));
+            }
+
+            // Add the album from provider
+            let album = metadata_service
+                .add_album_from_provider(AddAlbumOptions {
+                    musicbrainz_id: best_match.provider_id,
+                    library_id,
+                    user_id,
+                    monitored: true,
+                })
+                .await?;
+
+            return Ok(Some((album.id, true)));
+        }
+
+        // Get the best match
+        let best_match = &search_results[0];
+
+        // Check if we already have this album in the library
+        if let Some(existing) = albums_repo
+            .get_by_musicbrainz_id(library_id, best_match.provider_id)
+            .await?
+        {
+            info!(album_name = %existing.name, "Album already exists in library");
+            return Ok(Some((existing.id, false)));
+        }
+
+        // Add the album from provider
+        let album = metadata_service
+            .add_album_from_provider(AddAlbumOptions {
+                musicbrainz_id: best_match.provider_id,
+                library_id,
+                user_id,
+                monitored: true,
+            })
+            .await?;
+
+        Ok(Some((album.id, true)))
+    }
+
     /// Static version of find_or_create_tv_show for use in spawned tasks
     async fn find_or_create_tv_show_static(
         db: &Database,
@@ -642,7 +1715,6 @@ impl ScannerService {
                 user_id,
                 monitored: true,
                 monitor_type: "all".to_string(),
-                quality_profile_id: None,
                 path: None,
             })
             .await?;

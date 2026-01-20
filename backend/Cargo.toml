@@ -48,6 +48,9 @@ tokio-cron-scheduler = "0.13"
 # File walking
 walkdir = "2"
 
+# Internal macros
+librarian-macros = { path = "../librarian-macros" }
+
 # Utilities
 regex = "1"
 sanitize-filename = "0.6"
@@ -64,6 +67,13 @@ backoff = { version = "0.4", features = ["tokio"] }
 # Observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+
+# TUI dashboard
+ratatui = "0.29"
+crossterm = "0.28"
+
+# System metrics
+sysinfo = "0.32"
 
 # Config
 dotenvy = "0.15"
@@ -93,6 +103,8 @@ rust_cast = "0.21"
 # mDNS device discovery
 mdns-sd = "0.11"
 flume = "0.11"
+lofty = "0.22.4"
+serde_bencode = "0.2.4"
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -26,7 +26,6 @@ pub struct TvShowRecord {
     pub backdrop_url: Option<String>,
     pub monitored: bool,
     pub monitor_type: String,
-    pub quality_profile_id: Option<Uuid>,
     pub path: Option<String>,
     pub auto_download_override: Option<bool>,
     pub backfill_existing: bool,
@@ -70,7 +69,6 @@ pub struct CreateTvShow {
     pub backdrop_url: Option<String>,
     pub monitored: bool,
     pub monitor_type: String,
-    pub quality_profile_id: Option<Uuid>,
     pub path: Option<String>,
     pub auto_download_override: Option<bool>,
     pub backfill_existing: bool,
@@ -103,7 +101,6 @@ pub struct UpdateTvShow {
     pub backdrop_url: Option<String>,
     pub monitored: Option<bool>,
     pub monitor_type: Option<String>,
-    pub quality_profile_id: Option<Uuid>,
     pub path: Option<String>,
     pub auto_download_override: Option<Option<bool>>,
     pub backfill_existing: Option<bool>,
@@ -137,7 +134,7 @@ impl TvShowRepository {
             SELECT id, library_id, user_id, name, sort_name, year, status,
                    tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                    runtime, genres, poster_url, backdrop_url, monitored,
-                   monitor_type, quality_profile_id, path,
+                   monitor_type, path,
                    auto_download_override, backfill_existing,
                    organize_files_override, rename_style_override, auto_hunt_override,
                    episode_count, episode_file_count, size_bytes, created_at, updated_at,
@@ -157,6 +154,119 @@ impl TvShowRepository {
         Ok(records)
     }
 
+    /// List TV shows in a library with pagination and filtering
+    ///
+    /// Returns (records, total_count)
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_by_library_paginated(
+        &self,
+        library_id: Uuid,
+        offset: i64,
+        limit: i64,
+        name_filter: Option<&str>,
+        year_filter: Option<i32>,
+        monitored_filter: Option<bool>,
+        status_filter: Option<&str>,
+        sort_column: &str,
+        sort_asc: bool,
+    ) -> Result<(Vec<TvShowRecord>, i64)> {
+        // Build dynamic WHERE clause conditions
+        let mut conditions = vec!["library_id = $1".to_string()];
+        let mut param_idx = 2;
+
+        if name_filter.is_some() {
+            conditions.push(format!("LOWER(name) LIKE ${}", param_idx));
+            param_idx += 1;
+        }
+        if year_filter.is_some() {
+            conditions.push(format!("year = ${}", param_idx));
+            param_idx += 1;
+        }
+        if monitored_filter.is_some() {
+            conditions.push(format!("monitored = ${}", param_idx));
+            param_idx += 1;
+        }
+        if status_filter.is_some() {
+            conditions.push(format!("LOWER(status) = ${}", param_idx));
+        }
+
+        let where_clause = conditions.join(" AND ");
+
+        // Validate sort column
+        let valid_sort_columns = ["name", "sort_name", "year", "created_at"];
+        let sort_col = if valid_sort_columns.contains(&sort_column) {
+            sort_column
+        } else {
+            "sort_name"
+        };
+        let order_dir = if sort_asc { "ASC" } else { "DESC" };
+        let order_clause = format!(
+            "ORDER BY COALESCE({}, name) {} NULLS LAST",
+            sort_col, order_dir
+        );
+
+        // Build count query
+        let count_query = format!("SELECT COUNT(*) FROM tv_shows WHERE {}", where_clause);
+
+        // Build data query
+        let data_query = format!(
+            r#"
+            SELECT id, library_id, user_id, name, sort_name, year, status,
+                   tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
+                   runtime, genres, poster_url, backdrop_url, monitored,
+                   monitor_type, path,
+                   auto_download_override, backfill_existing,
+                   organize_files_override, rename_style_override, auto_hunt_override,
+                   episode_count, episode_file_count, size_bytes, created_at, updated_at,
+                   allowed_resolutions_override, allowed_video_codecs_override,
+                   allowed_audio_formats_override, require_hdr_override,
+                   allowed_hdr_types_override, allowed_sources_override,
+                   release_group_blacklist_override, release_group_whitelist_override
+            FROM tv_shows
+            WHERE {}
+            {}
+            LIMIT {} OFFSET {}
+            "#,
+            where_clause, order_clause, limit, offset
+        );
+
+        // Execute count query
+        let mut count_builder = sqlx::query_scalar::<_, i64>(&count_query).bind(library_id);
+        if let Some(name) = name_filter {
+            count_builder = count_builder.bind(format!("%{}%", name.to_lowercase()));
+        }
+        if let Some(year) = year_filter {
+            count_builder = count_builder.bind(year);
+        }
+        if let Some(monitored) = monitored_filter {
+            count_builder = count_builder.bind(monitored);
+        }
+        if let Some(status) = status_filter {
+            count_builder = count_builder.bind(status.to_lowercase());
+        }
+
+        let total: i64 = count_builder.fetch_one(&self.pool).await?;
+
+        // Execute data query
+        let mut data_builder = sqlx::query_as::<_, TvShowRecord>(&data_query).bind(library_id);
+        if let Some(name) = name_filter {
+            data_builder = data_builder.bind(format!("%{}%", name.to_lowercase()));
+        }
+        if let Some(year) = year_filter {
+            data_builder = data_builder.bind(year);
+        }
+        if let Some(monitored) = monitored_filter {
+            data_builder = data_builder.bind(monitored);
+        }
+        if let Some(status) = status_filter {
+            data_builder = data_builder.bind(status.to_lowercase());
+        }
+
+        let records = data_builder.fetch_all(&self.pool).await?;
+
+        Ok((records, total))
+    }
+
     /// Get all TV shows for a user (across all libraries)
     pub async fn list_by_user(&self, user_id: Uuid) -> Result<Vec<TvShowRecord>> {
         let records = sqlx::query_as::<_, TvShowRecord>(
@@ -164,7 +274,7 @@ impl TvShowRepository {
             SELECT id, library_id, user_id, name, sort_name, year, status,
                    tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                    runtime, genres, poster_url, backdrop_url, monitored,
-                   monitor_type, quality_profile_id, path,
+                   monitor_type, path,
                    auto_download_override, backfill_existing,
                    organize_files_override, rename_style_override, auto_hunt_override,
                    episode_count, episode_file_count, size_bytes, created_at, updated_at,
@@ -191,7 +301,7 @@ impl TvShowRepository {
             SELECT id, library_id, user_id, name, sort_name, year, status,
                    tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                    runtime, genres, poster_url, backdrop_url, monitored,
-                   monitor_type, quality_profile_id, path,
+                   monitor_type, path,
                    auto_download_override, backfill_existing,
                    organize_files_override, rename_style_override, auto_hunt_override,
                    episode_count, episode_file_count, size_bytes, created_at, updated_at,
@@ -218,7 +328,7 @@ impl TvShowRepository {
             SELECT id, library_id, user_id, name, sort_name, year, status,
                    tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                    runtime, genres, poster_url, backdrop_url, monitored,
-                   monitor_type, quality_profile_id, path,
+                   monitor_type, path,
                    auto_download_override, backfill_existing,
                    organize_files_override, rename_style_override, auto_hunt_override,
                    episode_count, episode_file_count, size_bytes, created_at, updated_at,
@@ -248,7 +358,7 @@ impl TvShowRepository {
             SELECT id, library_id, user_id, name, sort_name, year, status,
                    tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                    runtime, genres, poster_url, backdrop_url, monitored,
-                   monitor_type, quality_profile_id, path,
+                   monitor_type, path,
                    auto_download_override, backfill_existing,
                    organize_files_override, rename_style_override, auto_hunt_override,
                    episode_count, episode_file_count, size_bytes, created_at, updated_at,
@@ -280,7 +390,7 @@ impl TvShowRepository {
             SELECT id, library_id, user_id, name, sort_name, year, status,
                    tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                    runtime, genres, poster_url, backdrop_url, monitored,
-                   monitor_type, quality_profile_id, path,
+                   monitor_type, path,
                    auto_download_override, backfill_existing,
                    organize_files_override, rename_style_override, auto_hunt_override,
                    episode_count, episode_file_count, size_bytes, created_at, updated_at,
@@ -315,7 +425,7 @@ impl TvShowRepository {
             SELECT id, library_id, user_id, name, sort_name, year, status,
                    tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                    runtime, genres, poster_url, backdrop_url, monitored,
-                   monitor_type, quality_profile_id, path,
+                   monitor_type, path,
                    auto_download_override, backfill_existing,
                    organize_files_override, rename_style_override, auto_hunt_override,
                    episode_count, episode_file_count, size_bytes, created_at, updated_at,
@@ -348,7 +458,7 @@ impl TvShowRepository {
                 library_id, user_id, name, sort_name, year, status,
                 tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                 runtime, genres, poster_url, backdrop_url, monitored,
-                monitor_type, quality_profile_id, path,
+                monitor_type, path,
                 auto_download_override, backfill_existing,
                 organize_files_override, rename_style_override, auto_hunt_override,
                 allowed_resolutions_override, allowed_video_codecs_override,
@@ -357,11 +467,11 @@ impl TvShowRepository {
                 release_group_blacklist_override, release_group_whitelist_override
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25,
-                    $26, $27, $28, $29, $30, $31, $32, $33)
+                    $26, $27, $28, $29, $30, $31, $32)
             RETURNING id, library_id, user_id, name, sort_name, year, status,
                       tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                       runtime, genres, poster_url, backdrop_url, monitored,
-                      monitor_type, quality_profile_id, path,
+                      monitor_type, path,
                       auto_download_override, backfill_existing,
                       organize_files_override, rename_style_override, auto_hunt_override,
                       episode_count, episode_file_count, size_bytes, created_at, updated_at,
@@ -389,7 +499,6 @@ impl TvShowRepository {
         .bind(&input.backdrop_url)
         .bind(input.monitored)
         .bind(&input.monitor_type)
-        .bind(input.quality_profile_id)
         .bind(&input.path)
         .bind(input.auto_download_override)
         .bind(input.backfill_existing)
@@ -474,28 +583,27 @@ impl TvShowRepository {
                 backdrop_url = COALESCE($11, backdrop_url),
                 monitored = COALESCE($12, monitored),
                 monitor_type = COALESCE($13, monitor_type),
-                quality_profile_id = COALESCE($14, quality_profile_id),
-                path = COALESCE($15, path),
+                path = COALESCE($14, path),
                 -- Nullable override fields use CASE to allow setting to NULL
-                auto_download_override = CASE WHEN $16 THEN $17 ELSE auto_download_override END,
-                backfill_existing = COALESCE($18, backfill_existing),
-                organize_files_override = CASE WHEN $19 THEN $20 ELSE organize_files_override END,
-                rename_style_override = CASE WHEN $21 THEN $22 ELSE rename_style_override END,
-                auto_hunt_override = CASE WHEN $23 THEN $24 ELSE auto_hunt_override END,
-                allowed_resolutions_override = CASE WHEN $25 THEN $26 ELSE allowed_resolutions_override END,
-                allowed_video_codecs_override = CASE WHEN $27 THEN $28 ELSE allowed_video_codecs_override END,
-                allowed_audio_formats_override = CASE WHEN $29 THEN $30 ELSE allowed_audio_formats_override END,
-                require_hdr_override = CASE WHEN $31 THEN $32 ELSE require_hdr_override END,
-                allowed_hdr_types_override = CASE WHEN $33 THEN $34 ELSE allowed_hdr_types_override END,
-                allowed_sources_override = CASE WHEN $35 THEN $36 ELSE allowed_sources_override END,
-                release_group_blacklist_override = CASE WHEN $37 THEN $38 ELSE release_group_blacklist_override END,
-                release_group_whitelist_override = CASE WHEN $39 THEN $40 ELSE release_group_whitelist_override END,
+                auto_download_override = CASE WHEN $15 THEN $16 ELSE auto_download_override END,
+                backfill_existing = COALESCE($17, backfill_existing),
+                organize_files_override = CASE WHEN $18 THEN $19 ELSE organize_files_override END,
+                rename_style_override = CASE WHEN $20 THEN $21 ELSE rename_style_override END,
+                auto_hunt_override = CASE WHEN $22 THEN $23 ELSE auto_hunt_override END,
+                allowed_resolutions_override = CASE WHEN $24 THEN $25 ELSE allowed_resolutions_override END,
+                allowed_video_codecs_override = CASE WHEN $26 THEN $27 ELSE allowed_video_codecs_override END,
+                allowed_audio_formats_override = CASE WHEN $28 THEN $29 ELSE allowed_audio_formats_override END,
+                require_hdr_override = CASE WHEN $30 THEN $31 ELSE require_hdr_override END,
+                allowed_hdr_types_override = CASE WHEN $32 THEN $33 ELSE allowed_hdr_types_override END,
+                allowed_sources_override = CASE WHEN $34 THEN $35 ELSE allowed_sources_override END,
+                release_group_blacklist_override = CASE WHEN $36 THEN $37 ELSE release_group_blacklist_override END,
+                release_group_whitelist_override = CASE WHEN $38 THEN $39 ELSE release_group_whitelist_override END,
                 updated_at = NOW()
             WHERE id = $1
             RETURNING id, library_id, user_id, name, sort_name, year, status,
                       tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
                       runtime, genres, poster_url, backdrop_url, monitored,
-                      monitor_type, quality_profile_id, path,
+                      monitor_type, path,
                       auto_download_override, backfill_existing,
                       organize_files_override, rename_style_override, auto_hunt_override,
                       episode_count, episode_file_count, size_bytes, created_at, updated_at,
@@ -518,33 +626,32 @@ impl TvShowRepository {
         .bind(&input.backdrop_url)          // $11
         .bind(input.monitored)              // $12
         .bind(&input.monitor_type)          // $13
-        .bind(input.quality_profile_id)     // $14
-        .bind(&input.path)                  // $15
-        .bind(update_auto_download)         // $16 - flag
-        .bind(auto_download_value)          // $17 - value
-        .bind(input.backfill_existing)      // $18
-        .bind(update_organize_files)        // $19 - flag
-        .bind(organize_files_value)         // $20 - value
-        .bind(update_rename_style)          // $21 - flag
-        .bind(&rename_style_value)          // $22 - value
-        .bind(update_auto_hunt)             // $23 - flag
-        .bind(auto_hunt_value)              // $24 - value
-        .bind(update_resolutions)           // $25 - flag
-        .bind(&resolutions_value)           // $26 - value
-        .bind(update_codecs)                // $27 - flag
-        .bind(&codecs_value)                // $28 - value
-        .bind(update_audio)                 // $29 - flag
-        .bind(&audio_value)                 // $30 - value
-        .bind(update_require_hdr)           // $31 - flag
-        .bind(require_hdr_value)            // $32 - value
-        .bind(update_hdr_types)             // $33 - flag
-        .bind(&hdr_types_value)             // $34 - value
-        .bind(update_sources)               // $35 - flag
-        .bind(&sources_value)               // $36 - value
-        .bind(update_blacklist)             // $37 - flag
-        .bind(&blacklist_value)             // $38 - value
-        .bind(update_whitelist)             // $39 - flag
-        .bind(&whitelist_value)             // $40 - value
+        .bind(&input.path)                  // $14
+        .bind(update_auto_download)         // $15 - flag
+        .bind(auto_download_value)          // $16 - value
+        .bind(input.backfill_existing)      // $17
+        .bind(update_organize_files)        // $18 - flag
+        .bind(organize_files_value)         // $19 - value
+        .bind(update_rename_style)          // $20 - flag
+        .bind(&rename_style_value)          // $21 - value
+        .bind(update_auto_hunt)             // $22 - flag
+        .bind(auto_hunt_value)              // $23 - value
+        .bind(update_resolutions)           // $24 - flag
+        .bind(&resolutions_value)           // $25 - value
+        .bind(update_codecs)                // $26 - flag
+        .bind(&codecs_value)                // $27 - value
+        .bind(update_audio)                 // $28 - flag
+        .bind(&audio_value)                 // $29 - value
+        .bind(update_require_hdr)           // $30 - flag
+        .bind(require_hdr_value)            // $31 - value
+        .bind(update_hdr_types)             // $32 - flag
+        .bind(&hdr_types_value)             // $33 - value
+        .bind(update_sources)               // $34 - flag
+        .bind(&sources_value)               // $35 - value
+        .bind(update_blacklist)             // $36 - flag
+        .bind(&blacklist_value)             // $37 - value
+        .bind(update_whitelist)             // $38 - flag
+        .bind(&whitelist_value)             // $39 - value
         .fetch_optional(&self.pool)
         .await?;
 

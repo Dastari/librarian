@@ -2,7 +2,8 @@
  * Playback Context
  * 
  * Provides shared playback state across the application.
- * Manages persistent video playback with database sync.
+ * Manages persistent video/audio playback with database sync.
+ * Supports all content types: episodes, movies, tracks, and audiobooks.
  */
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
@@ -16,24 +17,52 @@ import {
   type PlaybackResult,
   type StartPlaybackInput,
   type UpdatePlaybackInput,
+  type PlaybackContentType,
   type Episode,
   type TvShow,
+  type Movie,
 } from '../lib/graphql';
+
+/** Metadata for the currently playing content */
+export interface CurrentContentMetadata {
+  contentType: PlaybackContentType;
+  title: string;
+  subtitle?: string;
+  posterUrl?: string | null;
+  backdropUrl?: string | null;
+}
 
 interface PlaybackContextValue {
   session: PlaybackSession | null;
   isLoading: boolean;
+  currentContent: CurrentContentMetadata | null;
   currentEpisode: Episode | null;
   currentShow: TvShow | null;
-  /** When true, the player should expand to dialog view (set when startPlayback is called) */
+  currentMovie: Movie | null;
   shouldExpand: boolean;
-  startPlayback: (input: StartPlaybackInput, episode?: Episode, show?: TvShow) => Promise<boolean>;
+  startPlayback: (input: StartPlaybackInput, metadata?: CurrentContentMetadata) => Promise<boolean>;
+  startEpisodePlayback: (
+    episodeId: string,
+    mediaFileId: string,
+    tvShowId: string,
+    episode?: Episode,
+    show?: TvShow,
+    startPosition?: number,
+    duration?: number
+  ) => Promise<boolean>;
+  startMoviePlayback: (
+    movieId: string,
+    mediaFileId: string,
+    movie?: Movie,
+    startPosition?: number,
+    duration?: number
+  ) => Promise<boolean>;
   updatePlayback: (input: UpdatePlaybackInput) => Promise<boolean>;
   stopPlayback: () => Promise<boolean>;
   refreshSession: () => Promise<void>;
   setCurrentEpisode: (episode: Episode | null) => void;
   setCurrentShow: (show: TvShow | null) => void;
-  /** Call this after expanding to clear the expand flag */
+  setCurrentMovie: (movie: Movie | null) => void;
   clearExpandFlag: () => void;
 }
 
@@ -42,8 +71,10 @@ const PlaybackContext = createContext<PlaybackContextValue | null>(null);
 export function PlaybackProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<PlaybackSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [currentContent, setCurrentContent] = useState<CurrentContentMetadata | null>(null);
   const [currentEpisode, setCurrentEpisode] = useState<Episode | null>(null);
   const [currentShow, setCurrentShow] = useState<TvShow | null>(null);
+  const [currentMovie, setCurrentMovie] = useState<Movie | null>(null);
   const [shouldExpand, setShouldExpand] = useState(false);
   
   const lastSyncedPosition = useRef<number>(0);
@@ -52,7 +83,6 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     setShouldExpand(false);
   }, []);
 
-  // Fetch current session on mount
   const refreshSession = useCallback(async () => {
     try {
       const result = await graphqlClient
@@ -63,8 +93,10 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         setSession(result.data.playbackSession);
       } else {
         setSession(null);
+        setCurrentContent(null);
         setCurrentEpisode(null);
         setCurrentShow(null);
+        setCurrentMovie(null);
       }
     } catch (err) {
       console.error('Failed to fetch playback session:', err);
@@ -77,11 +109,9 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     refreshSession();
   }, [refreshSession]);
 
-  // Start playback
   const startPlayback = useCallback(async (
     input: StartPlaybackInput,
-    episode?: Episode,
-    show?: TvShow
+    metadata?: CurrentContentMetadata
   ): Promise<boolean> => {
     try {
       const result = await graphqlClient
@@ -90,10 +120,8 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       
       if (result.data?.startPlayback.success && result.data.startPlayback.session) {
         setSession(result.data.startPlayback.session);
-        if (episode) setCurrentEpisode(episode);
-        if (show) setCurrentShow(show);
+        if (metadata) setCurrentContent(metadata);
         lastSyncedPosition.current = input.startPosition || 0;
-        // Signal the player to expand to dialog view
         setShouldExpand(true);
         return true;
       }
@@ -106,7 +134,70 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Update playback
+  const startEpisodePlayback = useCallback(async (
+    episodeId: string,
+    mediaFileId: string,
+    tvShowId: string,
+    episode?: Episode,
+    show?: TvShow,
+    startPosition?: number,
+    duration?: number
+  ): Promise<boolean> => {
+    const input: StartPlaybackInput = {
+      contentType: 'EPISODE',
+      contentId: episodeId,
+      mediaFileId,
+      parentId: tvShowId,
+      startPosition,
+      duration,
+    };
+
+    const metadata: CurrentContentMetadata | undefined = episode && show ? {
+      contentType: 'EPISODE',
+      title: show.name,
+      subtitle: `S${String(episode.season).padStart(2, '0')}E${String(episode.episode).padStart(2, '0')} - ${episode.title}`,
+      posterUrl: show.posterUrl,
+      backdropUrl: show.backdropUrl,
+    } : undefined;
+
+    const success = await startPlayback(input, metadata);
+    if (success) {
+      if (episode) setCurrentEpisode(episode);
+      if (show) setCurrentShow(show);
+    }
+    return success;
+  }, [startPlayback]);
+
+  const startMoviePlayback = useCallback(async (
+    movieId: string,
+    mediaFileId: string,
+    movie?: Movie,
+    startPosition?: number,
+    duration?: number
+  ): Promise<boolean> => {
+    const input: StartPlaybackInput = {
+      contentType: 'MOVIE',
+      contentId: movieId,
+      mediaFileId,
+      startPosition,
+      duration,
+    };
+
+    const metadata: CurrentContentMetadata | undefined = movie ? {
+      contentType: 'MOVIE',
+      title: movie.title,
+      subtitle: movie.year ? `${movie.year}` : undefined,
+      posterUrl: movie.posterUrl,
+      backdropUrl: movie.backdropUrl,
+    } : undefined;
+
+    const success = await startPlayback(input, metadata);
+    if (success && movie) {
+      setCurrentMovie(movie);
+    }
+    return success;
+  }, [startPlayback]);
+
   const updatePlayback = useCallback(async (input: UpdatePlaybackInput): Promise<boolean> => {
     if (input.currentPosition !== undefined) {
       const diff = Math.abs(input.currentPosition - lastSyncedPosition.current);
@@ -133,7 +224,6 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Stop playback
   const stopPlayback = useCallback(async (): Promise<boolean> => {
     try {
       const result = await graphqlClient
@@ -142,8 +232,10 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       
       if (result.data?.stopPlayback.success) {
         setSession(null);
+        setCurrentContent(null);
         setCurrentEpisode(null);
         setCurrentShow(null);
+        setCurrentMovie(null);
         lastSyncedPosition.current = 0;
         return true;
       }
@@ -160,15 +252,20 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       value={{
         session,
         isLoading,
+        currentContent,
         currentEpisode,
         currentShow,
+        currentMovie,
         shouldExpand,
         startPlayback,
+        startEpisodePlayback,
+        startMoviePlayback,
         updatePlayback,
         stopPlayback,
         refreshSession,
         setCurrentEpisode,
         setCurrentShow,
+        setCurrentMovie,
         clearExpandFlag,
       }}
     >

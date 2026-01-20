@@ -68,8 +68,23 @@ export type {
   MovieResult,
   AddMovieInput,
   UpdateMovieInput,
-  // Quality Profile
-  QualityProfile,
+  // Album/Music
+  Artist,
+  Album,
+  AlbumSearchResult,
+  AlbumResult,
+  AddAlbumInput,
+  Track,
+  TrackWithStatus,
+  AlbumWithTracks,
+  // Auto-Hunt
+  AutoHuntResult,
+  // Audiobook
+  AudiobookAuthor,
+  Audiobook,
+  AudiobookSearchResult,
+  AudiobookResult,
+  AddAudiobookInput,
   // Naming Patterns
   NamingPattern,
   CreateNamingPatternInput,
@@ -122,6 +137,7 @@ export type {
   CastSessionResult,
   CastSettingsResult,
   // Playback Session Types
+  PlaybackContentType,
   PlaybackSession,
   PlaybackSettings,
   StartPlaybackInput,
@@ -149,16 +165,33 @@ export {
   LIBRARY_QUERY,
   ALL_TV_SHOWS_QUERY,
   TV_SHOWS_QUERY,
+  TV_SHOWS_CONNECTION_QUERY,
   TV_SHOW_QUERY,
   SEARCH_TV_SHOWS_QUERY,
   // Movie Queries
   ALL_MOVIES_QUERY,
   MOVIES_QUERY,
+  MOVIES_CONNECTION_QUERY,
   MOVIE_QUERY,
   SEARCH_MOVIES_QUERY,
+  // Album/Music Queries
+  ALBUMS_QUERY,
+  ALBUMS_CONNECTION_QUERY,
+  ALBUM_QUERY,
+  ALBUM_WITH_TRACKS_QUERY,
+  TRACKS_QUERY,
+  ARTISTS_QUERY,
+  ARTISTS_CONNECTION_QUERY,
+  SEARCH_ALBUMS_QUERY,
+  // Audiobook Queries
+  AUDIOBOOKS_QUERY,
+  AUDIOBOOKS_CONNECTION_QUERY,
+  AUDIOBOOK_QUERY,
+  AUDIOBOOK_AUTHORS_QUERY,
+  AUDIOBOOK_AUTHORS_CONNECTION_QUERY,
+  SEARCH_AUDIOBOOKS_QUERY,
   EPISODES_QUERY,
   WANTED_EPISODES_QUERY,
-  QUALITY_PROFILES_QUERY,
   NAMING_PATTERNS_QUERY,
   RSS_FEEDS_QUERY,
   PARSE_AND_IDENTIFY_QUERY,
@@ -212,6 +245,12 @@ export {
   ADD_MOVIE_MUTATION,
   UPDATE_MOVIE_MUTATION,
   DELETE_MOVIE_MUTATION,
+  // Album Mutations
+  ADD_ALBUM_MUTATION,
+  DELETE_ALBUM_MUTATION,
+  // Audiobook Mutations
+  ADD_AUDIOBOOK_MUTATION,
+  DELETE_AUDIOBOOK_MUTATION,
   CREATE_RSS_FEED_MUTATION,
   UPDATE_RSS_FEED_MUTATION,
   DELETE_RSS_FEED_MUTATION,
@@ -250,6 +289,8 @@ export {
   UPDATE_PLAYBACK_MUTATION,
   STOP_PLAYBACK_MUTATION,
   UPDATE_PLAYBACK_SETTINGS_MUTATION,
+  // Auto-Hunt Mutations
+  TRIGGER_AUTO_HUNT_MUTATION,
 } from './mutations';
 
 // Subscriptions

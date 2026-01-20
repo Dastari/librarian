@@ -49,8 +49,8 @@ export const REMOVE_TORRENT_MUTATION = `
 `;
 
 export const ORGANIZE_TORRENT_MUTATION = `
-  mutation OrganizeTorrent($id: Int!, $libraryId: String) {
-    organizeTorrent(id: $id, libraryId: $libraryId) {
+  mutation OrganizeTorrent($id: Int!, $libraryId: String, $albumId: String) {
+    organizeTorrent(id: $id, libraryId: $libraryId, albumId: $albumId) {
       success
       organizedCount
       failedCount
@@ -291,7 +291,6 @@ export const UPDATE_TV_SHOW_MUTATION = `
         status
         monitored
         monitorType
-        qualityProfileId
         path
         autoDownloadOverride
         autoHuntOverride
@@ -374,6 +373,72 @@ export const UPDATE_MOVIE_MUTATION = `
 export const DELETE_MOVIE_MUTATION = `
   mutation DeleteMovie($id: String!) {
     deleteMovie(id: $id) {
+      success
+      error
+    }
+  }
+`;
+
+// ============================================================================
+// Album Mutations
+// ============================================================================
+
+export const ADD_ALBUM_MUTATION = `
+  mutation AddAlbum($input: AddAlbumInput!) {
+    addAlbum(input: $input) {
+      success
+      album {
+        id
+        artistId
+        libraryId
+        name
+        sortName
+        year
+        musicbrainzId
+        albumType
+        genres
+        coverUrl
+        hasFiles
+      }
+      error
+    }
+  }
+`;
+
+export const DELETE_ALBUM_MUTATION = `
+  mutation DeleteAlbum($id: String!) {
+    deleteAlbum(id: $id) {
+      success
+      error
+    }
+  }
+`;
+
+// ============================================================================
+// Audiobook Mutations
+// ============================================================================
+
+export const ADD_AUDIOBOOK_MUTATION = `
+  mutation AddAudiobook($input: AddAudiobookInput!) {
+    addAudiobook(input: $input) {
+      success
+      audiobook {
+        id
+        authorId
+        libraryId
+        title
+        sortTitle
+        coverUrl
+        hasFiles
+      }
+      error
+    }
+  }
+`;
+
+export const DELETE_AUDIOBOOK_MUTATION = `
+  mutation DeleteAudiobook($id: String!) {
+    deleteAudiobook(id: $id) {
       success
       error
     }
@@ -667,9 +732,15 @@ export const START_PLAYBACK_MUTATION = `
       session {
         id
         userId
-        episodeId
+        contentType
+        contentId
         mediaFileId
+        episodeId
+        movieId
+        trackId
+        audiobookId
         tvShowId
+        albumId
         currentPosition
         duration
         volume
@@ -690,9 +761,15 @@ export const UPDATE_PLAYBACK_MUTATION = `
       session {
         id
         userId
-        episodeId
+        contentType
+        contentId
         mediaFileId
+        episodeId
+        movieId
+        trackId
+        audiobookId
         tvShowId
+        albumId
         currentPosition
         duration
         volume
@@ -825,6 +902,24 @@ export const SET_DEFAULT_NAMING_PATTERN_MUTATION = `
     setDefaultNamingPattern(id: $id) {
       success
       error
+    }
+  }
+`;
+
+// ============================================================================
+// Auto-Hunt Mutations
+// ============================================================================
+
+export const TRIGGER_AUTO_HUNT_MUTATION = `
+  mutation TriggerAutoHunt($libraryId: String!) {
+    triggerAutoHunt(libraryId: $libraryId) {
+      success
+      error
+      searched
+      matched
+      downloaded
+      skipped
+      failed
     }
   }
 `;

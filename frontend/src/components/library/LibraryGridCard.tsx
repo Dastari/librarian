@@ -5,7 +5,7 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/d
 import { Button } from '@heroui/button'
 import { Image } from '@heroui/image'
 import { IconDotsVertical, IconRefresh, IconSettings, IconTrash, IconEye } from '@tabler/icons-react'
-import type { Library, TvShow } from '../../lib/graphql'
+import type { Library, TvShow, Movie, Album, Audiobook } from '../../lib/graphql'
 import { getLibraryTypeInfo } from '../../lib/graphql'
 import { formatBytes } from '../../lib/format'
 
@@ -16,6 +16,9 @@ import { formatBytes } from '../../lib/format'
 export interface LibraryGridCardProps {
   library: Library
   shows?: TvShow[]
+  movies?: Movie[]
+  albums?: Album[]
+  audiobooks?: Audiobook[]
   onScan: () => void
   onDelete: () => void
 }
@@ -39,6 +42,9 @@ const LIBRARY_GRADIENTS: Record<string, string> = {
 export function LibraryGridCard({
   library,
   shows = [],
+  movies = [],
+  albums = [],
+  audiobooks = [],
   onScan,
   onDelete,
 }: LibraryGridCardProps) {
@@ -46,12 +52,37 @@ export function LibraryGridCard({
   const typeInfo = getLibraryTypeInfo(library.libraryType)
   const gradient = LIBRARY_GRADIENTS[library.libraryType] || LIBRARY_GRADIENTS.OTHER
 
-  // Get artwork from shows - prefer poster URLs (portrait) over backdrop URLs (landscape)
-  const artworks = shows
-    .filter((show) => show.posterUrl || show.backdropUrl)
-    .map((show) => show.posterUrl || show.backdropUrl)
-    .filter((url): url is string => !!url)
-    .slice(0, 6) // Max 6 for cycling
+  // Get artwork from shows, movies, albums, or audiobooks depending on library type
+  // Prefer poster/cover URLs for visual variety
+  const artworks = (() => {
+    if (library.libraryType === 'MOVIES') {
+      return movies
+        .filter((movie) => movie.posterUrl || movie.backdropUrl)
+        .map((movie) => movie.posterUrl || movie.backdropUrl)
+        .filter((url): url is string => !!url)
+        .slice(0, 6) // Max 6 for cycling
+    }
+    if (library.libraryType === 'MUSIC') {
+      return albums
+        .filter((album) => album.coverUrl)
+        .map((album) => album.coverUrl)
+        .filter((url): url is string => !!url)
+        .slice(0, 6) // Max 6 for cycling
+    }
+    if (library.libraryType === 'AUDIOBOOKS') {
+      return audiobooks
+        .filter((audiobook) => audiobook.coverUrl)
+        .map((audiobook) => audiobook.coverUrl)
+        .filter((url): url is string => !!url)
+        .slice(0, 6) // Max 6 for cycling
+    }
+    // TV shows or other library types
+    return shows
+      .filter((show) => show.posterUrl || show.backdropUrl)
+      .map((show) => show.posterUrl || show.backdropUrl)
+      .filter((url): url is string => !!url)
+      .slice(0, 6) // Max 6 for cycling
+  })()
 
   const [currentArtIndex, setCurrentArtIndex] = useState(0)
   const [isTransitioning, setIsTransitioning] = useState(false)
