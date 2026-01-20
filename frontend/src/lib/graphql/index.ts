@@ -9,8 +9,6 @@ export type {
   LibraryTypeInfo,
   // Media Item (legacy)
   MediaItem,
-  // Subscription (legacy)
-  Subscription,
   // Torrent
   Torrent,
   TorrentState,

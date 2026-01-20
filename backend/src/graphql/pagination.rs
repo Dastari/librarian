@@ -105,7 +105,7 @@ impl<T> Connection<T> {
     /// * `offset` - The offset of the first item (for cursor generation)
     /// * `limit` - The requested limit (to determine if there are more pages)
     /// * `total` - Total count of items matching the query
-    pub fn from_items(items: Vec<T>, offset: i64, limit: i64, total: i64) -> Self 
+    pub fn from_items(items: Vec<T>, offset: i64, _limit: i64, total: i64) -> Self 
     where
         T: Clone,
     {

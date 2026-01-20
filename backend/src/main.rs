@@ -11,7 +11,6 @@ mod indexer;
 mod jobs;
 mod media;
 mod services;
-mod torrent;
 mod tui;
 
 use std::net::SocketAddr;

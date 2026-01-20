@@ -12,8 +12,8 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::db::{
-    CreateTorrentFileMatch, Database, EpisodeRecord, LibraryRecord, MovieRecord, TorrentRecord,
-    TvShowRecord,
+    CreateTorrentFileMatch, Database, EpisodeRecord, LibraryRecord, MovieRecord,
+    TorrentFileMatchRecord, TorrentRecord, TvShowRecord,
 };
 use crate::services::file_utils::{is_audio_file, is_video_file};
 use crate::services::filename_parser::{self, ParsedEpisode, ParsedQuality};
@@ -107,6 +107,365 @@ impl TorrentFileMatcher {
     pub fn new(db: Database) -> Self {
         Self { db }
     }
+
+    // =========================================================================
+    // Explicit Match Creation Methods
+    // These are used when a user or auto-hunt explicitly selects an item to link
+    // =========================================================================
+
+    /// Create an explicit match for a movie
+    /// 
+    /// Used when user adds a torrent for a specific movie, or auto-hunt finds a match.
+    /// This creates a torrent_file_matches record linking the file to the movie.
+    pub async fn create_match_for_movie(
+        &self,
+        torrent_id: Uuid,
+        file_index: i32,
+        file_path: &str,
+        file_size: i64,
+        movie_id: Uuid,
+    ) -> Result<TorrentFileMatchRecord> {
+        let quality = filename_parser::parse_quality(file_path);
+        
+        let input = CreateTorrentFileMatch {
+            torrent_id,
+            file_index,
+            file_path: file_path.to_string(),
+            file_size,
+            episode_id: None,
+            movie_id: Some(movie_id),
+            track_id: None,
+            chapter_id: None,
+            match_type: FileMatchType::Manual.to_string(),
+            match_confidence: Some(Decimal::from(1)),
+            parsed_resolution: quality.resolution,
+            parsed_codec: quality.codec,
+            parsed_source: quality.source,
+            parsed_audio: quality.audio,
+            skip_download: false,
+        };
+
+        let record = self.db.torrent_file_matches().create(input).await?;
+        
+        // Update movie status to downloading
+        sqlx::query("UPDATE movies SET download_status = 'downloading' WHERE id = $1")
+            .bind(movie_id)
+            .execute(self.db.pool())
+            .await?;
+
+        info!(
+            torrent_id = %torrent_id,
+            file_index = file_index,
+            movie_id = %movie_id,
+            "Created explicit match for movie"
+        );
+
+        Ok(record)
+    }
+
+    /// Create an explicit match for an episode
+    /// 
+    /// Used when user adds a torrent for a specific episode, or auto-hunt finds a match.
+    pub async fn create_match_for_episode(
+        &self,
+        torrent_id: Uuid,
+        file_index: i32,
+        file_path: &str,
+        file_size: i64,
+        episode_id: Uuid,
+    ) -> Result<TorrentFileMatchRecord> {
+        let quality = filename_parser::parse_quality(file_path);
+        
+        let input = CreateTorrentFileMatch {
+            torrent_id,
+            file_index,
+            file_path: file_path.to_string(),
+            file_size,
+            episode_id: Some(episode_id),
+            movie_id: None,
+            track_id: None,
+            chapter_id: None,
+            match_type: FileMatchType::Manual.to_string(),
+            match_confidence: Some(Decimal::from(1)),
+            parsed_resolution: quality.resolution,
+            parsed_codec: quality.codec,
+            parsed_source: quality.source,
+            parsed_audio: quality.audio,
+            skip_download: false,
+        };
+
+        let record = self.db.torrent_file_matches().create(input).await?;
+        
+        // Update episode status to downloading
+        self.db.episodes().update_status(episode_id, "downloading").await?;
+
+        info!(
+            torrent_id = %torrent_id,
+            file_index = file_index,
+            episode_id = %episode_id,
+            "Created explicit match for episode"
+        );
+
+        Ok(record)
+    }
+
+    /// Create explicit matches for all video files in a torrent, linking them to an episode
+    /// 
+    /// Used for single-episode torrents where all video files belong to the same episode.
+    pub async fn create_matches_for_episode_torrent(
+        &self,
+        torrent_id: Uuid,
+        files: &[TorrentFile],
+        episode_id: Uuid,
+    ) -> Result<Vec<TorrentFileMatchRecord>> {
+        let mut records = Vec::new();
+        
+        for (index, file) in files.iter().enumerate() {
+            if is_video_file(&file.path) && !self.is_sample_file(&file.path) {
+                let record = self.create_match_for_episode(
+                    torrent_id,
+                    index as i32,
+                    &file.path,
+                    file.size as i64,
+                    episode_id,
+                ).await?;
+                records.push(record);
+            }
+        }
+
+        Ok(records)
+    }
+
+    /// Create explicit matches for all video files in a torrent, linking them to a movie
+    /// 
+    /// Used for movie torrents where all video files belong to the same movie.
+    pub async fn create_matches_for_movie_torrent(
+        &self,
+        torrent_id: Uuid,
+        files: &[TorrentFile],
+        movie_id: Uuid,
+    ) -> Result<Vec<TorrentFileMatchRecord>> {
+        let mut records = Vec::new();
+        
+        for (index, file) in files.iter().enumerate() {
+            if is_video_file(&file.path) && !self.is_sample_file(&file.path) {
+                let record = self.create_match_for_movie(
+                    torrent_id,
+                    index as i32,
+                    &file.path,
+                    file.size as i64,
+                    movie_id,
+                ).await?;
+                records.push(record);
+            }
+        }
+
+        Ok(records)
+    }
+
+    /// Create an explicit match for a track
+    /// 
+    /// Used when linking a specific audio file to a track.
+    pub async fn create_match_for_track(
+        &self,
+        torrent_id: Uuid,
+        file_index: i32,
+        file_path: &str,
+        file_size: i64,
+        track_id: Uuid,
+    ) -> Result<TorrentFileMatchRecord> {
+        let quality = filename_parser::parse_quality(file_path);
+        
+        let input = CreateTorrentFileMatch {
+            torrent_id,
+            file_index,
+            file_path: file_path.to_string(),
+            file_size,
+            episode_id: None,
+            movie_id: None,
+            track_id: Some(track_id),
+            chapter_id: None,
+            match_type: FileMatchType::Manual.to_string(),
+            match_confidence: Some(Decimal::from(1)),
+            parsed_resolution: quality.resolution,
+            parsed_codec: quality.codec,
+            parsed_source: quality.source,
+            parsed_audio: quality.audio,
+            skip_download: false,
+        };
+
+        let record = self.db.torrent_file_matches().create(input).await?;
+        
+        // Update track status to downloading
+        sqlx::query("UPDATE tracks SET status = 'downloading' WHERE id = $1")
+            .bind(track_id)
+            .execute(self.db.pool())
+            .await?;
+
+        info!(
+            torrent_id = %torrent_id,
+            file_index = file_index,
+            track_id = %track_id,
+            "Created explicit match for track"
+        );
+
+        Ok(record)
+    }
+
+    /// Create explicit matches for all audio files in a torrent, linking to tracks in an album
+    /// 
+    /// This attempts to match audio files to tracks by track number or title similarity.
+    /// Used for album torrents where files should be matched to existing tracks.
+    pub async fn create_matches_for_album(
+        &self,
+        torrent_id: Uuid,
+        files: &[TorrentFile],
+        album_id: Uuid,
+    ) -> Result<Vec<TorrentFileMatchRecord>> {
+        let tracks = self.db.tracks().list_by_album(album_id).await?;
+        let mut records = Vec::new();
+        
+        for (index, file) in files.iter().enumerate() {
+            if !is_audio_file(&file.path) {
+                continue;
+            }
+            
+            let file_name = Path::new(&file.path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&file.path);
+            
+            // Try to match by track number first
+            if let Some(track_num) = self.extract_track_number(file_name) {
+                if let Some(track) = tracks.iter().find(|t| t.track_number == track_num) {
+                    let record = self.create_match_for_track(
+                        torrent_id,
+                        index as i32,
+                        &file.path,
+                        file.size as i64,
+                        track.id,
+                    ).await?;
+                    records.push(record);
+                    continue;
+                }
+            }
+            
+            // Try to match by title similarity
+            for track in &tracks {
+                let similarity = self.calculate_track_title_similarity(file_name, &track.title);
+                if similarity > 0.7 {
+                    let record = self.create_match_for_track(
+                        torrent_id,
+                        index as i32,
+                        &file.path,
+                        file.size as i64,
+                        track.id,
+                    ).await?;
+                    records.push(record);
+                    break;
+                }
+            }
+        }
+
+        Ok(records)
+    }
+
+    /// Create an explicit match for an audiobook chapter
+    pub async fn create_match_for_chapter(
+        &self,
+        torrent_id: Uuid,
+        file_index: i32,
+        file_path: &str,
+        file_size: i64,
+        chapter_id: Uuid,
+    ) -> Result<TorrentFileMatchRecord> {
+        let quality = filename_parser::parse_quality(file_path);
+        
+        let input = CreateTorrentFileMatch {
+            torrent_id,
+            file_index,
+            file_path: file_path.to_string(),
+            file_size,
+            episode_id: None,
+            movie_id: None,
+            track_id: None,
+            chapter_id: Some(chapter_id),
+            match_type: FileMatchType::Manual.to_string(),
+            match_confidence: Some(Decimal::from(1)),
+            parsed_resolution: quality.resolution,
+            parsed_codec: quality.codec,
+            parsed_source: quality.source,
+            parsed_audio: quality.audio,
+            skip_download: false,
+        };
+
+        let record = self.db.torrent_file_matches().create(input).await?;
+        
+        // Update chapter status to downloading
+        sqlx::query("UPDATE chapters SET status = 'downloading' WHERE id = $1")
+            .bind(chapter_id)
+            .execute(self.db.pool())
+            .await?;
+
+        info!(
+            torrent_id = %torrent_id,
+            file_index = file_index,
+            chapter_id = %chapter_id,
+            "Created explicit match for audiobook chapter"
+        );
+
+        Ok(record)
+    }
+
+    /// Create explicit matches for all audio files in a torrent, linking to chapters in an audiobook
+    pub async fn create_matches_for_audiobook(
+        &self,
+        torrent_id: Uuid,
+        files: &[TorrentFile],
+        audiobook_id: Uuid,
+    ) -> Result<Vec<TorrentFileMatchRecord>> {
+        // Get chapters for this audiobook
+        let chapters: Vec<(Uuid, i32, Option<String>)> = sqlx::query_as(
+            "SELECT id, chapter_number, title FROM chapters WHERE audiobook_id = $1 ORDER BY chapter_number"
+        )
+        .bind(audiobook_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        
+        let mut records = Vec::new();
+        
+        for (index, file) in files.iter().enumerate() {
+            if !is_audio_file(&file.path) {
+                continue;
+            }
+            
+            let file_name = Path::new(&file.path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&file.path);
+            
+            // Try to match by chapter number
+            if let Some(chapter_num) = self.extract_chapter_number(file_name) {
+                if let Some((chapter_id, _, _)) = chapters.iter().find(|(_, num, _)| *num == chapter_num) {
+                    let record = self.create_match_for_chapter(
+                        torrent_id,
+                        index as i32,
+                        &file.path,
+                        file.size as i64,
+                        *chapter_id,
+                    ).await?;
+                    records.push(record);
+                }
+            }
+        }
+
+        Ok(records)
+    }
+
+    // =========================================================================
+    // Auto-Matching Methods
+    // These analyze torrent files and try to match them automatically
+    // =========================================================================
 
     /// Match all files in a torrent to library items
     ///
@@ -297,7 +656,7 @@ impl TorrentFileMatcher {
     /// Match a video file to TV episodes or movies
     async fn match_video_file(
         &self,
-        torrent: &TorrentRecord,
+        _torrent: &TorrentRecord,
         file: &TorrentFile,
         file_index: i32,
         file_name: &str,
@@ -349,7 +708,7 @@ impl TorrentFileMatcher {
     /// Match an audio file to tracks or audiobook chapters
     async fn match_audio_file(
         &self,
-        torrent: &TorrentRecord,
+        _torrent: &TorrentRecord,
         file: &TorrentFile,
         file_index: i32,
         file_name: &str,
@@ -833,7 +1192,7 @@ impl TorrentFileMatcher {
 
         // Try to match by chapter number
         if let Some(chapter_num) = self.extract_chapter_number(file_name) {
-            for (chapter_id, chapter_number, title) in &chapters {
+            for (chapter_id, chapter_number, _title) in &chapters {
                 if *chapter_number == chapter_num {
                     return Ok(Some(FileMatchResult {
                         file_index,

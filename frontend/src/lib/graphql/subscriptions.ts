@@ -93,7 +93,7 @@ export const LIBRARY_CHANGED_SUBSCRIPTION = `
         icon
         color
         autoScan
-        scanIntervalHours
+        scanIntervalMinutes
         itemCount
         totalSizeBytes
         lastScannedAt

@@ -65,7 +65,6 @@ use super::types::{
     CreateIndexerInput,
     CreateLibraryInput,
     CreateRssFeedInput,
-    CreateSubscriptionInput,
     DownloadEpisodeResult,
     Episode,
     EpisodeStatus,
@@ -169,7 +168,6 @@ use super::types::{
     RssItem,
     ScanStatus,
     ConsolidateLibraryResult,
-    SearchResult,
     // Subtitle types
     MediaFileDetails,
     Subtitle,
@@ -189,8 +187,6 @@ use super::types::{
     // Schedule cache
     RefreshScheduleResult,
     StreamInfo,
-    Subscription,
-    SubscriptionResult,
     Torrent,
     TorrentActionResult,
     TorrentDetails,
@@ -208,7 +204,6 @@ use super::types::{
     UpdateLibraryInput,
     UpdatePreferencesInput,
     UpdateRssFeedInput,
-    UpdateSubscriptionInput,
     UpdateTorrentSettingsInput,
     UpdateTvShowInput,
     User,
@@ -1973,38 +1968,6 @@ impl QueryRoot {
 
 
     // ------------------------------------------------------------------------
-    // Subscriptions (legacy - use tv_shows instead)
-    // ------------------------------------------------------------------------
-
-    /// Get all subscriptions (legacy)
-    async fn subscriptions(&self, ctx: &Context<'_>) -> Result<Vec<Subscription>> {
-        let _user = ctx.auth_user()?;
-        // TODO: Query from database
-        Ok(vec![])
-    }
-
-    /// Get a specific subscription by ID (legacy)
-    async fn subscription(&self, ctx: &Context<'_>, id: String) -> Result<Option<Subscription>> {
-        let _user = ctx.auth_user()?;
-        let _id = id;
-        // TODO: Query from database
-        Ok(None)
-    }
-
-    /// Search for torrents via Torznab indexers
-    async fn search_torrents(
-        &self,
-        ctx: &Context<'_>,
-        query: String,
-        _category: Option<String>,
-    ) -> Result<Vec<SearchResult>> {
-        let _user = ctx.auth_user()?;
-        let _query = query;
-        // TODO: Implement Torznab search via Prowlarr
-        Ok(vec![])
-    }
-
-    // ------------------------------------------------------------------------
     // System & Settings
     // ------------------------------------------------------------------------
 
@@ -3060,7 +3023,7 @@ impl MutationRoot {
             icon: record.icon.unwrap_or_else(|| "folder".to_string()),
             color: record.color.unwrap_or_else(|| "slate".to_string()),
             auto_scan: record.auto_scan,
-            scan_interval_hours: record.scan_interval_minutes / 60,
+            scan_interval_minutes: record.scan_interval_minutes,
             item_count: 0,
             total_size_bytes: 0,
             last_scanned_at: None,
@@ -3155,7 +3118,7 @@ impl MutationRoot {
                 icon: record.icon.unwrap_or_else(|| "folder".to_string()),
                 color: record.color.unwrap_or_else(|| "slate".to_string()),
                 auto_scan: record.auto_scan,
-                scan_interval_hours: record.scan_interval_minutes / 60,
+                scan_interval_minutes: record.scan_interval_minutes,
                 item_count: 0,
                 total_size_bytes: 0,
                 last_scanned_at: record.last_scanned_at.map(|t| t.to_rfc3339()),
@@ -4736,7 +4699,7 @@ impl MutationRoot {
         };
 
         match add_result {
-            Ok(torrent_info) => {
+            Ok(_torrent_info) => {
                 // Note: File-level matching happens automatically when torrent is processed
                 // via torrent_file_matches table
                 
@@ -5987,78 +5950,6 @@ impl MutationRoot {
                 error: Some(e.to_string()),
             }),
         }
-    }
-
-    // ------------------------------------------------------------------------
-    // Subscriptions (legacy)
-    // ------------------------------------------------------------------------
-
-    /// Create a new subscription (legacy)
-    async fn create_subscription(
-        &self,
-        ctx: &Context<'_>,
-        input: CreateSubscriptionInput,
-    ) -> Result<SubscriptionResult> {
-        let _user = ctx.auth_user()?;
-
-        let subscription = Subscription {
-            id: Uuid::new_v4().to_string(),
-            name: input.name,
-            tvdb_id: input.tvdb_id,
-            tmdb_id: input.tmdb_id,
-            monitored: input.monitored.unwrap_or(true),
-            last_checked_at: None,
-            episode_count: 0,
-        };
-
-        // TODO: Insert into database
-
-        Ok(SubscriptionResult {
-            success: true,
-            subscription: Some(subscription),
-            error: None,
-        })
-    }
-
-    /// Update an existing subscription (legacy)
-    async fn update_subscription(
-        &self,
-        ctx: &Context<'_>,
-        id: String,
-        input: UpdateSubscriptionInput,
-    ) -> Result<SubscriptionResult> {
-        let _user = ctx.auth_user()?;
-        let _id = id;
-        let _input = input;
-        // TODO: Update in database
-        Ok(SubscriptionResult {
-            success: false,
-            subscription: None,
-            error: Some("Not implemented".to_string()),
-        })
-    }
-
-    /// Delete a subscription (legacy)
-    async fn delete_subscription(&self, ctx: &Context<'_>, id: String) -> Result<MutationResult> {
-        let _user = ctx.auth_user()?;
-        let _id = id;
-        // TODO: Delete from database
-        Ok(MutationResult {
-            success: true,
-            error: None,
-        })
-    }
-
-    /// Manually trigger a search for a subscription (legacy)
-    async fn search_subscription(
-        &self,
-        ctx: &Context<'_>,
-        id: String,
-    ) -> Result<Vec<SearchResult>> {
-        let _user = ctx.auth_user()?;
-        let _id = id;
-        // TODO: Implement Torznab search
-        Ok(vec![])
     }
 
     // ------------------------------------------------------------------------

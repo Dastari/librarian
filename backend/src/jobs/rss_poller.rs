@@ -22,6 +22,7 @@ use uuid::Uuid;
 use crate::db::libraries::LibraryRecord;
 use crate::db::tv_shows::TvShowRecord;
 use crate::db::{CreateRssFeedItem, Database, RssFeedRecord};
+use crate::services::text_utils::{normalize_quality, normalize_show_name};
 use crate::services::ParsedRssItem;
 use crate::services::RssService;
 
@@ -385,18 +386,13 @@ fn matches_quality_settings(
     parsed: &ParsedQualityInfo,
     settings: &EffectiveQualitySettings,
 ) -> bool {
-    // Helper to normalize strings for comparison
-    fn normalize(s: &str) -> String {
-        s.to_lowercase().replace(['-', '.', ' ', '_'], "")
-    }
-
     // Check resolution (empty = any)
     if !settings.allowed_resolutions.is_empty() {
         let resolution = parsed.resolution.as_deref().unwrap_or("");
-        let normalized_res = normalize(resolution);
+        let normalized_res = normalize_quality(resolution);
 
         let matches = settings.allowed_resolutions.iter().any(|allowed| {
-            let allowed_norm = normalize(allowed);
+            let allowed_norm = normalize_quality(allowed);
             normalized_res.contains(&allowed_norm)
                 || allowed_norm.contains(&normalized_res)
                 || (allowed_norm == "2160p" && (normalized_res == "4k" || normalized_res == "uhd"))
@@ -415,10 +411,10 @@ fn matches_quality_settings(
     // Check video codec (empty = any)
     if !settings.allowed_video_codecs.is_empty() {
         let codec = parsed.codec.as_deref().unwrap_or("");
-        let normalized_codec = normalize(codec);
+        let normalized_codec = normalize_quality(codec);
 
         let matches = settings.allowed_video_codecs.iter().any(|allowed| {
-            let allowed_norm = normalize(allowed);
+            let allowed_norm = normalize_quality(allowed);
             normalized_codec.contains(&allowed_norm)
                 || allowed_norm.contains(&normalized_codec)
                 || (normalized_codec == "hevc" && allowed_norm == "h265")
@@ -438,10 +434,10 @@ fn matches_quality_settings(
     // Check audio format (empty = any)
     if !settings.allowed_audio_formats.is_empty() {
         let audio = parsed.audio.as_deref().unwrap_or("");
-        let normalized_audio = normalize(audio);
+        let normalized_audio = normalize_quality(audio);
 
         let matches = settings.allowed_audio_formats.iter().any(|allowed| {
-            let allowed_norm = normalize(allowed);
+            let allowed_norm = normalize_quality(allowed);
             normalized_audio.contains(&allowed_norm)
                 || allowed_norm.contains(&normalized_audio)
                 || (normalized_audio == "dd" && allowed_norm == "dd51")
@@ -467,9 +463,9 @@ fn matches_quality_settings(
 
         // If specific HDR types are specified, check those
         if !settings.allowed_hdr_types.is_empty() {
-            let normalized_hdr = normalize(hdr);
+            let normalized_hdr = normalize_quality(hdr);
             let matches = settings.allowed_hdr_types.iter().any(|allowed| {
-                let allowed_norm = normalize(allowed);
+                let allowed_norm = normalize_quality(allowed);
                 normalized_hdr.contains(&allowed_norm) || allowed_norm.contains(&normalized_hdr)
             });
 
@@ -486,10 +482,10 @@ fn matches_quality_settings(
     // Check source (empty = any)
     if !settings.allowed_sources.is_empty() {
         let source = parsed.source.as_deref().unwrap_or("");
-        let normalized_source = normalize(source);
+        let normalized_source = normalize_quality(source);
 
         let matches = settings.allowed_sources.iter().any(|allowed| {
-            let allowed_norm = normalize(allowed);
+            let allowed_norm = normalize_quality(allowed);
             normalized_source.contains(&allowed_norm) || allowed_norm.contains(&normalized_source)
         });
 
@@ -505,11 +501,11 @@ fn matches_quality_settings(
     // Check release group blacklist
     if !settings.release_group_blacklist.is_empty() {
         if let Some(group) = &parsed.release_group {
-            let normalized_group = normalize(group);
+            let normalized_group = normalize_quality(group);
             if settings
                 .release_group_blacklist
                 .iter()
-                .any(|blocked| normalize(blocked) == normalized_group)
+                .any(|blocked| normalize_quality(blocked) == normalized_group)
             {
                 debug!("Quality filter: release group '{}' is blacklisted", group);
                 return false;
@@ -520,11 +516,11 @@ fn matches_quality_settings(
     // Check release group whitelist (if set, only allow listed groups)
     if !settings.release_group_whitelist.is_empty() {
         if let Some(group) = &parsed.release_group {
-            let normalized_group = normalize(group);
+            let normalized_group = normalize_quality(group);
             if !settings
                 .release_group_whitelist
                 .iter()
-                .any(|allowed| normalize(allowed) == normalized_group)
+                .any(|allowed| normalize_quality(allowed) == normalized_group)
             {
                 debug!(
                     "Quality filter: release group '{}' not in whitelist {:?}",
@@ -886,15 +882,6 @@ fn extract_release_group(title: &str) -> Option<String> {
         .captures(title)
         .and_then(|caps| caps.get(1))
         .map(|m| m.as_str().to_string())
-}
-
-/// Normalize a show name for matching
-fn normalize_show_name(name: &str) -> String {
-    name.to_lowercase()
-        .replace(['.', '-', '_'], " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 #[cfg(test)]

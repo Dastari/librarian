@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use sqlx::PgPool;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::db::Database;
 use crate::services::{MediaAnalysisQueue, MetadataService, TorrentProcessor, TorrentService};

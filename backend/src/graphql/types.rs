@@ -258,13 +258,7 @@ pub struct TorrentRecord {
     pub save_path: String,
     pub download_path: Option<String>,
     pub source_url: Option<String>,
-    // Legacy fields - prefer using torrent_file_matches for new code
-    pub library_id: Option<String>,
-    pub episode_id: Option<String>,
-    pub movie_id: Option<String>,
-    pub track_id: Option<String>,
-    pub album_id: Option<String>,
-    pub audiobook_id: Option<String>,
+    // Note: Legacy linking fields have been removed - use torrent_file_matches instead
     pub source_feed_id: Option<String>,
     pub source_indexer_id: Option<String>,
     pub post_process_status: Option<String>,
@@ -292,12 +286,6 @@ impl From<crate::db::TorrentRecord> for TorrentRecord {
             save_path: r.save_path,
             download_path: r.download_path,
             source_url: r.source_url,
-            library_id: r.library_id.map(|id| id.to_string()),
-            episode_id: r.episode_id.map(|id| id.to_string()),
-            movie_id: r.movie_id.map(|id| id.to_string()),
-            track_id: r.track_id.map(|id| id.to_string()),
-            album_id: r.album_id.map(|id| id.to_string()),
-            audiobook_id: r.audiobook_id.map(|id| id.to_string()),
             source_feed_id: r.source_feed_id.map(|id| id.to_string()),
             source_indexer_id: r.source_indexer_id.map(|id| id.to_string()),
             post_process_status: r.post_process_status,
@@ -603,8 +591,8 @@ pub struct Library {
     pub color: String,
     /// Whether auto-scan is enabled
     pub auto_scan: bool,
-    /// Scan interval in hours
-    pub scan_interval_hours: i32,
+    /// Scan interval in minutes
+    pub scan_interval_minutes: i32,
     /// Number of items in the library
     pub item_count: i32,
     /// Total size in bytes
@@ -633,7 +621,7 @@ impl Library {
             icon: r.icon.unwrap_or_else(|| "folder".to_string()),
             color: r.color.unwrap_or_else(|| "default".to_string()),
             auto_scan: r.auto_scan,
-            scan_interval_hours: r.scan_interval_minutes / 60,
+            scan_interval_minutes: r.scan_interval_minutes,
             item_count: 0,
             total_size_bytes: 0,
             last_scanned_at: r.last_scanned_at.map(|dt| dt.to_rfc3339()),
@@ -1053,72 +1041,6 @@ pub struct CastSettingsResult {
     pub success: bool,
     pub settings: Option<CastSettings>,
     pub error: Option<String>,
-}
-
-// ============================================================================
-// Subscription Types
-// ============================================================================
-
-/// A subscription to a TV show for auto-downloading
-#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
-pub struct Subscription {
-    /// Unique ID
-    pub id: String,
-    /// Show name
-    pub name: String,
-    /// TVDB ID
-    pub tvdb_id: Option<i32>,
-    /// TMDB ID
-    pub tmdb_id: Option<i32>,
-    /// Whether actively monitoring
-    pub monitored: bool,
-    /// Last checked timestamp
-    pub last_checked_at: Option<String>,
-    /// Number of episodes downloaded
-    pub episode_count: i32,
-}
-
-/// Input for creating a subscription
-#[derive(Debug, InputObject)]
-pub struct CreateSubscriptionInput {
-    /// Show name
-    pub name: String,
-    /// TVDB ID
-    pub tvdb_id: Option<i32>,
-    /// TMDB ID
-    pub tmdb_id: Option<i32>,
-    /// Enable monitoring (default: true)
-    pub monitored: Option<bool>,
-}
-
-/// Input for updating a subscription
-#[derive(Debug, InputObject)]
-pub struct UpdateSubscriptionInput {
-    /// Enable/disable monitoring
-    pub monitored: Option<bool>,
-}
-
-/// Result of a subscription mutation
-#[derive(Debug, SimpleObject)]
-pub struct SubscriptionResult {
-    pub success: bool,
-    pub subscription: Option<Subscription>,
-    pub error: Option<String>,
-}
-
-/// Search result from Torznab indexer
-#[derive(Debug, Clone, SimpleObject)]
-pub struct SearchResult {
-    pub title: String,
-    pub indexer: String,
-    pub size_bytes: i64,
-    pub size_formatted: String,
-    pub seeders: i32,
-    pub leechers: i32,
-    pub magnet_url: Option<String>,
-    pub download_url: Option<String>,
-    pub info_url: Option<String>,
-    pub published_at: Option<String>,
 }
 
 // ============================================================================

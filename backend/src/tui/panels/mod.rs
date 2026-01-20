@@ -8,8 +8,8 @@ mod logs;
 mod system;
 mod torrents;
 
-pub use database::{DatabasePanel, SharedTableCounts, TableCounts, create_shared_table_counts, spawn_table_counts_updater};
-pub use libraries::{LibrariesPanel, SharedLibraries, LibraryStats, create_shared_libraries, spawn_libraries_updater};
+pub use database::{DatabasePanel, create_shared_table_counts, spawn_table_counts_updater};
+pub use libraries::{LibrariesPanel, create_shared_libraries, spawn_libraries_updater};
 pub use logs::LogsPanel;
 pub use system::SystemPanel;
 pub use torrents::{TorrentsPanel, spawn_torrent_updater, create_shared_torrents};

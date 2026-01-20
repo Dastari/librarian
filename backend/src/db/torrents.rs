@@ -9,9 +9,8 @@ use uuid::Uuid;
 
 /// A torrent record in the database
 /// 
-/// Note: Media linking is now preferably done via the `torrent_file_matches` table which links
-/// individual files to episodes/movies/tracks/chapters. The legacy fields below are kept
-/// for backwards compatibility but should not be relied upon for new code.
+/// Media linking is done via the `torrent_file_matches` table which links
+/// individual files to episodes/movies/tracks/chapters.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TorrentRecord {
     pub id: Uuid,
@@ -27,13 +26,8 @@ pub struct TorrentRecord {
     pub save_path: String,
     pub download_path: Option<String>,
     pub source_url: Option<String>,
-    // Legacy fields - prefer using torrent_file_matches table for new code
-    pub library_id: Option<Uuid>,
-    pub episode_id: Option<Uuid>,
-    pub movie_id: Option<Uuid>,
-    pub track_id: Option<Uuid>,
-    pub album_id: Option<Uuid>,
-    pub audiobook_id: Option<Uuid>,
+    // Note: Legacy linking fields (library_id, episode_id, movie_id, etc.) have been removed
+    // Use torrent_file_matches table for file-level matching instead
     pub source_feed_id: Option<Uuid>,
     /// Which indexer this torrent was downloaded from (for post_download_action resolution)
     pub source_indexer_id: Option<Uuid>,
@@ -205,12 +199,7 @@ impl TorrentRepository {
     pub async fn list_pending_processing(&self) -> Result<Vec<TorrentRecord>> {
         let records = sqlx::query_as::<_, TorrentRecord>(
             r#"
-            SELECT id, user_id, info_hash, magnet_uri, name, state, progress,
-                   total_bytes, downloaded_bytes, uploaded_bytes, save_path,
-                   download_path, source_url, library_id, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, source_feed_id, source_indexer_id,
-                   post_process_status, post_process_error, processed_at, added_at, completed_at
-            FROM torrents 
+            SELECT * FROM torrents 
             WHERE state = 'seeding' 
               AND completed_at IS NOT NULL
               AND (post_process_status IS NULL OR post_process_status = 'pending')
@@ -233,70 +222,7 @@ impl TorrentRepository {
         Ok(())
     }
 
-    // -------------------------------------------------------------------------
-    // Legacy linking methods - prefer using torrent_file_matches table instead
-    // These are kept for backwards compatibility with existing code
-    // -------------------------------------------------------------------------
-
-    /// Link torrent to a library (legacy - prefer file-level matching)
-    pub async fn link_to_library(&self, info_hash: &str, library_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE torrents SET library_id = $2 WHERE info_hash = $1")
-            .bind(info_hash)
-            .bind(library_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    /// Link torrent to an episode (legacy - prefer file-level matching)
-    pub async fn link_to_episode(&self, info_hash: &str, episode_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE torrents SET episode_id = $2 WHERE info_hash = $1")
-            .bind(info_hash)
-            .bind(episode_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    /// Link torrent to a movie (legacy - prefer file-level matching)
-    pub async fn link_to_movie(&self, info_hash: &str, movie_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE torrents SET movie_id = $2 WHERE info_hash = $1")
-            .bind(info_hash)
-            .bind(movie_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    /// Link torrent to an album (legacy - prefer file-level matching)
-    pub async fn link_to_album(&self, info_hash: &str, album_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE torrents SET album_id = $2 WHERE info_hash = $1")
-            .bind(info_hash)
-            .bind(album_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    /// Link torrent to a track (legacy - prefer file-level matching)
-    pub async fn link_to_track(&self, info_hash: &str, track_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE torrents SET track_id = $2 WHERE info_hash = $1")
-            .bind(info_hash)
-            .bind(track_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    /// Link torrent to an audiobook (legacy - prefer file-level matching)
-    pub async fn link_to_audiobook(&self, info_hash: &str, audiobook_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE torrents SET audiobook_id = $2 WHERE info_hash = $1")
-            .bind(info_hash)
-            .bind(audiobook_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
+    // Legacy link_to_* methods removed - use torrent_file_matches table instead
 
     /// Get a default user ID from the database (for session sync when no user context)
     pub async fn get_default_user_id(&self) -> Result<Option<Uuid>> {
@@ -418,24 +344,23 @@ impl TorrentRepository {
 
     /// List torrents that completed but weren't matched to items
     /// These can be retried when a show is added to the library
+    /// Uses the torrent_file_matches table to find torrents with no successful matches
     pub async fn list_unmatched(&self) -> Result<Vec<TorrentRecord>> {
         let records = sqlx::query_as::<_, TorrentRecord>(
             r#"
-            SELECT id, user_id, info_hash, magnet_uri, name, state, progress,
-                   total_bytes, downloaded_bytes, uploaded_bytes, save_path,
-                   download_path, source_url, library_id, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, source_feed_id, source_indexer_id,
-                   post_process_status, post_process_error, processed_at, added_at, completed_at
-            FROM torrents 
-            WHERE state = 'seeding' 
-              AND completed_at IS NOT NULL
-              AND (post_process_status = 'unmatched' OR post_process_status IS NULL)
-              AND library_id IS NOT NULL
-              AND episode_id IS NULL
-              AND movie_id IS NULL
-              AND album_id IS NULL
-              AND audiobook_id IS NULL
-            ORDER BY completed_at ASC
+            SELECT t.* FROM torrents t
+            WHERE t.state = 'seeding' 
+              AND t.completed_at IS NOT NULL
+              AND (t.post_process_status = 'unmatched' OR t.post_process_status IS NULL)
+              AND NOT EXISTS (
+                  SELECT 1 FROM torrent_file_matches tfm 
+                  WHERE tfm.torrent_id = t.id 
+                    AND (tfm.episode_id IS NOT NULL 
+                         OR tfm.movie_id IS NOT NULL 
+                         OR tfm.track_id IS NOT NULL 
+                         OR tfm.chapter_id IS NOT NULL)
+              )
+            ORDER BY t.completed_at ASC
             "#,
         )
         .fetch_all(&self.pool)
