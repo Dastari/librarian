@@ -163,6 +163,37 @@ export interface TorrentFileInfo {
   progress: number;
 }
 
+/** A match between a file in a torrent and a library item */
+export interface TorrentFileMatch {
+  id: string;
+  torrentId: string;
+  fileIndex: number;
+  filePath: string;
+  fileSize: number;
+  episodeId: string | null;
+  movieId: string | null;
+  trackId: string | null;
+  chapterId: string | null;
+  matchType: 'auto' | 'manual' | 'forced';
+  matchConfidence: number | null;
+  parsedResolution: string | null;
+  parsedCodec: string | null;
+  parsedSource: string | null;
+  parsedAudio: string | null;
+  skipDownload: boolean;
+  processed: boolean;
+  processedAt: string | null;
+  mediaFileId: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+}
+
+/** Quality status of a media file */
+export type QualityStatus = 'UNKNOWN' | 'OPTIMAL' | 'SUBOPTIMAL' | 'EXCEEDS';
+
+/** Download status of a media item */
+export type DownloadStatus = 'MISSING' | 'WANTED' | 'DOWNLOADING' | 'DOWNLOADED' | 'SUBOPTIMAL' | 'IGNORED' | 'PARTIAL';
+
 // ============================================================================
 // Settings Types
 // ============================================================================
@@ -180,6 +211,63 @@ export interface TorrentSettings {
 export interface SettingsResult {
   success: boolean;
   error: string | null;
+}
+
+// ============================================================================
+// LLM Parser Types
+// ============================================================================
+
+export interface LlmParserSettings {
+  enabled: boolean;
+  ollamaUrl: string;
+  ollamaModel: string;
+  timeoutSeconds: number;
+  temperature: number;
+  maxTokens: number;
+  promptTemplate: string;
+  confidenceThreshold: number;
+  // Library-type-specific models
+  modelMovies: string | null;
+  modelTv: string | null;
+  modelMusic: string | null;
+  modelAudiobooks: string | null;
+  // Library-type-specific prompts
+  promptMovies: string | null;
+  promptTv: string | null;
+  promptMusic: string | null;
+  promptAudiobooks: string | null;
+}
+
+export interface OllamaConnectionResult {
+  success: boolean;
+  availableModels: string[];
+  error: string | null;
+}
+
+export interface FilenameParseResult {
+  mediaType: string | null;
+  title: string | null;
+  year: number | null;
+  season: number | null;
+  episode: number | null;
+  episodeEnd: number | null;
+  resolution: string | null;
+  source: string | null;
+  videoCodec: string | null;
+  audio: string | null;
+  hdr: string | null;
+  releaseGroup: string | null;
+  edition: string | null;
+  completeSeries: boolean;
+  confidence: number;
+}
+
+export interface TestFilenameParserResult {
+  regexResult: FilenameParseResult;
+  regexTimeMs: number;
+  llmResult: FilenameParseResult | null;
+  llmTimeMs: number | null;
+  llmError: string | null;
 }
 
 // ============================================================================
@@ -797,7 +885,7 @@ export interface AudiobookAuthor {
 
 export interface Audiobook {
   id: string;
-  authorId: string;
+  authorId: string | null;
   libraryId: string;
   title: string;
   sortTitle: string | null;

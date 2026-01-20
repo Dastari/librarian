@@ -148,6 +148,12 @@ use super::types::{
     AudiobookAuthorOrderByInput,
     AudiobookAuthorSortField,
     AudiobookAuthorWhereInput,
+    // Audiobook chapter connection types
+    AudiobookChapter,
+    AudiobookChapterConnection,
+    AudiobookChapterOrderByInput,
+    AudiobookChapterSortField,
+    AudiobookChapterWhereInput,
     // Naming pattern types
     CreateNamingPatternInput,
     NamingPattern,
@@ -174,6 +180,12 @@ use super::types::{
     SecuritySettings,
     SecuritySettingsResult,
     SettingsResult,
+    // LLM Parser types
+    LlmParserSettings,
+    UpdateLlmParserSettingsInput,
+    OllamaConnectionResult,
+    FilenameParseResult,
+    TestFilenameParserResult,
     // Schedule cache
     RefreshScheduleResult,
     StreamInfo,
@@ -182,7 +194,9 @@ use super::types::{
     Torrent,
     TorrentActionResult,
     TorrentDetails,
+    TorrentFileMatch,
     TorrentRelease,
+    DownloadStatus,
     TorrentSettings,
     TvShow,
     TvShowResult,
@@ -235,6 +249,7 @@ fn movie_record_to_graphql(r: crate::db::MovieRecord) -> Movie {
         has_file: r.has_file,
         size_bytes: r.size_bytes.unwrap_or(0),
         path: r.path,
+        download_status: DownloadStatus::from(r.download_status.as_str()),
         collection_id: r.collection_id,
         collection_name: r.collection_name,
         collection_poster_url: r.collection_poster_url,
@@ -307,6 +322,15 @@ fn audiobook_author_sort_field_to_column(field: AudiobookAuthorSortField) -> Str
     match field {
         AudiobookAuthorSortField::Name => "name".to_string(),
         AudiobookAuthorSortField::SortName => "sort_name".to_string(),
+    }
+}
+
+/// Convert AudiobookChapterSortField enum to database column name
+fn audiobook_chapter_sort_field_to_column(field: AudiobookChapterSortField) -> String {
+    match field {
+        AudiobookChapterSortField::ChapterNumber => "chapter_number".to_string(),
+        AudiobookChapterSortField::Title => "title".to_string(),
+        AudiobookChapterSortField::CreatedAt => "created_at".to_string(),
     }
 }
 
@@ -696,6 +720,9 @@ impl QueryRoot {
         let has_file_filter = r#where.as_ref().and_then(|w| {
             w.has_file.as_ref().and_then(|f| f.eq)
         });
+        let download_status_filter = r#where.as_ref().and_then(|w| {
+            w.download_status.as_ref().and_then(|f| f.eq.clone())
+        });
 
         // Determine sort field and direction
         let sort_field = order_by
@@ -718,6 +745,7 @@ impl QueryRoot {
                 year_filter,
                 monitored_filter,
                 has_file_filter,
+                download_status_filter.as_deref(),
                 &sort_field_to_column(sort_field),
                 sort_dir == super::filters::OrderDirection::Asc,
             )
@@ -1182,6 +1210,72 @@ impl QueryRoot {
         let connection = Connection::from_items(authors, offset, limit, total);
         
         Ok(AudiobookAuthorConnection::from_connection(connection))
+    }
+
+    /// Get all chapters for an audiobook
+    async fn audiobook_chapters(&self, ctx: &Context<'_>, audiobook_id: String) -> Result<Vec<AudiobookChapter>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let book_id = Uuid::parse_str(&audiobook_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid audiobook ID: {}", e)))?;
+
+        let records = db
+            .chapters()
+            .list_by_audiobook(book_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(records.into_iter().map(AudiobookChapter::from).collect())
+    }
+
+    /// Get audiobook chapters with cursor-based pagination and filtering
+    async fn audiobook_chapters_connection(
+        &self,
+        ctx: &Context<'_>,
+        audiobook_id: String,
+        #[graphql(default = 50)] first: Option<i32>,
+        after: Option<String>,
+        r#where: Option<AudiobookChapterWhereInput>,
+        order_by: Option<AudiobookChapterOrderByInput>,
+    ) -> Result<AudiobookChapterConnection> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let book_id = Uuid::parse_str(&audiobook_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid audiobook ID: {}", e)))?;
+
+        let (offset, limit) = parse_pagination_args(first, after)
+            .map_err(|e| async_graphql::Error::new(e))?;
+
+        let status_filter = r#where.as_ref().and_then(|w| {
+            w.status.as_ref().and_then(|f| f.eq.clone())
+        });
+
+        let sort_field = order_by
+            .as_ref()
+            .and_then(|o| o.field)
+            .unwrap_or(AudiobookChapterSortField::ChapterNumber);
+        let sort_dir = order_by
+            .as_ref()
+            .and_then(|o| o.direction)
+            .unwrap_or(super::filters::OrderDirection::Asc);
+
+        let (records, total) = db
+            .chapters()
+            .list_by_audiobook_paginated(
+                book_id,
+                offset,
+                limit,
+                status_filter.as_deref(),
+                &audiobook_chapter_sort_field_to_column(sort_field),
+                sort_dir == super::filters::OrderDirection::Asc,
+            )
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let chapters: Vec<AudiobookChapter> = records.into_iter().map(AudiobookChapter::from).collect();
+        let connection = Connection::from_items(chapters, offset, limit, total);
+        
+        Ok(AudiobookChapterConnection::from_connection(connection))
     }
 
     /// Search for audiobooks on OpenLibrary
@@ -1847,6 +1941,37 @@ impl QueryRoot {
         }
     }
 
+    /// Get file matches for a torrent
+    ///
+    /// Returns the list of files in the torrent and what library items they match to.
+    /// Accepts either a database UUID or an info_hash.
+    async fn torrent_file_matches(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(desc = "Torrent ID (UUID) or info_hash")] id: String,
+    ) -> Result<Vec<TorrentFileMatch>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        // Try to parse as UUID first, then fall back to info_hash lookup
+        let torrent_id = if let Ok(uuid) = uuid::Uuid::parse_str(&id) {
+            uuid
+        } else {
+            // Look up torrent by info_hash
+            let torrent = db.torrents().get_by_info_hash(&id).await?
+                .ok_or_else(|| async_graphql::Error::new("Torrent not found"))?;
+            torrent.id
+        };
+
+        let records = db.torrent_file_matches().list_by_torrent(torrent_id).await?;
+        
+        Ok(records
+            .into_iter()
+            .map(TorrentFileMatch::from_record)
+            .collect())
+    }
+
+
     // ------------------------------------------------------------------------
     // Subscriptions (legacy - use tv_shows instead)
     // ------------------------------------------------------------------------
@@ -1955,6 +2080,78 @@ impl QueryRoot {
                 category: r.category,
             })
             .collect())
+    }
+
+    // ------------------------------------------------------------------------
+    // LLM Parser Settings
+    // ------------------------------------------------------------------------
+
+    /// Get LLM parser settings
+    async fn llm_parser_settings(&self, ctx: &Context<'_>) -> Result<LlmParserSettings> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let settings = db.settings();
+
+        // Helper to get optional string (returns None if value is JSON null, "null", or empty)
+        async fn get_optional_string(
+            settings: &crate::db::SettingsRepository,
+            key: &str,
+        ) -> Result<Option<String>, async_graphql::Error> {
+            // Get the raw setting record to check if value is JSON null
+            let record = settings.get(key).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            
+            match record {
+                Some(r) => {
+                    // Check if the JSON value is null
+                    if r.value.is_null() {
+                        return Ok(None);
+                    }
+                    // Try to get as string
+                    match r.value.as_str() {
+                        Some(s) if s != "null" && !s.is_empty() => Ok(Some(s.to_string())),
+                        _ => Ok(None),
+                    }
+                }
+                None => Ok(None),
+            }
+        }
+
+        Ok(LlmParserSettings {
+            enabled: settings.get_or_default("llm.enabled", false).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?,
+            ollama_url: settings.get_or_default("llm.ollama_url", "http://localhost:11434".to_string()).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?,
+            ollama_model: settings.get_or_default("llm.ollama_model", "qwen2.5-coder:7b".to_string()).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?,
+            timeout_seconds: settings.get_or_default("llm.timeout_seconds", 30).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?,
+            temperature: settings.get_or_default("llm.temperature", 0.1).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?,
+            max_tokens: settings.get_or_default("llm.max_tokens", 256).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?,
+            prompt_template: settings.get_or_default("llm.prompt_template", 
+                r#"Parse this media filename. Fill ALL fields. Use null if not found.
+Clean the title (remove dots/underscores). Release group is after final hyphen.
+Set type to "movie" or "tv" based on whether season/episode are present.
+
+Filename: {filename}
+
+{"type":null,"title":null,"year":null,"season":null,"episode":null,"resolution":null,"source":null,"video_codec":null,"audio":null,"hdr":null,"release_group":null,"edition":null}"#.to_string()).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?,
+            confidence_threshold: settings.get_or_default("llm.confidence_threshold", 0.7).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?,
+            // Library-type-specific models
+            model_movies: get_optional_string(&settings, "llm.model.movies").await?,
+            model_tv: get_optional_string(&settings, "llm.model.tv").await?,
+            model_music: get_optional_string(&settings, "llm.model.music").await?,
+            model_audiobooks: get_optional_string(&settings, "llm.model.audiobooks").await?,
+            // Library-type-specific prompts
+            prompt_movies: get_optional_string(&settings, "llm.prompt.movies").await?,
+            prompt_tv: get_optional_string(&settings, "llm.prompt.tv").await?,
+            prompt_music: get_optional_string(&settings, "llm.prompt.music").await?,
+            prompt_audiobooks: get_optional_string(&settings, "llm.prompt.audiobooks").await?,
+        })
     }
 
     // ------------------------------------------------------------------------
@@ -2846,9 +3043,9 @@ impl MutationRoot {
         let scanner = ctx.data_unchecked::<Arc<ScannerService>>().clone();
         let db_clone = db.clone();
         tokio::spawn(async move {
-            tracing::info!(library_id = %library_id, library_name = %library_name, "Starting initial library scan");
+            tracing::info!("Starting initial scan for library '{}'", library_name);
             if let Err(e) = scanner.scan_library(library_id).await {
-                tracing::error!(library_id = %library_id, error = %e, "Initial library scan failed");
+                tracing::error!("Initial scan failed for '{}': {}", library_name, e);
                 if let Err(reset_err) = db_clone.libraries().set_scanning(library_id, false).await {
                     tracing::error!(library_id = %library_id, error = %reset_err, "Failed to reset scanning state");
                 }
@@ -3076,7 +3273,7 @@ impl MutationRoot {
         let library_id = Uuid::parse_str(&id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
 
-        tracing::info!(library_id = %id, "Consolidation requested for library");
+        tracing::debug!("Consolidation requested for library {}", id);
 
         let organizer = crate::services::OrganizerService::new(db.clone());
         
@@ -3140,7 +3337,7 @@ impl MutationRoot {
         .await
         .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        tracing::info!(library_id = %library_id, "Updated library subtitle settings");
+        tracing::debug!("Updated library subtitle settings for {}", library_id);
 
         Ok(MutationResult {
             success: true,
@@ -3180,7 +3377,7 @@ impl MutationRoot {
         .await
         .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        tracing::info!(show_id = %show_id, "Updated show subtitle settings");
+        tracing::debug!("Updated show subtitle settings for {}", show_id);
 
         Ok(MutationResult {
             success: true,
@@ -4095,7 +4292,7 @@ impl MutationRoot {
         match db.albums().delete(album_id).await {
             Ok(deleted) => {
                 if deleted {
-                    tracing::info!(album_id = %album_id, "Deleted album");
+                    tracing::info!("Deleted album {}", album_id);
                     Ok(MutationResult {
                         success: true,
                         error: None,
@@ -4540,15 +4737,9 @@ impl MutationRoot {
 
         match add_result {
             Ok(torrent_info) => {
-                // Link torrent to episode
-                if let Err(e) = db
-                    .torrents()
-                    .link_to_episode(&torrent_info.info_hash, episode.id)
-                    .await
-                {
-                    tracing::error!("Failed to link torrent to episode: {:?}", e);
-                }
-
+                // Note: File-level matching happens automatically when torrent is processed
+                // via torrent_file_matches table
+                
                 // Update episode status
                 if let Err(e) = db.episodes().mark_downloading(episode.id).await {
                     tracing::error!("Failed to update episode status: {:?}", e);
@@ -5232,23 +5423,8 @@ impl MutationRoot {
                                                         "User added torrent from authenticated download"
                                                     );
 
-                                                    // Link to library/episode/movie
-                                                    let info_hash = &info.info_hash;
-                                                    if let Some(ref library_id_str) = input.library_id {
-                                                        if let Ok(lib_id) = Uuid::parse_str(library_id_str) {
-                                                            let _ = db.torrents().link_to_library(info_hash, lib_id).await;
-                                                        }
-                                                    }
-                                                    if let Some(ref episode_id_str) = input.episode_id {
-                                                        if let Ok(ep_id) = Uuid::parse_str(episode_id_str) {
-                                                            let _ = db.torrents().link_to_episode(info_hash, ep_id).await;
-                                                        }
-                                                    }
-                                                    if let Some(ref movie_id_str) = input.movie_id {
-                                                        if let Ok(movie_id) = Uuid::parse_str(movie_id_str) {
-                                                            let _ = db.torrents().link_to_movie(info_hash, movie_id).await;
-                                                        }
-                                                    }
+                                                    // Note: File-level matching happens automatically when torrent is processed
+                                                    // via torrent_file_matches table
 
                                                     Ok(AddTorrentResult {
                                                         success: true,
@@ -5295,95 +5471,17 @@ impl MutationRoot {
                     info.name
                 );
 
-                // Link torrent to library/episode/movie if specified (use info_hash)
-                let info_hash = &info.info_hash;
+                // Note: File-level matching happens automatically when torrent is processed
+                // via torrent_file_matches table in TorrentFileMatcher
+                let _ = &info.info_hash; // Used for tracing/debugging
 
-                // Link to library
-                if let Some(ref library_id_str) = input.library_id {
-                    if let Ok(lib_id) = Uuid::parse_str(library_id_str) {
-                        let _ = db.torrents().link_to_library(info_hash, lib_id).await;
-                        tracing::debug!(torrent_id = info.id, library_id = %lib_id, "Linked torrent to library");
-                    }
-                }
-
-                // Link to episode
+                // Mark episode/movie as downloading if explicitly specified
                 if let Some(ref episode_id_str) = input.episode_id {
                     if let Ok(ep_id) = Uuid::parse_str(episode_id_str) {
-                        let _ = db.torrents().link_to_episode(info_hash, ep_id).await;
-                        tracing::debug!(torrent_id = info.id, episode_id = %ep_id, "Linked torrent to episode");
+                        let _ = db.episodes().mark_downloading(ep_id).await;
                     }
                 }
-
-                // Link to movie
-                if let Some(ref movie_id_str) = input.movie_id {
-                    if let Ok(movie_id) = Uuid::parse_str(movie_id_str) {
-                        let _ = db.torrents().link_to_movie(info_hash, movie_id).await;
-                        tracing::debug!(torrent_id = info.id, movie_id = %movie_id, "Linked torrent to movie");
-                    }
-                }
-
-                // Auto-match to episode if library provided but no specific episode/movie
-                if input.episode_id.is_none() && input.movie_id.is_none() {
-                    tracing::debug!(
-                        library_id = ?input.library_id,
-                        torrent_name = %info.name,
-                        "Attempting auto-match for torrent"
-                    );
-                    if let Some(ref library_id_str) = input.library_id {
-                        if let Ok(lib_id) = Uuid::parse_str(library_id_str) {
-                            // Try to match torrent name to an episode
-                            if let Ok(Some(library)) = db.libraries().get_by_id(lib_id).await {
-                                tracing::debug!(library_type = %library.library_type, "Found library");
-                                if library.library_type == "tv" {
-                                    // Parse the torrent name
-                                    let parsed = crate::services::filename_parser::parse_episode(&info.name);
-                                    tracing::debug!(
-                                        show_name = ?parsed.show_name,
-                                        season = ?parsed.season,
-                                        episode = ?parsed.episode,
-                                        "Parsed torrent name"
-                                    );
-                                    if let Some(ref show_name) = parsed.show_name {
-                                        if let (Some(season), Some(episode)) = (parsed.season, parsed.episode) {
-                                            // Find matching show in library
-                                            match db.tv_shows().find_by_name_in_library(lib_id, show_name).await {
-                                                Ok(Some(tv_show)) => {
-                                                    tracing::debug!(show_id = %tv_show.id, "Found matching show");
-                                                    // Find matching episode
-                                                    match db.episodes().get_by_show_season_episode(tv_show.id, season as i32, episode as i32).await {
-                                                        Ok(Some(ep)) => {
-                                                            let _ = db.torrents().link_to_episode(info_hash, ep.id).await;
-                                                            let _ = db.episodes().mark_downloading(ep.id).await;
-                                                            tracing::info!(
-                                                                torrent_name = %info.name,
-                                                                show_name = %tv_show.name,
-                                                                season = season,
-                                                                episode = episode,
-                                                                "Auto-matched torrent to episode"
-                                                            );
-                                                        }
-                                                        Ok(None) => {
-                                                            tracing::debug!(season = season, episode = episode, "Episode not found");
-                                                        }
-                                                        Err(e) => {
-                                                            tracing::warn!(error = %e, "Failed to find episode");
-                                                        }
-                                                    }
-                                                }
-                                                Ok(None) => {
-                                                    tracing::debug!(show_name = %show_name, "Show not found in library");
-                                                }
-                                                Err(e) => {
-                                                    tracing::warn!(error = %e, "Failed to find show");
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                // Note: Movie status is derived from media_files, no need to mark downloading
 
                 Ok(AddTorrentResult {
                     success: true,
@@ -5500,31 +5598,9 @@ impl MutationRoot {
             }
         };
 
-        // If library_id provided, link the torrent to that library first
-        if let Some(ref lib_id) = library_id {
-            if let Ok(library_uuid) = Uuid::parse_str(lib_id) {
-                if let Err(e) = db
-                    .torrents()
-                    .link_to_library(&torrent_info.info_hash, library_uuid)
-                    .await
-                {
-                    tracing::warn!(error = %e, "Failed to link torrent to library");
-                }
-            }
-        }
-
-        // If album_id provided, link the torrent to that album
-        if let Some(ref album) = album_id {
-            if let Ok(album_uuid) = Uuid::parse_str(album) {
-                if let Err(e) = db
-                    .torrents()
-                    .link_to_album(&torrent_info.info_hash, album_uuid)
-                    .await
-                {
-                    tracing::warn!(error = %e, "Failed to link torrent to album");
-                }
-            }
-        }
+        // Note: library_id and album_id hints are no longer used for torrent-level linking
+        // File-level matching will happen automatically in process_torrent
+        let _ = (&library_id, &album_id); // Suppress unused warnings
 
         // Use the unified TorrentProcessor with force=true to reprocess
         // Include metadata service for auto-adding movies from TMDB
@@ -5615,6 +5691,237 @@ impl MutationRoot {
         Ok(SettingsResult {
             success: true,
             error: None,
+        })
+    }
+
+    // ------------------------------------------------------------------------
+    // LLM Parser Settings
+    // ------------------------------------------------------------------------
+
+    /// Update LLM parser settings
+    async fn update_llm_parser_settings(
+        &self,
+        ctx: &Context<'_>,
+        input: UpdateLlmParserSettingsInput,
+    ) -> Result<SettingsResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let settings = db.settings();
+
+        // Update each setting if provided
+        if let Some(v) = input.enabled {
+            settings.set_with_category("llm.enabled", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        if let Some(v) = input.ollama_url {
+            settings.set_with_category("llm.ollama_url", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        if let Some(v) = input.ollama_model {
+            settings.set_with_category("llm.ollama_model", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        if let Some(v) = input.timeout_seconds {
+            settings.set_with_category("llm.timeout_seconds", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        if let Some(v) = input.temperature {
+            settings.set_with_category("llm.temperature", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        if let Some(v) = input.max_tokens {
+            settings.set_with_category("llm.max_tokens", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        if let Some(v) = input.prompt_template {
+            settings.set_with_category("llm.prompt_template", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        if let Some(v) = input.confidence_threshold {
+            settings.set_with_category("llm.confidence_threshold", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        // Library-type-specific models
+        if let Some(v) = input.model_movies {
+            settings.set_with_category("llm.model.movies", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        if let Some(v) = input.model_tv {
+            settings.set_with_category("llm.model.tv", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        if let Some(v) = input.model_music {
+            settings.set_with_category("llm.model.music", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        if let Some(v) = input.model_audiobooks {
+            settings.set_with_category("llm.model.audiobooks", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        // Library-type-specific prompts
+        if let Some(v) = input.prompt_movies {
+            settings.set_with_category("llm.prompt.movies", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        if let Some(v) = input.prompt_tv {
+            settings.set_with_category("llm.prompt.tv", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        if let Some(v) = input.prompt_music {
+            settings.set_with_category("llm.prompt.music", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+        if let Some(v) = input.prompt_audiobooks {
+            settings.set_with_category("llm.prompt.audiobooks", v, "llm", None).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+
+        Ok(SettingsResult {
+            success: true,
+            error: None,
+        })
+    }
+
+    /// Test connection to Ollama server and list available models
+    async fn test_ollama_connection(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(desc = "Ollama server URL (defaults to configured URL)")] url: Option<String>,
+    ) -> Result<OllamaConnectionResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let settings = db.settings();
+
+        // Get URL from input or settings
+        let ollama_url = match url {
+            Some(u) => u,
+            None => settings.get_or_default("llm.ollama_url", "http://localhost:11434".to_string()).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?,
+        };
+
+        let config = crate::services::OllamaConfig {
+            url: ollama_url,
+            ..Default::default()
+        };
+        let ollama = crate::services::OllamaService::new(config);
+
+        match ollama.test_connection().await {
+            Ok(models) => Ok(OllamaConnectionResult {
+                success: true,
+                available_models: models,
+                error: None,
+            }),
+            Err(e) => Ok(OllamaConnectionResult {
+                success: false,
+                available_models: vec![],
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    /// Test filename parsing with both regex and LLM parsers
+    async fn test_filename_parser(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(desc = "Filename to parse")] filename: String,
+    ) -> Result<TestFilenameParserResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let settings = db.settings();
+
+        // Run regex parser with timing
+        let regex_start = std::time::Instant::now();
+        let parsed_ep = crate::services::filename_parser::parse_episode(&filename);
+        let parsed_quality = crate::services::filename_parser::parse_quality(&filename);
+        let regex_time_ms = regex_start.elapsed().as_secs_f64() * 1000.0;
+
+        // Determine media type based on whether season/episode info was found
+        let media_type = if parsed_ep.season.is_some() || parsed_ep.episode.is_some() || parsed_ep.date.is_some() {
+            Some("tv".to_string())
+        } else {
+            Some("movie".to_string())
+        };
+
+        let regex_result = FilenameParseResult {
+            media_type,
+            title: parsed_ep.show_name.clone(),
+            year: parsed_ep.year.map(|y| y as i32),
+            season: parsed_ep.season.map(|s| s as i32),
+            episode: parsed_ep.episode.map(|e| e as i32),
+            episode_end: None, // Not supported by current parser
+            resolution: parsed_quality.resolution.or(parsed_ep.resolution),
+            source: parsed_quality.source.or(parsed_ep.source),
+            video_codec: parsed_quality.codec.or(parsed_ep.codec),
+            audio: parsed_quality.audio.or(parsed_ep.audio),
+            hdr: parsed_quality.hdr.or(parsed_ep.hdr),
+            release_group: parsed_ep.release_group,
+            edition: None, // Not supported by current parser
+            complete_series: false, // Not supported by current parser
+            confidence: 0.8, // Default confidence for regex parser
+        };
+
+        // Check if LLM parsing is enabled
+        let llm_enabled: bool = settings.get_or_default("llm.enabled", false).await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let (llm_result, llm_time_ms, llm_error) = if llm_enabled {
+            // Build LLM config from settings
+            let config = crate::services::OllamaConfig {
+                url: settings.get_or_default("llm.ollama_url", "http://localhost:11434".to_string()).await
+                    .map_err(|e| async_graphql::Error::new(e.to_string()))?,
+                model: settings.get_or_default("llm.ollama_model", "qwen2.5-coder:7b".to_string()).await
+                    .map_err(|e| async_graphql::Error::new(e.to_string()))?,
+                timeout_seconds: settings.get_or_default::<i32>("llm.timeout_seconds", 30).await
+                    .map_err(|e| async_graphql::Error::new(e.to_string()))? as u64,
+                temperature: settings.get_or_default::<f64>("llm.temperature", 0.1).await
+                    .map_err(|e| async_graphql::Error::new(e.to_string()))? as f32,
+                max_tokens: settings.get_or_default::<i32>("llm.max_tokens", 256).await
+                    .map_err(|e| async_graphql::Error::new(e.to_string()))? as u32,
+                prompt_template: settings.get_or_default("llm.prompt_template", 
+                    "Parse this media filename: {filename}".to_string()).await
+                    .map_err(|e| async_graphql::Error::new(e.to_string()))?,
+            };
+
+            let ollama = crate::services::OllamaService::new(config);
+            let llm_start = std::time::Instant::now();
+            
+            match ollama.parse_filename(&filename).await {
+                Ok(parsed) => {
+                    let time_ms = llm_start.elapsed().as_secs_f64() * 1000.0;
+                    let result = FilenameParseResult {
+                        media_type: parsed.media_type,
+                        title: parsed.title,
+                        year: parsed.year,
+                        season: parsed.season,
+                        episode: parsed.episode,
+                        episode_end: parsed.episode_end,
+                        resolution: parsed.resolution,
+                        source: parsed.source,
+                        video_codec: parsed.video_codec,
+                        audio: parsed.audio,
+                        hdr: parsed.hdr,
+                        release_group: parsed.release_group,
+                        edition: parsed.edition,
+                        complete_series: parsed.complete_series,
+                        confidence: parsed.confidence,
+                    };
+                    (Some(result), Some(time_ms), None)
+                }
+                Err(e) => {
+                    let time_ms = llm_start.elapsed().as_secs_f64() * 1000.0;
+                    (None, Some(time_ms), Some(e.to_string()))
+                }
+            }
+        } else {
+            (None, None, Some("LLM parsing is not enabled".to_string()))
+        };
+
+        Ok(TestFilenameParserResult {
+            regex_result,
+            regex_time_ms,
+            llm_result,
+            llm_time_ms,
+            llm_error,
         })
     }
 

@@ -180,8 +180,10 @@ export function LibraryAuthorsTab({
   const bookCountByAuthor = useMemo(() => {
     const counts = new Map<string, number>()
     audiobooks.forEach((audiobook) => {
-      const current = counts.get(audiobook.authorId) || 0
-      counts.set(audiobook.authorId, current + 1)
+      if (audiobook.authorId) {
+        const current = counts.get(audiobook.authorId) || 0
+        counts.set(audiobook.authorId, current + 1)
+      }
     })
     return counts
   }, [audiobooks])

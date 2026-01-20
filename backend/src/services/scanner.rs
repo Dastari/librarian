@@ -247,16 +247,16 @@ impl ScannerService {
         self.broadcast_library_changed(library_id).await;
 
         info!(
-            library_id = %library_id,
-            path = %library.path,
-            library_type = %library.library_type,
-            auto_add_discovered = library.auto_add_discovered,
-            "Starting library scan"
+            "Beginning scan of library '{}' ({})",
+            library.name, library.library_type
         );
 
         let library_path = Path::new(&library.path);
         if !library_path.exists() {
-            warn!(path = %library.path, "Library path does not exist");
+            warn!(
+                "Library path does not exist for '{}': {}",
+                library.name, library.path
+            );
             // Set scanning back to false before returning
             let _ = self.db.libraries().set_scanning(library_id, false).await;
             self.broadcast_library_changed(library_id).await;
@@ -277,21 +277,19 @@ impl ScannerService {
         // For TV libraries, run consolidation first to merge duplicate folders
         // and delete duplicate files before we discover files
         if library.library_type == "tv" && library.organize_files {
-            info!(library_id = %library_id, "Running pre-scan consolidation");
+            debug!("Running pre-scan consolidation for '{}'", library.name);
             let organizer = OrganizerService::new(self.db.clone());
             match organizer.consolidate_library(library_id).await {
                 Ok(result) => {
                     if result.files_moved > 0 || result.folders_removed > 0 {
                         info!(
-                            library_id = %library_id,
-                            files_moved = result.files_moved,
-                            folders_removed = result.folders_removed,
-                            "Pre-scan consolidation complete"
+                            "Pre-scan consolidation for '{}': {} files moved, {} folders removed",
+                            library.name, result.files_moved, result.folders_removed
                         );
                     }
                 }
                 Err(e) => {
-                    warn!(library_id = %library_id, error = %e, "Pre-scan consolidation failed");
+                    warn!("Pre-scan consolidation failed for '{}': {}", library.name, e);
                 }
             }
         }
@@ -343,7 +341,7 @@ impl ScannerService {
         }
 
         let total_files = video_files.len() as i32;
-        info!(total = total_files, "Found video files to scan");
+        info!("Found {} media files to scan in '{}'", total_files, library.name);
 
         // Initialize progress
         let mut progress = ScanProgress {
@@ -424,9 +422,9 @@ impl ScannerService {
         let is_music_library = library_type == "music";
         let is_audiobook_library = library_type == "audiobook";
         if library.organize_files && (is_tv_library || is_movie_library || is_music_library || is_audiobook_library) {
-            info!(library_id = %library_id, "Running automatic file organization");
+            info!("Running automatic file organization for '{}'", library.name);
             if let Err(e) = self.organize_library_files(library_id).await {
-                error!(library_id = %library_id, error = %e, "Failed to organize library files");
+                error!("Failed to organize '{}': {}", library.name, e);
             }
         }
 
@@ -449,10 +447,28 @@ impl ScannerService {
             "Library scan completed"
         );
 
-        // Trigger auto-hunt for this library if enabled and we have the required services
-        if library.auto_hunt {
+        // Trigger auto-hunt for this library if enabled (library-level or show-level overrides)
+        // Check if library has auto_hunt enabled OR any shows with auto_hunt_override = true
+        let should_auto_hunt = if library.auto_hunt {
+            true
+        } else if library.library_type.to_lowercase() == "tv" {
+            // Check for any TV shows with auto_hunt_override = true
+            let has_override: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM tv_shows WHERE library_id = $1 AND auto_hunt_override = true AND monitored = true)"
+            )
+            .bind(library_id)
+            .fetch_one(self.db.pool())
+            .await
+            .unwrap_or(false);
+            has_override
+        } else {
+            false
+        };
+
+        if should_auto_hunt {
             if let (Some(torrent_svc), Some(indexer_mgr)) = (&self.torrent_service, &self.indexer_manager) {
-                info!(library_id = %library_id, "Triggering auto-hunt after scan");
+                info!("Triggering auto-hunt for '{}'{}", library.name, 
+                    if !library.auto_hunt { " (show-level override)" } else { "" });
                 
                 let pool = self.db.pool().clone();
                 let torrent_svc = torrent_svc.clone();
@@ -578,7 +594,7 @@ impl ScannerService {
                     let show_name = show_files[0].parsed.show_name.clone().unwrap_or_default();
                     let year = show_files[0].parsed.year;
 
-                    info!(show_name = %show_name, file_count = show_files.len(), "Processing show group");
+                    info!("Processing {} files for show '{}'", show_files.len(), show_name);
 
                     // Try to find or create the TV show
                     let tv_show_id = match Self::find_or_create_tv_show_static(
@@ -792,7 +808,10 @@ impl ScannerService {
                         .clone()
                         .unwrap_or_default();
 
-                    info!(title = %title, year = ?year, file_count = movie_files.len(), "Processing movie group");
+                    info!("Processing {} files for movie '{}'{}",
+                        movie_files.len(), title,
+                        year.map(|y| format!(" ({})", y)).unwrap_or_default()
+                    );
 
                     // Try to find or create the movie
                     let movie_id = match Self::find_or_create_movie_static(
@@ -947,7 +966,7 @@ impl ScannerService {
                 .get_by_tmdb_id(library_id, best_match.provider_id as i32)
                 .await?
             {
-                info!(movie_title = %existing.title, "Movie already exists in library");
+                debug!("Movie '{}' already exists in library", existing.title);
                 return Ok(Some((existing.id, false)));
             }
 
@@ -974,7 +993,7 @@ impl ScannerService {
             .get_by_tmdb_id(library_id, best_match.provider_id as i32)
             .await?
         {
-            info!(movie_title = %existing.title, "Movie already exists in library");
+            debug!("Movie '{}' already exists in library", existing.title);
             return Ok(Some((existing.id, false)));
         }
 
@@ -1013,7 +1032,10 @@ impl ScannerService {
                 media_files_repo
                     .link_to_movie(existing_file.id, movie_id)
                     .await?;
-                info!(path = %file.path, movie_id = %movie_id, "Linked existing file to movie");
+                debug!("Linked file to movie: {}", 
+                    std::path::Path::new(&file.path).file_name()
+                        .and_then(|n| n.to_str()).unwrap_or(&file.path)
+                );
                 files_linked.fetch_add(1, Ordering::SeqCst);
             } else {
                 debug!(path = %file.path, "File already linked to movie, skipping");
@@ -1623,7 +1645,7 @@ impl ScannerService {
                 .get_by_musicbrainz_id(library_id, best_match.provider_id)
                 .await?
             {
-                info!(album_name = %existing.name, "Album already exists in library");
+                debug!("Album '{}' already exists in library", existing.name);
                 return Ok(Some((existing.id, false)));
             }
 
@@ -1648,7 +1670,7 @@ impl ScannerService {
             .get_by_musicbrainz_id(library_id, best_match.provider_id)
             .await?
         {
-            info!(album_name = %existing.name, "Album already exists in library");
+            debug!("Album '{}' already exists in library", existing.name);
             return Ok(Some((existing.id, false)));
         }
 
@@ -1702,7 +1724,7 @@ impl ScannerService {
                 .get_by_tvmaze_id(library_id, best_match.provider_id as i32)
                 .await?
         {
-            info!(show_name = %existing.name, "Show already exists in library");
+            debug!("Show '{}' already exists in library", existing.name);
             return Ok(Some((existing.id, false)));
         }
 
@@ -1746,7 +1768,7 @@ impl ScannerService {
                     {
                         // Link the existing file to the episode
                         media_files_repo.link_to_episode(existing_file.id, ep.id).await?;
-                        info!(path = %file.path, season = season, episode = episode, "Linked existing file to episode");
+                        debug!("Linked file to S{:02}E{:02}", season, episode);
                         episodes_linked.fetch_add(1, Ordering::SeqCst);
 
                         // Mark episode as downloaded

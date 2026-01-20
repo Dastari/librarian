@@ -2,7 +2,7 @@
 //!
 //! These types mirror our domain models but are decorated with async-graphql attributes.
 
-use async_graphql::{Enum, InputObject, Object, SimpleObject};
+use async_graphql::{Context, Enum, InputObject, Object, SimpleObject};
 use serde::{Deserialize, Serialize};
 
 use crate::services::{
@@ -185,6 +185,29 @@ impl Torrent {
     async fn added_at(&self) -> Option<&str> {
         self.added_at.as_deref()
     }
+
+    /// File-level matches for this torrent (lazy loaded from database)
+    async fn matches(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<TorrentFileMatch>> {
+        let db = ctx.data_unchecked::<crate::db::Database>();
+        
+        // Look up torrent record by info_hash to get the UUID
+        let torrent_record = db.torrents().get_by_info_hash(&self.info_hash).await?;
+        
+        let Some(record) = torrent_record else {
+            // Torrent not in database yet (still being added)
+            return Ok(vec![]);
+        };
+        
+        let matches = db.torrent_file_matches().list_by_torrent(record.id).await?;
+        Ok(matches.into_iter().map(TorrentFileMatch::from_record).collect())
+    }
+
+    /// Database record for this torrent (if persisted)
+    async fn db_record(&self, ctx: &Context<'_>) -> async_graphql::Result<Option<TorrentRecord>> {
+        let db = ctx.data_unchecked::<crate::db::Database>();
+        let record = db.torrents().get_by_info_hash(&self.info_hash).await?;
+        Ok(record.map(TorrentRecord::from))
+    }
 }
 
 impl From<ServiceTorrentInfo> for Torrent {
@@ -214,6 +237,75 @@ impl From<ServiceTorrentInfo> for Torrent {
                 })
                 .collect(),
             added_at: None, // Will be populated from database
+        }
+    }
+}
+
+/// Database record for a torrent (persistent state)
+/// Note: Media linking is now preferably done via torrent_file_matches table
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct TorrentRecord {
+    pub id: String,
+    pub user_id: String,
+    pub info_hash: String,
+    pub magnet_uri: Option<String>,
+    pub name: String,
+    pub state: String,
+    pub progress: f64,
+    pub total_bytes: i64,
+    pub downloaded_bytes: i64,
+    pub uploaded_bytes: i64,
+    pub save_path: String,
+    pub download_path: Option<String>,
+    pub source_url: Option<String>,
+    // Legacy fields - prefer using torrent_file_matches for new code
+    pub library_id: Option<String>,
+    pub episode_id: Option<String>,
+    pub movie_id: Option<String>,
+    pub track_id: Option<String>,
+    pub album_id: Option<String>,
+    pub audiobook_id: Option<String>,
+    pub source_feed_id: Option<String>,
+    pub source_indexer_id: Option<String>,
+    pub post_process_status: Option<String>,
+    pub post_process_error: Option<String>,
+    pub processed_at: Option<String>,
+    pub added_at: String,
+    pub completed_at: Option<String>,
+    /// Array of file indices to exclude from download (0-based)
+    pub excluded_files: Vec<i32>,
+}
+
+impl From<crate::db::TorrentRecord> for TorrentRecord {
+    fn from(r: crate::db::TorrentRecord) -> Self {
+        Self {
+            id: r.id.to_string(),
+            user_id: r.user_id.to_string(),
+            info_hash: r.info_hash,
+            magnet_uri: r.magnet_uri,
+            name: r.name,
+            state: r.state,
+            progress: r.progress as f64,
+            total_bytes: r.total_bytes,
+            downloaded_bytes: r.downloaded_bytes,
+            uploaded_bytes: r.uploaded_bytes,
+            save_path: r.save_path,
+            download_path: r.download_path,
+            source_url: r.source_url,
+            library_id: r.library_id.map(|id| id.to_string()),
+            episode_id: r.episode_id.map(|id| id.to_string()),
+            movie_id: r.movie_id.map(|id| id.to_string()),
+            track_id: r.track_id.map(|id| id.to_string()),
+            album_id: r.album_id.map(|id| id.to_string()),
+            audiobook_id: r.audiobook_id.map(|id| id.to_string()),
+            source_feed_id: r.source_feed_id.map(|id| id.to_string()),
+            source_indexer_id: r.source_indexer_id.map(|id| id.to_string()),
+            post_process_status: r.post_process_status,
+            post_process_error: r.post_process_error,
+            processed_at: r.processed_at.map(|t| t.to_string()),
+            added_at: r.added_at.to_string(),
+            completed_at: r.completed_at.map(|t| t.to_string()),
+            excluded_files: r.excluded_files,
         }
     }
 }
@@ -1201,6 +1293,145 @@ pub struct SettingsResult {
     pub error: Option<String>,
 }
 
+// ============================================================================
+// LLM Parser Settings
+// ============================================================================
+
+/// LLM parser configuration for Ollama
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct LlmParserSettings {
+    /// Whether LLM parsing is enabled as fallback
+    pub enabled: bool,
+    /// Ollama API server URL
+    pub ollama_url: String,
+    /// Default model to use for parsing
+    pub ollama_model: String,
+    /// Timeout in seconds for API calls
+    pub timeout_seconds: i32,
+    /// Temperature for generation (0.0-1.0)
+    pub temperature: f64,
+    /// Maximum tokens to generate
+    pub max_tokens: i32,
+    /// Default prompt template ({filename} is replaced with the actual filename)
+    pub prompt_template: String,
+    /// Minimum confidence from regex parser before falling back to LLM
+    pub confidence_threshold: f64,
+    /// Model for movie libraries (null = use default)
+    pub model_movies: Option<String>,
+    /// Model for TV show libraries (null = use default)
+    pub model_tv: Option<String>,
+    /// Model for music libraries (null = use default)
+    pub model_music: Option<String>,
+    /// Model for audiobook libraries (null = use default)
+    pub model_audiobooks: Option<String>,
+    /// Prompt for movie libraries (null = use default)
+    pub prompt_movies: Option<String>,
+    /// Prompt for TV show libraries (null = use default)
+    pub prompt_tv: Option<String>,
+    /// Prompt for music libraries (null = use default)
+    pub prompt_music: Option<String>,
+    /// Prompt for audiobook libraries (null = use default)
+    pub prompt_audiobooks: Option<String>,
+}
+
+/// Input for updating LLM parser settings
+#[derive(Debug, InputObject)]
+pub struct UpdateLlmParserSettingsInput {
+    /// Whether LLM parsing is enabled as fallback
+    pub enabled: Option<bool>,
+    /// Ollama API server URL
+    pub ollama_url: Option<String>,
+    /// Default model to use for parsing
+    pub ollama_model: Option<String>,
+    /// Timeout in seconds for API calls
+    pub timeout_seconds: Option<i32>,
+    /// Temperature for generation (0.0-1.0)
+    pub temperature: Option<f64>,
+    /// Maximum tokens to generate
+    pub max_tokens: Option<i32>,
+    /// Default prompt template ({filename} is replaced with the actual filename)
+    pub prompt_template: Option<String>,
+    /// Minimum confidence from regex parser before falling back to LLM
+    pub confidence_threshold: Option<f64>,
+    /// Model for movie libraries (null = use default)
+    pub model_movies: Option<String>,
+    /// Model for TV show libraries (null = use default)
+    pub model_tv: Option<String>,
+    /// Model for music libraries (null = use default)
+    pub model_music: Option<String>,
+    /// Model for audiobook libraries (null = use default)
+    pub model_audiobooks: Option<String>,
+    /// Prompt for movie libraries (null = use default)
+    pub prompt_movies: Option<String>,
+    /// Prompt for TV show libraries (null = use default)
+    pub prompt_tv: Option<String>,
+    /// Prompt for music libraries (null = use default)
+    pub prompt_music: Option<String>,
+    /// Prompt for audiobook libraries (null = use default)
+    pub prompt_audiobooks: Option<String>,
+}
+
+/// Result of testing Ollama connection
+#[derive(Debug, SimpleObject)]
+pub struct OllamaConnectionResult {
+    /// Whether the connection succeeded
+    pub success: bool,
+    /// Available models if connection succeeded
+    pub available_models: Vec<String>,
+    /// Error message if connection failed
+    pub error: Option<String>,
+}
+
+/// Result of parsing a filename
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct FilenameParseResult {
+    /// Media type (movie, tv, music, audiobook)
+    pub media_type: Option<String>,
+    /// Cleaned title
+    pub title: Option<String>,
+    /// Release year
+    pub year: Option<i32>,
+    /// Season number (for TV)
+    pub season: Option<i32>,
+    /// Episode number (for TV)
+    pub episode: Option<i32>,
+    /// End episode for ranges (E01-E05)
+    pub episode_end: Option<i32>,
+    /// Video resolution (2160p, 1080p, etc.)
+    pub resolution: Option<String>,
+    /// Source (BluRay, WEB-DL, etc.)
+    pub source: Option<String>,
+    /// Video codec (x265, x264, etc.)
+    pub video_codec: Option<String>,
+    /// Audio format
+    pub audio: Option<String>,
+    /// HDR type
+    pub hdr: Option<String>,
+    /// Release group
+    pub release_group: Option<String>,
+    /// Edition (Remastered, Extended, etc.)
+    pub edition: Option<String>,
+    /// Whether this is a complete series
+    pub complete_series: bool,
+    /// Parser confidence (0.0-1.0)
+    pub confidence: f64,
+}
+
+/// Combined result of testing both parsers
+#[derive(Debug, SimpleObject)]
+pub struct TestFilenameParserResult {
+    /// Result from regex parser
+    pub regex_result: FilenameParseResult,
+    /// Time taken by regex parser in milliseconds
+    pub regex_time_ms: f64,
+    /// Result from LLM parser (if enabled and available)
+    pub llm_result: Option<FilenameParseResult>,
+    /// Time taken by LLM parser in milliseconds
+    pub llm_time_ms: Option<f64>,
+    /// Error from LLM parser if it failed
+    pub llm_error: Option<String>,
+}
+
 /// Result of refreshing the schedule cache
 #[derive(Debug, SimpleObject)]
 pub struct RefreshScheduleResult {
@@ -1527,6 +1758,8 @@ pub struct Movie {
     pub has_file: bool,
     pub size_bytes: i64,
     pub path: Option<String>,
+    /// Download status (missing, wanted, downloading, downloaded, suboptimal, ignored)
+    pub download_status: DownloadStatus,
     /// Collection info
     pub collection_id: Option<i32>,
     pub collection_name: Option<String>,
@@ -1615,6 +1848,8 @@ pub struct MovieWhereInput {
     pub has_file: Option<crate::graphql::filters::BoolFilter>,
     /// Filter by status
     pub status: Option<crate::graphql::filters::StringFilter>,
+    /// Filter by download status (missing, wanted, downloading, downloaded, suboptimal, ignored)
+    pub download_status: Option<crate::graphql::filters::StringFilter>,
 }
 
 /// Sortable fields for movies
@@ -1935,7 +2170,7 @@ impl From<crate::db::AudiobookAuthorRecord> for AudiobookAuthor {
 #[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
 pub struct Audiobook {
     pub id: String,
-    pub author_id: String,
+    pub author_id: Option<String>,
     pub library_id: String,
     pub title: String,
     pub sort_title: Option<String>,
@@ -1958,7 +2193,7 @@ impl From<crate::db::AudiobookRecord> for Audiobook {
     fn from(r: crate::db::AudiobookRecord) -> Self {
         Self {
             id: r.id.to_string(),
-            author_id: r.author_id.to_string(),
+            author_id: r.author_id.map(|id| id.to_string()),
             library_id: r.library_id.to_string(),
             title: r.title,
             sort_title: r.sort_title,
@@ -2074,6 +2309,71 @@ pub struct AudiobookAuthorOrderByInput {
 
 // Define the AudiobookAuthorConnection and AudiobookAuthorEdge types
 crate::define_connection!(AudiobookAuthorConnection, AudiobookAuthorEdge, AudiobookAuthor);
+
+// ============================================================================
+// Audiobook Chapter Types
+// ============================================================================
+
+/// An audiobook chapter
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct AudiobookChapter {
+    pub id: String,
+    pub audiobook_id: String,
+    pub chapter_number: i32,
+    pub title: Option<String>,
+    pub start_secs: i32,
+    pub end_secs: i32,
+    pub duration_secs: Option<i32>,
+    pub media_file_id: Option<String>,
+    pub status: String,
+}
+
+impl From<crate::db::AudiobookChapterRecord> for AudiobookChapter {
+    fn from(r: crate::db::AudiobookChapterRecord) -> Self {
+        Self {
+            id: r.id.to_string(),
+            audiobook_id: r.audiobook_id.to_string(),
+            chapter_number: r.chapter_number,
+            title: r.title,
+            start_secs: r.start_secs,
+            end_secs: r.end_secs,
+            duration_secs: r.duration_secs,
+            media_file_id: r.media_file_id.map(|id| id.to_string()),
+            status: r.status,
+        }
+    }
+}
+
+/// Filter input for audiobook chapters query
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct AudiobookChapterWhereInput {
+    /// Filter by status
+    pub status: Option<crate::graphql::filters::StringFilter>,
+}
+
+/// Sortable fields for audiobook chapters
+#[derive(async_graphql::Enum, Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum AudiobookChapterSortField {
+    /// Sort by chapter number
+    #[default]
+    ChapterNumber,
+    /// Sort by title
+    Title,
+    /// Sort by date added
+    CreatedAt,
+}
+
+/// Order by input for audiobook chapters
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct AudiobookChapterOrderByInput {
+    /// Field to sort by
+    pub field: Option<AudiobookChapterSortField>,
+    /// Sort direction
+    pub direction: Option<crate::graphql::filters::OrderDirection>,
+}
+
+// Define the AudiobookChapterConnection and AudiobookChapterEdge types
+crate::define_connection!(AudiobookChapterConnection, AudiobookChapterEdge, AudiobookChapter);
 
 // ============================================================================
 // Episode Types
@@ -3089,6 +3389,8 @@ pub struct MediaFile {
     pub organize_status: Option<String>,
     /// Error or conflict details when organization fails
     pub organize_error: Option<String>,
+    /// Quality status: unknown, optimal, suboptimal, exceeds
+    pub quality_status: QualityStatus,
     /// When the file was added
     pub added_at: String,
 }
@@ -3117,6 +3419,7 @@ impl MediaFile {
             organized: record.organized,
             organize_status: record.organize_status,
             organize_error: record.organize_error,
+            quality_status: record.quality_status.as_deref().map(QualityStatus::from).unwrap_or(QualityStatus::Unknown),
             added_at: record.added_at.to_rfc3339(),
         }
     }
@@ -3944,4 +4247,142 @@ pub struct AutoHuntResult {
     pub skipped: i32,
     /// Number of items that failed to download
     pub failed: i32,
+}
+
+// ============================================================================
+// Torrent File Match Types
+// ============================================================================
+
+/// A match between a file in a torrent and a library item
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct TorrentFileMatch {
+    /// Match ID
+    pub id: String,
+    /// Torrent ID
+    pub torrent_id: String,
+    /// Index of file within the torrent
+    pub file_index: i32,
+    /// Path of file within the torrent
+    pub file_path: String,
+    /// Size of file in bytes
+    pub file_size: i64,
+    /// Episode ID if matched to an episode
+    pub episode_id: Option<String>,
+    /// Movie ID if matched to a movie
+    pub movie_id: Option<String>,
+    /// Track ID if matched to a track
+    pub track_id: Option<String>,
+    /// Chapter ID if matched to an audiobook chapter
+    pub chapter_id: Option<String>,
+    /// How the match was determined (auto, manual, forced)
+    pub match_type: String,
+    /// Confidence score of the match (0.0 - 1.0)
+    pub match_confidence: Option<f64>,
+    /// Parsed resolution from filename
+    pub parsed_resolution: Option<String>,
+    /// Parsed codec from filename
+    pub parsed_codec: Option<String>,
+    /// Parsed source from filename
+    pub parsed_source: Option<String>,
+    /// Parsed audio info from filename
+    pub parsed_audio: Option<String>,
+    /// Whether this file should be skipped during download
+    pub skip_download: bool,
+    /// Whether this file has been processed
+    pub processed: bool,
+    /// When the file was processed
+    pub processed_at: Option<String>,
+    /// Resulting media file ID after organization
+    pub media_file_id: Option<String>,
+    /// Error message if processing failed
+    pub error_message: Option<String>,
+    /// When the match was created
+    pub created_at: String,
+}
+
+impl TorrentFileMatch {
+    pub fn from_record(record: crate::db::TorrentFileMatchRecord) -> Self {
+        Self {
+            id: record.id.to_string(),
+            torrent_id: record.torrent_id.to_string(),
+            file_index: record.file_index,
+            file_path: record.file_path,
+            file_size: record.file_size,
+            episode_id: record.episode_id.map(|id| id.to_string()),
+            movie_id: record.movie_id.map(|id| id.to_string()),
+            track_id: record.track_id.map(|id| id.to_string()),
+            chapter_id: record.chapter_id.map(|id| id.to_string()),
+            match_type: record.match_type,
+            match_confidence: record.match_confidence.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            parsed_resolution: record.parsed_resolution,
+            parsed_codec: record.parsed_codec,
+            parsed_source: record.parsed_source,
+            parsed_audio: record.parsed_audio,
+            skip_download: record.skip_download,
+            processed: record.processed,
+            processed_at: record.processed_at.map(|d| d.to_string()),
+            media_file_id: record.media_file_id.map(|id| id.to_string()),
+            error_message: record.error_message,
+            created_at: record.created_at.to_string(),
+        }
+    }
+}
+
+/// Quality status of a media file
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Enum, Serialize, Deserialize)]
+pub enum QualityStatus {
+    /// Quality has not been verified
+    Unknown,
+    /// Quality meets the target settings
+    Optimal,
+    /// Quality is below the target settings
+    Suboptimal,
+    /// Quality exceeds the target settings
+    Exceeds,
+}
+
+impl From<&str> for QualityStatus {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "optimal" => Self::Optimal,
+            "suboptimal" => Self::Suboptimal,
+            "exceeds" => Self::Exceeds,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// Download status of a media item
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Enum, Serialize, Deserialize, Default)]
+pub enum DownloadStatus {
+    /// No file exists
+    #[default]
+    Missing,
+    /// Actively looking for this item
+    Wanted,
+    /// Currently downloading
+    Downloading,
+    /// File exists in library
+    Downloaded,
+    /// Has file but quality below target
+    Suboptimal,
+    /// User explicitly skipped
+    Ignored,
+    /// Some files exist (for multi-file items like albums)
+    Partial,
+}
+
+impl From<&str> for DownloadStatus {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "missing" => Self::Missing,
+            "wanted" => Self::Wanted,
+            "downloading" => Self::Downloading,
+            "downloaded" => Self::Downloaded,
+            "suboptimal" => Self::Suboptimal,
+            "ignored" => Self::Ignored,
+            "partial" => Self::Partial,
+            _ => Self::Missing,
+        }
+    }
 }

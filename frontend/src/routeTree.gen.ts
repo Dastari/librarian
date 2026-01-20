@@ -19,6 +19,7 @@ import { Route as DownloadsIndexRouteImport } from './routes/downloads/index'
 import { Route as ShowsShowIdRouteImport } from './routes/shows/$showId'
 import { Route as SettingsTorrentRouteImport } from './routes/settings/torrent'
 import { Route as SettingsRssRouteImport } from './routes/settings/rss'
+import { Route as SettingsParserRouteImport } from './routes/settings/parser'
 import { Route as SettingsOrganizationRouteImport } from './routes/settings/organization'
 import { Route as SettingsMetadataRouteImport } from './routes/settings/metadata'
 import { Route as SettingsLogsRouteImport } from './routes/settings/logs'
@@ -89,6 +90,11 @@ const SettingsTorrentRoute = SettingsTorrentRouteImport.update({
 const SettingsRssRoute = SettingsRssRouteImport.update({
   id: '/rss',
   path: '/rss',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsParserRoute = SettingsParserRouteImport.update({
+  id: '/parser',
+  path: '/parser',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsOrganizationRoute = SettingsOrganizationRouteImport.update({
@@ -220,6 +226,7 @@ export interface FileRoutesByFullPath {
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
   '/settings/organization': typeof SettingsOrganizationRoute
+  '/settings/parser': typeof SettingsParserRoute
   '/settings/rss': typeof SettingsRssRoute
   '/settings/torrent': typeof SettingsTorrentRoute
   '/shows/$showId': typeof ShowsShowIdRoute
@@ -251,6 +258,7 @@ export interface FileRoutesByTo {
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
   '/settings/organization': typeof SettingsOrganizationRoute
+  '/settings/parser': typeof SettingsParserRoute
   '/settings/rss': typeof SettingsRssRoute
   '/settings/torrent': typeof SettingsTorrentRoute
   '/shows/$showId': typeof ShowsShowIdRoute
@@ -285,6 +293,7 @@ export interface FileRoutesById {
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
   '/settings/organization': typeof SettingsOrganizationRoute
+  '/settings/parser': typeof SettingsParserRoute
   '/settings/rss': typeof SettingsRssRoute
   '/settings/torrent': typeof SettingsTorrentRoute
   '/shows/$showId': typeof ShowsShowIdRoute
@@ -320,6 +329,7 @@ export interface FileRouteTypes {
     | '/settings/logs'
     | '/settings/metadata'
     | '/settings/organization'
+    | '/settings/parser'
     | '/settings/rss'
     | '/settings/torrent'
     | '/shows/$showId'
@@ -351,6 +361,7 @@ export interface FileRouteTypes {
     | '/settings/logs'
     | '/settings/metadata'
     | '/settings/organization'
+    | '/settings/parser'
     | '/settings/rss'
     | '/settings/torrent'
     | '/shows/$showId'
@@ -384,6 +395,7 @@ export interface FileRouteTypes {
     | '/settings/logs'
     | '/settings/metadata'
     | '/settings/organization'
+    | '/settings/parser'
     | '/settings/rss'
     | '/settings/torrent'
     | '/shows/$showId'
@@ -488,6 +500,13 @@ declare module '@tanstack/react-router' {
       path: '/rss'
       fullPath: '/settings/rss'
       preLoaderRoute: typeof SettingsRssRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/parser': {
+      id: '/settings/parser'
+      path: '/parser'
+      fullPath: '/settings/parser'
+      preLoaderRoute: typeof SettingsParserRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/organization': {
@@ -646,6 +665,7 @@ interface SettingsRouteChildren {
   SettingsLogsRoute: typeof SettingsLogsRoute
   SettingsMetadataRoute: typeof SettingsMetadataRoute
   SettingsOrganizationRoute: typeof SettingsOrganizationRoute
+  SettingsParserRoute: typeof SettingsParserRoute
   SettingsRssRoute: typeof SettingsRssRoute
   SettingsTorrentRoute: typeof SettingsTorrentRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
@@ -657,6 +677,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsLogsRoute: SettingsLogsRoute,
   SettingsMetadataRoute: SettingsMetadataRoute,
   SettingsOrganizationRoute: SettingsOrganizationRoute,
+  SettingsParserRoute: SettingsParserRoute,
   SettingsRssRoute: SettingsRssRoute,
   SettingsTorrentRoute: SettingsTorrentRoute,
   SettingsIndexRoute: SettingsIndexRoute,

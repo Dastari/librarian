@@ -6,8 +6,11 @@
 use sanitize_filename;
 
 /// Video file extensions (lowercase)
+// TODO: Consider using `file` command or `ffprobe` to determine file type
+// more reliably instead of relying solely on extensions
 pub const VIDEO_EXTENSIONS: &[&str] = &[
     ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".ts", ".m2ts",
+    ".mpg", ".mpeg",
 ];
 
 /// Audio file extensions (lowercase)

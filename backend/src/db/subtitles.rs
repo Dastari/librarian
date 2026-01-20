@@ -503,7 +503,7 @@ impl StreamRepository {
         let records = sqlx::query_as::<_, ChapterRecord>(
             r#"
             SELECT id, media_file_id, chapter_index, start_secs, end_secs, title, created_at
-            FROM chapters
+            FROM media_chapters
             WHERE media_file_id = $1
             ORDER BY chapter_index
             "#,

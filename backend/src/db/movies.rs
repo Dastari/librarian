@@ -57,6 +57,8 @@ pub struct MovieRecord {
     pub has_file: bool,
     pub size_bytes: Option<i64>,
     pub path: Option<String>,
+    /// Download status (missing, wanted, downloading, downloaded, suboptimal, ignored)
+    pub download_status: String,
     // Timestamps
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -161,7 +163,7 @@ impl MovieRepository {
                    allowed_audio_formats_override, require_hdr_override,
                    allowed_hdr_types_override, allowed_sources_override,
                    release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, created_at, updated_at
+                   has_file, size_bytes, path, download_status, created_at, updated_at
             FROM movies
             WHERE library_id = $1
             ORDER BY COALESCE(sort_title, title)
@@ -187,6 +189,7 @@ impl MovieRepository {
         year_filter: Option<i32>,
         monitored_filter: Option<bool>,
         has_file_filter: Option<bool>,
+        download_status_filter: Option<&str>,
         sort_column: &str,
         sort_asc: bool,
     ) -> Result<(Vec<MovieRecord>, i64)> {
@@ -208,6 +211,10 @@ impl MovieRepository {
         }
         if has_file_filter.is_some() {
             conditions.push(format!("has_file = ${}", param_idx));
+            param_idx += 1;
+        }
+        if download_status_filter.is_some() {
+            conditions.push(format!("download_status = ${}", param_idx));
             // param_idx += 1; // Not needed after last
         }
 
@@ -251,7 +258,7 @@ impl MovieRepository {
                    allowed_audio_formats_override, require_hdr_override,
                    allowed_hdr_types_override, allowed_sources_override,
                    release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, created_at, updated_at
+                   has_file, size_bytes, path, download_status, created_at, updated_at
             FROM movies
             WHERE {}
             {}
@@ -274,6 +281,9 @@ impl MovieRepository {
         if let Some(has_file) = has_file_filter {
             count_builder = count_builder.bind(has_file);
         }
+        if let Some(download_status) = download_status_filter {
+            count_builder = count_builder.bind(download_status);
+        }
 
         let total: i64 = count_builder.fetch_one(&self.pool).await?;
 
@@ -291,6 +301,9 @@ impl MovieRepository {
         }
         if let Some(has_file) = has_file_filter {
             data_builder = data_builder.bind(has_file);
+        }
+        if let Some(download_status) = download_status_filter {
+            data_builder = data_builder.bind(download_status);
         }
 
         let records = data_builder.fetch_all(&self.pool).await?;
@@ -312,7 +325,7 @@ impl MovieRepository {
                    allowed_audio_formats_override, require_hdr_override,
                    allowed_hdr_types_override, allowed_sources_override,
                    release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, created_at, updated_at
+                   has_file, size_bytes, path, download_status, created_at, updated_at
             FROM movies
             WHERE user_id = $1
             ORDER BY COALESCE(sort_title, title)
@@ -339,7 +352,7 @@ impl MovieRepository {
                    allowed_audio_formats_override, require_hdr_override,
                    allowed_hdr_types_override, allowed_sources_override,
                    release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, created_at, updated_at
+                   has_file, size_bytes, path, download_status, created_at, updated_at
             FROM movies
             WHERE id = $1
             "#,
@@ -369,7 +382,7 @@ impl MovieRepository {
                    allowed_audio_formats_override, require_hdr_override,
                    allowed_hdr_types_override, allowed_sources_override,
                    release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, created_at, updated_at
+                   has_file, size_bytes, path, download_status, created_at, updated_at
             FROM movies
             WHERE library_id = $1 AND tmdb_id = $2
             "#,
@@ -406,7 +419,7 @@ impl MovieRepository {
                       allowed_audio_formats_override, require_hdr_override,
                       allowed_hdr_types_override, allowed_sources_override,
                       release_group_blacklist_override, release_group_whitelist_override,
-                      has_file, size_bytes, path, created_at, updated_at
+                      has_file, size_bytes, path, download_status, created_at, updated_at
             "#,
         )
         .bind(input.library_id)
@@ -481,7 +494,7 @@ impl MovieRepository {
                       allowed_audio_formats_override, require_hdr_override,
                       allowed_hdr_types_override, allowed_sources_override,
                       release_group_blacklist_override, release_group_whitelist_override,
-                      has_file, size_bytes, path, created_at, updated_at
+                      has_file, size_bytes, path, download_status, created_at, updated_at
             "#,
         )
         .bind(id)
@@ -593,7 +606,7 @@ impl MovieRepository {
                    allowed_audio_formats_override, require_hdr_override,
                    allowed_hdr_types_override, allowed_sources_override,
                    release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, created_at, updated_at
+                   has_file, size_bytes, path, download_status, created_at, updated_at
             FROM movies
             WHERE collection_id = $1
             ORDER BY release_date
@@ -621,7 +634,7 @@ impl MovieRepository {
                    allowed_audio_formats_override, require_hdr_override,
                    allowed_hdr_types_override, allowed_sources_override,
                    release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, created_at, updated_at
+                   has_file, size_bytes, path, download_status, created_at, updated_at
             FROM movies
             WHERE library_id = $1 AND (
                 LOWER(title) LIKE $2 OR
@@ -669,11 +682,11 @@ impl MovieRepository {
                        allowed_audio_formats_override, require_hdr_override,
                        allowed_hdr_types_override, allowed_sources_override,
                        release_group_blacklist_override, release_group_whitelist_override,
-                       has_file, size_bytes, path, created_at, updated_at
+                       has_file, size_bytes, path, download_status, created_at, updated_at
                 FROM movies
                 WHERE library_id = $1 AND year = $2 AND (
-                    LOWER(REPLACE(REPLACE(title, '''', ''), ':', '')) = $3 OR
-                    LOWER(REPLACE(REPLACE(original_title, '''', ''), ':', '')) = $3
+                    LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(title, '''', ''), ':', ''), '-', ''), '.', ''), '_', '')) = $3 OR
+                    LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(original_title, '''', ''), ':', ''), '-', ''), '.', ''), '_', '')) = $3
                 )
                 LIMIT 1
                 "#,
@@ -701,11 +714,11 @@ impl MovieRepository {
                        allowed_audio_formats_override, require_hdr_override,
                        allowed_hdr_types_override, allowed_sources_override,
                        release_group_blacklist_override, release_group_whitelist_override,
-                       has_file, size_bytes, path, created_at, updated_at
+                       has_file, size_bytes, path, download_status, created_at, updated_at
                 FROM movies
                 WHERE library_id = $1 AND year BETWEEN $2 AND $3 AND (
-                    LOWER(REPLACE(REPLACE(title, '''', ''), ':', '')) = $4 OR
-                    LOWER(REPLACE(REPLACE(original_title, '''', ''), ':', '')) = $4
+                    LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(title, '''', ''), ':', ''), '-', ''), '.', ''), '_', '')) = $4 OR
+                    LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(original_title, '''', ''), ':', ''), '-', ''), '.', ''), '_', '')) = $4
                 )
                 ORDER BY ABS(year - $5)
                 LIMIT 1
@@ -737,11 +750,11 @@ impl MovieRepository {
                    allowed_audio_formats_override, require_hdr_override,
                    allowed_hdr_types_override, allowed_sources_override,
                    release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, created_at, updated_at
+                   has_file, size_bytes, path, download_status, created_at, updated_at
             FROM movies
             WHERE library_id = $1 AND (
-                LOWER(REPLACE(REPLACE(title, '''', ''), ':', '')) = $2 OR
-                LOWER(REPLACE(REPLACE(original_title, '''', ''), ':', '')) = $2
+                LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(title, '''', ''), ':', ''), '-', ''), '.', ''), '_', '')) = $2 OR
+                LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(original_title, '''', ''), ':', ''), '-', ''), '.', ''), '_', '')) = $2
             )
             LIMIT 1
             "#,
@@ -768,7 +781,7 @@ impl MovieRepository {
                    allowed_audio_formats_override, require_hdr_override,
                    allowed_hdr_types_override, allowed_sources_override,
                    release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, created_at, updated_at
+                   has_file, size_bytes, path, download_status, created_at, updated_at
             FROM movies
             WHERE library_id = $1 AND monitored = true AND has_file = false
             ORDER BY COALESCE(sort_title, title)
@@ -784,8 +797,9 @@ impl MovieRepository {
 
 /// Normalize a title for comparison
 /// - Lowercase
-/// - Remove special characters (apostrophes, colons)
+/// - Remove special characters (apostrophes, colons, dashes, dots, underscores)
 /// - Collapse whitespace
+/// NOTE: The SQL queries in find_by_title_in_library must match this normalization!
 fn normalize_title(title: &str) -> String {
     title
         .to_lowercase()

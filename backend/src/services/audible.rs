@@ -130,7 +130,7 @@ impl AudiobookMetadataClient {
 
     /// Search for audiobooks/books
     pub async fn search(&self, query: &str) -> Result<Vec<AudiobookSearchResult>> {
-        info!(query = %query, "Searching OpenLibrary for audiobooks");
+        debug!("Searching OpenLibrary for '{}'", query);
 
         let url = "https://openlibrary.org/search.json";
         let client = self.client.clone();
@@ -201,7 +201,7 @@ impl AudiobookMetadataClient {
 
     /// Get author details from OpenLibrary
     pub async fn get_author(&self, author_id: &str) -> Result<OpenLibraryAuthor> {
-        info!(author_id = %author_id, "Fetching author from OpenLibrary");
+        debug!("Fetching author {} from OpenLibrary", author_id);
 
         // Normalize author ID (ensure it has the /authors/ prefix)
         let normalized_id = if author_id.starts_with("OL") {
@@ -245,7 +245,7 @@ impl AudiobookMetadataClient {
 
     /// Get work (book) details from OpenLibrary
     pub async fn get_work(&self, work_id: &str) -> Result<AudiobookDetails> {
-        info!(work_id = %work_id, "Fetching work from OpenLibrary");
+        debug!("Fetching work {} from OpenLibrary", work_id);
 
         // Normalize work ID
         let normalized_id = if work_id.starts_with("OL") {

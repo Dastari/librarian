@@ -86,6 +86,34 @@ export const TORRENT_DETAILS_QUERY = `
   }
 `;
 
+export const TORRENT_FILE_MATCHES_QUERY = `
+  query TorrentFileMatches($id: String!) {
+    torrentFileMatches(id: $id) {
+      id
+      torrentId
+      fileIndex
+      filePath
+      fileSize
+      episodeId
+      movieId
+      trackId
+      chapterId
+      matchType
+      matchConfidence
+      parsedResolution
+      parsedCodec
+      parsedSource
+      parsedAudio
+      skipDownload
+      processed
+      processedAt
+      mediaFileId
+      errorMessage
+      createdAt
+    }
+  }
+`;
+
 // ============================================================================
 // Settings Queries
 // ============================================================================
@@ -100,6 +128,29 @@ export const TORRENT_SETTINGS_QUERY = `
       maxConcurrent
       uploadLimit
       downloadLimit
+    }
+  }
+`;
+
+export const LLM_PARSER_SETTINGS_QUERY = `
+  query LlmParserSettings {
+    llmParserSettings {
+      enabled
+      ollamaUrl
+      ollamaModel
+      timeoutSeconds
+      temperature
+      maxTokens
+      promptTemplate
+      confidenceThreshold
+      modelMovies
+      modelTv
+      modelMusic
+      modelAudiobooks
+      promptMovies
+      promptTv
+      promptMusic
+      promptAudiobooks
     }
   }
 `;

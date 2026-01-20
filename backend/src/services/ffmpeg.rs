@@ -348,18 +348,29 @@ impl FfmpegService {
     pub async fn analyze(&self, path: &Path) -> Result<MediaAnalysis> {
         debug!(path = %path.display(), "Analyzing media file with ffprobe");
 
+        // Check if file exists first
+        if !path.exists() {
+            anyhow::bail!("ffprobe failed for '{}': file does not exist", path.display());
+        }
+
         let output = Command::new(&self.ffprobe_path)
-            .args(["-v", "quiet"])
+            .args(["-v", "error"]) // Show errors instead of quiet
             .args(["-print_format", "json"])
             .args(["-show_format", "-show_streams", "-show_chapters"])
             .arg(path)
             .output()
             .await
-            .context("Failed to execute ffprobe")?;
+            .with_context(|| format!("Failed to execute ffprobe for '{}'", path.display()))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("ffprobe failed: {}", stderr);
+            let exit_code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "unknown".to_string());
+            anyhow::bail!(
+                "ffprobe failed for '{}' (exit code {}): {}",
+                path.display(),
+                exit_code,
+                if stderr.is_empty() { "no error output" } else { stderr.trim() }
+            );
         }
 
         let probe: ffprobe::FfprobeOutput = serde_json::from_slice(&output.stdout)
