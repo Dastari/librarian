@@ -21,7 +21,6 @@ pub struct LibraryRecord {
     pub organize_files: bool,
     pub rename_style: String,
     pub naming_pattern: Option<String>,
-    pub default_quality_profile_id: Option<Uuid>,
     pub auto_add_discovered: bool,
     pub auto_download: bool,
     pub auto_hunt: bool,
@@ -59,7 +58,6 @@ pub struct CreateLibrary {
     pub organize_files: bool,
     pub rename_style: String,
     pub naming_pattern: Option<String>,
-    pub default_quality_profile_id: Option<Uuid>,
     pub auto_add_discovered: bool,
     pub auto_download: bool,
     pub auto_hunt: bool,
@@ -88,7 +86,6 @@ pub struct UpdateLibrary {
     pub organize_files: Option<bool>,
     pub rename_style: Option<String>,
     pub naming_pattern: Option<String>,
-    pub default_quality_profile_id: Option<Uuid>,
     pub auto_add_discovered: Option<bool>,
     pub auto_download: Option<bool>,
     pub auto_hunt: Option<bool>,
@@ -128,7 +125,7 @@ impl LibraryRepository {
             SELECT id, user_id, name, path, library_type, icon, color, 
                    auto_scan, scan_interval_minutes, watch_for_changes,
                    post_download_action, organize_files, rename_style, naming_pattern,
-                   default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
+                   auto_add_discovered, auto_download, auto_hunt,
                    scanning, last_scanned_at, created_at, updated_at,
                    allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
                    require_hdr, allowed_hdr_types, allowed_sources,
@@ -153,7 +150,7 @@ impl LibraryRepository {
             SELECT id, user_id, name, path, library_type, icon, color, 
                    auto_scan, scan_interval_minutes, watch_for_changes,
                    post_download_action, organize_files, rename_style, naming_pattern,
-                   default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
+                   auto_add_discovered, auto_download, auto_hunt,
                    scanning, last_scanned_at, created_at, updated_at,
                    allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
                    require_hdr, allowed_hdr_types, allowed_sources,
@@ -181,7 +178,7 @@ impl LibraryRepository {
             SELECT id, user_id, name, path, library_type, icon, color, 
                    auto_scan, scan_interval_minutes, watch_for_changes,
                    post_download_action, organize_files, rename_style, naming_pattern,
-                   default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
+                   auto_add_discovered, auto_download, auto_hunt,
                    scanning, last_scanned_at, created_at, updated_at,
                    allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
                    require_hdr, allowed_hdr_types, allowed_sources,
@@ -207,17 +204,17 @@ impl LibraryRepository {
                 user_id, name, path, library_type, icon, color,
                 auto_scan, scan_interval_minutes, watch_for_changes,
                 post_download_action, organize_files, rename_style, naming_pattern,
-                default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
+                auto_add_discovered, auto_download, auto_hunt,
                 allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
                 require_hdr, allowed_hdr_types, allowed_sources,
                 release_group_blacklist, release_group_whitelist
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-                    $18, $19, $20, $21, $22, $23, $24, $25)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+                    $17, $18, $19, $20, $21, $22, $23, $24)
             RETURNING id, user_id, name, path, library_type, icon, color, 
                       auto_scan, scan_interval_minutes, watch_for_changes,
                       post_download_action, organize_files, rename_style, naming_pattern,
-                      default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
+                      auto_add_discovered, auto_download, auto_hunt,
                       scanning, last_scanned_at, created_at, updated_at,
                       allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
                       require_hdr, allowed_hdr_types, allowed_sources,
@@ -238,7 +235,6 @@ impl LibraryRepository {
         .bind(input.organize_files)
         .bind(&input.rename_style)
         .bind(&input.naming_pattern)
-        .bind(input.default_quality_profile_id)
         .bind(input.auto_add_discovered)
         .bind(input.auto_download)
         .bind(input.auto_hunt)
@@ -273,24 +269,23 @@ impl LibraryRepository {
                 organize_files = COALESCE($10, organize_files),
                 rename_style = COALESCE($11, rename_style),
                 naming_pattern = COALESCE($12, naming_pattern),
-                default_quality_profile_id = COALESCE($13, default_quality_profile_id),
-                auto_add_discovered = COALESCE($14, auto_add_discovered),
-                auto_download = COALESCE($15, auto_download),
-                auto_hunt = COALESCE($16, auto_hunt),
-                allowed_resolutions = COALESCE($17, allowed_resolutions),
-                allowed_video_codecs = COALESCE($18, allowed_video_codecs),
-                allowed_audio_formats = COALESCE($19, allowed_audio_formats),
-                require_hdr = COALESCE($20, require_hdr),
-                allowed_hdr_types = COALESCE($21, allowed_hdr_types),
-                allowed_sources = COALESCE($22, allowed_sources),
-                release_group_blacklist = COALESCE($23, release_group_blacklist),
-                release_group_whitelist = COALESCE($24, release_group_whitelist),
+                auto_add_discovered = COALESCE($13, auto_add_discovered),
+                auto_download = COALESCE($14, auto_download),
+                auto_hunt = COALESCE($15, auto_hunt),
+                allowed_resolutions = COALESCE($16, allowed_resolutions),
+                allowed_video_codecs = COALESCE($17, allowed_video_codecs),
+                allowed_audio_formats = COALESCE($18, allowed_audio_formats),
+                require_hdr = COALESCE($19, require_hdr),
+                allowed_hdr_types = COALESCE($20, allowed_hdr_types),
+                allowed_sources = COALESCE($21, allowed_sources),
+                release_group_blacklist = COALESCE($22, release_group_blacklist),
+                release_group_whitelist = COALESCE($23, release_group_whitelist),
                 updated_at = NOW()
             WHERE id = $1
             RETURNING id, user_id, name, path, library_type, icon, color, 
                       auto_scan, scan_interval_minutes, watch_for_changes,
                       post_download_action, organize_files, rename_style, naming_pattern,
-                      default_quality_profile_id, auto_add_discovered, auto_download, auto_hunt,
+                      auto_add_discovered, auto_download, auto_hunt,
                       scanning, last_scanned_at, created_at, updated_at,
                       allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
                       require_hdr, allowed_hdr_types, allowed_sources,
@@ -310,7 +305,6 @@ impl LibraryRepository {
         .bind(input.organize_files)
         .bind(&input.rename_style)
         .bind(&input.naming_pattern)
-        .bind(input.default_quality_profile_id)
         .bind(input.auto_add_discovered)
         .bind(input.auto_download)
         .bind(input.auto_hunt)

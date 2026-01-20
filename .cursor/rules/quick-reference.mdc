@@ -44,6 +44,19 @@ alwaysApply: true
 - ✅ Persist torrent state to database
 - ✅ Broadcast events via channels
 - ✅ Load settings from database
+- ✅ Download via IndexerManager for authenticated private tracker access
+- ✅ Use `process_torrent(force=true)` to re-organize stuck torrents
+
+### Auto-Hunt
+- ✅ Trigger immediately when adding movies/albums/audiobooks
+- ✅ Trigger after library scans complete
+- ✅ Use IndexerManager.download_release() for authenticated downloads
+- ✅ Match library type case-insensitively (`library.library_type.to_lowercase()`)
+
+### Content Workflows
+- ✅ Support both Library-first and Torrent-first workflows
+- ✅ Auto-create entries when linking torrents (if `auto_add_discovered` enabled)
+- ✅ Use type-specific quality filters (video vs audio)
 
 ## ❌ DON'T
 
@@ -66,6 +79,10 @@ alwaysApply: true
 - ❌ Panic on recoverable errors (return Result)
 - ❌ Put business logic in route handlers
 - ❌ Use external torrent clients (qBittorrent, etc.)
+- ❌ Download torrents directly from URLs (use IndexerManager for auth)
+- ❌ Compare library_type without lowercasing (DB stores lowercase)
+- ❌ Schedule auto-hunt as independent cron job (it's event-driven)
+- ❌ Use separate quality_profiles table (quality settings are per-library)
 
 ### Database
 - ❌ Use raw SQL in GraphQL resolvers (use repositories)
@@ -81,8 +98,10 @@ alwaysApply: true
 | GraphQL Types | `backend/src/graphql/types.rs` |
 | GraphQL Subscriptions | `backend/src/graphql/subscriptions.rs` |
 | Torrent Service | `backend/src/services/torrent.rs` |
+| Torrent Processor | `backend/src/services/torrent_processor.rs` |
 | Organizer Service | `backend/src/services/organizer.rs` |
 | Download Monitor Job | `backend/src/jobs/download_monitor.rs` |
+| Auto Hunt Job | `backend/src/jobs/auto_hunt.rs` |
 | Filename Parser | `backend/src/services/filename_parser.rs` |
 | Database Connection | `backend/src/db/mod.rs` |
 | Settings Repository | `backend/src/db/settings.rs` |
@@ -95,7 +114,10 @@ alwaysApply: true
 | Hunt Page | `frontend/src/routes/hunt.tsx` |
 | Search Modal | `frontend/src/components/SearchModal.tsx` |
 | Add to Library Modal | `frontend/src/components/search/AddToLibraryModal.tsx` |
+| Link to Library Modal | `frontend/src/components/downloads/LinkToLibraryModal.tsx` |
 | Library Detail Page | `frontend/src/routes/libraries/$libraryId.tsx` |
+| Library Settings Form | `frontend/src/components/library/LibrarySettingsForm.tsx` |
+| Quality Settings Card | `frontend/src/components/settings/QualitySettingsCard.tsx` |
 | Indexers Settings Page | `frontend/src/routes/settings/indexers.tsx` |
 
 ## Naming Conventions

@@ -13,7 +13,7 @@ use std::process::Stdio;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Complete media analysis result containing all extracted information
 #[derive(Debug, Clone, Serialize, Deserialize)]

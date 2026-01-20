@@ -7,6 +7,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useRouterState } from '@tanstack/react-router'
 import {
   graphqlClient,
   LIBRARIES_QUERY,
@@ -221,9 +222,25 @@ export function useDashboardCache(userId: string | null): UseDashboardCacheResul
     }
   }, [userId, refetch])
 
+  // Check if we're currently on the dashboard (home) route
+  const routerState = useRouterState()
+  const isOnDashboard = routerState.location.pathname === '/'
+
   // Subscribe to real-time updates for library changes and torrent completions
+  // Only refetch if we're on the dashboard and the page is visible
   useEffect(() => {
-    if (!userId) return
+    // Don't set up subscriptions if not on dashboard or not logged in
+    if (!userId || !isOnDashboard) return
+
+    const handleEvent = () => {
+      // Only refetch if the document is visible (user is viewing this page)
+      if (document.visibilityState === 'visible') {
+        refetch()
+      } else {
+        // Mark cache as stale so it refreshes on next visit
+        setIsStale(true)
+      }
+    }
 
     // Subscribe to library changes (created, updated, deleted)
     const librarySub = graphqlClient
@@ -232,10 +249,7 @@ export function useDashboardCache(userId: string | null): UseDashboardCacheResul
         {}
       )
       .subscribe({
-        next: () => {
-          // Refetch dashboard data when any library changes
-          refetch()
-        },
+        next: handleEvent,
       })
 
     // Subscribe to torrent completions (triggers media organization)
@@ -245,17 +259,14 @@ export function useDashboardCache(userId: string | null): UseDashboardCacheResul
         {}
       )
       .subscribe({
-        next: () => {
-          // Refetch dashboard data when a torrent completes
-          refetch()
-        },
+        next: handleEvent,
       })
 
     return () => {
       librarySub.unsubscribe()
       torrentSub.unsubscribe()
     }
-  }, [userId, refetch])
+  }, [userId, refetch, isOnDashboard])
 
   // Memoize the result to prevent unnecessary re-renders
   const result = useMemo(

@@ -26,3 +26,15 @@ export { LibraryMoviesTab } from './LibraryMoviesTab'
 export { LibraryUnmatchedFilesTab } from './LibraryUnmatchedFilesTab'
 export { LibraryFileBrowserTab } from './LibraryFileBrowserTab'
 export { LibrarySettingsTab } from './LibrarySettingsTab'
+
+// Music library components
+export { LibraryAlbumsTab } from './LibraryAlbumsTab'
+export { LibraryArtistsTab } from './LibraryArtistsTab'
+export { AlbumCard, type AlbumCardProps } from './AlbumCard'
+export { AddAlbumModal } from './AddAlbumModal'
+
+// Audiobook library components
+export { LibraryAudiobooksTab } from './LibraryAudiobooksTab'
+export { LibraryAuthorsTab } from './LibraryAuthorsTab'
+export { AudiobookCard, type AudiobookCardProps } from './AudiobookCard'
+export { AddAudiobookModal } from './AddAudiobookModal'

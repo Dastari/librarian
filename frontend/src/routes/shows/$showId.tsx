@@ -343,7 +343,7 @@ function ShowDetailPage() {
   const { isOpen: isSettingsOpen, onOpen: onSettingsOpen, onClose: onSettingsClose } = useDisclosure()
   const { isOpen: isPropertiesOpen, onOpen: onPropertiesOpen, onClose: onPropertiesClose } = useDisclosure()
   const [propertiesEpisode, setPropertiesEpisode] = useState<Episode | null>(null)
-  const { startPlayback, setCurrentEpisode, setCurrentShow } = usePlaybackContext()
+  const { startEpisodePlayback } = usePlaybackContext()
 
   // Track if initial load is done to avoid showing spinner on background refreshes
   const initialLoadDone = useRef(false)
@@ -617,10 +617,6 @@ function ShowDetailPage() {
 
   const handlePlay = useCallback(async (episode: Episode) => {
     if (episode.mediaFileId && show) {
-      // Set metadata for the persistent player
-      setCurrentEpisode(episode)
-      setCurrentShow(show)
-
       // Determine start position:
       // - If watched (>=90%), restart from beginning
       // - If has progress (5-90%), resume from saved position
@@ -635,14 +631,9 @@ function ShowDetailPage() {
       }
 
       // Start playback (this will trigger the persistent player)
-      await startPlayback({
-        episodeId: episode.id,
-        mediaFileId: episode.mediaFileId,
-        tvShowId: show.id,
-        startPosition,
-      }, episode, show)
+      await startEpisodePlayback(episode.id, episode.mediaFileId, show.id, episode, show, startPosition)
     }
-  }, [show, startPlayback, setCurrentEpisode, setCurrentShow])
+  }, [show, startEpisodePlayback])
 
   // Navigate to hunt page with pre-filled query for missing episode
   const handleSearchEpisode = useCallback((episode: Episode) => {

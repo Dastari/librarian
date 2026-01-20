@@ -116,25 +116,33 @@ export function LibrarySettingsForm({
   // Quality preset (only used in create mode)
   const [qualityPreset, setQualityPreset] = useState('Any Quality')
 
+  // Track if values were changed by user (not initial load)
+  const [hasUserChanges, setHasUserChanges] = useState(false)
+
   // Reset when initial values change
   useEffect(() => {
     setValues({
       ...DEFAULT_LIBRARY_SETTINGS,
       ...initialValues,
     })
+    setHasUserChanges(false)
   }, [initialValues])
 
-  // Notify parent of changes
+  // Notify parent of changes (after state update completes)
+  useEffect(() => {
+    if (hasUserChanges) {
+      onChange(values)
+    }
+  }, [values, hasUserChanges, onChange])
+
+  // Update a single value
   const updateValue = useCallback(<K extends keyof LibrarySettingsValues>(
     key: K,
     value: LibrarySettingsValues[K]
   ) => {
-    setValues(prev => {
-      const next = { ...prev, [key]: value }
-      onChange(next)
-      return next
-    })
-  }, [onChange])
+    setValues(prev => ({ ...prev, [key]: value }))
+    setHasUserChanges(true)
+  }, [])
 
   // Quality settings as a single object
   const qualitySettings = useMemo<QualitySettings>(() => ({
@@ -149,22 +157,19 @@ export function LibrarySettingsForm({
   }), [values])
 
   const handleQualityChange = useCallback((settings: QualitySettings) => {
-    setValues(prev => {
-      const next = {
-        ...prev,
-        allowedResolutions: settings.allowedResolutions,
-        allowedVideoCodecs: settings.allowedVideoCodecs,
-        allowedAudioFormats: settings.allowedAudioFormats,
-        requireHdr: settings.requireHdr,
-        allowedHdrTypes: settings.allowedHdrTypes,
-        allowedSources: settings.allowedSources,
-        releaseGroupBlacklist: settings.releaseGroupBlacklist,
-        releaseGroupWhitelist: settings.releaseGroupWhitelist,
-      }
-      onChange(next)
-      return next
-    })
-  }, [onChange])
+    setValues(prev => ({
+      ...prev,
+      allowedResolutions: settings.allowedResolutions,
+      allowedVideoCodecs: settings.allowedVideoCodecs,
+      allowedAudioFormats: settings.allowedAudioFormats,
+      requireHdr: settings.requireHdr,
+      allowedHdrTypes: settings.allowedHdrTypes,
+      allowedSources: settings.allowedSources,
+      releaseGroupBlacklist: settings.releaseGroupBlacklist,
+      releaseGroupWhitelist: settings.releaseGroupWhitelist,
+    }))
+    setHasUserChanges(true)
+  }, [])
 
   const handlePresetChange = useCallback((presetName: string) => {
     setQualityPreset(presetName)
@@ -269,17 +274,43 @@ export function LibrarySettingsForm({
 
   const renderAutomationSection = () => {
     const libraryType = values.libraryType
-    if (libraryType !== 'TV' && libraryType !== 'MOVIES') return null
+
+    // Get library-specific descriptions
+    const getAutoDownloadDescription = () => {
+      switch (libraryType) {
+        case 'TV':
+          return 'Automatically download episodes from RSS feeds when they match'
+        case 'MOVIES':
+          return 'Automatically download movies from RSS feeds when they match'
+        case 'MUSIC':
+          return 'Automatically download albums from RSS feeds when they match'
+        case 'AUDIOBOOKS':
+          return 'Automatically download audiobooks from RSS feeds when they match'
+        default:
+          return 'Automatically download content from RSS feeds when they match'
+      }
+    }
+
+    const getAutoHuntDescription = () => {
+      switch (libraryType) {
+        case 'TV':
+          return 'Automatically search indexers for missing episodes'
+        case 'MOVIES':
+          return 'Automatically search indexers for missing movies'
+        case 'MUSIC':
+          return 'Automatically search indexers for missing albums'
+        case 'AUDIOBOOKS':
+          return 'Automatically search indexers for missing audiobooks'
+        default:
+          return 'Automatically search indexers for missing content'
+      }
+    }
 
     return (
       <>
         <SettingRow
           label="Auto-download"
-          description={
-            libraryType === 'TV'
-              ? 'Automatically download episodes from RSS feeds when they match'
-              : 'Automatically download movies from RSS feeds when they match'
-          }
+          description={getAutoDownloadDescription()}
         >
           <Switch
             isSelected={values.autoDownload}
@@ -291,11 +322,7 @@ export function LibrarySettingsForm({
 
         <SettingRow
           label="Auto-hunt"
-          description={
-            libraryType === 'TV'
-              ? 'Automatically search indexers for missing episodes'
-              : 'Automatically search indexers for missing movies'
-          }
+          description={getAutoHuntDescription()}
         >
           <Switch
             isSelected={values.autoHunt}
@@ -408,8 +435,6 @@ export function LibrarySettingsForm({
   // ============================================================================
 
   if (useCards) {
-    const showAutomation = values.libraryType === 'TV' || values.libraryType === 'MOVIES'
-
     // Build accordion items dynamically to avoid conditional children issue
     const accordionItems = [
       <AccordionItem
@@ -462,31 +487,27 @@ export function LibrarySettingsForm({
             title=""
             description="Configure which releases to accept. Empty = accept any."
             noCard
+            libraryType={values.libraryType}
           />
         </div>
       </AccordionItem>,
-    ]
 
-    // Add automation section only for TV and Movies
-    if (showAutomation) {
-      accordionItems.push(
-        <AccordionItem
-          key="automation"
-          aria-label="Automation"
-          title={
-            <div className="flex items-center gap-2">
-              <IconDownload size={18} className="text-primary" />
-              <span className="font-semibold">Automation</span>
-            </div>
-          }
-          subtitle="Auto-download and hunting settings"
-        >
-          <div className="space-y-4 pb-2">
-            {renderAutomationSection()}
+      <AccordionItem
+        key="automation"
+        aria-label="Automation"
+        title={
+          <div className="flex items-center gap-2">
+            <IconDownload size={18} className="text-primary" />
+            <span className="font-semibold">Automation</span>
           </div>
-        </AccordionItem>
-      )
-    }
+        }
+        subtitle="Auto-download and hunting settings"
+      >
+        <div className="space-y-4 pb-2">
+          {renderAutomationSection()}
+        </div>
+      </AccordionItem>,
+    ]
 
     // Add organization section
     accordionItems.push(

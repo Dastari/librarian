@@ -12,6 +12,7 @@ mod jobs;
 mod media;
 mod services;
 mod torrent;
+mod tui;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -38,9 +39,10 @@ use crate::services::{
     FfmpegService, FilesystemService, FilesystemServiceConfig, MediaAnalysisQueue,
     MetadataServiceConfig, ScannerService, StorageClient, TorrentService, TorrentServiceConfig,
     artwork::ensure_artwork_bucket, create_database_layer, create_media_analysis_queue,
-    create_metadata_service_with_artwork, create_scanner_service,
+    create_metadata_service_with_artwork, create_metrics_collector,
 };
 use crate::graphql::{LibraryChangedEvent, MediaFileUpdatedEvent};
+use crate::tui::{TuiApp, TuiConfig, should_use_tui, create_tui_layer};
 
 /// Application state shared across all handlers
 #[derive(Clone)]
@@ -90,15 +92,40 @@ async fn main() -> anyhow::Result<()> {
     let (db_layer, log_broadcast_sender) =
         create_database_layer(db.pool().clone(), db_logger_config);
 
-    // Initialize tracing with both console output and database logging
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "librarian=info,tower_http=info,librqbit=info".into()),
-        )
-        .with(tracing_subscriber::fmt::layer().json())
-        .with(db_layer)
-        .init();
+    // Detect TUI mode
+    let use_tui = should_use_tui();
+
+    // Create TUI layer if needed (we need the receiver before init)
+    let tui_log_rx = if use_tui {
+        let (tui_layer, tui_rx) = create_tui_layer(tracing::Level::INFO);
+        
+        // Initialize tracing with TUI layer (no stdout output)
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "librarian=info,tower_http=info,librqbit=info".into()),
+            )
+            .with(tui_layer)
+            .with(db_layer)
+            .init();
+        
+        Some(tui_rx)
+    } else {
+        // Initialize tracing with JSON console output (headless mode)
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "librarian=info,tower_http=info,librqbit=info".into()),
+            )
+            .with(tracing_subscriber::fmt::layer().json())
+            .with(db_layer)
+            .init();
+        
+        None
+    };
+
+    // Create metrics collector
+    let metrics = create_metrics_collector();
 
     tracing::info!("Starting Librarian Backend");
     tracing::info!("Configuration loaded");
@@ -185,14 +212,41 @@ async fn main() -> anyhow::Result<()> {
     // Create library changed broadcast channel for real-time scan status updates
     let (library_changed_tx, _) = tokio::sync::broadcast::channel::<LibraryChangedEvent>(100);
 
-    // Initialize scanner service with analysis queue and library broadcast
+    // Initialize IndexerManager early so we can pass it to ScannerService for auto-hunt
+    let indexer_manager = match db.settings().get_or_create_indexer_encryption_key().await {
+        Ok(encryption_key) => {
+            match indexer::manager::IndexerManager::new(db.clone(), &encryption_key).await {
+                Ok(manager) => {
+                    tracing::info!("IndexerManager initialized for auto-hunt");
+                    Some(std::sync::Arc::new(manager))
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to initialize IndexerManager - auto-hunt will be disabled");
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to get indexer encryption key - auto-hunt will be disabled");
+            None
+        }
+    };
+
+    // Initialize scanner service with analysis queue, library broadcast, and auto-hunt services
     let scanner_service = {
-        let scanner = ScannerService::new(db.clone(), metadata_service.clone())
+        let mut scanner = ScannerService::new(db.clone(), metadata_service.clone())
             .with_analysis_queue(analysis_queue.clone())
-            .with_library_changed_tx(library_changed_tx.clone());
+            .with_library_changed_tx(library_changed_tx.clone())
+            .with_torrent_service(torrent_service.clone());
+        
+        // Add IndexerManager if available for post-scan auto-hunt
+        if let Some(ref mgr) = indexer_manager {
+            scanner = scanner.with_indexer_manager(mgr.clone());
+        }
+        
         Arc::new(scanner)
     };
-    tracing::info!("Scanner service initialized with FFmpeg analysis");
+    tracing::info!("Scanner service initialized with FFmpeg analysis and auto-hunt");
 
     // Initialize cast service for Chromecast/AirPlay support
     let cast_config = CastServiceConfig {
@@ -237,6 +291,7 @@ async fn main() -> anyhow::Result<()> {
         db.pool().clone(),
         Some(analysis_queue.clone()),
         Some(metadata_service.clone()),
+        indexer_manager,
     )
     .await?;
     tracing::info!("Job scheduler started");
@@ -289,6 +344,10 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Clone references for TUI before moving into AppState
+    let tui_torrent_service = torrent_service.clone();
+    let tui_pool = db.pool().clone();
+
     // Build application state
     let state = AppState {
         config: config.clone(),
@@ -337,7 +396,30 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+
+    // Run with TUI or headless based on detection
+    if let Some(tui_rx) = tui_log_rx {
+        // TUI mode: run server and TUI in parallel
+        let tui_app = TuiApp::new(
+            metrics,
+            tui_rx,
+            tui_torrent_service,
+            tui_pool,
+            TuiConfig::default(),
+        )?;
+
+        tokio::select! {
+            result = axum::serve(listener, app) => {
+                result?;
+            }
+            result = tui_app.run() => {
+                result?;
+            }
+        }
+    } else {
+        // Headless mode: just run the server
+        axum::serve(listener, app).await?;
+    }
 
     Ok(())
 }

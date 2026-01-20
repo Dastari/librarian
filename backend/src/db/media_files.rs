@@ -21,6 +21,12 @@ pub struct MediaFileRecord {
     pub file_hash: Option<String>,
     pub episode_id: Option<Uuid>,
     pub movie_id: Option<Uuid>,
+    /// Link to track record if this file is a music track
+    pub track_id: Option<Uuid>,
+    /// Link to album for grouping music files
+    pub album_id: Option<Uuid>,
+    /// Link to audiobook record if this file is an audiobook
+    pub audiobook_id: Option<Uuid>,
     pub relative_path: Option<String>,
     pub original_name: Option<String>,
     pub video_bitrate: Option<i32>,
@@ -36,6 +42,8 @@ pub struct MediaFileRecord {
     pub organize_error: Option<String>,
     pub added_at: chrono::DateTime<chrono::Utc>,
     pub modified_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Content type: episode, movie, track, or audiobook
+    pub content_type: Option<String>,
 }
 
 /// Input for creating a media file
@@ -76,10 +84,12 @@ impl MediaFileRepository {
             r#"
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
-                   duration, bitrate, file_hash, episode_id, movie_id, relative_path,
+                   duration, bitrate, file_hash, episode_id, movie_id,
+                   track_id, album_id, audiobook_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
-                   original_path, organize_status, organize_error, added_at, modified_at
+                   original_path, organize_status, organize_error, added_at, modified_at,
+                   content_type
             FROM media_files
             WHERE library_id = $1
             ORDER BY path
@@ -109,10 +119,12 @@ impl MediaFileRepository {
             r#"
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
-                   duration, bitrate, file_hash, episode_id, movie_id, relative_path,
+                   duration, bitrate, file_hash, episode_id, movie_id,
+                   track_id, album_id, audiobook_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
-                   original_path, organize_status, organize_error, added_at, modified_at
+                   original_path, organize_status, organize_error, added_at, modified_at,
+                   content_type
             FROM media_files
             WHERE path = $1
             "#,
@@ -130,10 +142,12 @@ impl MediaFileRepository {
             r#"
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
-                   duration, bitrate, file_hash, episode_id, movie_id, relative_path,
+                   duration, bitrate, file_hash, episode_id, movie_id,
+                   track_id, album_id, audiobook_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
-                   original_path, organize_status, organize_error, added_at, modified_at
+                   original_path, organize_status, organize_error, added_at, modified_at,
+                   content_type
             FROM media_files
             WHERE episode_id = $1
             ORDER BY organized DESC, added_at ASC
@@ -158,10 +172,12 @@ impl MediaFileRepository {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             RETURNING id, library_id, path, size as size_bytes, 
                       container, video_codec, audio_codec, width, height,
-                      duration, bitrate, file_hash, episode_id, movie_id, relative_path,
+                      duration, bitrate, file_hash, episode_id, movie_id,
+                      track_id, album_id, audiobook_id, relative_path,
                       original_name, video_bitrate, audio_channels, audio_language,
                       resolution, is_hdr, hdr_type, organized, organized_at,
-                      original_path, organize_status, organize_error, added_at, modified_at
+                      original_path, organize_status, organize_error, added_at, modified_at,
+                      content_type
             "#,
         )
         .bind(input.library_id)
@@ -214,10 +230,12 @@ impl MediaFileRepository {
                 modified_at = NOW()
             RETURNING id, library_id, path, size as size_bytes, 
                       container, video_codec, audio_codec, width, height,
-                      duration, bitrate, file_hash, episode_id, movie_id, relative_path,
+                      duration, bitrate, file_hash, episode_id, movie_id,
+                      track_id, album_id, audiobook_id, relative_path,
                       original_name, video_bitrate, audio_channels, audio_language,
                       resolution, is_hdr, hdr_type, organized, organized_at,
-                      original_path, organize_status, organize_error, added_at, modified_at
+                      original_path, organize_status, organize_error, added_at, modified_at,
+                      content_type
             "#,
         )
         .bind(input.library_id)
@@ -278,7 +296,7 @@ impl MediaFileRepository {
 
     /// Link a media file to an episode
     pub async fn link_to_episode(&self, file_id: Uuid, episode_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE media_files SET episode_id = $2 WHERE id = $1")
+        sqlx::query("UPDATE media_files SET episode_id = $2, content_type = 'episode' WHERE id = $1")
             .bind(file_id)
             .bind(episode_id)
             .execute(&self.pool)
@@ -289,7 +307,7 @@ impl MediaFileRepository {
 
     /// Link a media file to a movie
     pub async fn link_to_movie(&self, file_id: Uuid, movie_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE media_files SET movie_id = $2 WHERE id = $1")
+        sqlx::query("UPDATE media_files SET movie_id = $2, content_type = 'movie' WHERE id = $1")
             .bind(file_id)
             .bind(movie_id)
             .execute(&self.pool)
@@ -311,7 +329,7 @@ impl MediaFileRepository {
 
     /// Link a media file to a music track
     pub async fn link_to_track(&self, file_id: Uuid, track_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE media_files SET track_id = $2 WHERE id = $1")
+        sqlx::query("UPDATE media_files SET track_id = $2, content_type = 'track' WHERE id = $1")
             .bind(file_id)
             .bind(track_id)
             .execute(&self.pool)
@@ -322,7 +340,7 @@ impl MediaFileRepository {
 
     /// Link a media file to an audiobook
     pub async fn link_to_audiobook(&self, file_id: Uuid, audiobook_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE media_files SET audiobook_id = $2 WHERE id = $1")
+        sqlx::query("UPDATE media_files SET audiobook_id = $2, content_type = 'audiobook' WHERE id = $1")
             .bind(file_id)
             .bind(audiobook_id)
             .execute(&self.pool)
@@ -337,10 +355,12 @@ impl MediaFileRepository {
             r#"
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
-                   duration, bitrate, file_hash, episode_id, movie_id, relative_path,
+                   duration, bitrate, file_hash, episode_id, movie_id,
+                   track_id, album_id, audiobook_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
-                   original_path, organize_status, organize_error, added_at, modified_at
+                   original_path, organize_status, organize_error, added_at, modified_at,
+                   content_type
             FROM media_files
             WHERE episode_id = $1
             ORDER BY size_bytes DESC
@@ -363,10 +383,12 @@ impl MediaFileRepository {
             r#"
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
-                   duration, bitrate, file_hash, episode_id, movie_id, relative_path,
+                   duration, bitrate, file_hash, episode_id, movie_id,
+                   track_id, album_id, audiobook_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
-                   original_path, organize_status, organize_error, added_at, modified_at
+                   original_path, organize_status, organize_error, added_at, modified_at,
+                   content_type
             FROM media_files
             WHERE library_id = $1 AND organized = false
             ORDER BY path
@@ -475,10 +497,12 @@ impl MediaFileRepository {
             r#"
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
-                   duration, bitrate, file_hash, episode_id, movie_id, relative_path,
+                   duration, bitrate, file_hash, episode_id, movie_id,
+                   track_id, album_id, audiobook_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
-                   original_path, organize_status, organize_error, added_at, modified_at
+                   original_path, organize_status, organize_error, added_at, modified_at,
+                   content_type
             FROM media_files
             WHERE library_id = $1 AND organize_status = 'conflicted'
             ORDER BY path
@@ -508,10 +532,12 @@ impl MediaFileRepository {
             r#"
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
-                   duration, bitrate, file_hash, episode_id, movie_id, relative_path,
+                   duration, bitrate, file_hash, episode_id, movie_id,
+                   track_id, album_id, audiobook_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
-                   original_path, organize_status, organize_error, added_at, modified_at
+                   original_path, organize_status, organize_error, added_at, modified_at,
+                   content_type
             FROM media_files
             WHERE id = $1
             "#,
@@ -535,10 +561,12 @@ impl MediaFileRepository {
             r#"
             SELECT mf.id, mf.library_id, mf.path, mf.size as size_bytes, 
                    mf.container, mf.video_codec, mf.audio_codec, mf.width, mf.height,
-                   mf.duration, mf.bitrate, mf.file_hash, mf.episode_id, mf.movie_id, mf.relative_path,
+                   mf.duration, mf.bitrate, mf.file_hash, mf.episode_id, mf.movie_id,
+                   mf.track_id, mf.album_id, mf.audiobook_id, mf.relative_path,
                    mf.original_name, mf.video_bitrate, mf.audio_channels, mf.audio_language,
                    mf.resolution, mf.is_hdr, mf.hdr_type, mf.organized, mf.organized_at,
-                   mf.original_path, mf.organize_status, mf.organize_error, mf.added_at, mf.modified_at
+                   mf.original_path, mf.organize_status, mf.organize_error, mf.added_at, mf.modified_at,
+                   mf.content_type
             FROM media_files mf
             JOIN libraries l ON mf.library_id = l.id
             WHERE mf.library_id = $1 
@@ -583,10 +611,12 @@ impl MediaFileRepository {
             r#"
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
-                   duration, bitrate, file_hash, episode_id, movie_id, relative_path,
+                   duration, bitrate, file_hash, episode_id, movie_id,
+                   track_id, album_id, audiobook_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
-                   original_path, organize_status, organize_error, added_at, modified_at
+                   original_path, organize_status, organize_error, added_at, modified_at,
+                   content_type
             FROM media_files
             WHERE movie_id = $1
             ORDER BY size_bytes DESC
@@ -605,10 +635,12 @@ impl MediaFileRepository {
             r#"
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
-                   duration, bitrate, file_hash, episode_id, movie_id, relative_path,
+                   duration, bitrate, file_hash, episode_id, movie_id,
+                   track_id, album_id, audiobook_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
-                   original_path, organize_status, organize_error, added_at, modified_at
+                   original_path, organize_status, organize_error, added_at, modified_at,
+                   content_type
             FROM media_files
             WHERE movie_id = $1
             ORDER BY size_bytes DESC

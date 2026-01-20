@@ -123,7 +123,6 @@ export const LIBRARIES_QUERY = `
       postDownloadAction
       organizeFiles
       namingPattern
-      defaultQualityProfileId
       autoAddDiscovered
       itemCount
       totalSizeBytes
@@ -150,7 +149,6 @@ export const LIBRARY_QUERY = `
       organizeFiles
       renameStyle
       namingPattern
-      defaultQualityProfileId
       autoAddDiscovered
       autoDownload
       autoHunt
@@ -212,11 +210,40 @@ export const TV_SHOWS_QUERY = `
       backdropUrl
       monitored
       monitorType
-      qualityProfileId
       path
       episodeCount
       episodeFileCount
       sizeBytes
+    }
+  }
+`;
+
+export const TV_SHOWS_CONNECTION_QUERY = `
+  query TvShowsConnection($libraryId: String!, $first: Int, $after: String, $where: TvShowWhereInput, $orderBy: TvShowOrderByInput) {
+    tvShowsConnection(libraryId: $libraryId, first: $first, after: $after, where: $where, orderBy: $orderBy) {
+      edges {
+        node {
+          id
+          libraryId
+          name
+          sortName
+          year
+          status
+          posterUrl
+          backdropUrl
+          monitored
+          episodeCount
+          episodeFileCount
+        }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        hasPreviousPage
+        startCursor
+        endCursor
+        totalCount
+      }
     }
   }
 `;
@@ -242,7 +269,6 @@ export const TV_SHOW_QUERY = `
       backdropUrl
       monitored
       monitorType
-      qualityProfileId
       path
       autoDownloadOverride
       backfillExisting
@@ -345,6 +371,59 @@ export const MOVIES_QUERY = `
   }
 `;
 
+/** Movies query with cursor-based pagination and filtering */
+export const MOVIES_CONNECTION_QUERY = `
+  query MoviesConnection(
+    $libraryId: String!
+    $first: Int
+    $after: String
+    $where: MovieWhereInput
+    $orderBy: MovieOrderByInput
+  ) {
+    moviesConnection(
+      libraryId: $libraryId
+      first: $first
+      after: $after
+      where: $where
+      orderBy: $orderBy
+    ) {
+      edges {
+        node {
+          id
+          libraryId
+          title
+          sortTitle
+          originalTitle
+          year
+          tmdbId
+          imdbId
+          status
+          overview
+          runtime
+          genres
+          director
+          posterUrl
+          backdropUrl
+          monitored
+          hasFile
+          sizeBytes
+          path
+          tmdbRating
+          releaseDate
+        }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        hasPreviousPage
+        startCursor
+        endCursor
+        totalCount
+      }
+    }
+  }
+`;
+
 export const MOVIE_QUERY = `
   query Movie($id: String!) {
     movie(id: $id) {
@@ -407,6 +486,349 @@ export const SEARCH_MOVIES_QUERY = `
 `;
 
 // ============================================================================
+// Album/Music Queries
+// ============================================================================
+
+export const ALBUMS_QUERY = `
+  query Albums($libraryId: String!) {
+    albums(libraryId: $libraryId) {
+      id
+      artistId
+      libraryId
+      name
+      sortName
+      year
+      musicbrainzId
+      albumType
+      genres
+      label
+      country
+      releaseDate
+      coverUrl
+      trackCount
+      discCount
+      totalDurationSecs
+      hasFiles
+      sizeBytes
+      path
+    }
+  }
+`;
+
+export const ALBUM_QUERY = `
+  query Album($id: String!) {
+    album(id: $id) {
+      id
+      artistId
+      libraryId
+      name
+      sortName
+      year
+      musicbrainzId
+      albumType
+      genres
+      label
+      country
+      releaseDate
+      coverUrl
+      trackCount
+      discCount
+      totalDurationSecs
+      hasFiles
+      sizeBytes
+      path
+    }
+  }
+`;
+
+export const ALBUMS_CONNECTION_QUERY = `
+  query AlbumsConnection($libraryId: String!, $first: Int, $after: String, $where: AlbumWhereInput, $orderBy: AlbumOrderByInput) {
+    albumsConnection(libraryId: $libraryId, first: $first, after: $after, where: $where, orderBy: $orderBy) {
+      edges {
+        node {
+          id
+          artistId
+          libraryId
+          name
+          sortName
+          year
+          albumType
+          coverUrl
+          hasFiles
+          trackCount
+        }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        hasPreviousPage
+        startCursor
+        endCursor
+        totalCount
+      }
+    }
+  }
+`;
+
+export const ARTISTS_CONNECTION_QUERY = `
+  query ArtistsConnection($libraryId: String!, $first: Int, $after: String, $where: ArtistWhereInput, $orderBy: ArtistOrderByInput) {
+    artistsConnection(libraryId: $libraryId, first: $first, after: $after, where: $where, orderBy: $orderBy) {
+      edges {
+        node {
+          id
+          libraryId
+          name
+          sortName
+          musicbrainzId
+        }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        hasPreviousPage
+        startCursor
+        endCursor
+        totalCount
+      }
+    }
+  }
+`;
+
+export const ALBUM_WITH_TRACKS_QUERY = `
+  query AlbumWithTracks($id: String!) {
+    albumWithTracks(id: $id) {
+      album {
+        id
+        artistId
+        libraryId
+        name
+        sortName
+        year
+        musicbrainzId
+        albumType
+        genres
+        label
+        country
+        releaseDate
+        coverUrl
+        trackCount
+        discCount
+        totalDurationSecs
+        hasFiles
+        sizeBytes
+        path
+      }
+      tracks {
+        track {
+          id
+          albumId
+          libraryId
+          title
+          trackNumber
+          discNumber
+          musicbrainzId
+          isrc
+          durationSecs
+          explicit
+          artistName
+          artistId
+          mediaFileId
+          hasFile
+        }
+        hasFile
+        filePath
+        fileSize
+      }
+      trackCount
+      tracksWithFiles
+      missingTracks
+      completionPercent
+    }
+  }
+`;
+
+export const TRACKS_QUERY = `
+  query Tracks($albumId: String!) {
+    tracks(albumId: $albumId) {
+      id
+      albumId
+      libraryId
+      title
+      trackNumber
+      discNumber
+      musicbrainzId
+      isrc
+      durationSecs
+      explicit
+      artistName
+      artistId
+      mediaFileId
+      hasFile
+    }
+  }
+`;
+
+export const ARTISTS_QUERY = `
+  query Artists($libraryId: String!) {
+    artists(libraryId: $libraryId) {
+      id
+      libraryId
+      name
+      sortName
+      musicbrainzId
+    }
+  }
+`;
+
+export const SEARCH_ALBUMS_QUERY = `
+  query SearchAlbums($query: String!) {
+    searchAlbums(query: $query) {
+      provider
+      providerId
+      title
+      artistName
+      year
+      albumType
+      coverUrl
+      score
+    }
+  }
+`;
+
+// ============================================================================
+// Audiobook Queries
+// ============================================================================
+
+export const AUDIOBOOKS_QUERY = `
+  query Audiobooks($libraryId: String!) {
+    audiobooks(libraryId: $libraryId) {
+      id
+      authorId
+      libraryId
+      title
+      sortTitle
+      subtitle
+      openlibraryId
+      isbn
+      description
+      publisher
+      language
+      narrators
+      seriesName
+      durationSecs
+      coverUrl
+      hasFiles
+      sizeBytes
+      path
+    }
+  }
+`;
+
+export const AUDIOBOOK_QUERY = `
+  query Audiobook($id: String!) {
+    audiobook(id: $id) {
+      id
+      authorId
+      libraryId
+      title
+      sortTitle
+      subtitle
+      openlibraryId
+      isbn
+      description
+      publisher
+      language
+      narrators
+      seriesName
+      durationSecs
+      coverUrl
+      hasFiles
+      sizeBytes
+      path
+    }
+  }
+`;
+
+export const AUDIOBOOK_AUTHORS_QUERY = `
+  query AudiobookAuthors($libraryId: String!) {
+    audiobookAuthors(libraryId: $libraryId) {
+      id
+      libraryId
+      name
+      sortName
+      openlibraryId
+    }
+  }
+`;
+
+export const SEARCH_AUDIOBOOKS_QUERY = `
+  query SearchAudiobooks($query: String!) {
+    searchAudiobooks(query: $query) {
+      provider
+      providerId
+      title
+      authorName
+      year
+      coverUrl
+      isbn
+      description
+    }
+  }
+`;
+
+export const AUDIOBOOKS_CONNECTION_QUERY = `
+  query AudiobooksConnection($libraryId: String!, $first: Int, $after: String, $where: AudiobookWhereInput, $orderBy: AudiobookOrderByInput) {
+    audiobooksConnection(libraryId: $libraryId, first: $first, after: $after, where: $where, orderBy: $orderBy) {
+      edges {
+        node {
+          id
+          authorId
+          libraryId
+          title
+          sortTitle
+          subtitle
+          coverUrl
+          hasFiles
+          seriesName
+        }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        hasPreviousPage
+        startCursor
+        endCursor
+        totalCount
+      }
+    }
+  }
+`;
+
+export const AUDIOBOOK_AUTHORS_CONNECTION_QUERY = `
+  query AudiobookAuthorsConnection($libraryId: String!, $first: Int, $after: String, $where: AudiobookAuthorWhereInput, $orderBy: AudiobookAuthorOrderByInput) {
+    audiobookAuthorsConnection(libraryId: $libraryId, first: $first, after: $after, where: $where, orderBy: $orderBy) {
+      edges {
+        node {
+          id
+          libraryId
+          name
+          sortName
+          openlibraryId
+        }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        hasPreviousPage
+        startCursor
+        endCursor
+        totalCount
+      }
+    }
+  }
+`;
+
+// ============================================================================
 // Episode Queries
 // ============================================================================
 
@@ -460,27 +882,6 @@ export const WANTED_EPISODES_QUERY = `
 // ============================================================================
 // Quality Profile Queries
 // ============================================================================
-
-export const QUALITY_PROFILES_QUERY = `
-  query QualityProfiles {
-    qualityProfiles {
-      id
-      name
-      preferredResolution
-      minResolution
-      preferredCodec
-      preferredAudio
-      requireHdr
-      hdrTypes
-      preferredLanguage
-      maxSizeGb
-      minSeeders
-      releaseGroupWhitelist
-      releaseGroupBlacklist
-      upgradeUntil
-    }
-  }
-`;
 
 // ============================================================================
 // Naming Pattern Queries
@@ -565,8 +966,8 @@ export const PARSE_AND_IDENTIFY_QUERY = `
 // ============================================================================
 
 export const LOGS_QUERY = `
-  query Logs($filter: LogFilterInput, $limit: Int!, $offset: Int!) {
-    logs(filter: $filter, limit: $limit, offset: $offset) {
+  query Logs($filter: LogFilterInput, $orderBy: LogOrderByInput, $limit: Int!, $offset: Int!) {
+    logs(filter: $filter, orderBy: $orderBy, limit: $limit, offset: $offset) {
       logs {
         id
         timestamp
@@ -926,9 +1327,15 @@ export const PLAYBACK_SESSION_QUERY = `
     playbackSession {
       id
       userId
-      episodeId
+      contentType
+      contentId
       mediaFileId
+      episodeId
+      movieId
+      trackId
+      audiobookId
       tvShowId
+      albumId
       currentPosition
       duration
       volume

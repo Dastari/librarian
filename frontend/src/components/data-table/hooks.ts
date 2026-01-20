@@ -380,10 +380,14 @@ interface UseInfiniteScrollOptions {
   dataLength?: number
   /** Intersection threshold (0-1), default 0.1 */
   threshold?: number
-  /** Maximum attempts to load when data length doesn't change (guards against infinite loops) */
-  maxAttempts?: number
+  /** Known total count - if dataLength >= totalCount, don't try to load more */
+  totalCount?: number | null
 }
 
+/**
+ * Simple infinite scroll hook based on IntersectionObserver.
+ * Uses a regular ref + effect pattern for stability.
+ */
 export function useInfiniteScroll(options: UseInfiniteScrollOptions) {
   const {
     hasMore,
@@ -391,75 +395,119 @@ export function useInfiniteScroll(options: UseInfiniteScrollOptions) {
     onLoadMore,
     dataLength = 0,
     threshold = 0.1,
-    maxAttempts = 3,
+    totalCount = null,
   } = options
   
+  // Regular ref for the sentinel element - more stable than callback ref
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
   const observerRef = useRef<IntersectionObserver | null>(null)
-  const lastDataLength = useRef<number>(dataLength)
+  const lastDataLength = useRef<number>(0)
   const loadMoreAttempts = useRef<number>(0)
+  const lastLoadTime = useRef<number>(0)
   
-  // Store latest values in refs so the observer callback always has fresh data
+  // Minimum time between loads (ms) - prevents rapid-fire even if observer misbehaves
+  const LOAD_COOLDOWN_MS = 500
+  
+  // Use refs for values checked in the observer callback
   const isLoadingRef = useRef(isLoading)
   const hasMoreRef = useRef(hasMore)
   const dataLengthRef = useRef(dataLength)
+  const totalCountRef = useRef(totalCount)
   const onLoadMoreRef = useRef(onLoadMore)
   
   // Keep refs updated
   isLoadingRef.current = isLoading
   hasMoreRef.current = hasMore
   dataLengthRef.current = dataLength
+  totalCountRef.current = totalCount
   onLoadMoreRef.current = onLoadMore
-
-  // Track data length changes to detect when load more produces no visible results
+  
+  // Track data length changes to reset the attempts counter
   useEffect(() => {
     if (dataLength !== lastDataLength.current) {
-      // Data changed, reset attempts counter
       loadMoreAttempts.current = 0
       lastDataLength.current = dataLength
     }
   }, [dataLength])
 
-  // Callback ref that sets up the IntersectionObserver when the element mounts
-  const sentinelRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      // Disconnect previous observer
-      if (observerRef.current) {
-        observerRef.current.disconnect()
-        observerRef.current = null
-      }
-
-      // Don't observe if no node or no more items
-      if (!node || !hasMore) return
-
-      observerRef.current = new IntersectionObserver(
-        (entries) => {
-          if (entries[0].isIntersecting && !isLoadingRef.current && hasMoreRef.current) {
-            // Guard against infinite loops when filters hide all data:
-            // If we've tried loading more maxAttempts times without dataLength changing,
-            // stop attempting to load more until data or filters change.
-            if (dataLengthRef.current === 0 && loadMoreAttempts.current >= maxAttempts) {
-              return
-            }
-            loadMoreAttempts.current++
-            onLoadMoreRef.current()
-          }
-        },
-        { threshold }
-      )
-
-      observerRef.current.observe(node)
-    },
-    [hasMore, threshold, maxAttempts]
-  )
-
-  // Clean up observer on unmount
+  // Set up observer - recreate only when onLoadMore changes
   useEffect(() => {
+    if (!onLoadMore) return
+
+    // Clean up previous observer
+    if (observerRef.current) {
+      observerRef.current.disconnect()
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0]
+        
+        // Only trigger on intersection, not on un-intersection
+        if (!entry.isIntersecting) return
+        
+        // Check all conditions via refs for fresh values
+        if (isLoadingRef.current) {
+          console.log('[InfiniteScroll] Blocked: isLoading')
+          return
+        }
+        if (!hasMoreRef.current) {
+          console.log('[InfiniteScroll] Blocked: !hasMore')
+          return
+        }
+        if (totalCountRef.current !== null && dataLengthRef.current >= totalCountRef.current) {
+          console.log('[InfiniteScroll] Blocked: dataLength >= totalCount')
+          return
+        }
+        
+        // Cooldown check - prevent rapid-fire loads
+        const now = Date.now()
+        const timeSinceLastLoad = now - lastLoadTime.current
+        if (timeSinceLastLoad < LOAD_COOLDOWN_MS) {
+          console.log(`[InfiniteScroll] Blocked: cooldown (${timeSinceLastLoad}ms < ${LOAD_COOLDOWN_MS}ms)`)
+          return
+        }
+        
+        // Guard against infinite loops when no data
+        if (dataLengthRef.current === 0 && loadMoreAttempts.current >= 3) {
+          console.log('[InfiniteScroll] Blocked: max attempts with 0 data')
+          return
+        }
+        
+        console.log(`[InfiniteScroll] Loading more... (dataLength: ${dataLengthRef.current}, attempts: ${loadMoreAttempts.current})`)
+        loadMoreAttempts.current++
+        lastLoadTime.current = now
+        onLoadMoreRef.current()
+      },
+      { threshold }
+    )
+
+    observerRef.current = observer
+
+    // Observe the sentinel if it exists
+    if (sentinelRef.current) {
+      observer.observe(sentinelRef.current)
+    }
+
+    return () => observer.disconnect()
+  }, [onLoadMore, threshold])
+
+  // Separate effect to handle sentinel element changes
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    const observer = observerRef.current
+    
+    if (sentinel && observer) {
+      // Make sure we're observing the current sentinel
+      observer.observe(sentinel)
+    }
+    
     return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect()
+      if (sentinel && observer) {
+        observer.unobserve(sentinel)
       }
     }
-  }, [])
+  }) // Run on every render to catch sentinel changes
 
   return { sentinelRef }
 }

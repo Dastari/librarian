@@ -11,11 +11,16 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::artwork::{ArtworkService, ArtworkType};
+use super::audible::AudiobookMetadataClient;
 use super::cache::{SharedCache, create_cache};
 use super::filename_parser::{ParsedEpisode, parse_episode};
-use super::tmdb::{TmdbClient, TmdbMovie, normalize_movie_status};
+use super::musicbrainz::{MusicBrainzClient, MusicBrainzReleaseGroup};
+use super::tmdb::{TmdbClient, normalize_movie_status};
 use super::tvmaze::{TvMazeClient, TvMazeEpisode, TvMazeScheduleEntry, TvMazeShow};
-use crate::db::{CreateEpisode, CreateMovie, CreateTvShow, Database, MovieRecord, TvShowRecord};
+use crate::db::{
+    AlbumRecord, AudiobookRecord, CreateEpisode, CreateMovie, CreateTvShow, Database, MovieRecord,
+    TvShowRecord,
+};
 
 /// Metadata provider enum
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +29,8 @@ pub enum MetadataProvider {
     TvMaze,
     Tmdb,
     TvDb,
+    MusicBrainz,
+    OpenLibrary,
 }
 
 /// Unified show search result
@@ -144,6 +151,74 @@ pub struct AddMovieOptions {
     pub path: Option<String>,
 }
 
+/// Album search result from MusicBrainz
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlbumSearchResult {
+    pub provider: MetadataProvider,
+    /// MusicBrainz release group ID (UUID)
+    pub provider_id: Uuid,
+    pub title: String,
+    pub artist_name: Option<String>,
+    pub year: Option<i32>,
+    pub album_type: Option<String>,
+    pub cover_url: Option<String>,
+    pub score: Option<i32>,
+}
+
+/// Artist search result from MusicBrainz
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtistSearchResult {
+    pub provider: MetadataProvider,
+    /// MusicBrainz artist ID (UUID)
+    pub provider_id: Uuid,
+    pub name: String,
+    pub sort_name: Option<String>,
+    pub country: Option<String>,
+    pub artist_type: Option<String>,
+    pub disambiguation: Option<String>,
+    pub score: Option<i32>,
+}
+
+/// Options for adding an album from MusicBrainz
+#[derive(Debug, Clone)]
+pub struct AddAlbumOptions {
+    /// MusicBrainz release group ID (UUID)
+    pub musicbrainz_id: Uuid,
+    /// Library to add the album to
+    pub library_id: Uuid,
+    /// User who owns the library
+    pub user_id: Uuid,
+    /// Whether to monitor for releases
+    pub monitored: bool,
+}
+
+/// Audiobook search result from OpenLibrary
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudiobookSearchResult {
+    pub provider: MetadataProvider,
+    /// OpenLibrary work ID
+    pub provider_id: String,
+    pub title: String,
+    pub author_name: Option<String>,
+    pub year: Option<i32>,
+    pub cover_url: Option<String>,
+    pub isbn: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Options for adding an audiobook from OpenLibrary
+#[derive(Debug, Clone)]
+pub struct AddAudiobookOptions {
+    /// OpenLibrary work ID
+    pub openlibrary_id: String,
+    /// Library to add the audiobook to
+    pub library_id: Uuid,
+    /// User who owns the library
+    pub user_id: Uuid,
+    /// Whether to monitor for releases
+    pub monitored: bool,
+}
+
 /// Metadata service configuration
 #[derive(Debug, Clone, Default)]
 pub struct MetadataServiceConfig {
@@ -167,8 +242,6 @@ pub struct AddTvShowOptions {
     pub monitored: bool,
     /// Monitor type: "all", "future", or "none"
     pub monitor_type: String,
-    /// Quality profile to use (optional)
-    pub quality_profile_id: Option<Uuid>,
     /// Custom path within the library (optional)
     pub path: Option<String>,
 }
@@ -177,6 +250,8 @@ pub struct AddTvShowOptions {
 pub struct MetadataService {
     tvmaze: TvMazeClient,
     tmdb: Option<TmdbClient>,
+    musicbrainz: MusicBrainzClient,
+    openlibrary: AudiobookMetadataClient,
     config: MetadataServiceConfig,
     db: Database,
     artwork_service: Option<Arc<ArtworkService>>,
@@ -194,10 +269,12 @@ impl MetadataService {
             .as_ref()
             .filter(|k| !k.is_empty())
             .map(|k| TmdbClient::new(k.clone()));
-        
+
         Self {
             tvmaze: TvMazeClient::new(),
             tmdb,
+            musicbrainz: MusicBrainzClient::new_default(),
+            openlibrary: AudiobookMetadataClient::new(),
             config,
             db,
             artwork_service: None,
@@ -225,13 +302,15 @@ impl MetadataService {
         Self {
             tvmaze: TvMazeClient::new(),
             tmdb,
+            musicbrainz: MusicBrainzClient::new_default(),
+            openlibrary: AudiobookMetadataClient::new(),
             config,
             db,
             artwork_service: Some(artwork_service),
             schedule_cache: create_cache(SCHEDULE_CACHE_TTL),
         }
     }
-    
+
     /// Check if TMDB is configured
     pub fn has_tmdb(&self) -> bool {
         self.tmdb.is_some()
@@ -307,6 +386,12 @@ impl MetadataService {
                 // TODO: Implement TheTVDB
                 anyhow::bail!("TheTVDB not yet implemented")
             }
+            MetadataProvider::MusicBrainz => {
+                anyhow::bail!("MusicBrainz is not for TV shows")
+            }
+            MetadataProvider::OpenLibrary => {
+                anyhow::bail!("OpenLibrary is not for TV shows")
+            }
         }
     }
 
@@ -331,6 +416,12 @@ impl MetadataService {
             }
             MetadataProvider::TvDb => {
                 anyhow::bail!("TheTVDB not yet implemented")
+            }
+            MetadataProvider::MusicBrainz => {
+                anyhow::bail!("MusicBrainz is not for TV shows")
+            }
+            MetadataProvider::OpenLibrary => {
+                anyhow::bail!("OpenLibrary is not for TV shows")
             }
         }
     }
@@ -588,6 +679,270 @@ impl MetadataService {
         Ok(movie)
     }
 
+    // =========================================================================
+    // Music Methods
+    // =========================================================================
+
+    /// Search for artists using MusicBrainz
+    pub async fn search_artists(&self, query: &str) -> Result<Vec<ArtistSearchResult>> {
+        info!(query = %query, "Searching for artists");
+
+        let artists = self.musicbrainz.search_artists(query).await?;
+
+        let results: Vec<ArtistSearchResult> = artists
+            .into_iter()
+            .map(|a| ArtistSearchResult {
+                provider: MetadataProvider::MusicBrainz,
+                provider_id: a.id,
+                name: a.name,
+                sort_name: a.sort_name,
+                country: a.country,
+                artist_type: a.artist_type,
+                disambiguation: a.disambiguation,
+                score: a.score,
+            })
+            .collect();
+
+        debug!(count = results.len(), "Found artists");
+        Ok(results)
+    }
+
+    /// Search for albums using MusicBrainz
+    pub async fn search_albums(&self, query: &str) -> Result<Vec<AlbumSearchResult>> {
+        info!(query = %query, "Searching for albums");
+
+        let albums = self.musicbrainz.search_albums(query).await?;
+
+        // Fetch cover art for each album (async)
+        let mut results: Vec<AlbumSearchResult> = Vec::with_capacity(albums.len());
+        for album in albums {
+            let cover_url = self
+                .musicbrainz
+                .get_cover_art(album.id)
+                .await
+                .ok()
+                .flatten();
+
+            results.push(AlbumSearchResult {
+                provider: MetadataProvider::MusicBrainz,
+                provider_id: album.id,
+                title: album.title.clone(),
+                artist_name: album.artist_names(),
+                year: album.year(),
+                album_type: Some(album.normalized_type()),
+                cover_url,
+                score: album.score,
+            });
+        }
+
+        debug!(count = results.len(), "Found albums");
+        Ok(results)
+    }
+
+    /// Get album details from MusicBrainz
+    pub async fn get_album(&self, musicbrainz_id: Uuid) -> Result<MusicBrainzReleaseGroup> {
+        info!(mbid = %musicbrainz_id, "Fetching album details");
+        self.musicbrainz.get_release_group(musicbrainz_id).await
+    }
+
+    /// Add an album from MusicBrainz to a library
+    /// 
+    /// This fetches album metadata, cover art, and track listings from MusicBrainz.
+    pub async fn add_album_from_provider(&self, options: AddAlbumOptions) -> Result<AlbumRecord> {
+        info!(
+            musicbrainz_id = %options.musicbrainz_id,
+            library_id = %options.library_id,
+            "Adding album from MusicBrainz"
+        );
+
+        let albums_repo = self.db.albums();
+        let tracks_repo = self.db.tracks();
+
+        // Check if album already exists in this library
+        if let Some(existing) = albums_repo
+            .get_by_musicbrainz_id(options.library_id, options.musicbrainz_id)
+            .await?
+        {
+            info!(
+                album_id = %existing.id,
+                album_name = %existing.name,
+                "Album already exists in library, returning existing"
+            );
+            return Ok(existing);
+        }
+
+        // Get album details from MusicBrainz
+        let album_details = self.musicbrainz.get_release_group(options.musicbrainz_id).await?;
+
+        // Get artist info if available
+        let (artist_id, artist_name) = if let Some(ref credits) = album_details.artist_credit {
+            if let Some(first_credit) = credits.first() {
+                // Find or create the artist
+                let artist = albums_repo
+                    .find_or_create_artist(
+                        options.library_id,
+                        options.user_id,
+                        &first_credit.artist.name,
+                        first_credit.artist.sort_name.as_deref(),
+                        Some(first_credit.artist.id),
+                    )
+                    .await?;
+                (artist.id, first_credit.artist.name.clone())
+            } else {
+                anyhow::bail!("Album has no artist credits");
+            }
+        } else {
+            anyhow::bail!("Album has no artist information");
+        };
+
+        // Get cover art
+        let cover_url = self
+            .musicbrainz
+            .get_cover_art(options.musicbrainz_id)
+            .await
+            .ok()
+            .flatten();
+
+        // Cache artwork if available
+        let cached_cover_url = if let Some(ref artwork_service) = self.artwork_service {
+            let entity_id = format!("album_{}", options.musicbrainz_id);
+            artwork_service
+                .cache_image_optional(
+                    cover_url.as_deref(),
+                    ArtworkType::Poster,
+                    "album",
+                    &entity_id,
+                )
+                .await
+                .or(cover_url)
+        } else {
+            cover_url
+        };
+
+        // Get track listing from MusicBrainz
+        let track_list = self
+            .musicbrainz
+            .get_tracks_for_release_group(options.musicbrainz_id)
+            .await
+            .unwrap_or_else(|e| {
+                warn!(error = %e, "Failed to fetch track listing, continuing without tracks");
+                vec![]
+            });
+
+        // Calculate disc count and track count
+        let disc_count = track_list.iter().map(|t| t.disc_number).max();
+        let track_count = Some(track_list.len() as i32);
+
+        // Create album record
+        let album = albums_repo
+            .create(crate::db::albums::CreateAlbum {
+                artist_id,
+                library_id: options.library_id,
+                user_id: options.user_id,
+                name: album_details.title.clone(),
+                sort_name: None,
+                year: album_details.year(),
+                musicbrainz_id: Some(options.musicbrainz_id),
+                album_type: Some(album_details.normalized_type()),
+                genres: vec![],
+                label: None,
+                country: None,
+                release_date: None,
+                cover_url: cached_cover_url,
+                track_count,
+                disc_count,
+            })
+            .await?;
+
+        info!(
+            album_id = %album.id,
+            album_name = %album.name,
+            artist = %artist_name,
+            track_count = track_list.len(),
+            "Created album record"
+        );
+
+        // Create track records
+        if !track_list.is_empty() {
+            let tracks_to_create: Vec<crate::db::CreateTrack> = track_list
+                .into_iter()
+                .map(|t| crate::db::CreateTrack {
+                    album_id: album.id,
+                    library_id: options.library_id,
+                    title: t.title,
+                    track_number: t.track_number,
+                    disc_number: t.disc_number,
+                    musicbrainz_id: Some(t.musicbrainz_id),
+                    isrc: t.isrc,
+                    duration_secs: t.duration_secs,
+                    explicit: false,
+                    artist_name: t.artist_name,
+                    artist_id: None, // Could look up artist if different from album artist
+                })
+                .collect();
+
+            match tracks_repo.create_many(tracks_to_create).await {
+                Ok(created_tracks) => {
+                    info!(
+                        album_id = %album.id,
+                        tracks_created = created_tracks.len(),
+                        "Created track records for album"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        album_id = %album.id,
+                        error = %e,
+                        "Failed to create track records, album created without tracks"
+                    );
+                }
+            }
+        }
+
+        Ok(album)
+    }
+
+    // =========================================================================
+    // Audiobook Methods
+    // =========================================================================
+
+    /// Search for audiobooks using OpenLibrary
+    pub async fn search_audiobooks(&self, query: &str) -> Result<Vec<AudiobookSearchResult>> {
+        info!(query = %query, "Searching for audiobooks");
+        let results = self.openlibrary.search(query).await?;
+        let audiobooks: Vec<AudiobookSearchResult> = results.into_iter().map(|r| AudiobookSearchResult {
+            provider: MetadataProvider::OpenLibrary,
+            provider_id: r.openlibrary_id.unwrap_or_default(),
+            title: r.title,
+            author_name: r.author_name,
+            year: r.year,
+            cover_url: r.cover_url,
+            isbn: r.isbn,
+            description: r.description,
+        }).collect();
+        debug!(count = audiobooks.len(), "Found audiobooks");
+        Ok(audiobooks)
+    }
+
+    /// Add an audiobook from OpenLibrary to a library
+    pub async fn add_audiobook_from_provider(&self, options: AddAudiobookOptions) -> Result<AudiobookRecord> {
+        info!(openlibrary_id = %options.openlibrary_id, library_id = %options.library_id, "Adding audiobook");
+        let audiobooks_repo = self.db.audiobooks();
+        if let Some(existing) = audiobooks_repo.get_by_openlibrary_id(options.library_id, &options.openlibrary_id).await? {
+            return Ok(existing);
+        }
+        let details = self.openlibrary.get_work(&options.openlibrary_id).await?;
+        let author = audiobooks_repo.find_or_create_author(options.library_id, options.user_id, &details.author_name, None).await?;
+        let cover_url = details.cover_url.clone();
+        let audiobook = audiobooks_repo.create(crate::db::CreateAudiobook {
+            author_id: author.id, library_id: options.library_id, user_id: options.user_id,
+            title: details.title.clone(), sort_title: None, subtitle: details.subtitle,
+            openlibrary_id: Some(options.openlibrary_id), isbn: details.isbn, description: details.description,
+            publisher: details.publishers.first().cloned(), language: details.language, cover_url,
+        }).await?;
+        Ok(audiobook)
+    }
+
     /// Get upcoming TV schedule (database cached)
     ///
     /// Fetches episodes airing in the next N days from the database cache.
@@ -616,7 +971,7 @@ impl MetadataService {
             let schedule: Vec<TvMazeScheduleEntry> = cached_entries
                 .into_iter()
                 .map(|record| {
-                    use super::tvmaze::{TvMazeImage, TvMazeNetwork, TvMazeRating};
+                    use super::tvmaze::{TvMazeImage, TvMazeNetwork};
 
                     TvMazeScheduleEntry {
                         id: record.tvmaze_episode_id as u32,
@@ -827,7 +1182,6 @@ impl MetadataService {
                 backdrop_url: cached_backdrop_url,
                 monitored: options.monitored,
                 monitor_type: options.monitor_type.clone(),
-                quality_profile_id: options.quality_profile_id,
                 path: options.path.clone(),
                 auto_download_override: None,  // Inherit from library
                 backfill_existing: true,       // Default to true for new shows

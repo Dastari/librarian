@@ -336,6 +336,20 @@ export interface DataTableProps<T> {
   /** Whether a load-more operation is in progress (separate from initial loading) */
   isLoadingMore?: boolean
 
+  // --- Server-Side Mode ---
+  /**
+   * Enable server-side mode. When true:
+   * - Client-side filtering is disabled (data is already filtered by server)
+   * - Client-side sorting is disabled (data is already sorted by server)
+   * - Search is passed to onSearchChange callback instead of filtering locally
+   * - Use with paginationMode="infinite" for server-side pagination
+   */
+  serverSide?: boolean
+  /** Total count of items on server (for display, used in server-side mode) */
+  serverTotalCount?: number
+  /** Callback when search term changes (for server-side filtering) */
+  onSearchChange?: (searchTerm: string) => void
+
   // --- Layout ---
   /** Custom header content (above toolbar) */
   headerContent?: ReactNode

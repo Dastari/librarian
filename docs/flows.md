@@ -8,6 +8,8 @@ This document describes the key backend flows in Librarian using Mermaid diagram
 - [Adding a New Library](#adding-a-new-library)
 - [Torrent Lifecycle](#torrent-lifecycle)
 - [File Organization](#file-organization)
+- [Auto-Hunt System](#auto-hunt-system)
+- [Content Acquisition Workflows](#content-acquisition-workflows)
 
 ---
 
@@ -334,35 +336,82 @@ flowchart TD
     T --> U
 ```
 
-### Auto-Matching Unlinked Torrents
+### Auto-Matching and Auto-Adding Torrents
+
+When a torrent is linked to a library (but not a specific item), the system can auto-add entries:
 
 ```mermaid
 flowchart TD
     A[process_with_library] --> B[Get Library]
-    B --> C[For Each File]
-    C --> D{Video or Audio?}
+    B --> C{Library Type?}
     
-    D -->|Video + TV Library| E[try_match_tv_file]
-    D -->|Video + Movie Library| F[Create Unlinked File]
-    D -->|Audio| G[Create Unlinked Audio File]
+    C -->|TV| D[try_match_tv_file]
+    C -->|Movies| E{auto_add_discovered?}
+    C -->|Music| F{auto_add_discovered?}
+    C -->|Audiobooks| G{auto_add_discovered?}
     
-    E --> H[Parse Filename]
+    D --> H[Parse Filename]
     H --> I[Extract Show Name + S##E##]
     I --> J[find_by_name_in_library]
     J --> K{Show Found?}
-    
-    K -->|Yes| L[get_by_show_season_episode]
+    K -->|Yes| L[Link to Episode]
     K -->|No| M[Create Unlinked File]
     
-    L --> N{Episode Found?}
-    N -->|Yes| O[Link Torrent to Episode]
-    N -->|No| M
+    E -->|Yes| N[try_auto_add_movie]
+    E -->|No| O[Create Unlinked File]
+    N --> P[Parse Torrent Name]
+    P --> Q[Search TMDB]
+    Q --> R{Match Found?}
+    R -->|Yes| S[Create Movie + Link + Organize]
+    R -->|No| O
     
-    O --> P[process_video_file]
-    P --> Q[Organize if Enabled]
-    Q --> R[Return matched=true]
+    F -->|Yes| T[try_auto_add_album]
+    F -->|No| U[Create Unlinked Audio File]
+    T --> V[Parse Artist/Album from Name]
+    V --> W[Search MusicBrainz]
+    W --> X{Match Found?}
+    X -->|Yes| Y[Create Album + Link + Organize]
+    X -->|No| U
     
-    M --> S[Return matched=false]
+    G -->|Yes| Z[try_auto_add_audiobook]
+    G -->|No| AA[Create Unlinked Audio File]
+    Z --> AB[Parse Author/Title from Name]
+    AB --> AC[Search OpenLibrary]
+    AC --> AD{Match Found?}
+    AD -->|Yes| AE[Create Audiobook + Link + Organize]
+    AD -->|No| AA
+```
+
+### Force Reprocessing (Organize Action)
+
+When triggering manual organization from the Downloads page with force=true:
+
+```mermaid
+flowchart TD
+    A[organize_torrent mutation] --> B[Get Torrent Record]
+    B --> C[Get Files from librqbit]
+    C --> D{Files in Downloads Path?}
+    
+    D -->|Yes| E[Delete Existing media_file Records]
+    E --> F[Reset has_file Flags on Linked Items]
+    
+    D -->|No| G[Normal Processing]
+    F --> G
+    
+    G --> H{Item Linked?}
+    H -->|Episode| I[process_linked_episode]
+    H -->|Movie| J[process_linked_movie]
+    H -->|Album| K[process_linked_music]
+    H -->|Audiobook| L[process_linked_audiobook]
+    H -->|Library Only| M[process_with_library]
+    
+    I --> N[Organize Files]
+    J --> N
+    K --> N
+    L --> N
+    M --> N
+    
+    N --> O[Update post_process_status]
 ```
 
 ---
@@ -498,6 +547,62 @@ flowchart TD
 
 ---
 
+## Auto-Hunt System
+
+Auto-hunt is **event-driven**, not scheduled. It triggers:
+1. **Immediately when adding content** - Adding a movie/album/audiobook triggers hunt for that item
+2. **After library scans** - Each scan triggers auto-hunt for all missing content in that library
+
+```mermaid
+flowchart TD
+    subgraph Triggers["Auto-Hunt Triggers"]
+        A[Add Movie/Album/Audiobook] --> B[Immediate Hunt for Item]
+        C[Library Scan Completes] --> D[Hunt All Missing in Library]
+        E[Manual triggerAutoHunt] --> D
+    end
+    
+    subgraph HuntProcess["Hunt Process"]
+        B --> F[Search Enabled Indexers]
+        D --> G[Find Missing Items]
+        G --> F
+        
+        F --> H[Apply Quality Filters]
+        H --> I{Matches Found?}
+        
+        I -->|Yes| J[Score and Rank Releases]
+        I -->|No| K[Log: No Match]
+        
+        J --> L[Select Best Release]
+        L --> M[Download via IndexerManager]
+        M --> N[Authenticated Download]
+        N --> O[Link Torrent to Item]
+        O --> P[Download Monitor Handles Rest]
+    end
+```
+
+### Authenticated Downloads
+
+Private tracker downloads go through the IndexerManager for proper authentication:
+
+```mermaid
+sequenceDiagram
+    participant Hunt as Auto-Hunt
+    participant IM as IndexerManager
+    participant Idx as Indexer (e.g., IPTorrents)
+    participant TS as TorrentService
+    
+    Hunt->>IM: download_release(release)
+    IM->>IM: Find indexer by name
+    IM->>Idx: download(url)
+    Idx->>Idx: HTTP GET with cookies/auth
+    Idx-->>IM: .torrent file bytes
+    IM->>TS: add_torrent_bytes(bytes, user_id)
+    TS-->>IM: TorrentInfo
+    IM-->>Hunt: TorrentInfo
+```
+
+---
+
 ## Event Flow (Subscriptions)
 
 ```mermaid
@@ -528,3 +633,86 @@ flowchart LR
     E --> H
     F --> I
 ```
+
+---
+
+## Content Acquisition Workflows
+
+Librarian supports two complementary workflows for acquiring content:
+
+### Library-First Workflow
+
+Start from the library, add what you want, system finds and downloads it automatically.
+
+```mermaid
+flowchart TD
+    A[User navigates to Library] --> B[Click 'Add Movie/Album/Audiobook']
+    B --> C[Search metadata provider]
+    C --> D[Select item to add]
+    D --> E[Create entry in library]
+    E --> F{Auto-Hunt enabled?}
+    
+    F -->|Yes| G[Immediate Auto-Hunt triggered]
+    F -->|No| H[Item saved as 'Missing']
+    
+    G --> I[Search enabled indexers]
+    I --> J[Apply quality filters]
+    J --> K{Matches found?}
+    
+    K -->|Yes| L[Download best release]
+    K -->|No| M[Log: No match, will retry on next scan]
+    
+    L --> N[Download Monitor processes]
+    N --> O[Organize into library folder]
+    O --> P[Item marked as 'Downloaded']
+```
+
+### Torrent-First Workflow
+
+Find a torrent first, then add it to your library. Requires `auto_add_discovered` enabled.
+
+```mermaid
+flowchart TD
+    A[User searches on /hunt] --> B[Browse search results]
+    B --> C[Click Download]
+    C --> D[Torrent added to client]
+    D --> E[Download completes]
+    
+    E --> F[User goes to /downloads]
+    F --> G[Click 'Link to Library']
+    G --> H[Select target library]
+    
+    H --> I{Library type?}
+    
+    I -->|Movies| J[Parse torrent name]
+    J --> K[Search TMDB]
+    K --> L[Create movie entry]
+    
+    I -->|Music| M[Parse artist/album]
+    M --> N[Search MusicBrainz]
+    N --> O[Create album entry]
+    
+    I -->|Audiobooks| P[Parse author/title]
+    P --> Q[Search OpenLibrary]
+    Q --> R[Create audiobook entry]
+    
+    I -->|TV| S[Match existing show/episode]
+    
+    L --> T[Link torrent to item]
+    O --> T
+    R --> T
+    S --> T
+    
+    T --> U[Organize files into library]
+    U --> V[Item marked as 'Downloaded']
+```
+
+### Key Difference
+
+| Aspect | Library-First | Torrent-First |
+|--------|---------------|---------------|
+| Starting point | Library UI | Hunt/Downloads page |
+| Entry creation | Before download | After download |
+| Auto-Hunt | Required | Not used |
+| auto_add_discovered | Optional | Required |
+| Use case | "I want this movie" | "Found a good release, add it" |

@@ -269,43 +269,53 @@ Native Jackett-like indexer system built into the backend:
 
 ### Auto Hunt System
 
-Automatic torrent hunting for wanted episodes:
+Automatic torrent hunting for missing content. **Auto Hunt is event-driven, not scheduled.**
+
+**Triggers:**
+- **On Add**: Adding a movie/album/audiobook immediately triggers hunt for that item
+- **After Scan**: Library scans trigger auto-hunt for all missing content
+- **Manual**: `triggerAutoHunt` mutation for on-demand hunting
 
 **Flow:**
 ```
-1. Episode marked as "wanted" (missing or upgrade desired)
+1. Trigger event (add item or scan completes)
           │
           ▼
-2. Auto Hunt job runs (configurable interval)
+2. Find missing content in library
+   - Movies: monitored=true, has_file=false
+   - TV: episodes with status=wanted
+   - Music/Audiobooks: monitored=true, has_files=false
           │
           ▼
-3. Query enabled indexers for episode
-   - Search term: "Show Name S01E05"
-   - Apply category filters (TV)
+3. Query enabled indexers
+   - Movies: IMDB/TMDB ID + title/year
+   - TV: "Show Name S01E05"
+   - Music: Artist + Album
           │
           ▼
-4. Filter results by quality profile
-   - Resolution (4K > 1080p > 720p)
-   - Codec (x265 > x264)
-   - Source (BluRay > WEB-DL > HDTV)
-   - Size limits
-   - Minimum seeders
+4. Filter results by library quality settings
+   - Resolution, codec, source (video)
+   - Audio format, bit depth (audio)
+   - Preferred release groups
           │
           ▼
-5. Select best matching release
+5. Score and rank releases
+   - Seeders, freeleech bonus
+   - Quality match score
           │
           ▼
-6. Add to download queue automatically
+6. Download via IndexerManager (authenticated)
           │
           ▼
-7. Post-download processing organizes file
+7. Link torrent to item
+          │
+          ▼
+8. Download monitor handles organization
 ```
 
-**Configuration (per library/show):**
-- `auto_hunt_enabled`: Enable automatic searching
-- `quality_profile_id`: Quality requirements
-- `hunt_interval_minutes`: How often to search
-- `max_results_per_search`: Limit API calls
+**Configuration (per library):**
+- `auto_hunt`: Enable automatic searching
+- Quality filters embedded in library settings (not separate profiles)
 
 ---
 
@@ -328,9 +338,12 @@ libraries
 ├── scan_interval_minutes (INTEGER) - how often to scan
 ├── watch_for_changes (BOOLEAN) - use inotify where supported
 ├── post_download_action (ENUM) - copy|move|hardlink
-├── auto_rename (BOOLEAN) - automatically rename files
+├── organize_files (BOOLEAN) - automatically organize files
 ├── naming_pattern (TEXT) - e.g., "{show}/Season {season}/{show} - S{season}E{episode} - {title}.{ext}"
-├── default_quality_profile_id (UUID, FK → quality_profiles)
+├── auto_add_discovered (BOOLEAN) - auto-create entries from downloaded content
+├── auto_download (BOOLEAN) - auto-download from RSS feeds
+├── auto_hunt (BOOLEAN) - auto-search indexers for missing content
+├── quality_* (various) - embedded quality settings (see Quality Settings section)
 ├── last_scanned_at (TIMESTAMPTZ)
 ├── created_at, updated_at
 ```
@@ -356,7 +369,8 @@ tv_shows
 ├── backdrop_url (TEXT)
 ├── monitored (BOOLEAN) - is this show being tracked
 ├── monitor_type (VARCHAR) - all|future|none
-├── quality_profile_id (UUID, FK → quality_profiles) - NULL = use library default
+├── auto_hunt_override (BOOLEAN) - NULL = inherit from library
+├── organize_override (BOOLEAN) - NULL = inherit from library
 ├── path (TEXT) - show-specific folder within library
 ├── created_at, updated_at
 ```
@@ -383,27 +397,27 @@ episodes
 ├── UNIQUE(tv_show_id, season, episode)
 ```
 
-### Quality Profiles
+### Quality Settings (Embedded in Libraries)
+
+Quality settings are stored directly in the `libraries` table, not as separate profiles:
 
 ```sql
-quality_profiles
-├── id (UUID)
-├── user_id (UUID)
-├── name (VARCHAR) - e.g., "4K HDR", "1080p", "Any"
-├── preferred_resolution (VARCHAR) - 2160p|1080p|720p|480p|any
-├── min_resolution (VARCHAR) - minimum acceptable
-├── preferred_codec (VARCHAR) - hevc|h264|av1|any
-├── preferred_audio (VARCHAR) - atmos|truehd|dts|ac3|aac|any
-├── require_hdr (BOOLEAN)
-├── hdr_types (VARCHAR[]) - hdr10|hdr10plus|dolbyvision
-├── preferred_language (VARCHAR) - en|de|fr|etc
-├── max_size_gb (DECIMAL) - per episode
-├── min_seeders (INTEGER) - for downloads
-├── release_group_whitelist (TEXT[]) - preferred groups
-├── release_group_blacklist (TEXT[]) - avoid these
-├── upgrade_until (VARCHAR) - stop upgrading at this quality
-├── created_at, updated_at
+-- Video library quality columns
+├── quality_resolutions (TEXT[]) - ["1080p", "2160p"]
+├── quality_video_codecs (TEXT[]) - ["x265", "x264"]
+├── quality_hdr_types (TEXT[]) - ["HDR10", "DolbyVision"]
+├── quality_audio_formats (TEXT[]) - ["TrueHD", "DTS-HD"]
+├── quality_sources (TEXT[]) - ["BluRay", "WEB-DL"]
+├── quality_release_groups (TEXT[]) - preferred groups
+├── quality_blocked_groups (TEXT[]) - avoid these
+
+-- Audio library quality columns (music/audiobooks)
+├── quality_audio_formats (TEXT[]) - ["FLAC", "MP3 320"]
+├── quality_bit_depths (TEXT[]) - ["24-bit", "16-bit"]
+├── quality_sample_rates (TEXT[]) - ["96kHz", "44.1kHz"]
 ```
+
+This simplifies the model - each library has its own quality preferences without needing to reference a separate profile table.
 
 ### Media Files
 
@@ -599,11 +613,11 @@ type Mutation {
 | **Library Scanner** | Per-library (configurable) | Walk paths, detect new/changed files |
 | **Filesystem Watcher** | Real-time (inotify) | Immediate detection of new files |
 | **RSS Poller** | Every 15 min (configurable) | Check RSS feeds for new releases |
-| **Download Monitor** | Real-time (events) | Track torrent progress, trigger post-processing |
-| **Post-Processor** | On completion | Extract, filter, identify, rename, organize |
-| **Metadata Fetcher** | On demand + batch | Fetch show/episode info from APIs |
-| **Quality Upgrader** | Daily | Find better quality versions of existing files |
-| **Transcode GC** | Daily at 3 AM | Clean old HLS caches |
+| **Download Monitor** | Every 1 min | Process completed torrents, organize files |
+| **Auto-Hunt** | Event-driven | Search indexers for missing content (triggers on add + after scans) |
+| **Metadata Fetcher** | On demand | Fetch show/episode/movie info from APIs |
+| **Transcode GC** | Daily at 3 AM | Clean old HLS transcodes |
+| **Schedule Sync** | Hourly | Sync TV schedule from TVMaze |
 
 ---
 
@@ -740,28 +754,34 @@ OPENAI_API_KEY=
 
 ## MVP vs. Later
 
-### MVP (Current Focus)
+### MVP (Completed)
 - ✅ Native torrent client (librqbit)
 - ✅ GraphQL subscriptions for real-time updates
-- ⏳ TV library management (create, scan, browse)
-- ⏳ Show management (add, search, monitor)
-- ⏳ Episode tracking (wanted list)
-- ⏳ RSS feed polling
-- ⏳ Basic post-download processing
-- ⏳ Auto-rename and organization
-- ⏳ Quality profiles (basic)
+- ✅ TV library management (create, scan, browse)
+- ✅ Show management (add, search, monitor)
+- ✅ Episode tracking (wanted list)
+- ✅ RSS feed polling
+- ✅ Post-download processing with organization
+- ✅ Auto-rename and organization with naming patterns
+- ✅ Quality filters (per-library, type-aware)
+- ✅ Native indexer system (Jackett-like)
+- ✅ Auto-Hunt (event-driven, immediate on add + after scans)
+- ✅ Movie library support
+- ✅ Music library support (MusicBrainz metadata)
+- ✅ Audiobook library support (OpenLibrary metadata)
+- ✅ Two-way content acquisition (Library-first and Torrent-first workflows)
+- ✅ Authenticated downloads for private trackers
+- ✅ Chromecast casting support
 
 ### Later
 - Multi‑quality HLS ladder + dynamic ABR
-- Torrent search engines (beyond RSS)
 - Advanced quality upgrading
 - DLNA server
 - Subtitles management (embedded, external, OCR for PGS)
 - Hardware transcoding (NVENC/VAAPI/QSV)
 - Multi‑user sharing with roles
 - Mobile‑friendly PWA, offline posters, push notifications
-- Movie library support (similar workflow)
-- Music/audiobook libraries
+- AirPlay casting support
 
 ---
 

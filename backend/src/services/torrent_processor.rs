@@ -17,7 +17,6 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tracing::{debug, error, info, warn};
-use uuid::Uuid;
 
 use crate::db::{Database, EpisodeRecord, MediaFileRecord, MovieRecord, TorrentRecord, TvShowRecord};
 use crate::services::file_utils::{get_container, is_audio_file, is_video_file};
@@ -200,6 +199,47 @@ impl TorrentProcessor {
             return Ok(result);
         }
 
+        // When force=true, delete existing media_file records for files in the downloads folder
+        // This allows re-organization of files that were previously processed but not organized correctly
+        if force {
+            let downloads_path = std::env::var("DOWNLOADS_PATH").unwrap_or_else(|_| "/data/downloads".to_string());
+            let mut deleted_count = 0;
+            
+            for file_info in &files {
+                if file_info.path.starts_with(&downloads_path) {
+                    if let Some(existing) = self.db.media_files().get_by_path(&file_info.path).await? {
+                        info!(
+                            path = %file_info.path,
+                            media_file_id = %existing.id,
+                            "Force reprocess: deleting existing media_file record in downloads folder"
+                        );
+                        // Reset has_file flags on linked items
+                        // (Episodes derive status from media_files, so no update needed)
+                        if let Some(movie_id) = existing.movie_id {
+                            self.db.movies().update_has_file(movie_id, false).await.ok();
+                        }
+                        self.db.media_files().delete(existing.id).await.ok();
+                        deleted_count += 1;
+                    }
+                }
+            }
+            
+            // For albums/audiobooks, reset has_files flag on the linked item if we deleted any files
+            if deleted_count > 0 {
+                if let Some(album_id) = torrent.album_id {
+                    self.db.albums().update_has_files(album_id, false).await.ok();
+                }
+                if let Some(audiobook_id) = torrent.audiobook_id {
+                    self.db.audiobooks().update_has_files(audiobook_id, false).await.ok();
+                }
+                info!(
+                    info_hash = %info_hash,
+                    deleted_count = deleted_count,
+                    "Force reprocess: cleared existing media_file records"
+                );
+            }
+        }
+
         // Route processing based on what's linked
         let process_result = if torrent.episode_id.is_some() {
             self.process_linked_episode(&torrent, &files).await
@@ -360,6 +400,13 @@ impl TorrentProcessor {
                 continue;
             }
 
+            let parsed = filename_parser::parse_movie(
+                Path::new(file_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(""),
+            );
+
             let media_file = self
                 .db
                 .media_files()
@@ -368,8 +415,8 @@ impl TorrentProcessor {
                     path: file_path.clone(),
                     size_bytes: file_info.size as i64,
                     container: get_container(file_path),
-                    video_codec: None,
-                    audio_codec: None,
+                    video_codec: parsed.codec.clone(),
+                    audio_codec: parsed.audio.clone(),
                     width: None,
                     height: None,
                     duration: None,
@@ -382,14 +429,65 @@ impl TorrentProcessor {
                         .file_name()
                         .and_then(|n| n.to_str())
                         .map(|s| s.to_string()),
-                    resolution: None,
-                    is_hdr: None,
-                    hdr_type: None,
+                    resolution: parsed.resolution.clone(),
+                    is_hdr: parsed.hdr.is_some().then_some(true),
+                    hdr_type: parsed.hdr.clone(),
                 })
                 .await?;
 
             // Queue for FFmpeg analysis to get real metadata
             self.queue_for_analysis(&media_file).await;
+
+            // Organize the file if library has organize_files enabled
+            if library.organize_files {
+                info!(
+                    movie = %movie.title,
+                    library_path = %library.path,
+                    source_path = %file_path,
+                    post_download_action = %library.post_download_action,
+                    "Organizing movie file"
+                );
+                match self
+                    .organizer
+                    .organize_movie_file(
+                        &media_file,
+                        &movie,
+                        &library.path,
+                        library.naming_pattern.as_deref(),
+                        &library.post_download_action,
+                        false,
+                    )
+                    .await
+                {
+                    Ok(org_result) if org_result.success => {
+                        info!(
+                            movie = %movie.title,
+                            original_path = %org_result.original_path,
+                            new_path = %org_result.new_path,
+                            "Movie file organized successfully"
+                        );
+                        result.organized = true;
+                    }
+                    Ok(org_result) => {
+                        warn!(
+                            movie = %movie.title,
+                            original_path = %org_result.original_path,
+                            new_path = %org_result.new_path,
+                            error = ?org_result.error,
+                            "Failed to organize movie file"
+                        );
+                    }
+                    Err(e) => {
+                        error!(movie = %movie.title, error = %e, "Error organizing movie file");
+                    }
+                }
+            } else {
+                debug!(
+                    movie = %movie.title,
+                    library_name = %library.name,
+                    "Library has organize_files disabled, file will remain in downloads"
+                );
+            }
 
             result.files_processed += 1;
         }
@@ -397,6 +495,12 @@ impl TorrentProcessor {
         // Update movie status
         if result.files_processed > 0 {
             self.db.movies().update_has_file(movie.id, true).await?;
+            
+            // Calculate total size from all files
+            let movie_files = self.db.media_files().list_by_movie(movie.id).await?;
+            let total_size: i64 = movie_files.iter().map(|f| f.size_bytes).sum();
+            self.db.movies().update_file_status(movie.id, true, Some(total_size)).await?;
+            
             result.success = true;
             result.messages.push(format!("Processed movie: {}", movie.title));
         }
@@ -423,6 +527,34 @@ impl TorrentProcessor {
             result.messages.push("No library linked to music torrent".to_string());
             return Ok(result);
         };
+
+        // Get album and artist info for organization
+        let album = if let Some(album_id) = torrent.album_id {
+            self.db.albums().get_by_id(album_id).await?
+        } else {
+            None
+        };
+
+        let artist_name = if let Some(ref album) = album {
+            // Get artist name from album's artist_id
+            self.db
+                .albums()
+                .get_artist_by_id(album.artist_id)
+                .await?
+                .map(|a| a.name)
+                .unwrap_or_else(|| "Unknown Artist".to_string())
+        } else {
+            "Unknown Artist".to_string()
+        };
+
+        // Get tracks for the album if we have an album linked
+        let album_tracks = if let Some(ref album) = album {
+            self.db.tracks().list_by_album(album.id).await.unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        let mut tracks_matched = 0;
 
         for file_info in files {
             if !is_audio_file(&file_info.path) {
@@ -463,22 +595,82 @@ impl TorrentProcessor {
                 })
                 .await?;
 
-            // Link to album or track
+            // Link to album
             if let Some(album_id) = torrent.album_id {
                 self.db
                     .media_files()
                     .link_to_album(media_file.id, album_id)
                     .await?;
             }
-            if let Some(track_id) = torrent.track_id {
-                self.db
-                    .media_files()
-                    .link_to_track(media_file.id, track_id)
-                    .await?;
+
+            // Try to match this file to a track
+            // If the torrent has a specific track_id, use that
+            // Otherwise, try to match by filename analysis
+            let matched_track_id = if let Some(track_id) = torrent.track_id {
+                Some(track_id)
+            } else if !album_tracks.is_empty() {
+                // Try to match by track number in filename
+                let filename = Path::new(file_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+
+                match_track_to_file(filename, &album_tracks)
+            } else {
+                None
+            };
+
+            // Link to track if we found a match
+            if let Some(track_id) = matched_track_id {
+                if let Err(e) = self.db.tracks().link_media_file(track_id, media_file.id).await {
+                    warn!(error = %e, track_id = %track_id, "Failed to link media file to track");
+                } else {
+                    tracks_matched += 1;
+                    debug!(track_id = %track_id, file = %file_path, "Linked file to track");
+                }
             }
 
             // Queue for FFmpeg analysis to get real audio metadata (bitrate, codec, duration, etc.)
             self.queue_for_analysis(&media_file).await;
+
+            // Organize the file if library has organize_files enabled and we have album info
+            if library.organize_files {
+                if let Some(ref album) = album {
+                    match self
+                        .organizer
+                        .organize_music_file(
+                            &media_file,
+                            &artist_name,
+                            album,
+                            &library.path,
+                            library.naming_pattern.as_deref(),
+                            &library.post_download_action,
+                            false,
+                        )
+                        .await
+                    {
+                        Ok(org_result) if org_result.success => {
+                            info!(
+                                album = %album.name,
+                                artist = %artist_name,
+                                new_path = %org_result.new_path,
+                                "Music file organized successfully"
+                            );
+                            result.organized = true;
+                        }
+                        Ok(org_result) => {
+                            warn!(
+                                album = %album.name,
+                                error = ?org_result.error,
+                                "Failed to organize music file"
+                            );
+                        }
+                        Err(e) => {
+                            error!(album = %album.name, error = %e, "Error organizing music file");
+                        }
+                    }
+                }
+            }
 
             result.files_processed += 1;
             info!(
@@ -489,10 +681,16 @@ impl TorrentProcessor {
         }
 
         if result.files_processed > 0 {
+            // Update album has_files status if we have an album
+            if let Some(ref album) = album {
+                self.db.albums().update_has_files(album.id, true).await?;
+            }
+            
             result.success = true;
             result.messages.push(format!(
-                "Processed {} music file(s)",
-                result.files_processed
+                "Processed {} music file(s), matched {} track(s)",
+                result.files_processed,
+                tracks_matched
             ));
         }
 
@@ -518,6 +716,20 @@ impl TorrentProcessor {
         let Some(library) = library else {
             result.messages.push("No library linked to audiobook torrent".to_string());
             return Ok(result);
+        };
+
+        // Get audiobook and author info for organization
+        let audiobook = self.db.audiobooks().get_by_id(audiobook_id).await?;
+        
+        let author_name = if let Some(ref ab) = audiobook {
+            self.db
+                .audiobooks()
+                .get_author_by_id(ab.author_id)
+                .await?
+                .map(|a| a.name)
+                .unwrap_or_else(|| "Unknown Author".to_string())
+        } else {
+            "Unknown Author".to_string()
         };
 
         for file_info in files {
@@ -568,6 +780,45 @@ impl TorrentProcessor {
             // Queue for FFmpeg analysis to get real audio metadata
             self.queue_for_analysis(&media_file).await;
 
+            // Organize the file if library has organize_files enabled and we have audiobook info
+            if library.organize_files {
+                if let Some(ref ab) = audiobook {
+                    match self
+                        .organizer
+                        .organize_audiobook_file(
+                            &media_file,
+                            &author_name,
+                            ab,
+                            &library.path,
+                            library.naming_pattern.as_deref(),
+                            &library.post_download_action,
+                            false,
+                        )
+                        .await
+                    {
+                        Ok(org_result) if org_result.success => {
+                            info!(
+                                audiobook = %ab.title,
+                                author = %author_name,
+                                new_path = %org_result.new_path,
+                                "Audiobook file organized successfully"
+                            );
+                            result.organized = true;
+                        }
+                        Ok(org_result) => {
+                            warn!(
+                                audiobook = %ab.title,
+                                error = ?org_result.error,
+                                "Failed to organize audiobook file"
+                            );
+                        }
+                        Err(e) => {
+                            error!(audiobook = %ab.title, error = %e, "Error organizing audiobook file");
+                        }
+                    }
+                }
+            }
+
             result.files_processed += 1;
             info!(
                 file_id = %media_file.id,
@@ -577,6 +828,11 @@ impl TorrentProcessor {
         }
 
         if result.files_processed > 0 {
+            // Update audiobook has_files status
+            if let Some(ref ab) = audiobook {
+                self.db.audiobooks().update_has_files(ab.id, true).await?;
+            }
+            
             result.success = true;
             result.messages.push(format!(
                 "Processed {} audiobook file(s)",
@@ -788,12 +1044,74 @@ impl TorrentProcessor {
                         ));
                     }
                 }
-                "music" | "audiobooks" => {
-                    // For audio libraries, create unlinked audio file
-                    // TODO: Add music/audiobook matching
+                "music" => {
+                    // For music libraries, try to auto-add album from the torrent name
+                    if library.auto_add_discovered {
+                        if let Some(album) = self.try_auto_add_album(&torrent.name, &library).await? {
+                            // Link torrent to the album
+                            self.db.torrents().link_to_album(&torrent.info_hash, album.id).await?;
+                            
+                            // Now process as linked music - this will organize all files
+                            let mut updated_torrent = torrent.clone();
+                            updated_torrent.album_id = Some(album.id);
+                            
+                            let music_result = self.process_linked_music(&updated_torrent, files).await?;
+                            result.matched = music_result.matched;
+                            result.organized = music_result.organized;
+                            result.files_processed += music_result.files_processed;
+                            result.files_failed += music_result.files_failed;
+                            result.messages.extend(music_result.messages);
+                            result.messages.push(format!(
+                                "Auto-added album: {} by {}",
+                                album.name,
+                                self.db.albums().get_artist_by_id(album.artist_id).await?
+                                    .map(|a| a.name).unwrap_or_else(|| "Unknown Artist".to_string())
+                            ));
+                            // Break out of file loop since we processed all files
+                            break;
+                        }
+                    }
+                    // Fallback: create unlinked audio file
                     self.create_unlinked_audio_file(file_path, file_info.size as i64, &library)
                         .await?;
                     result.files_processed += 1;
+                    result.messages.push(format!(
+                        "No album match found for: {}. Enable 'Auto-add discovered' or add the album first.",
+                        Path::new(file_path).file_name().and_then(|n| n.to_str()).unwrap_or(file_path)
+                    ));
+                }
+                "audiobooks" => {
+                    // For audiobook libraries, try to auto-add from the torrent name
+                    if library.auto_add_discovered {
+                        if let Some(audiobook) = self.try_auto_add_audiobook(&torrent.name, &library).await? {
+                            // Link torrent to the audiobook
+                            self.db.torrents().link_to_audiobook(&torrent.info_hash, audiobook.id).await?;
+                            
+                            // Now process as linked audiobook
+                            let mut updated_torrent = torrent.clone();
+                            updated_torrent.audiobook_id = Some(audiobook.id);
+                            
+                            let audiobook_result = self.process_linked_audiobook(&updated_torrent, files).await?;
+                            result.matched = audiobook_result.matched;
+                            result.organized = audiobook_result.organized;
+                            result.files_processed += audiobook_result.files_processed;
+                            result.files_failed += audiobook_result.files_failed;
+                            result.messages.extend(audiobook_result.messages);
+                            result.messages.push(format!(
+                                "Auto-added audiobook: {}",
+                                audiobook.title
+                            ));
+                            break;
+                        }
+                    }
+                    // Fallback: create unlinked audio file
+                    self.create_unlinked_audio_file(file_path, file_info.size as i64, &library)
+                        .await?;
+                    result.files_processed += 1;
+                    result.messages.push(format!(
+                        "No audiobook match found for: {}. Enable 'Auto-add discovered' or add the audiobook first.",
+                        Path::new(file_path).file_name().and_then(|n| n.to_str()).unwrap_or(file_path)
+                    ));
                 }
                 _ => {
                     // Unknown library type - just create unlinked file
@@ -946,15 +1264,46 @@ impl TorrentProcessor {
 
             // Process audio files (music and audiobooks)
             if !matched && is_audio_file(file_path) {
-                // TODO: Add music and audiobook matching logic
-                // For now, just log
-                if !music_libraries.is_empty() || !audiobook_libraries.is_empty() {
-                    debug!(
-                        path = %file_path,
-                        music_libraries = music_libraries.len(),
-                        audiobook_libraries = audiobook_libraries.len(),
-                        "Would try matching against audio libraries (not yet implemented)"
-                    );
+                // Try to match against music libraries first
+                for library in &music_libraries {
+                    if let Ok(Some((album, artist_name))) = self.try_match_music_file(file_path, library).await {
+                        debug!(
+                            path = %file_path,
+                            album = %album.name,
+                            artist = %artist_name,
+                            library = %library.name,
+                            "Matched audio file to album"
+                        );
+                        if let Err(e) = self.create_linked_music_file(file_path, file_info.size as i64, library, &album).await {
+                            result.messages.push(format!("Error creating music file: {}", e));
+                        } else {
+                            result.files_processed += 1;
+                            matched = true;
+                        }
+                        break;
+                    }
+                }
+
+                // If not matched as music, try audiobook libraries
+                if !matched {
+                    for library in &audiobook_libraries {
+                        if let Ok(Some((audiobook, author_name))) = self.try_match_audiobook_file(file_path, library).await {
+                            debug!(
+                                path = %file_path,
+                                audiobook = %audiobook.title,
+                                author = %author_name,
+                                library = %library.name,
+                                "Matched audio file to audiobook"
+                            );
+                            if let Err(e) = self.create_linked_audiobook_file(file_path, file_info.size as i64, library, &audiobook).await {
+                                result.messages.push(format!("Error creating audiobook file: {}", e));
+                            } else {
+                                result.files_processed += 1;
+                                matched = true;
+                            }
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -1231,7 +1580,248 @@ impl TorrentProcessor {
         Ok(Some(movie_record))
     }
 
-    /// Process a video file for a movie - create media record and link to movie
+    /// Try to auto-add an album from MusicBrainz when auto_add_discovered is enabled
+    async fn try_auto_add_album(
+        &self,
+        torrent_name: &str,
+        library: &crate::db::libraries::LibraryRecord,
+    ) -> Result<Option<crate::db::albums::AlbumRecord>> {
+        let metadata_service = match &self.metadata_service {
+            Some(ms) => ms,
+            None => {
+                debug!("MetadataService not available, cannot auto-add album");
+                return Ok(None);
+            }
+        };
+
+        // Parse album info from torrent name
+        // Common patterns: "Artist - Album (Year)" or "Artist-Album-YEAR-FORMAT"
+        let cleaned = torrent_name
+            .replace('_', " ")
+            .replace('.', " ");
+        
+        // Try to extract artist and album from the name
+        let (artist_name, album_name) = if let Some(pos) = cleaned.find(" - ") {
+            let artist = cleaned[..pos].trim().to_string();
+            let rest = &cleaned[pos + 3..];
+            // Remove year and format info from album name
+            let album = rest.split(|c: char| c == '(' || c == '[' || c.is_ascii_digit())
+                .next()
+                .unwrap_or(rest)
+                .trim()
+                .to_string();
+            (artist, album)
+        } else if cleaned.contains('-') {
+            // Try splitting on first hyphen
+            let parts: Vec<&str> = cleaned.splitn(2, '-').collect();
+            if parts.len() == 2 {
+                let artist = parts[0].trim().to_string();
+                // Clean up album part
+                let album_part = parts[1].trim();
+                let album = album_part
+                    .split(|c: char| c.is_ascii_digit())
+                    .next()
+                    .unwrap_or(album_part)
+                    .trim()
+                    .replace('-', " ")
+                    .trim()
+                    .to_string();
+                (artist, album)
+            } else {
+                debug!(torrent = %torrent_name, "Could not parse artist/album from torrent name");
+                return Ok(None);
+            }
+        } else {
+            debug!(torrent = %torrent_name, "Could not parse artist/album from torrent name");
+            return Ok(None);
+        };
+
+        if artist_name.is_empty() || album_name.is_empty() {
+            debug!(torrent = %torrent_name, "Empty artist or album name parsed");
+            return Ok(None);
+        }
+
+        info!(
+            artist = %artist_name,
+            album = %album_name,
+            "Searching MusicBrainz for album"
+        );
+
+        // Search MusicBrainz
+        let query = format!("{} {}", artist_name, album_name);
+        let search_results = match metadata_service.search_albums(&query).await {
+            Ok(results) => results,
+            Err(e) => {
+                warn!(query = %query, error = %e, "Failed to search MusicBrainz for album");
+                return Ok(None);
+            }
+        };
+
+        if search_results.is_empty() {
+            // Try album name only
+            let search_results = match metadata_service.search_albums(&album_name).await {
+                Ok(results) => results,
+                Err(e) => {
+                    warn!(album = %album_name, error = %e, "Failed to search MusicBrainz for album (retry)");
+                    return Ok(None);
+                }
+            };
+            if search_results.is_empty() {
+                debug!(artist = %artist_name, album = %album_name, "No MusicBrainz results for album");
+                return Ok(None);
+            }
+        }
+
+        let best_match = &search_results[0];
+        
+        info!(
+            title = %best_match.title,
+            artist = ?best_match.artist_name,
+            provider_id = %best_match.provider_id,
+            "Auto-adding album from MusicBrainz"
+        );
+
+        // Add the album from provider
+        let album_record = match metadata_service
+            .add_album_from_provider(crate::services::metadata::AddAlbumOptions {
+                musicbrainz_id: best_match.provider_id.clone(),
+                library_id: library.id,
+                user_id: library.user_id,
+                monitored: true,
+            })
+            .await
+        {
+            Ok(record) => record,
+            Err(e) => {
+                warn!(
+                    title = %best_match.title,
+                    provider_id = %best_match.provider_id,
+                    error = %e,
+                    "Failed to auto-add album from MusicBrainz"
+                );
+                return Ok(None);
+            }
+        };
+
+        Ok(Some(album_record))
+    }
+
+    /// Try to auto-add an audiobook from Audible when auto_add_discovered is enabled
+    async fn try_auto_add_audiobook(
+        &self,
+        torrent_name: &str,
+        library: &crate::db::libraries::LibraryRecord,
+    ) -> Result<Option<crate::db::audiobooks::AudiobookRecord>> {
+        let metadata_service = match &self.metadata_service {
+            Some(ms) => ms,
+            None => {
+                debug!("MetadataService not available, cannot auto-add audiobook");
+                return Ok(None);
+            }
+        };
+
+        // Parse audiobook info from torrent name
+        // Common patterns: "Author - Title" or "Title by Author"
+        let cleaned = torrent_name
+            .replace('_', " ")
+            .replace('.', " ");
+        
+        // Try to extract author and title
+        let (author_name, title) = if cleaned.to_lowercase().contains(" by ") {
+            let lower = cleaned.to_lowercase();
+            if let Some(pos) = lower.find(" by ") {
+                let title = cleaned[..pos].trim().to_string();
+                let author = cleaned[pos + 4..].split(|c: char| c == '(' || c == '[')
+                    .next()
+                    .unwrap_or(&cleaned[pos + 4..])
+                    .trim()
+                    .to_string();
+                (author, title)
+            } else {
+                return Ok(None);
+            }
+        } else if let Some(pos) = cleaned.find(" - ") {
+            let author = cleaned[..pos].trim().to_string();
+            let title = cleaned[pos + 3..]
+                .split(|c: char| c == '(' || c == '[')
+                .next()
+                .unwrap_or(&cleaned[pos + 3..])
+                .trim()
+                .to_string();
+            (author, title)
+        } else {
+            debug!(torrent = %torrent_name, "Could not parse author/title from audiobook torrent name");
+            return Ok(None);
+        };
+
+        if title.is_empty() {
+            debug!(torrent = %torrent_name, "Empty title parsed from audiobook torrent");
+            return Ok(None);
+        }
+
+        info!(
+            author = %author_name,
+            title = %title,
+            "Searching Audible for audiobook"
+        );
+
+        // Search for the audiobook
+        let query = if author_name.is_empty() {
+            title.clone()
+        } else {
+            format!("{} {}", author_name, title)
+        };
+        
+        let search_results = match metadata_service.search_audiobooks(&query).await {
+            Ok(results) => results,
+            Err(e) => {
+                warn!(query = %query, error = %e, "Failed to search Audible for audiobook");
+                return Ok(None);
+            }
+        };
+
+        if search_results.is_empty() {
+            debug!(author = %author_name, title = %title, "No OpenLibrary results for audiobook");
+            return Ok(None);
+        }
+
+        let best_match = &search_results[0];
+        
+        info!(
+            title = %best_match.title,
+            author = ?best_match.author_name,
+            provider_id = %best_match.provider_id,
+            "Auto-adding audiobook from OpenLibrary"
+        );
+
+        // Add the audiobook from provider
+        let audiobook_record = match metadata_service
+            .add_audiobook_from_provider(crate::services::metadata::AddAudiobookOptions {
+                openlibrary_id: best_match.provider_id.clone(),
+                library_id: library.id,
+                user_id: library.user_id,
+                monitored: true,
+            })
+            .await
+        {
+            Ok(record) => record,
+            Err(e) => {
+                warn!(
+                    title = %best_match.title,
+                    provider_id = %best_match.provider_id,
+                    error = %e,
+                    "Failed to auto-add audiobook from OpenLibrary"
+                );
+                return Ok(None);
+            }
+        };
+
+        Ok(Some(audiobook_record))
+    }
+
+    /// Process a video file for a movie - create media record, organize, and link to movie
+    ///
+    /// Returns (success, organized) tuple
     async fn process_video_file_for_movie(
         &self,
         file_path: &str,
@@ -1290,6 +1880,40 @@ impl TorrentProcessor {
 
         // Queue for FFmpeg analysis to get real metadata
         self.queue_for_analysis(&media_file).await;
+
+        // Organize the file if library has organize_files enabled
+        if library.organize_files {
+            match self
+                .organizer
+                .organize_movie_file(
+                    &media_file,
+                    movie,
+                    &library.path,
+                    library.naming_pattern.as_deref(),
+                    &library.post_download_action,
+                    false,
+                )
+                .await
+            {
+                Ok(org_result) if org_result.success => {
+                    info!(
+                        movie = %movie.title,
+                        new_path = %org_result.new_path,
+                        "Movie file organized successfully"
+                    );
+                }
+                Ok(org_result) => {
+                    warn!(
+                        movie = %movie.title,
+                        error = ?org_result.error,
+                        "Failed to organize movie file"
+                    );
+                }
+                Err(e) => {
+                    error!(movie = %movie.title, error = %e, "Error organizing movie file");
+                }
+            }
+        }
 
         // Update movie status
         self.db.movies().update_has_file(movie.id, true).await?;
@@ -1653,4 +2277,380 @@ impl TorrentProcessor {
 
         Ok(processed)
     }
+
+    /// Try to match an audio file to a music album by reading ID3 tags
+    async fn try_match_music_file(
+        &self,
+        file_path: &str,
+        library: &crate::db::libraries::LibraryRecord,
+    ) -> Result<Option<(crate::db::AlbumRecord, String)>> {
+        // Read ID3 tags from the file
+        let meta = match Self::read_audio_metadata_static(file_path) {
+            Some(m) => m,
+            None => return Ok(None),
+        };
+
+        // We need at least artist and album to match
+        let artist_name = match meta.artist {
+            Some(a) if !a.is_empty() => a,
+            _ => return Ok(None),
+        };
+        let album_name = match meta.album {
+            Some(a) if !a.is_empty() => a,
+            _ => return Ok(None),
+        };
+
+        // Try to find the album in the library by name
+        let albums = self.db.albums().list_by_library(library.id).await?;
+        for album in albums {
+            // Case-insensitive match
+            if album.name.to_lowercase() == album_name.to_lowercase() {
+                // Verify artist matches (get artist name)
+                if let Some(artist) = self.db.albums().get_artist_by_id(album.artist_id).await? {
+                    if artist.name.to_lowercase() == artist_name.to_lowercase() {
+                        return Ok(Some((album, artist.name)));
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Try to match an audio file to an audiobook by reading metadata or folder structure
+    async fn try_match_audiobook_file(
+        &self,
+        file_path: &str,
+        library: &crate::db::libraries::LibraryRecord,
+    ) -> Result<Option<(crate::db::AudiobookRecord, String)>> {
+        // Try to read ID3 tags for album name (often audiobook title)
+        let meta = Self::read_audio_metadata_static(file_path);
+
+        // Get folder name as fallback
+        let folder_name = Path::new(file_path)
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+
+        // Try to match by album tag (audiobook title) or folder name
+        let search_name = meta
+            .as_ref()
+            .and_then(|m| m.album.clone())
+            .unwrap_or_else(|| folder_name.to_string());
+
+        if search_name.is_empty() {
+            return Ok(None);
+        }
+
+        // Try to find the audiobook in the library
+        let audiobooks = self.db.audiobooks().list_by_library(library.id).await?;
+        for audiobook in audiobooks {
+            // Case-insensitive partial match (audiobooks often have varied naming)
+            if audiobook.title.to_lowercase().contains(&search_name.to_lowercase())
+                || search_name.to_lowercase().contains(&audiobook.title.to_lowercase())
+            {
+                // Get author name
+                if let Some(author) = self.db.audiobooks().get_author_by_id(audiobook.author_id).await? {
+                    return Ok(Some((audiobook, author.name)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Create a media file linked to a music album
+    async fn create_linked_music_file(
+        &self,
+        file_path: &str,
+        size_bytes: i64,
+        library: &crate::db::libraries::LibraryRecord,
+        album: &crate::db::AlbumRecord,
+    ) -> Result<crate::db::MediaFileRecord> {
+        let media_file = self.db.media_files().create(crate::db::CreateMediaFile {
+            library_id: library.id,
+            path: file_path.to_string(),
+            size_bytes,
+            container: get_container(file_path),
+            video_codec: None,
+            audio_codec: None,
+            width: None,
+            height: None,
+            duration: None,
+            bitrate: None,
+            file_hash: None,
+            episode_id: None,
+            movie_id: None,
+            relative_path: None,
+            original_name: Path::new(file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string()),
+            resolution: None,
+            is_hdr: None,
+            hdr_type: None,
+        }).await?;
+
+        // Link to album
+        self.db.media_files().link_to_album(media_file.id, album.id).await?;
+
+        // Update album has_files
+        self.db.albums().update_has_files(album.id, true).await?;
+
+        // Queue for analysis
+        self.queue_for_analysis(&media_file).await;
+
+        debug!(
+            file_id = %media_file.id,
+            album_id = %album.id,
+            path = %file_path,
+            "Created linked music file"
+        );
+
+        Ok(media_file)
+    }
+
+    /// Create a media file linked to an audiobook
+    async fn create_linked_audiobook_file(
+        &self,
+        file_path: &str,
+        size_bytes: i64,
+        library: &crate::db::libraries::LibraryRecord,
+        audiobook: &crate::db::AudiobookRecord,
+    ) -> Result<crate::db::MediaFileRecord> {
+        let media_file = self.db.media_files().create(crate::db::CreateMediaFile {
+            library_id: library.id,
+            path: file_path.to_string(),
+            size_bytes,
+            container: get_container(file_path),
+            video_codec: None,
+            audio_codec: None,
+            width: None,
+            height: None,
+            duration: None,
+            bitrate: None,
+            file_hash: None,
+            episode_id: None,
+            movie_id: None,
+            relative_path: None,
+            original_name: Path::new(file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string()),
+            resolution: None,
+            is_hdr: None,
+            hdr_type: None,
+        }).await?;
+
+        // Link to audiobook
+        self.db.media_files().link_to_audiobook(media_file.id, audiobook.id).await?;
+
+        // Update audiobook has_files
+        self.db.audiobooks().update_has_files(audiobook.id, true).await?;
+
+        // Queue for analysis
+        self.queue_for_analysis(&media_file).await;
+
+        debug!(
+            file_id = %media_file.id,
+            audiobook_id = %audiobook.id,
+            path = %file_path,
+            "Created linked audiobook file"
+        );
+
+        Ok(media_file)
+    }
+
+    /// Read audio metadata from a file (static method for use in matching)
+    fn read_audio_metadata_static(path: &str) -> Option<AudioMetadata> {
+        use lofty::prelude::*;
+        use lofty::probe::Probe;
+
+        let tagged_file = Probe::open(path).ok()?.read().ok()?;
+        let tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag())?;
+
+        Some(AudioMetadata {
+            artist: tag.artist().map(|s| s.to_string()),
+            album: tag.album().map(|s| s.to_string()),
+            title: tag.title().map(|s| s.to_string()),
+            track_number: tag.track(),
+            disc_number: tag.disk(),
+            year: tag.year(),
+            genre: tag.genre().map(|s| s.to_string()),
+        })
+    }
+}
+
+/// Audio metadata from ID3/FLAC/etc tags
+#[derive(Debug, Clone)]
+struct AudioMetadata {
+    artist: Option<String>,
+    album: Option<String>,
+    title: Option<String>,
+    track_number: Option<u32>,
+    disc_number: Option<u32>,
+    year: Option<u32>,
+    genre: Option<String>,
+}
+
+/// Match a music filename to a track in the album track list
+/// 
+/// Tries multiple matching strategies:
+/// 1. Extract track number from filename (e.g., "01 - Song Title.flac", "Track01.mp3")
+/// 2. Match by title similarity
+fn match_track_to_file(
+    filename: &str,
+    tracks: &[crate::db::TrackRecord],
+) -> Option<uuid::Uuid> {
+    if tracks.is_empty() {
+        return None;
+    }
+
+    // Clean up filename - remove extension
+    let name_without_ext = std::path::Path::new(filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(filename);
+
+    // Try to extract track number from filename
+    // Common patterns:
+    // "01 - Song Title"
+    // "01. Song Title"
+    // "01_Song Title"
+    // "Track 01 - Song Title"
+    // "(01) Song Title"
+    // "1-01 Song Title" (disc-track)
+    
+    let parsed = parse_track_number_from_filename(name_without_ext);
+
+    if let Some((disc_num, track_num)) = parsed {
+        // Try exact disc+track match first
+        if let Some(track) = tracks.iter().find(|t| {
+            t.disc_number == disc_num && t.track_number == track_num
+        }) {
+            return Some(track.id);
+        }
+        
+        // If no disc match, just try track number on disc 1
+        if disc_num == 1 {
+            if let Some(track) = tracks.iter().find(|t| t.track_number == track_num) {
+                return Some(track.id);
+            }
+        }
+    }
+
+    // Fallback: Try matching by title similarity
+    let clean_name = clean_title_for_matching(name_without_ext);
+    
+    let best_match = tracks
+        .iter()
+        .filter_map(|t| {
+            let clean_track = clean_title_for_matching(&t.title);
+            let score = title_similarity(&clean_name, &clean_track);
+            if score >= 0.8 {
+                Some((t, score))
+            } else {
+                None
+            }
+        })
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    best_match.map(|(t, _)| t.id)
+}
+
+/// Parse track number (and optionally disc number) from filename
+fn parse_track_number_from_filename(filename: &str) -> Option<(i32, i32)> {
+    use regex::Regex;
+    
+    // Match patterns like "1-05" or "2-01" (disc-track)
+    if let Ok(disc_track_re) = Regex::new(r"^(\d{1,2})[.-](\d{1,2})") {
+        if let Some(caps) = disc_track_re.captures(filename) {
+            if let (Some(disc_str), Some(track_str)) = (caps.get(1), caps.get(2)) {
+                if let (Ok(disc), Ok(track)) = (
+                    disc_str.as_str().parse::<i32>(),
+                    track_str.as_str().parse::<i32>(),
+                ) {
+                    // Validate reasonable ranges
+                    if disc >= 1 && disc <= 20 && track >= 1 && track <= 99 {
+                        return Some((disc, track));
+                    }
+                }
+            }
+        }
+    }
+
+    // Match patterns like "01 -", "01.", "01_", "(01)", "[01]", "Track 01"
+    if let Ok(track_re) = Regex::new(r"(?i)(?:^|track\s*)(\d{1,3})(?:\s*[-._)\]]|\s)") {
+        if let Some(caps) = track_re.captures(filename) {
+            if let Some(track_str) = caps.get(1) {
+                if let Ok(track) = track_str.as_str().parse::<i32>() {
+                    if track >= 1 && track <= 999 {
+                        return Some((1, track));
+                    }
+                }
+            }
+        }
+    }
+
+    // Last resort: find any leading number
+    let leading_num: String = filename.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if !leading_num.is_empty() {
+        if let Ok(track) = leading_num.parse::<i32>() {
+            if track >= 1 && track <= 999 {
+                return Some((1, track));
+            }
+        }
+    }
+
+    None
+}
+
+/// Clean a title for fuzzy matching
+fn clean_title_for_matching(title: &str) -> String {
+    // Convert to lowercase and remove punctuation
+    let mut result = String::new();
+    for c in title.chars() {
+        if c.is_alphanumeric() {
+            result.push(c.to_ascii_lowercase());
+        } else if c.is_whitespace() {
+            result.push(' ');
+        }
+    }
+    
+    // Normalize whitespace
+    result.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Simple string similarity using longest common subsequence ratio
+fn title_similarity(a: &str, b: &str) -> f64 {
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let m = a_chars.len();
+    let n = b_chars.len();
+
+    // LCS DP table
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+
+    for i in 1..=m {
+        for j in 1..=n {
+            if a_chars[i - 1] == b_chars[j - 1] {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
+            }
+        }
+    }
+
+    let lcs_len = dp[m][n] as f64;
+    let max_len = m.max(n) as f64;
+
+    lcs_len / max_len
 }

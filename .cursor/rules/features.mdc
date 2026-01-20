@@ -108,12 +108,12 @@ missing → wanted → available → downloading → downloaded
 - `testRssFeed` - Test a URL without storing
 - `pollRssFeed` - Manually poll a feed
 
-### Quality Profiles
-Quality profiles define preferred formats:
-- Resolution preferences (4K > 1080p > 720p)
-- Codec preferences (x265 > x264)
-- Source preferences (BluRay > WEB-DL > HDTV)
-- Size limits
+### Quality Filters (Per-Library)
+Quality filters are embedded in library settings (not separate profiles):
+- **Video libraries (TV, Movies)**: Resolution, video codec, HDR, audio format, source
+- **Audio libraries (Music, Audiobooks)**: Audio format (FLAC/MP3/etc), bit depth, sample rate
+
+Quality filters are type-aware in the UI - music libraries show audio-specific filters.
 
 ## Settings System
 
@@ -206,13 +206,23 @@ query {
 - Changing the encryption key invalidates all stored credentials
 
 ### Integration with Auto Hunt
-The indexer system is designed to power the **Auto Hunt** feature:
-1. Library/show has "Auto Hunt" enabled with quality profile
-2. System detects wanted episodes (missing or upgradeable)
-3. Searches enabled indexers for matching releases
-4. Filters by quality/format/audio preferences from quality profile
-5. Automatically adds matching torrents to download queue
-6. Post-download processing organizes files into library
+The indexer system powers the **Auto Hunt** feature. Auto Hunt is **event-driven**:
+
+**Triggers:**
+1. **On Add** - Adding a movie/album/audiobook immediately triggers hunt for that item
+2. **After Scan** - Library scans trigger auto-hunt for all missing content
+3. **Manual** - `triggerAutoHunt` GraphQL mutation
+
+**Flow:**
+1. Find missing items in library (monitored=true, has_file=false)
+2. Search enabled indexers for matching releases
+3. Filter by library's quality settings (resolution, codec, source, etc.)
+4. Score and rank releases (seeders, freeleech, preferred groups)
+5. Download best match via IndexerManager (with proper authentication)
+6. Link torrent to item in database
+7. Download monitor handles post-processing and organization
+
+**Note:** Auto Hunt does NOT run on a fixed schedule. It's purely event-driven.
 
 ### UI Location
 - **Settings → Indexers** - Configure indexer sources
@@ -247,35 +257,84 @@ Selects release → clicks "Download + Add to Library"
     ↓
 AddToLibraryModal opens
     ↓
-User selects library, searches for show/movie
+User selects library (and album for music, or searches for show/movie)
     ↓
-System downloads torrent (authenticated if private tracker)
+System downloads torrent (authenticated via IndexerManager)
     ↓
-Auto-matches to episode, links in database
+Links torrent to item in database
     ↓
-Episode status → "Downloading"
+Episode/Movie status → "Downloading"
     ↓
 Download completes → auto-organization
     ↓
-Episode status → "Downloaded"
+Status → "Downloaded"
 ```
+
+## Two Content Acquisition Workflows
+
+Librarian supports two ways to acquire content:
+
+### 1. Library-First Workflow
+Start from the library, add what you want, system finds and downloads it.
+
+```
+Add Movie/Album/Audiobook to Library
+    ↓
+Auto Hunt triggers immediately
+    ↓
+Search indexers for content
+    ↓
+Download best matching release
+    ↓
+Organize into library folder
+```
+
+### 2. Torrent-First Workflow
+Find a torrent first, then add it to your library.
+
+```
+Search on /hunt page
+    ↓
+Download torrent
+    ↓
+Go to /downloads, click "Link to Library"
+    ↓
+Select library (with auto_add_discovered enabled)
+    ↓
+System auto-creates entry:
+  - Movies: Search TMDB, create movie
+  - Music: Search MusicBrainz, create album
+  - Audiobooks: Search OpenLibrary, create audiobook
+  - TV: Match to existing show/episode
+    ↓
+Link torrent to new entry
+    ↓
+Organize files into library
+```
+
+**Key setting:** `auto_add_discovered` must be enabled on the library for the torrent-first workflow to auto-create entries.
 
 ## Unified Content Acquisition Pipeline
 
-### Auto-Matching at Add Time
-When a torrent is added with a library_id but no episode_id:
-1. Parse torrent name for show/season/episode
-2. Find matching show in library
-3. Find matching episode
-4. Link torrent to episode
-5. Mark episode as "Downloading"
+### Auto-Adding on Link
+When linking a torrent to a library (without a specific item):
+1. Parse torrent name for title/artist/author info
+2. Search appropriate metadata provider:
+   - Movies → TMDB
+   - Music → MusicBrainz  
+   - Audiobooks → OpenLibrary
+   - TV → Match existing shows
+3. Create entry in library if match found
+4. Link torrent to new entry
+5. Process and organize files
 
-### Auto-Matching at Completion (No Library)
-When a torrent completes without any library context:
-1. Get user's libraries
-2. Parse filename for show/season/episode
-3. Try to match against each TV library
-4. If match found: create media file, link torrent, organize
+### Force Reprocessing
+When a torrent is "stuck" (downloaded but not organized correctly):
+1. Manual "Organize" action from /downloads
+2. Deletes existing media_file records in downloads path
+3. Resets has_file flags on linked items
+4. Re-runs full processing pipeline
+5. Organizes files fresh
 
 ### Library Consolidation
 Clean up duplicate folders after naming convention changes:

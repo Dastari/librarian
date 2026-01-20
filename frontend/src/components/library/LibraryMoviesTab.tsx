@@ -1,44 +1,24 @@
-import { useMemo, useState, useCallback, useEffect } from 'react'
-import { Button, ButtonGroup } from '@heroui/button'
+import { useMemo, useCallback } from 'react'
+import { useQueryState, parseAsString, parseAsStringLiteral } from 'nuqs'
+import { Button } from '@heroui/button'
 import { Chip } from '@heroui/chip'
 import { Image } from '@heroui/image'
-import { Spinner } from '@heroui/spinner'
 import { Card, CardBody } from '@heroui/card'
 import { Link } from '@tanstack/react-router'
 import {
   DataTable,
+  AlphabetFilter,
+  getFirstLetter,
   type DataTableColumn,
   type RowAction,
   type CardRendererProps,
 } from '../data-table'
-import { graphqlClient, MOVIES_QUERY, type Movie } from '../../lib/graphql'
+import { MOVIES_CONNECTION_QUERY, type Movie } from '../../lib/graphql'
+import type { Connection } from '../../lib/graphql/types'
 import { formatBytes } from '../../lib/format'
 import { IconPlus, IconTrash, IconEye, IconMovie, IconClock, IconStar } from '@tabler/icons-react'
 import { MovieCard } from './MovieCard'
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-const ALPHABET = '#ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
-
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
-function getFirstLetter(title: string): string {
-  // Skip common articles for sorting
-  const titleLower = title.toLowerCase()
-  let sortTitle = title
-  for (const article of ['the ', 'a ', 'an ']) {
-    if (titleLower.startsWith(article)) {
-      sortTitle = title.slice(article.length)
-      break
-    }
-  }
-  const firstChar = sortTitle.charAt(0).toUpperCase()
-  return /[A-Z]/.test(firstChar) ? firstChar : '#'
-}
+import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 // ============================================================================
 // Component Props
@@ -51,36 +31,83 @@ interface LibraryMoviesTabProps {
 }
 
 // ============================================================================
+// Types for GraphQL response
+// ============================================================================
+
+interface MoviesConnectionResponse {
+  moviesConnection: Connection<Movie>
+}
+
+// ============================================================================
 // Main Component
 // ============================================================================
 
+// Map column keys to GraphQL sort fields
+const SORT_FIELD_MAP: Record<string, string> = {
+  title: 'SORT_TITLE',
+  year: 'YEAR',
+  runtime: 'RUNTIME',
+  rating: 'RATING',
+  size: 'SIZE_BYTES',
+}
+
 export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: LibraryMoviesTabProps) {
-  const [selectedLetter, setSelectedLetter] = useState<string | null>(null)
-  const [movies, setMovies] = useState<Movie[]>([])
-  const [loading, setLoading] = useState(true)
+  // URL-persisted state via nuqs (clean URLs when using defaults)
+  const [selectedLetter, setSelectedLetter] = useQueryState('letter', parseAsString.withDefault(''))
+  const [searchTerm, setSearchTerm] = useQueryState('q', parseAsString.withDefault(''))
+  const [sortColumn, setSortColumn] = useQueryState('sort', parseAsString.withDefault('title'))
+  const [sortDirection, setSortDirection] = useQueryState(
+    'order',
+    parseAsStringLiteral(['asc', 'desc'] as const).withDefault('asc')
+  )
+  
+  // Normalize selectedLetter: empty string becomes null for the filter logic
+  const normalizedLetter = selectedLetter === '' ? null : selectedLetter
 
-  const fetchMovies = useCallback(async () => {
-    try {
-      setLoading(true)
-      const result = await graphqlClient
-        .query<{ movies: Movie[] }>(MOVIES_QUERY, { libraryId })
-        .toPromise()
+  // Handle sort change from DataTable
+  const handleSortChange = useCallback((column: string, direction: 'asc' | 'desc') => {
+    setSortColumn(column)
+    setSortDirection(direction)
+  }, [setSortColumn, setSortDirection])
 
-      if (result.data?.movies) {
-        setMovies(result.data.movies)
+  // Build filter variables for GraphQL query
+  const queryVariables = useMemo(() => {
+    const vars: Record<string, unknown> = { libraryId }
+    
+    // Add search filter if there's a search term
+    if (searchTerm) {
+      vars.where = {
+        title: { contains: searchTerm },
       }
-    } catch (err) {
-      console.error('Failed to fetch movies:', err)
-    } finally {
-      setLoading(false)
     }
-  }, [libraryId])
+    
+    // Add order by from sort state
+    const graphqlField = SORT_FIELD_MAP[sortColumn || 'title'] || 'SORT_TITLE'
+    vars.orderBy = {
+      field: graphqlField,
+      direction: sortDirection.toUpperCase(),
+    }
+    
+    return vars
+  }, [libraryId, searchTerm, sortColumn, sortDirection])
 
-  useEffect(() => {
-    fetchMovies()
-  }, [fetchMovies])
+  // Use infinite connection hook for server-side pagination
+  const {
+    items: movies,
+    isLoading,
+    isLoadingMore,
+    hasMore,
+    totalCount,
+    loadMore,
+  } = useInfiniteConnection<MoviesConnectionResponse, Movie>({
+    query: MOVIES_CONNECTION_QUERY,
+    variables: queryVariables,
+    getConnection: (data) => data.moviesConnection,
+    batchSize: 50,
+    deps: [libraryId, searchTerm],
+  })
 
-  // Get letters that have movies
+  // Get letters that have movies (from loaded data)
   const availableLetters = useMemo(() => {
     const letters = new Set<string>()
     movies.forEach((movie) => {
@@ -89,16 +116,22 @@ export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: Libra
     return letters
   }, [movies])
 
-  // Filter movies by selected letter
+  // Filter movies by selected letter (client-side for alphabet filter)
   const filteredMovies = useMemo(() => {
-    if (!selectedLetter) return movies
-    return movies.filter((movie) => getFirstLetter(movie.title) === selectedLetter)
-  }, [movies, selectedLetter])
+    if (!normalizedLetter) return movies
+    return movies.filter((movie) => getFirstLetter(movie.title) === normalizedLetter)
+  }, [movies, normalizedLetter])
 
-  // Handle letter click - toggle filter
-  const handleLetterClick = (letter: string) => {
-    setSelectedLetter((prev) => (prev === letter ? null : letter))
-  }
+  // Handle letter change - toggle filter
+  const handleLetterChange = useCallback((letter: string | null) => {
+    setSelectedLetter(normalizedLetter === letter ? '' : (letter ?? ''))
+  }, [normalizedLetter, setSelectedLetter])
+
+  // Handle search change from DataTable
+  const handleSearchChange = useCallback((term: string) => {
+    setSearchTerm(term || '')
+    setSelectedLetter('') // Reset letter filter on search
+  }, [setSearchTerm, setSelectedLetter])
 
   // Column definitions
   const columns: DataTableColumn<Movie>[] = useMemo(
@@ -106,7 +139,7 @@ export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: Libra
       {
         key: 'title',
         label: 'MOVIE',
-        sortable: true,
+        // sortable: true (default) - server handles actual sorting
         render: (movie) => (
           <Link to="/movies/$movieId" params={{ movieId: movie.id }} className="flex items-center gap-3 hover:opacity-80">
             {movie.posterUrl ? (
@@ -122,7 +155,7 @@ export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: Libra
             )}
             <div>
               <p className="font-medium">{movie.title}</p>
-              {movie.genres.length > 0 && (
+              {movie.genres && movie.genres.length > 0 && (
                 <p className="text-xs text-default-400">
                   {movie.genres.slice(0, 2).join(', ')}
                 </p>
@@ -130,21 +163,17 @@ export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: Libra
             </div>
           </Link>
         ),
-        sortFn: (a, b) => a.title.localeCompare(b.title),
       },
       {
         key: 'year',
         label: 'YEAR',
         width: 80,
-        sortable: true,
         render: (movie) => <span>{movie.year || '—'}</span>,
-        sortFn: (a, b) => (a.year || 0) - (b.year || 0),
       },
       {
         key: 'runtime',
         label: 'RUNTIME',
         width: 100,
-        sortable: true,
         render: (movie) => (
           <span className="flex items-center gap-1">
             {movie.runtime ? (
@@ -155,13 +184,11 @@ export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: Libra
             ) : '—'}
           </span>
         ),
-        sortFn: (a, b) => (a.runtime || 0) - (b.runtime || 0),
       },
       {
         key: 'rating',
         label: 'RATING',
         width: 100,
-        sortable: true,
         render: (movie) => (
           movie.tmdbRating && movie.tmdbRating > 0 ? (
             <Chip
@@ -174,21 +201,18 @@ export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: Libra
             </Chip>
           ) : <span>—</span>
         ),
-        sortFn: (a, b) => (a.tmdbRating || 0) - (b.tmdbRating || 0),
       },
       {
         key: 'size',
         label: 'SIZE',
         width: 100,
-        sortable: true,
         render: (movie) => <span>{movie.hasFile ? formatBytes(movie.sizeBytes) : '—'}</span>,
-        sortFn: (a, b) => a.sizeBytes - b.sizeBytes,
       },
       {
         key: 'status',
         label: 'STATUS',
         width: 120,
-        sortable: true,
+        sortable: false, // Status is not sortable
         render: (movie) => (
           <Chip
             size="sm"
@@ -198,7 +222,6 @@ export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: Libra
             {movie.hasFile ? 'Downloaded' : 'Missing'}
           </Chip>
         ),
-        sortFn: (a, b) => (a.hasFile === b.hasFile ? 0 : a.hasFile ? -1 : 1),
       },
     ],
     []
@@ -228,17 +251,7 @@ export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: Libra
     [onDeleteMovie]
   )
 
-  // Search function
-  const searchFn = (movie: Movie, term: string) => {
-    const lowerTerm = term.toLowerCase()
-    return (
-      movie.title.toLowerCase().includes(lowerTerm) ||
-      (movie.director?.toLowerCase().includes(lowerTerm) ?? false) ||
-      movie.genres.some((g) => g.toLowerCase().includes(lowerTerm))
-    )
-  }
-
-  // Card renderer - using the MovieCard component
+  // Card renderer
   const cardRenderer = useCallback(
     ({ item }: CardRendererProps<Movie>) => (
       <MovieCard
@@ -249,56 +262,18 @@ export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: Libra
     [onDeleteMovie]
   )
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center py-12">
-        <Spinner size="lg" />
-      </div>
-    )
-  }
-
   return (
     <div className="flex flex-col grow w-full">
-      {/* A-Z Navigation - Sticky at top */}
-      <div className="flex items-center p-2 bg-content2 rounded-lg overflow-x-auto shrink-0 mb-4">
-        <ButtonGroup size="sm" variant="flat">
-          <Button
-            variant={selectedLetter === null ? 'solid' : 'flat'}
-            color={selectedLetter === null ? 'primary' : 'default'}
-            onPress={() => setSelectedLetter(null)}
-            className="min-w-8 px-2"
-          >
-            All
-          </Button>
-          {ALPHABET.map((letter) => {
-            const hasMovies = availableLetters.has(letter)
-            const isSelected = selectedLetter === letter
-            return (
-              <Button
-                key={letter}
-                variant={isSelected ? 'solid' : 'flat'}
-                color={isSelected ? 'primary' : 'default'}
-                onPress={() => hasMovies && handleLetterClick(letter)}
-                isDisabled={!hasMovies}
-                className="w-4 min-w-4 lg:w-6 lg:min-w-6 p-0 text-xs font-medium xl:min-w-7 xl:w-7"
-              >
-                {letter}
-              </Button>
-            )
-          })}
-        </ButtonGroup>
-      </div>
-
-      {/* Data Table - Fills remaining height with sticky header */}
       <div className="flex-1 min-h-0">
         <DataTable
           stateKey="library-movies"
           data={filteredMovies}
           columns={columns}
           getRowKey={(movie) => movie.id}
-          searchFn={searchFn}
           searchPlaceholder="Search movies..."
-          defaultSortColumn="title"
+          sortColumn={sortColumn || 'title'}
+          sortDirection={sortDirection}
+          onSortChange={handleSortChange}
           showViewModeToggle
           defaultViewMode="cards"
           cardRenderer={cardRenderer}
@@ -307,6 +282,23 @@ export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: Libra
           showItemCount
           ariaLabel="Movies table"
           fillHeight
+          // Server-side mode
+          serverSide
+          serverTotalCount={totalCount ?? undefined}
+          onSearchChange={handleSearchChange}
+          // Infinite loading
+          paginationMode="infinite"
+          hasMore={hasMore}
+          onLoadMore={loadMore}
+          isLoading={isLoading}
+          isLoadingMore={isLoadingMore}
+          headerContent={
+            <AlphabetFilter
+              selectedLetter={normalizedLetter}
+              availableLetters={availableLetters}
+              onLetterChange={handleLetterChange}
+            />
+          }
           emptyContent={
             <Card className="bg-content1/50 border-default-300 border-dashed border-2">
               <CardBody className="py-12 text-center">

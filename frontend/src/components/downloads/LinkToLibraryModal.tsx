@@ -4,6 +4,7 @@ import { Card, CardBody } from '@heroui/card'
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
 import { Spinner } from '@heroui/spinner'
 import { addToast } from '@heroui/toast'
+import { Select, SelectItem } from '@heroui/select'
 import {
   IconDeviceTv,
   IconMovie,
@@ -11,6 +12,7 @@ import {
   IconHeadphones,
   IconFolder,
   IconCheck,
+  IconDisc,
 } from '@tabler/icons-react'
 import {
   graphqlClient,
@@ -19,7 +21,20 @@ import {
   type Library,
   type Torrent,
   type OrganizeTorrentResult,
+  type Album,
 } from '../../lib/graphql'
+
+// Query to get albums for a library
+const ALBUMS_FOR_LIBRARY_QUERY = `
+  query AlbumsForLibrary($libraryId: String!) {
+    albums(libraryId: $libraryId) {
+      id
+      name
+      year
+      coverUrl
+    }
+  }
+`
 
 export interface LinkToLibraryModalProps {
   isOpen: boolean
@@ -105,15 +120,28 @@ export function LinkToLibraryModal({
   onLinked,
 }: LinkToLibraryModalProps) {
   const [libraries, setLibraries] = useState<Library[]>([])
+  const [albums, setAlbums] = useState<Album[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingAlbums, setLoadingAlbums] = useState(false)
   const [organizing, setOrganizing] = useState(false)
   const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null)
+  const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null)
+
+  // Get the selected library
+  const selectedLibrary = useMemo(() => {
+    return libraries.find(l => l.id === selectedLibraryId)
+  }, [libraries, selectedLibraryId])
+
+  // Check if selected library is music
+  const isMusicLibrary = selectedLibrary?.libraryType === 'MUSIC'
 
   // Fetch libraries
   useEffect(() => {
     if (isOpen) {
       setLoading(true)
       setSelectedLibraryId(null)
+      setSelectedAlbumId(null)
+      setAlbums([])
       graphqlClient
         .query<{ libraries: Library[] }>(LIBRARIES_QUERY)
         .toPromise()
@@ -125,6 +153,26 @@ export function LinkToLibraryModal({
         .finally(() => setLoading(false))
     }
   }, [isOpen])
+
+  // Fetch albums when a music library is selected
+  useEffect(() => {
+    if (selectedLibraryId && isMusicLibrary) {
+      setLoadingAlbums(true)
+      setSelectedAlbumId(null)
+      graphqlClient
+        .query<{ albums: Album[] }>(ALBUMS_FOR_LIBRARY_QUERY, { libraryId: selectedLibraryId })
+        .toPromise()
+        .then((result) => {
+          if (result.data?.albums) {
+            setAlbums(result.data.albums)
+          }
+        })
+        .finally(() => setLoadingAlbums(false))
+    } else {
+      setAlbums([])
+      setSelectedAlbumId(null)
+    }
+  }, [selectedLibraryId, isMusicLibrary])
 
   // Detect recommended library type
   const recommendedType = useMemo(() => {
@@ -144,6 +192,15 @@ export function LinkToLibraryModal({
 
   const handleLink = async () => {
     if (!torrent || !selectedLibraryId) return
+    // For music libraries, require album selection
+    if (isMusicLibrary && !selectedAlbumId) {
+      addToast({
+        title: 'Select Album',
+        description: 'Please select an album to link this music to',
+        color: 'warning',
+      })
+      return
+    }
 
     setOrganizing(true)
     try {
@@ -151,6 +208,7 @@ export function LinkToLibraryModal({
         .mutation<{ organizeTorrent: OrganizeTorrentResult }>(ORGANIZE_TORRENT_MUTATION, {
           id: torrent.id,
           libraryId: selectedLibraryId,
+          albumId: selectedAlbumId,
         })
         .toPromise()
 
@@ -252,6 +310,51 @@ export function LinkToLibraryModal({
                   </Card>
                 )
               })}
+
+              {/* Album selection for music libraries */}
+              {isMusicLibrary && selectedLibraryId && (
+                <div className="mt-4 pt-4 border-t border-default-200">
+                  <div className="flex items-center gap-2 mb-2">
+                    <IconDisc size={20} className="text-green-400" />
+                    <span className="text-sm font-medium">Select Album</span>
+                  </div>
+                  {loadingAlbums ? (
+                    <div className="flex justify-center py-4">
+                      <Spinner size="sm" />
+                    </div>
+                  ) : albums.length === 0 ? (
+                    <div className="text-sm text-default-500 py-2">
+                      No albums found in this library. Add an album first from the library page.
+                    </div>
+                  ) : (
+                    <Select
+                      label="Album"
+                      placeholder="Select an album"
+                      selectedKeys={selectedAlbumId ? [selectedAlbumId] : []}
+                      onSelectionChange={(keys) => {
+                        const selected = Array.from(keys)[0] as string
+                        setSelectedAlbumId(selected || null)
+                      }}
+                      classNames={{
+                        trigger: 'bg-content2',
+                      }}
+                    >
+                      {albums.map((album) => (
+                        <SelectItem key={album.id} textValue={album.name}>
+                          <div className="flex flex-col">
+                            <span>{album.name}</span>
+                            {album.year && (
+                              <span className="text-xs text-default-500">
+                                {album.year}
+                              </span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </Select>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </ModalBody>
@@ -263,7 +366,7 @@ export function LinkToLibraryModal({
             color="primary"
             onPress={handleLink}
             isLoading={organizing}
-            isDisabled={!selectedLibraryId || organizing}
+            isDisabled={!selectedLibraryId || organizing || (isMusicLibrary && !selectedAlbumId)}
           >
             Link & Organize
           </Button>

@@ -3,8 +3,6 @@
 //! Periodically fetches the TV schedule from TVMaze and caches it in the database.
 //! This reduces API calls and ensures fast schedule queries.
 
-use std::sync::Arc;
-
 use anyhow::Result;
 use sqlx::PgPool;
 use tracing::{debug, error, info, warn};

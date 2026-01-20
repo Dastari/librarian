@@ -467,7 +467,7 @@ pub fn create_subtitle_download_queue(db: Database) -> SubtitleDownloadQueue {
         "subtitle_download",
         config,
         move |job: SubtitleDownloadJob| {
-            let db = db.clone();
+            let _db = db.clone();
             async move {
                 // TODO: Implement when OpenSubtitles client is ready
                 debug!(
