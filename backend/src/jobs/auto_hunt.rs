@@ -21,7 +21,9 @@ use crate::db::tv_shows::TvShowRecord;
 use crate::db::Database;
 use crate::indexer::manager::IndexerManager;
 use crate::indexer::{ReleaseInfo, TorznabQuery};
+use crate::services::text_utils::normalize_quality;
 use crate::services::torrent::TorrentInfo;
+use crate::services::torrent_file_matcher::TorrentFileMatcher;
 use crate::services::torrent_metadata::{parse_torrent_files, extract_audio_files, is_single_file_album};
 use crate::services::track_matcher::{match_tracks, TrackMatchResult};
 use crate::services::TorrentService;
@@ -131,6 +133,95 @@ async fn download_release(
     }
 
     Err(anyhow::anyhow!("Release has no download link or magnet URI"))
+}
+
+/// Create file-level matches after a torrent download starts
+/// 
+/// This replaces the legacy torrent-level linking (link_to_movie, link_to_episode, etc.)
+/// with the new file-level matching system.
+async fn create_file_matches_for_movie(
+    db: &Database,
+    torrent_info: &TorrentInfo,
+    movie_id: Uuid,
+) -> Result<()> {
+    // Get the torrent database record
+    let torrent_record = db
+        .torrents()
+        .get_by_info_hash(&torrent_info.info_hash)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Torrent record not found for info_hash: {}", torrent_info.info_hash))?;
+
+    // Create file-level matches
+    let matcher = TorrentFileMatcher::new(db.clone());
+    matcher
+        .create_matches_for_movie_torrent(torrent_record.id, &torrent_info.files, movie_id)
+        .await?;
+
+    debug!(
+        job = "auto_hunt",
+        torrent_id = %torrent_record.id,
+        movie_id = %movie_id,
+        files = torrent_info.files.len(),
+        "Created file-level matches for movie"
+    );
+
+    Ok(())
+}
+
+/// Create file-level matches for an episode torrent
+async fn create_file_matches_for_episode(
+    db: &Database,
+    torrent_info: &TorrentInfo,
+    episode_id: Uuid,
+) -> Result<()> {
+    let torrent_record = db
+        .torrents()
+        .get_by_info_hash(&torrent_info.info_hash)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Torrent record not found"))?;
+
+    let matcher = TorrentFileMatcher::new(db.clone());
+    matcher
+        .create_matches_for_episode_torrent(torrent_record.id, &torrent_info.files, episode_id)
+        .await?;
+
+    debug!(
+        job = "auto_hunt",
+        torrent_id = %torrent_record.id,
+        episode_id = %episode_id,
+        files = torrent_info.files.len(),
+        "Created file-level matches for episode"
+    );
+
+    Ok(())
+}
+
+/// Create file-level matches for an album torrent
+async fn create_file_matches_for_album(
+    db: &Database,
+    torrent_info: &TorrentInfo,
+    album_id: Uuid,
+) -> Result<()> {
+    let torrent_record = db
+        .torrents()
+        .get_by_info_hash(&torrent_info.info_hash)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Torrent record not found"))?;
+
+    let matcher = TorrentFileMatcher::new(db.clone());
+    matcher
+        .create_matches_for_album(torrent_record.id, &torrent_info.files, album_id)
+        .await?;
+
+    debug!(
+        job = "auto_hunt",
+        torrent_id = %torrent_record.id,
+        album_id = %album_id,
+        files = torrent_info.files.len(),
+        "Created file-level matches for album"
+    );
+
+    Ok(())
 }
 
 /// Effective quality settings for filtering releases
@@ -342,17 +433,13 @@ fn extract_release_group(title: &str) -> Option<String> {
 
 /// Check if a release matches the quality settings
 fn matches_quality_settings(parsed: &ParsedQualityInfo, settings: &EffectiveQualitySettings) -> bool {
-    fn normalize(s: &str) -> String {
-        s.to_lowercase().replace(['-', '.', ' ', '_'], "")
-    }
-
     // Check resolution (empty = any)
     if !settings.allowed_resolutions.is_empty() {
         let resolution = parsed.resolution.as_deref().unwrap_or("");
-        let normalized_res = normalize(resolution);
+        let normalized_res = normalize_quality(resolution);
 
         let matches = settings.allowed_resolutions.iter().any(|allowed| {
-            let allowed_norm = normalize(allowed);
+            let allowed_norm = normalize_quality(allowed);
             normalized_res.contains(&allowed_norm)
                 || allowed_norm.contains(&normalized_res)
                 || (allowed_norm == "2160p" && (normalized_res == "4k" || normalized_res == "uhd"))
@@ -371,10 +458,10 @@ fn matches_quality_settings(parsed: &ParsedQualityInfo, settings: &EffectiveQual
     // Check video codec (empty = any)
     if !settings.allowed_video_codecs.is_empty() {
         let codec = parsed.codec.as_deref().unwrap_or("");
-        let normalized_codec = normalize(codec);
+        let normalized_codec = normalize_quality(codec);
 
         let matches = settings.allowed_video_codecs.iter().any(|allowed| {
-            let allowed_norm = normalize(allowed);
+            let allowed_norm = normalize_quality(allowed);
             normalized_codec.contains(&allowed_norm)
                 || allowed_norm.contains(&normalized_codec)
                 || (normalized_codec == "hevc" && allowed_norm == "h265")
@@ -400,9 +487,9 @@ fn matches_quality_settings(parsed: &ParsedQualityInfo, settings: &EffectiveQual
         }
 
         if !settings.allowed_hdr_types.is_empty() {
-            let normalized_hdr = normalize(hdr);
+            let normalized_hdr = normalize_quality(hdr);
             let matches = settings.allowed_hdr_types.iter().any(|allowed| {
-                let allowed_norm = normalize(allowed);
+                let allowed_norm = normalize_quality(allowed);
                 normalized_hdr.contains(&allowed_norm) || allowed_norm.contains(&normalized_hdr)
             });
 
@@ -419,10 +506,10 @@ fn matches_quality_settings(parsed: &ParsedQualityInfo, settings: &EffectiveQual
     // Check source (empty = any)
     if !settings.allowed_sources.is_empty() {
         let source = parsed.source.as_deref().unwrap_or("");
-        let normalized_source = normalize(source);
+        let normalized_source = normalize_quality(source);
 
         let matches = settings.allowed_sources.iter().any(|allowed| {
-            let allowed_norm = normalize(allowed);
+            let allowed_norm = normalize_quality(allowed);
             normalized_source.contains(&allowed_norm) || allowed_norm.contains(&normalized_source)
         });
 
@@ -438,11 +525,11 @@ fn matches_quality_settings(parsed: &ParsedQualityInfo, settings: &EffectiveQual
     // Check release group blacklist
     if !settings.release_group_blacklist.is_empty() {
         if let Some(group) = &parsed.release_group {
-            let normalized_group = normalize(group);
+            let normalized_group = normalize_quality(group);
             if settings
                 .release_group_blacklist
                 .iter()
-                .any(|blocked| normalize(blocked) == normalized_group)
+                .any(|blocked| normalize_quality(blocked) == normalized_group)
             {
                 debug!("Quality filter: release group '{}' is blacklisted", group);
                 return false;
@@ -453,11 +540,11 @@ fn matches_quality_settings(parsed: &ParsedQualityInfo, settings: &EffectiveQual
     // Check release group whitelist (if set, only allow listed groups)
     if !settings.release_group_whitelist.is_empty() {
         if let Some(group) = &parsed.release_group {
-            let normalized_group = normalize(group);
+            let normalized_group = normalize_quality(group);
             if !settings
                 .release_group_whitelist
                 .iter()
-                .any(|allowed| normalize(allowed) == normalized_group)
+                .any(|allowed| normalize_quality(allowed) == normalized_group)
             {
                 debug!(
                     "Quality filter: release group '{}' not in whitelist {:?}",
@@ -814,31 +901,13 @@ pub async fn hunt_single_movie(
                     "Successfully started download"
                 );
 
-                // Link torrent to movie (this sets post_process_status = 'pending')
-                if let Err(e) = db
-                    .torrents()
-                    .link_to_movie(&torrent_info.info_hash, movie.id)
-                    .await
-                {
+                // Create file-level matches for the movie
+                if let Err(e) = create_file_matches_for_movie(db, &torrent_info, movie.id).await {
                     error!(
                         job = "auto_hunt",
                         movie_title = %movie.title,
                         error = %e,
-                        "Failed to link torrent to movie"
-                    );
-                }
-
-                // Also link to library for better tracking
-                if let Err(e) = db
-                    .torrents()
-                    .link_to_library(&torrent_info.info_hash, library.id)
-                    .await
-                {
-                    warn!(
-                        job = "auto_hunt",
-                        movie_title = %movie.title,
-                        error = %e,
-                        "Failed to link torrent to library"
+                        "Failed to create file matches for movie"
                     );
                 }
 
@@ -881,22 +950,27 @@ async fn hunt_movies_impl(
     );
 
     // First, check if there are any active downloads for movies in this library
-    let active_torrents: Vec<(String, Option<Uuid>)> = sqlx::query_as(
-        r#"SELECT info_hash, movie_id FROM torrents 
-           WHERE library_id = $1 AND movie_id IS NOT NULL 
-           AND state NOT IN ('removed', 'error')"#
+    // Uses torrent_file_matches to find active downloads (file-level matching)
+    let active_movie_downloads: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(DISTINCT tfm.movie_id) FROM torrent_file_matches tfm
+           JOIN torrents t ON t.id = tfm.torrent_id
+           JOIN movies m ON m.id = tfm.movie_id
+           WHERE m.library_id = $1 
+           AND tfm.movie_id IS NOT NULL 
+           AND NOT tfm.processed
+           AND t.state NOT IN ('removed', 'error')"#
     )
     .bind(library.id)
-    .fetch_all(db.pool())
+    .fetch_one(db.pool())
     .await
-    .unwrap_or_default();
+    .unwrap_or(0);
 
-    if !active_torrents.is_empty() {
+    if active_movie_downloads > 0 {
         debug!(
             job = "auto_hunt",
             library_name = %library.name,
-            active_torrents = active_torrents.len(),
-            "Found active torrents for movies in this library"
+            active_downloads = active_movie_downloads,
+            "Found active downloads for movies in this library"
         );
     }
 
@@ -1060,31 +1134,13 @@ async fn hunt_movies_impl(
                         "Successfully started download"
                     );
 
-                    // Link torrent to movie (this sets post_process_status = 'pending')
-                    if let Err(e) = db
-                        .torrents()
-                        .link_to_movie(&torrent_info.info_hash, movie.id)
-                        .await
-                    {
+                    // Create file-level matches for the movie
+                    if let Err(e) = create_file_matches_for_movie(db, &torrent_info, movie.id).await {
                         error!(
                             job = "auto_hunt",
                             movie_title = %movie.title,
                             error = %e,
-                            "Failed to link torrent to movie"
-                        );
-                    }
-
-                    // Also link to library for better tracking
-                    if let Err(e) = db
-                        .torrents()
-                        .link_to_library(&torrent_info.info_hash, library.id)
-                        .await
-                    {
-                        warn!(
-                            job = "auto_hunt",
-                            movie_title = %movie.title,
-                            error = %e,
-                            "Failed to link torrent to library"
+                            "Failed to create file matches for movie"
                         );
                     }
 
@@ -1271,18 +1327,9 @@ async fn hunt_tv_episodes_impl(
                             "Successfully started episode download"
                         );
 
-                        // Link torrent to episode
-                        if let Err(e) = db
-                            .torrents()
-                            .link_to_episode(&torrent_info.info_hash, episode_id)
-                            .await
-                        {
-                            error!(job = "auto_hunt", error = %e, "Failed to link torrent to episode");
-                        }
-
-                        // Update episode status
-                        if let Err(e) = db.episodes().mark_downloading(episode_id).await {
-                            error!(job = "auto_hunt", error = %e, "Failed to update episode status");
+                        // Create file-level matches for the episode
+                        if let Err(e) = create_file_matches_for_episode(db, &torrent_info, episode_id).await {
+                            error!(job = "auto_hunt", error = %e, "Failed to create file matches for episode");
                         }
 
                         result.downloaded += 1;
@@ -1496,12 +1543,9 @@ async fn hunt_music(
                                                 "Music download started (validated)"
                                             );
 
-                                            // Link torrent to library and album
-                                            if let Err(e) = db.torrents().link_to_library(&info.info_hash, library.id).await {
-                                                warn!(job = "auto_hunt", error = %e, "Failed to link torrent to library");
-                                            }
-                                            if let Err(e) = db.torrents().link_to_album(&info.info_hash, album.id).await {
-                                                warn!(job = "auto_hunt", error = %e, "Failed to link torrent to album");
+                                            // Create file-level matches for the album
+                                            if let Err(e) = create_file_matches_for_album(db, &info, album.id).await {
+                                                warn!(job = "auto_hunt", error = %e, "Failed to create file matches for album");
                                             }
 
                                             result.downloaded += 1;
@@ -1585,11 +1629,9 @@ async fn hunt_music(
                             "Music download started (unvalidated fallback)"
                         );
 
-                        if let Err(e) = db.torrents().link_to_library(&info.info_hash, library.id).await {
-                            warn!(job = "auto_hunt", error = %e, "Failed to link torrent to library");
-                        }
-                        if let Err(e) = db.torrents().link_to_album(&info.info_hash, album.id).await {
-                            warn!(job = "auto_hunt", error = %e, "Failed to link torrent to album");
+                        // Create file-level matches for the album
+                        if let Err(e) = create_file_matches_for_album(db, &info, album.id).await {
+                            warn!(job = "auto_hunt", error = %e, "Failed to create file matches for album");
                         }
 
                         result.downloaded += 1;

@@ -49,21 +49,6 @@ export interface MediaItem {
 }
 
 // ============================================================================
-// Subscription Types (legacy)
-// ============================================================================
-
-/** Subscription for RSS/auto-download */
-export interface Subscription {
-  id: string;
-  name: string;
-  tvdbId: number | null;
-  tmdbId: number | null;
-  monitored: boolean;
-  lastCheckedAt: string | null;
-  episodeCount: number;
-}
-
-// ============================================================================
 // Torrent Types
 // ============================================================================
 

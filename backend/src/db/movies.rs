@@ -4,6 +4,8 @@ use anyhow::Result;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::services::text_utils::normalize_title;
+
 /// Movie record from database
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct MovieRecord {
@@ -795,16 +797,5 @@ impl MovieRepository {
     }
 }
 
-/// Normalize a title for comparison
-/// - Lowercase
-/// - Remove special characters (apostrophes, colons, dashes, dots, underscores)
-/// - Collapse whitespace
-/// NOTE: The SQL queries in find_by_title_in_library must match this normalization!
-fn normalize_title(title: &str) -> String {
-    title
-        .to_lowercase()
-        .replace(['\'', '\u{2019}', ':', '-', '.', '_'], "")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
+// normalize_title moved to services/text_utils.rs
+// NOTE: The SQL queries in find_by_title_in_library must match the normalization!

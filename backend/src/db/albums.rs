@@ -493,14 +493,8 @@ impl AlbumRepository {
         .execute(&mut *tx)
         .await?;
 
-        // Delete tracks for this album
+        // Delete tracks for this album (torrent_file_matches handles cleanup via ON DELETE SET NULL)
         sqlx::query("DELETE FROM tracks WHERE album_id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-
-        // Unlink any torrents associated with this album
-        sqlx::query("UPDATE torrents SET album_id = NULL WHERE album_id = $1")
             .bind(id)
             .execute(&mut *tx)
             .await?;

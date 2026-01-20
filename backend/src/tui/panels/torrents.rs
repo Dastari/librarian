@@ -341,9 +341,9 @@ fn render_graph_with_stats(
     let stats_inner = stats_block.inner(stats_area);
     frame.render_widget(stats_block, stats_area);
 
-    // Calculate totals
-    let total_down: u64 = stats.download_history.iter().map(|&v| v as u64).sum();
-    let total_up: u64 = stats.upload_history.iter().map(|&v| v as u64).sum();
+    // Calculate peaks for display (totals reserved for future use)
+    let _total_down: u64 = stats.download_history.iter().map(|&v| v as u64).sum();
+    let _total_up: u64 = stats.upload_history.iter().map(|&v| v as u64).sum();
     let peak_down = stats.download_history.iter().cloned().fold(0.0_f64, f64::max) as u64;
     let peak_up = stats.upload_history.iter().cloned().fold(0.0_f64, f64::max) as u64;
 

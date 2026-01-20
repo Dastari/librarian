@@ -27,6 +27,7 @@ pub mod rate_limiter;
 pub mod rss;
 pub mod scanner;
 pub mod supabase_storage;
+pub mod text_utils;
 pub mod tmdb;
 pub mod torrent;
 pub mod torrent_completion_handler;
@@ -89,4 +90,9 @@ pub use file_utils::{
     format_bytes, format_bytes_i64, get_container, is_archive_file, is_audio_file,
     is_subtitle_file, is_video_file, sanitize_for_filename, ARCHIVE_EXTENSIONS,
     AUDIO_EXTENSIONS, SUBTITLE_EXTENSIONS, VIDEO_EXTENSIONS,
+};
+pub use text_utils::{
+    normalize_quality, normalize_show_name, normalize_show_name_no_articles,
+    normalize_title, normalize_track_title, levenshtein_distance, string_similarity,
+    show_name_similarity,
 };

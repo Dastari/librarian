@@ -322,7 +322,7 @@ async fn match_torrent_files_on_add(
         .await?;
 
     // Save matches to database
-    let saved = matcher.save_matches(torrent.id, &matches).await?;
+    let _saved = matcher.save_matches(torrent.id, &matches).await?;
 
     // Update item statuses to 'downloading'
     let status_updates = matches.iter().filter(|m| {

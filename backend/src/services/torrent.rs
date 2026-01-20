@@ -342,7 +342,7 @@ impl TorrentService {
             "Syncing session torrents to database"
         );
 
-        for (id, handle) in session_torrents {
+        for (_id, handle) in session_torrents {
             let info_hash = get_info_hash_hex(&handle);
             let name = handle.name().unwrap_or_else(|| "Unknown".to_string());
             let stats = handle.stats();

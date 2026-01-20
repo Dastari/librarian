@@ -458,14 +458,8 @@ impl AudiobookRepository {
         // Start a transaction to ensure all deletions are atomic
         let mut tx = self.pool.begin().await?;
 
-        // Delete media files for this audiobook
+        // Delete media files for this audiobook (torrent_file_matches handles cleanup via ON DELETE SET NULL)
         sqlx::query("DELETE FROM media_files WHERE audiobook_id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-
-        // Unlink any torrents associated with this audiobook
-        sqlx::query("UPDATE torrents SET audiobook_id = NULL WHERE audiobook_id = $1")
             .bind(id)
             .execute(&mut *tx)
             .await?;
@@ -573,7 +567,7 @@ impl AudiobookChapterRepository {
         sort_asc: bool,
     ) -> Result<(Vec<AudiobookChapterRecord>, i64)> {
         let mut conditions = vec!["audiobook_id = $1".to_string()];
-        let mut param_idx = 2;
+        let param_idx = 2;
 
         if status_filter.is_some() {
             conditions.push(format!("status = ${}", param_idx));

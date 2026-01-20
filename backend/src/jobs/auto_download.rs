@@ -18,7 +18,37 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::db::Database;
+use crate::services::torrent::TorrentInfo;
+use crate::services::torrent_file_matcher::TorrentFileMatcher;
 use crate::services::TorrentService;
+
+/// Create file-level matches for an episode after torrent download starts
+async fn create_file_matches_for_episode(
+    db: &Database,
+    torrent_info: &TorrentInfo,
+    episode_id: Uuid,
+) -> Result<()> {
+    let torrent_record = db
+        .torrents()
+        .get_by_info_hash(&torrent_info.info_hash)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Torrent record not found"))?;
+
+    let matcher = TorrentFileMatcher::new(db.clone());
+    matcher
+        .create_matches_for_episode_torrent(torrent_record.id, &torrent_info.files, episode_id)
+        .await?;
+
+    debug!(
+        job = "auto_download",
+        torrent_id = %torrent_record.id,
+        episode_id = %episode_id,
+        files = torrent_info.files.len(),
+        "Created file-level matches for episode"
+    );
+
+    Ok(())
+}
 
 /// Maximum concurrent download starts
 const MAX_CONCURRENT_DOWNLOADS: usize = 3;
@@ -174,28 +204,13 @@ pub async fn process_available_episodes(
                             show.name, episode.season, episode.episode
                         );
 
-                        // Link torrent to episode for post-processing
-                        if let Err(e) = db
-                            .torrents()
-                            .link_to_episode(&torrent_info.info_hash, episode.id)
-                            .await
-                        {
+                        // Create file-level matches for the episode
+                        if let Err(e) = create_file_matches_for_episode(&db, &torrent_info, episode.id).await {
                             error!(
                                 job = "auto_download",
                                 show_name = %show.name,
                                 error = %e,
-                                "Failed to link torrent to episode"
-                            );
-                        }
-
-                        // Update episode status to 'downloading'
-                        if let Err(e) = db.episodes().mark_downloading(episode.id).await {
-                            error!(
-                                job = "auto_download",
-                                show_name = %show.name,
-                                episode_id = %episode.id,
-                                error = %e,
-                                "Failed to update episode status to downloading"
+                                "Failed to create file matches for episode"
                             );
                         }
 
@@ -331,17 +346,9 @@ pub async fn download_available_for_show(
                     torrent_info.name, torrent_info.id
                 );
 
-                // Link torrent to episode for post-processing
-                if let Err(e) = db
-                    .torrents()
-                    .link_to_episode(&torrent_info.info_hash, episode.id)
-                    .await
-                {
-                    error!("Failed to link torrent to episode: {:?}", e);
-                }
-
-                if let Err(e) = db.episodes().mark_downloading(episode.id).await {
-                    error!("Failed to update episode status: {:?}", e);
+                // Create file-level matches for the episode
+                if let Err(e) = create_file_matches_for_episode(&db, &torrent_info, episode.id).await {
+                    error!("Failed to create file matches for episode: {:?}", e);
                 }
 
                 downloaded += 1;
