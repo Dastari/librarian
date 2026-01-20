@@ -8,7 +8,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AudiobookRecord {
     pub id: Uuid,
-    pub author_id: Uuid,
+    pub author_id: Option<Uuid>,
     pub library_id: Uuid,
     pub user_id: Uuid,
     // Basic info
@@ -63,7 +63,7 @@ pub struct AudiobookAuthorRecord {
 /// Input for creating a new audiobook
 #[derive(Debug, Clone)]
 pub struct CreateAudiobook {
-    pub author_id: Uuid,
+    pub author_id: Option<Uuid>,
     pub library_id: Uuid,
     pub user_id: Uuid,
     pub title: String,
@@ -140,7 +140,7 @@ impl AudiobookRepository {
         let record = sqlx::query_as::<_, AudiobookAuthorRecord>(
             r#"
             SELECT id, library_id, user_id, name, sort_name, openlibrary_id
-            FROM audiobook_authors
+            FROM authors
             WHERE id = $1
             "#,
         )
@@ -164,7 +164,7 @@ impl AudiobookRepository {
             let existing = sqlx::query_as::<_, AudiobookAuthorRecord>(
                 r#"
                 SELECT id, library_id, user_id, name, sort_name, openlibrary_id
-                FROM audiobook_authors
+                FROM authors
                 WHERE library_id = $1 AND openlibrary_id = $2
                 "#,
             )
@@ -182,7 +182,7 @@ impl AudiobookRepository {
         let existing = sqlx::query_as::<_, AudiobookAuthorRecord>(
             r#"
             SELECT id, library_id, user_id, name, sort_name, openlibrary_id
-            FROM audiobook_authors
+            FROM authors
             WHERE library_id = $1 AND LOWER(name) = LOWER($2)
             "#,
         )
@@ -198,7 +198,7 @@ impl AudiobookRepository {
         // Create new author
         let author = sqlx::query_as::<_, AudiobookAuthorRecord>(
             r#"
-            INSERT INTO audiobook_authors (library_id, user_id, name, openlibrary_id)
+            INSERT INTO authors (library_id, user_id, name, openlibrary_id)
             VALUES ($1, $2, $3, $4)
             RETURNING id, library_id, user_id, name, sort_name, openlibrary_id
             "#,
@@ -358,7 +358,7 @@ impl AudiobookRepository {
         let records = sqlx::query_as::<_, AudiobookAuthorRecord>(
             r#"
             SELECT id, library_id, user_id, name, sort_name, openlibrary_id
-            FROM audiobook_authors
+            FROM authors
             WHERE library_id = $1
             ORDER BY COALESCE(sort_name, name)
             "#,
@@ -397,11 +397,11 @@ impl AudiobookRepository {
         let order_dir = if sort_asc { "ASC" } else { "DESC" };
         let order_clause = format!("ORDER BY COALESCE({}, name) {} NULLS LAST", sort_col, order_dir);
 
-        let count_query = format!("SELECT COUNT(*) FROM audiobook_authors WHERE {}", where_clause);
+        let count_query = format!("SELECT COUNT(*) FROM authors WHERE {}", where_clause);
         let data_query = format!(
             r#"
             SELECT id, library_id, user_id, name, sort_name, openlibrary_id
-            FROM audiobook_authors
+            FROM authors
             WHERE {}
             {}
             LIMIT {} OFFSET {}
@@ -485,5 +485,191 @@ impl AudiobookRepository {
         tx.commit().await?;
 
         Ok(result.rows_affected() > 0)
+    }
+}
+
+// ============================================================================
+// Audiobook Chapters
+// ============================================================================
+
+/// Audiobook chapter record from database
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AudiobookChapterRecord {
+    pub id: Uuid,
+    pub audiobook_id: Uuid,
+    pub chapter_number: i32,
+    pub title: Option<String>,
+    pub start_secs: i32,
+    pub end_secs: i32,
+    pub duration_secs: Option<i32>,
+    pub media_file_id: Option<Uuid>,
+    pub status: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Input for creating a new audiobook chapter
+#[derive(Debug, Clone)]
+pub struct CreateAudiobookChapter {
+    pub audiobook_id: Uuid,
+    pub chapter_number: i32,
+    pub title: Option<String>,
+    pub start_secs: i32,
+    pub end_secs: i32,
+}
+
+pub struct AudiobookChapterRepository {
+    pool: PgPool,
+}
+
+impl AudiobookChapterRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    /// Get a chapter by ID
+    pub async fn get_by_id(&self, id: Uuid) -> Result<Option<AudiobookChapterRecord>> {
+        let record = sqlx::query_as::<_, AudiobookChapterRecord>(
+            r#"
+            SELECT id, audiobook_id, chapter_number, title, start_secs, end_secs,
+                   duration_secs, media_file_id, status, created_at
+            FROM chapters
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(record)
+    }
+
+    /// List all chapters for an audiobook
+    pub async fn list_by_audiobook(&self, audiobook_id: Uuid) -> Result<Vec<AudiobookChapterRecord>> {
+        let records = sqlx::query_as::<_, AudiobookChapterRecord>(
+            r#"
+            SELECT id, audiobook_id, chapter_number, title, start_secs, end_secs,
+                   duration_secs, media_file_id, status, created_at
+            FROM chapters
+            WHERE audiobook_id = $1
+            ORDER BY chapter_number
+            "#,
+        )
+        .bind(audiobook_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(records)
+    }
+
+    /// List chapters with pagination and filtering
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_by_audiobook_paginated(
+        &self,
+        audiobook_id: Uuid,
+        offset: i64,
+        limit: i64,
+        status_filter: Option<&str>,
+        sort_column: &str,
+        sort_asc: bool,
+    ) -> Result<(Vec<AudiobookChapterRecord>, i64)> {
+        let mut conditions = vec!["audiobook_id = $1".to_string()];
+        let mut param_idx = 2;
+
+        if status_filter.is_some() {
+            conditions.push(format!("status = ${}", param_idx));
+        }
+
+        let where_clause = conditions.join(" AND ");
+
+        let valid_sort_columns = ["chapter_number", "title", "created_at"];
+        let sort_col = if valid_sort_columns.contains(&sort_column) {
+            sort_column
+        } else {
+            "chapter_number"
+        };
+        let order_dir = if sort_asc { "ASC" } else { "DESC" };
+        let order_clause = format!("ORDER BY {} {} NULLS LAST", sort_col, order_dir);
+
+        let count_query = format!("SELECT COUNT(*) FROM chapters WHERE {}", where_clause);
+        let data_query = format!(
+            r#"
+            SELECT id, audiobook_id, chapter_number, title, start_secs, end_secs,
+                   duration_secs, media_file_id, status, created_at
+            FROM chapters
+            WHERE {}
+            {}
+            LIMIT {} OFFSET {}
+            "#,
+            where_clause, order_clause, limit, offset
+        );
+
+        let mut count_builder = sqlx::query_scalar::<_, i64>(&count_query).bind(audiobook_id);
+        if let Some(status) = status_filter {
+            count_builder = count_builder.bind(status);
+        }
+
+        let total: i64 = count_builder.fetch_one(&self.pool).await?;
+
+        let mut data_builder = sqlx::query_as::<_, AudiobookChapterRecord>(&data_query).bind(audiobook_id);
+        if let Some(status) = status_filter {
+            data_builder = data_builder.bind(status);
+        }
+
+        let records = data_builder.fetch_all(&self.pool).await?;
+
+        Ok((records, total))
+    }
+
+    /// Create a new chapter
+    pub async fn create(&self, input: CreateAudiobookChapter) -> Result<AudiobookChapterRecord> {
+        let record = sqlx::query_as::<_, AudiobookChapterRecord>(
+            r#"
+            INSERT INTO chapters (audiobook_id, chapter_number, title, start_secs, end_secs)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id, audiobook_id, chapter_number, title, start_secs, end_secs,
+                      duration_secs, media_file_id, status, created_at
+            "#,
+        )
+        .bind(input.audiobook_id)
+        .bind(input.chapter_number)
+        .bind(&input.title)
+        .bind(input.start_secs)
+        .bind(input.end_secs)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(record)
+    }
+
+    /// Update chapter status
+    pub async fn update_status(&self, id: Uuid, status: &str) -> Result<()> {
+        sqlx::query("UPDATE chapters SET status = $2 WHERE id = $1")
+            .bind(id)
+            .bind(status)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Link chapter to media file
+    pub async fn link_media_file(&self, id: Uuid, media_file_id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE chapters SET media_file_id = $2, status = 'downloaded' WHERE id = $1")
+            .bind(id)
+            .bind(media_file_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Delete all chapters for an audiobook
+    pub async fn delete_by_audiobook(&self, audiobook_id: Uuid) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM chapters WHERE audiobook_id = $1")
+            .bind(audiobook_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(result.rows_affected())
     }
 }

@@ -3,7 +3,7 @@ import { Link, useLocation } from '@tanstack/react-router'
 import { Card, CardBody } from '@heroui/card'
 import { RouteError } from '../components/RouteError'
 import type { TablerIcon } from '@tabler/icons-react'
-import { IconSettings, IconDownload, IconRss, IconMovie, IconClipboard, IconSearch, IconCast, IconFolderCog } from '@tabler/icons-react'
+import { IconSettings, IconDownload, IconRss, IconMovie, IconClipboard, IconSearch, IconCast, IconFolderCog, IconBrain } from '@tabler/icons-react'
 
 // This is the parent route for /settings/* that provides the shared layout
 export const Route = createFileRoute('/settings')({
@@ -67,10 +67,18 @@ const settingsTabs: SettingsTab[] = [
   {
     key: 'metadata',
     path: '/settings/metadata',
-    label: 'Metadata & Parser',
+    label: 'Metadata',
     Icon: IconMovie,
     iconColor: 'text-purple-400',
     description: 'Media identification',
+  },
+  {
+    key: 'parser',
+    path: '/settings/parser',
+    label: 'Filename Parser',
+    Icon: IconBrain,
+    iconColor: 'text-cyan-400',
+    description: 'Regex & LLM parsing',
   },
   {
     key: 'organization',

@@ -27,6 +27,8 @@ pub struct IndexerConfigRecord {
     pub supports_imdb_search: Option<bool>,
     pub supports_tvdb_search: Option<bool>,
     pub capabilities: Option<sqlx::types::Json<serde_json::Value>>,
+    /// Post-download action override (copy, move, hardlink) - NULL uses library setting
+    pub post_download_action: Option<String>,
     pub last_error: Option<String>,
     pub error_count: i32,
     pub last_success_at: Option<DateTime<Utc>>,
@@ -122,7 +124,7 @@ impl IndexerRepository {
                 id, user_id, indexer_type, definition_id, name, enabled, priority,
                 site_url, supports_search, supports_tv_search, supports_movie_search,
                 supports_music_search, supports_book_search, supports_imdb_search,
-                supports_tvdb_search, capabilities,
+                supports_tvdb_search, capabilities, post_download_action,
                 last_error, error_count, last_success_at, last_error_at,
                 created_at, updated_at
             "#,
@@ -146,7 +148,7 @@ impl IndexerRepository {
                 id, user_id, indexer_type, definition_id, name, enabled, priority,
                 site_url, supports_search, supports_tv_search, supports_movie_search,
                 supports_music_search, supports_book_search, supports_imdb_search,
-                supports_tvdb_search, capabilities,
+                supports_tvdb_search, capabilities, post_download_action,
                 last_error, error_count, last_success_at, last_error_at,
                 created_at, updated_at
             FROM indexer_configs
@@ -168,7 +170,7 @@ impl IndexerRepository {
                 id, user_id, indexer_type, definition_id, name, enabled, priority,
                 site_url, supports_search, supports_tv_search, supports_movie_search,
                 supports_music_search, supports_book_search, supports_imdb_search,
-                supports_tvdb_search, capabilities,
+                supports_tvdb_search, capabilities, post_download_action,
                 last_error, error_count, last_success_at, last_error_at,
                 created_at, updated_at
             FROM indexer_configs
@@ -191,7 +193,7 @@ impl IndexerRepository {
                 id, user_id, indexer_type, definition_id, name, enabled, priority,
                 site_url, supports_search, supports_tv_search, supports_movie_search,
                 supports_music_search, supports_book_search, supports_imdb_search,
-                supports_tvdb_search, capabilities,
+                supports_tvdb_search, capabilities, post_download_action,
                 last_error, error_count, last_success_at, last_error_at,
                 created_at, updated_at
             FROM indexer_configs
@@ -238,7 +240,7 @@ impl IndexerRepository {
                 id, user_id, indexer_type, definition_id, name, enabled, priority,
                 site_url, supports_search, supports_tv_search, supports_movie_search,
                 supports_music_search, supports_book_search, supports_imdb_search,
-                supports_tvdb_search, capabilities,
+                supports_tvdb_search, capabilities, post_download_action,
                 last_error, error_count, last_success_at, last_error_at,
                 created_at, updated_at
             "#,

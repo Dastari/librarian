@@ -14,7 +14,7 @@ use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, Sessi
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::db::{CreateTorrent, Database, TorrentRepository};
@@ -211,12 +211,12 @@ impl TorrentService {
             config.max_concurrent = v;
         }
 
-        info!(download_dir = %config.download_dir.display(), "Using download directory from settings");
+        info!("Using download directory: {}", config.download_dir.display());
 
         // Try to create directories, but don't fail if we can't
         let download_dir_ok = match tokio::fs::create_dir_all(&config.download_dir).await {
             Ok(_) => {
-                info!(path = %config.download_dir.display(), "Download directory ready");
+                debug!("Download directory ready: {}", config.download_dir.display());
                 true
             }
             Err(e) => {
@@ -228,7 +228,7 @@ impl TorrentService {
 
         let session_dir_ok = match tokio::fs::create_dir_all(&config.session_dir).await {
             Ok(_) => {
-                info!(path = %config.session_dir.display(), "Session directory ready");
+                debug!("Session directory ready: {}", config.session_dir.display());
                 true
             }
             Err(e) => {
@@ -373,9 +373,9 @@ impl TorrentService {
                 )
                 .await
             {
-                warn!(id = %id, info_hash = %info_hash, error = %e, "Failed to sync torrent to database");
+                warn!("Failed to sync torrent '{}' to database: {}", name, e);
             } else {
-                info!(id = %id, info_hash = %info_hash, name = %name, "Synced session torrent to database");
+                debug!("Synced torrent '{}' to database", name);
             }
         }
 
@@ -387,7 +387,7 @@ impl TorrentService {
         let repo = self.db.torrents();
         let records = repo.list_resumable().await?;
 
-        info!(count = records.len(), "Restoring torrents from database");
+        info!("Restoring {} torrents from database", records.len());
 
         for record in records {
             if let Some(magnet) = &record.magnet_uri {
@@ -400,7 +400,7 @@ impl TorrentService {
                     .await
                 {
                     Ok(_) => {
-                        info!(info_hash = %record.info_hash, name = %record.name, "Restored torrent");
+                        info!("Restored torrent '{}'", record.name);
                     }
                     Err(e) => {
                         warn!(info_hash = %record.info_hash, error = %e, "Failed to restore torrent");
@@ -431,7 +431,7 @@ impl TorrentService {
 
     /// Add a torrent from a magnet link, persisting to database
     pub async fn add_magnet(&self, magnet: &str, user_id: Option<Uuid>) -> Result<TorrentInfo> {
-        info!(magnet = %magnet, "Adding torrent from magnet");
+        debug!("Adding torrent from magnet link");
 
         let add_result = self
             .session
@@ -492,7 +492,7 @@ impl TorrentService {
         data: Vec<u8>,
         user_id: Option<Uuid>,
     ) -> Result<TorrentInfo> {
-        info!("Adding torrent from file data");
+        debug!("Adding torrent from file data");
 
         let add_result = self
             .session
@@ -541,7 +541,7 @@ impl TorrentService {
 
     /// Add a torrent from a URL to a .torrent file
     pub async fn add_torrent_url(&self, url: &str, user_id: Option<Uuid>) -> Result<TorrentInfo> {
-        info!(url = %url, "Adding torrent from URL");
+        debug!("Adding torrent from URL: {}", url);
 
         // librqbit handles both magnet links and http URLs
         let add_result = self
@@ -595,7 +595,7 @@ impl TorrentService {
 
     /// Add a torrent from raw bytes (for authenticated downloads)
     pub async fn add_torrent_bytes(&self, bytes: &[u8], user_id: Option<Uuid>) -> Result<TorrentInfo> {
-        info!(bytes_len = bytes.len(), "Adding torrent from bytes");
+        debug!("Adding torrent from bytes ({} bytes)", bytes.len());
 
         let add_result = self
             .session
@@ -846,10 +846,11 @@ impl TorrentService {
 
                 // Check if there's a torrent folder or if files are directly in download dir
                 let full_path = if metadata.file_infos.len() == 1 {
-                    // Single file torrent - file might be directly in download dir or in a folder
+                    // Single file torrent - use the actual filename from metadata
+                    // (not the torrent name, which may differ from the actual file)
                     self.config
                         .download_dir
-                        .join(&torrent_name)
+                        .join(&relative_path)
                         .to_string_lossy()
                         .to_string()
                 } else {
@@ -896,7 +897,7 @@ impl TorrentService {
             .pause(&handle)
             .await
             .context("Failed to pause torrent")?;
-        info!(id = %id, "Torrent paused");
+        debug!("Torrent {} paused", id);
         Ok(())
     }
 
@@ -909,7 +910,7 @@ impl TorrentService {
             .unpause(&handle)
             .await
             .context("Failed to resume torrent")?;
-        info!(id = %id, "Torrent resumed");
+        debug!("Torrent {} resumed", id);
         Ok(())
     }
 
@@ -936,7 +937,7 @@ impl TorrentService {
             info_hash: info_hash.clone(),
         });
         self.completed.write().remove(&info_hash);
-        info!(id = %id, delete_files = %delete_files, "Torrent removed");
+        info!("Torrent {} removed{}", id, if delete_files { " (files deleted)" } else { "" });
         Ok(())
     }
 

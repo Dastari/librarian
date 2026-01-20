@@ -9,14 +9,16 @@ import { Tooltip } from '@heroui/tooltip'
 import {
   graphqlClient,
   TORRENT_DETAILS_QUERY,
+  TORRENT_FILE_MATCHES_QUERY,
   type TorrentDetails,
   type TorrentFileInfo,
+  type TorrentFileMatch,
 } from '../../lib/graphql'
 import { formatBytes, sanitizeError } from '../../lib/format'
 import { TORRENT_STATE_INFO } from './TorrentCard'
 import { DataTable, type DataTableColumn } from '../data-table'
 import { ErrorState } from '../shared'
-import { IconCheck, IconArrowDown, IconArrowUp, IconFolder } from '@tabler/icons-react'
+import { IconCheck, IconArrowDown, IconArrowUp, IconFolder, IconLink, IconX, IconPlayerSkipForward } from '@tabler/icons-react'
 
 interface TorrentInfoModalProps {
   torrentId: number | null
@@ -24,82 +26,157 @@ interface TorrentInfoModalProps {
   onClose: () => void
 }
 
-// File columns for the DataTable
-const fileColumns: DataTableColumn<TorrentFileInfo>[] = [
-  {
-    key: 'path',
-    label: 'File',
-    render: (file) => {
-      const fileName = file.path.split('/').pop() || file.path
-      const directory = file.path.includes('/') 
-        ? file.path.substring(0, file.path.lastIndexOf('/'))
-        : null
-      return (
-        <div className="min-w-0 h-10">
-          <Tooltip content={file.path} delay={500}>
-            <div className="truncate font-medium text-sm max-w-xs lg:max-w-md">
-              {fileName}
-            </div>
+// Helper to create file columns with match info
+function createFileColumns(matchesByIndex: Map<number, TorrentFileMatch>): DataTableColumn<TorrentFileInfo>[] {
+  return [
+    {
+      key: 'match',
+      label: 'Match',
+      width: 80,
+      align: 'center',
+      render: (file) => {
+        const match = matchesByIndex.get(file.index)
+        if (!match) {
+          return (
+            <Tooltip content="No match data">
+              <span className="text-default-400">-</span>
+            </Tooltip>
+          )
+        }
+        if (match.skipDownload) {
+          return (
+            <Tooltip content="Skipped (already have or duplicate)">
+              <Chip size="sm" color="default" variant="flat" startContent={<IconPlayerSkipForward size={12} />}>
+                Skip
+              </Chip>
+            </Tooltip>
+          )
+        }
+        if (match.episodeId || match.movieId || match.trackId || match.chapterId) {
+          const matchType = match.episodeId ? 'Episode' : match.movieId ? 'Movie' : match.trackId ? 'Track' : 'Chapter'
+          return (
+            <Tooltip content={`Matched to ${matchType}`}>
+              <Chip size="sm" color="success" variant="flat" startContent={<IconLink size={12} />}>
+                {matchType}
+              </Chip>
+            </Tooltip>
+          )
+        }
+        return (
+          <Tooltip content="No library item matched">
+            <Chip size="sm" color="warning" variant="flat" startContent={<IconX size={12} />}>
+              None
+            </Chip>
           </Tooltip>
-          {directory && (
-            <div className="text-xs text-default-400 truncate max-w-xs lg:max-w-md">
-              {directory}
-            </div>
-          )}
-        </div>
-      )
+        )
+      },
     },
-  },
-  {
-    key: 'size',
-    label: 'Size',
-    width: 100,
-    align: 'end',
-    render: (file) => (
-      <span className="text-sm tabular-nums text-default-500">
-        {formatBytes(file.size)}
-      </span>
-    ),
-    sortFn: (a, b) => a.size - b.size,
-  },
-  {
-    key: 'progress',
-    label: 'Progress',
-    width: 160,
-    align: 'center',
-    render: (file) => (
-      <div className="flex items-center gap-2">
-        <Progress
-          value={file.progress * 100}
-          size="sm"
-          color={file.progress >= 1 ? 'success' : 'primary'}
-          className="w-20"
-          aria-label={`${file.path} progress`}
-        />
-        <span className={`text-xs tabular-nums w-10 text-right ${file.progress >= 1 ? 'text-success' : 'text-default-500'}`}>
-          {(file.progress * 100).toFixed(0)}%
+    {
+      key: 'path',
+      label: 'File',
+      render: (file) => {
+        const fileName = file.path.split('/').pop() || file.path
+        const directory = file.path.includes('/') 
+          ? file.path.substring(0, file.path.lastIndexOf('/'))
+          : null
+        const match = matchesByIndex.get(file.index)
+        return (
+          <div className="min-w-0 h-10">
+            <Tooltip content={file.path} delay={500}>
+              <div className="truncate font-medium text-sm max-w-xs lg:max-w-md">
+                {fileName}
+              </div>
+            </Tooltip>
+            {directory && (
+              <div className="text-xs text-default-400 truncate max-w-xs lg:max-w-md">
+                {directory}
+              </div>
+            )}
+            {match?.parsedResolution && (
+              <div className="text-xs text-default-500 mt-0.5">
+                {[match.parsedResolution, match.parsedCodec].filter(Boolean).join(' ')}
+              </div>
+            )}
+          </div>
+        )
+      },
+    },
+    {
+      key: 'size',
+      label: 'Size',
+      width: 100,
+      align: 'end',
+      render: (file) => (
+        <span className="text-sm tabular-nums text-default-500">
+          {formatBytes(file.size)}
         </span>
-      </div>
-    ),
-    sortFn: (a, b) => a.progress - b.progress,
-  },
-]
+      ),
+      sortFn: (a, b) => a.size - b.size,
+    },
+    {
+      key: 'progress',
+      label: 'Progress',
+      width: 160,
+      align: 'center',
+      render: (file) => (
+        <div className="flex items-center gap-2">
+          <Progress
+            value={file.progress * 100}
+            size="sm"
+            color={file.progress >= 1 ? 'success' : 'primary'}
+            className="w-20"
+            aria-label={`${file.path} progress`}
+          />
+          <span className={`text-xs tabular-nums w-10 text-right ${file.progress >= 1 ? 'text-success' : 'text-default-500'}`}>
+            {(file.progress * 100).toFixed(0)}%
+          </span>
+        </div>
+      ),
+      sortFn: (a, b) => a.progress - b.progress,
+    },
+  ]
+}
 
 export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModalProps) {
   const [details, setDetails] = useState<TorrentDetails | null>(null)
+  const [fileMatches, setFileMatches] = useState<TorrentFileMatch[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Create a map of file index to match for quick lookup
+  const matchesByIndex = new Map(fileMatches.map(m => [m.fileIndex, m]))
 
   useEffect(() => {
     if (isOpen && torrentId !== null) {
       setIsLoading(true)
       setError(null)
+      setFileMatches([])
+      
+      // Fetch torrent details
       graphqlClient
         .query<{ torrentDetails: TorrentDetails }>(TORRENT_DETAILS_QUERY, { id: torrentId })
         .toPromise()
-        .then((result) => {
+        .then(async (result) => {
           if (result.data?.torrentDetails) {
-            setDetails(result.data.torrentDetails)
+            const det = result.data.torrentDetails
+            setDetails(det)
+            
+            // Fetch file matches using the info_hash
+            try {
+              const matchResult = await graphqlClient
+                .query<{ torrentFileMatches: TorrentFileMatch[] }>(
+                  TORRENT_FILE_MATCHES_QUERY, 
+                  { id: det.infoHash }
+                )
+                .toPromise()
+              
+              if (matchResult.data?.torrentFileMatches) {
+                setFileMatches(matchResult.data.torrentFileMatches)
+              }
+            } catch {
+              // File matches are optional, don't fail the whole modal
+              console.warn('Failed to fetch file matches')
+            }
           } else if (result.error) {
             setError(sanitizeError(result.error))
           } else {
@@ -258,9 +335,19 @@ export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModa
               {/* Files Table */}
               {details.files.length > 0 && (
                 <div className="space-y-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-default-600">
+                      Files ({details.files.length})
+                    </span>
+                    {fileMatches.length > 0 && (
+                      <span className="text-xs text-default-400">
+                        {fileMatches.filter(m => m.episodeId || m.movieId || m.trackId || m.chapterId).length} matched
+                      </span>
+                    )}
+                  </div>
                   <DataTable
                     data={details.files}
-                    columns={fileColumns}
+                    columns={createFileColumns(matchesByIndex)}
                     getRowKey={(file) => file.index}
                     isCompact
                     isStriped

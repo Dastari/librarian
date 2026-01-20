@@ -108,6 +108,10 @@ serde_bencode = "0.2.4"
 
 [dev-dependencies]
 tokio-test = "0.4"
+tempfile = "3"
+assert_matches = "1"
+pretty_assertions = "1"
+# regex is already a main dependency, but we use it in tests too
 
 [profile.release]
 opt-level = 'z'

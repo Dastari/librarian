@@ -168,7 +168,7 @@ impl TvMazeClient {
 
     /// Search for shows by name (with rate limiting and retry)
     pub async fn search_shows(&self, query: &str) -> Result<Vec<TvMazeSearchResult>> {
-        info!(query = %query, "Searching TVMaze for shows");
+        info!("Searching TVMaze for show '{}'", query);
 
         let url = format!("{}/search/shows", self.base_url);
         let client = self.client.clone();
@@ -213,7 +213,7 @@ impl TvMazeClient {
 
     /// Get show details by TVMaze ID (with rate limiting and retry)
     pub async fn get_show(&self, tvmaze_id: u32) -> Result<TvMazeShow> {
-        info!(tvmaze_id = tvmaze_id, "Fetching show from TVMaze");
+        debug!("Fetching show details from TVMaze (ID: {})", tvmaze_id);
 
         let url = format!("{}/shows/{}", self.base_url, tvmaze_id);
         let client = self.client.clone();
@@ -251,7 +251,7 @@ impl TvMazeClient {
 
     /// Get all episodes for a show (with rate limiting and retry)
     pub async fn get_episodes(&self, tvmaze_id: u32) -> Result<Vec<TvMazeEpisode>> {
-        info!(tvmaze_id = tvmaze_id, "Fetching episodes from TVMaze");
+        debug!("Fetching episodes from TVMaze for show {}", tvmaze_id);
 
         let url = format!("{}/shows/{}/episodes", self.base_url, tvmaze_id);
         let client = self.client.clone();
@@ -296,7 +296,7 @@ impl TvMazeClient {
     /// Get seasons for a show (for future season-level features)
     #[allow(dead_code)]
     pub async fn get_seasons(&self, tvmaze_id: u32) -> Result<Vec<TvMazeSeason>> {
-        info!(tvmaze_id = tvmaze_id, "Fetching seasons from TVMaze");
+        debug!("Fetching seasons from TVMaze for show {}", tvmaze_id);
 
         let url = format!("{}/shows/{}/seasons", self.base_url, tvmaze_id);
         let client = self.client.clone();
@@ -552,7 +552,7 @@ impl TvMazeClient {
         days: u32,
         country: Option<&str>,
     ) -> Result<Vec<TvMazeScheduleEntry>> {
-        info!(days = days, country = ?country, "Fetching upcoming TV schedule from TVMaze");
+        debug!("Fetching {} day TV schedule from TVMaze for {}", days, country.unwrap_or("US"));
 
         let today = chrono::Utc::now().date_naive();
         let mut all_episodes = Vec::new();
@@ -586,7 +586,7 @@ impl TvMazeClient {
     /// Returns episodes from streaming platforms like Netflix, Hulu, etc.
     #[allow(dead_code)]
     pub async fn get_web_schedule(&self, date: Option<&str>) -> Result<Vec<TvMazeScheduleEntry>> {
-        info!(date = ?date, "Fetching web schedule from TVMaze");
+        debug!("Fetching web schedule from TVMaze for {}", date.unwrap_or("today"));
 
         let url = format!("{}/schedule/web", self.base_url);
         let client = self.client.clone();

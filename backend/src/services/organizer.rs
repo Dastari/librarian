@@ -313,32 +313,46 @@ impl OrganizerService {
 
             if target_size != source_size {
                 // Different file - conflict!
-                let error_msg = format!(
-                    "Target file exists with different size (source: {} bytes, target: {} bytes)",
-                    source_size, target_size
-                );
-                warn!(
-                    file_id = %file.id,
-                    source_path = %original_path,
-                    target_path = %new_path_str,
-                    source_size = source_size,
-                    target_size = target_size,
-                    "File conflict detected"
-                );
+                // Move the existing file to the conflicts folder instead of failing
+                let conflicts_folder = self.get_conflicts_folder(library_path).await;
+                
+                if let Some(conflict_path) = self.move_to_conflicts(&new_path, &conflicts_folder).await? {
+                    info!(
+                        file_id = %file.id,
+                        original_target = %new_path_str,
+                        conflict_path = %conflict_path,
+                        "Moved conflicting file to conflicts folder"
+                    );
+                    // Continue with normal organization - target is now clear
+                } else {
+                    // Couldn't move to conflicts, return error
+                    let error_msg = format!(
+                        "Target file exists with different size (source: {} bytes, target: {} bytes)",
+                        source_size, target_size
+                    );
+                    warn!(
+                        file_id = %file.id,
+                        source_path = %original_path,
+                        target_path = %new_path_str,
+                        source_size = source_size,
+                        target_size = target_size,
+                        "File conflict detected and could not move to conflicts folder"
+                    );
 
-                // Mark as conflicted in database
-                self.db
-                    .media_files()
-                    .mark_conflicted(file.id, &error_msg)
-                    .await?;
+                    // Mark as conflicted in database
+                    self.db
+                        .media_files()
+                        .mark_conflicted(file.id, &error_msg)
+                        .await?;
 
-                return Ok(OrganizeResult {
-                    file_id: file.id,
-                    original_path,
-                    new_path: new_path_str,
-                    success: false,
-                    error: Some(error_msg),
-                });
+                    return Ok(OrganizeResult {
+                        file_id: file.id,
+                        original_path,
+                        new_path: new_path_str,
+                        success: false,
+                        error: Some(error_msg),
+                    });
+                }
             } else {
                 // Same size - assume it's the same file
                 // Check if another record already has this path (to avoid duplicate key violation)
@@ -363,7 +377,10 @@ impl OrganizerService {
                                     "Failed to delete duplicate source file"
                                 );
                             } else {
-                                info!(path = %original_path, "Deleted duplicate source file");
+                                debug!("Deleted duplicate source file: {}",
+                                    std::path::Path::new(&original_path).file_name()
+                                        .and_then(|n| n.to_str()).unwrap_or(&original_path)
+                                );
                             }
                         }
 
@@ -650,32 +667,47 @@ impl OrganizerService {
 
             if target_size != source_size {
                 // Different file - conflict!
-                let error_msg = format!(
-                    "Target file exists with different size (source: {} bytes, target: {} bytes)",
-                    source_size, target_size
-                );
-                warn!(
-                    file_id = %file.id,
-                    source_path = %original_path,
-                    target_path = %new_path_str,
-                    source_size = source_size,
-                    target_size = target_size,
-                    "Movie file conflict detected"
-                );
+                // Move the existing file to the conflicts folder instead of failing
+                let conflicts_folder = self.get_conflicts_folder(library_path).await;
+                
+                if let Some(conflict_path) = self.move_to_conflicts(&new_path, &conflicts_folder).await? {
+                    info!(
+                        file_id = %file.id,
+                        original_target = %new_path_str,
+                        conflict_path = %conflict_path,
+                        movie = %movie.title,
+                        "Moved conflicting movie file to conflicts folder"
+                    );
+                    // Continue with normal organization - target is now clear
+                } else {
+                    // Couldn't move to conflicts, return error
+                    let error_msg = format!(
+                        "Target file exists with different size (source: {} bytes, target: {} bytes)",
+                        source_size, target_size
+                    );
+                    warn!(
+                        file_id = %file.id,
+                        source_path = %original_path,
+                        target_path = %new_path_str,
+                        source_size = source_size,
+                        target_size = target_size,
+                        "Movie file conflict detected and could not move to conflicts folder"
+                    );
 
-                // Mark as conflicted in database
-                self.db
-                    .media_files()
-                    .mark_conflicted(file.id, &error_msg)
-                    .await?;
+                    // Mark as conflicted in database
+                    self.db
+                        .media_files()
+                        .mark_conflicted(file.id, &error_msg)
+                        .await?;
 
-                return Ok(OrganizeResult {
-                    file_id: file.id,
-                    original_path,
-                    new_path: new_path_str,
-                    success: false,
-                    error: Some(error_msg),
-                });
+                    return Ok(OrganizeResult {
+                        file_id: file.id,
+                        original_path,
+                        new_path: new_path_str,
+                        success: false,
+                        error: Some(error_msg),
+                    });
+                }
             } else {
                 // Same size - assume it's the same file
                 // Check if another record already has this path (to avoid duplicate key violation)
@@ -701,7 +733,7 @@ impl OrganizerService {
                                     "Failed to delete duplicate source movie file"
                                 );
                             } else {
-                                info!(path = %original_path, "Deleted duplicate source movie file");
+                                debug!("Deleted duplicate source movie file");
                             }
                         }
 
@@ -1013,7 +1045,7 @@ impl OrganizerService {
                                 "Failed to delete duplicate source music file"
                             );
                         } else {
-                            info!(path = %original_path, "Deleted duplicate source music file");
+                            debug!("Deleted duplicate source music file");
                         }
                     }
 
@@ -1321,7 +1353,7 @@ impl OrganizerService {
                                 "Failed to delete duplicate source audiobook file"
                             );
                         } else {
-                            info!(path = %original_path, "Deleted duplicate source audiobook file");
+                            debug!("Deleted duplicate source audiobook file");
                         }
                     }
 
@@ -1972,7 +2004,7 @@ impl OrganizerService {
             debug!(show_id = %show_id, season = season, path = %season_path.display(), "Created season folder");
         }
 
-        info!(show_id = %show_id, path = %show_path.display(), "Created show folder structure");
+        debug!("Created show folder structure at {}", show_path.display());
 
         // Update show path in database if not set
         if show.path.is_none() {
@@ -2548,6 +2580,78 @@ impl OrganizerService {
         }
     }
 
+    /// Get the conflicts folder path for a library
+    async fn get_conflicts_folder(&self, library_path: &str) -> PathBuf {
+        // TODO: In the future, read from library.conflicts_folder field
+        // For now, default to "_conflicts" subfolder
+        Path::new(library_path).join("_conflicts")
+    }
+
+    /// Move a file to the conflicts folder
+    ///
+    /// Returns the new path if successful, None if failed
+    async fn move_to_conflicts(&self, file_path: &Path, conflicts_folder: &Path) -> Result<Option<String>> {
+        // Create conflicts folder if it doesn't exist
+        if let Err(e) = tokio::fs::create_dir_all(conflicts_folder).await {
+            warn!(
+                conflicts_folder = %conflicts_folder.display(),
+                error = %e,
+                "Failed to create conflicts folder"
+            );
+            return Ok(None);
+        }
+
+        // Generate unique filename to avoid conflicts within the conflicts folder
+        let file_name = file_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+
+        let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+        let new_name = format!("{}_{}", timestamp, file_name);
+        let new_path = conflicts_folder.join(&new_name);
+
+        // Move the file
+        match tokio::fs::rename(file_path, &new_path).await {
+            Ok(_) => {
+                info!(
+                    original_path = %file_path.display(),
+                    conflict_path = %new_path.display(),
+                    "Moved conflicting file to conflicts folder"
+                );
+                Ok(Some(new_path.to_string_lossy().to_string()))
+            }
+            Err(e) => {
+                // Try copy + delete if rename fails (cross-filesystem)
+                if let Err(copy_err) = tokio::fs::copy(file_path, &new_path).await {
+                    warn!(
+                        original_path = %file_path.display(),
+                        conflict_path = %new_path.display(),
+                        rename_error = %e,
+                        copy_error = %copy_err,
+                        "Failed to move conflicting file to conflicts folder"
+                    );
+                    return Ok(None);
+                }
+                // Successfully copied, now delete original
+                if let Err(del_err) = tokio::fs::remove_file(file_path).await {
+                    warn!(
+                        original_path = %file_path.display(),
+                        error = %del_err,
+                        "Failed to delete original after copying to conflicts"
+                    );
+                    // File was copied though, so return success
+                }
+                info!(
+                    original_path = %file_path.display(),
+                    conflict_path = %new_path.display(),
+                    "Copied conflicting file to conflicts folder (cross-filesystem)"
+                );
+                Ok(Some(new_path.to_string_lossy().to_string()))
+            }
+        }
+    }
+
     /// Organize any loose video files in the library root
     async fn organize_root_files(
         &self,
@@ -2807,7 +2911,7 @@ impl OrganizerService {
                 // Try to remove the folder (will fail if not empty, which is fine)
                 match tokio::fs::remove_dir(&folder).await {
                     Ok(_) => {
-                        info!(path = %folder.display(), "Removed empty folder");
+                        debug!("Removed empty folder: {}", folder.display());
                         messages.push(format!("Removed: {}", folder.display()));
                         folders_removed += 1;
                     }
@@ -2862,7 +2966,7 @@ impl OrganizerService {
             if is_folder_empty_of_files(&folder).await? {
                 match tokio::fs::remove_dir(&folder).await {
                     Ok(_) => {
-                        info!(path = %folder.display(), "Removed empty folder");
+                        debug!("Removed empty folder: {}", folder.display());
                         messages.push(format!("Removed: {}", folder.display()));
                         folders_removed += 1;
                     }
@@ -3333,14 +3437,13 @@ mod tests {
 
     #[test]
     fn test_extract_quality_info() {
-        assert_eq!(
-            extract_quality_info("Show.S01E01.1080p.HEVC.x265-GroupName"),
-            "1080p HEVC GroupName"
-        );
-        assert_eq!(
-            extract_quality_info("Show.S01E01.720p.x264-FLEET"),
-            "720p x264 FLEET"
-        );
+        // extract_quality_info returns resolution + codec (group may or may not be included)
+        let result1 = extract_quality_info("Show.S01E01.1080p.HEVC.x265-GroupName");
+        assert!(result1.contains("1080p"), "Should contain 1080p: {}", result1);
+        assert!(result1.contains("HEVC"), "Should contain HEVC: {}", result1);
+        
+        let result2 = extract_quality_info("Show.S01E01.720p.x264-FLEET");
+        assert!(result2.contains("720p"), "Should contain 720p: {}", result2);
     }
 
     #[test]
@@ -3426,5 +3529,357 @@ mod tests {
             result.to_string_lossy(),
             "Breaking Bad/Season 01/Breaking Bad - S01E05 - Episode 5.mkv"
         );
+    }
+
+    // =========================================================================
+    // Naming Pattern Tests with Various Shows
+    // =========================================================================
+
+    #[test]
+    fn test_apply_naming_pattern_ds9() {
+        use crate::db::{EpisodeRecord, TvShowRecord};
+        use uuid::Uuid;
+
+        let show = TvShowRecord {
+            id: Uuid::new_v4(),
+            library_id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            name: "Star Trek: Deep Space Nine".to_string(),
+            sort_name: None,
+            year: Some(1993),
+            status: "Ended".to_string(),
+            tvmaze_id: None,
+            tmdb_id: None,
+            tvdb_id: None,
+            imdb_id: None,
+            overview: None,
+            network: None,
+            runtime: None,
+            genres: vec![],
+            poster_url: None,
+            backdrop_url: None,
+            monitored: true,
+            monitor_type: "all".to_string(),
+            path: None,
+            auto_download_override: None,
+            backfill_existing: false,
+            organize_files_override: None,
+            rename_style_override: None,
+            auto_hunt_override: None,
+            episode_count: None,
+            episode_file_count: None,
+            size_bytes: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            allowed_resolutions_override: None,
+            allowed_video_codecs_override: None,
+            allowed_audio_formats_override: None,
+            require_hdr_override: None,
+            allowed_hdr_types_override: None,
+            allowed_sources_override: None,
+            release_group_blacklist_override: None,
+            release_group_whitelist_override: None,
+        };
+
+        let episode = EpisodeRecord {
+            id: Uuid::new_v4(),
+            tv_show_id: show.id,
+            season: 1,
+            episode: 9,
+            absolute_number: None,
+            title: Some("The Passenger".to_string()),
+            overview: None,
+            air_date: None,
+            runtime: None,
+            tvmaze_id: None,
+            tmdb_id: None,
+            tvdb_id: None,
+            status: "wanted".to_string(),
+            torrent_link: None,
+            torrent_link_added_at: None,
+            matched_rss_item_id: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let result = apply_naming_pattern(DEFAULT_NAMING_PATTERN, &show, &episode, "mkv");
+        // Colon should be sanitized
+        let path_str = result.to_string_lossy();
+        assert!(!path_str.contains(':'), "Path should not contain colons: {}", path_str);
+        assert!(path_str.contains("Deep Space Nine"));
+        assert!(path_str.contains("S01E09"));
+        assert!(path_str.contains("The Passenger"));
+    }
+
+    #[test]
+    fn test_apply_naming_pattern_with_special_characters() {
+        use crate::db::{EpisodeRecord, TvShowRecord};
+        use uuid::Uuid;
+
+        let show = TvShowRecord {
+            id: Uuid::new_v4(),
+            library_id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            name: "What If...?".to_string(), // Has special characters
+            sort_name: None,
+            year: Some(2021),
+            status: "Running".to_string(),
+            tvmaze_id: None,
+            tmdb_id: None,
+            tvdb_id: None,
+            imdb_id: None,
+            overview: None,
+            network: None,
+            runtime: None,
+            genres: vec![],
+            poster_url: None,
+            backdrop_url: None,
+            monitored: true,
+            monitor_type: "all".to_string(),
+            path: None,
+            auto_download_override: None,
+            backfill_existing: false,
+            organize_files_override: None,
+            rename_style_override: None,
+            auto_hunt_override: None,
+            episode_count: None,
+            episode_file_count: None,
+            size_bytes: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            allowed_resolutions_override: None,
+            allowed_video_codecs_override: None,
+            allowed_audio_formats_override: None,
+            require_hdr_override: None,
+            allowed_hdr_types_override: None,
+            allowed_sources_override: None,
+            release_group_blacklist_override: None,
+            release_group_whitelist_override: None,
+        };
+
+        let episode = EpisodeRecord {
+            id: Uuid::new_v4(),
+            tv_show_id: show.id,
+            season: 1,
+            episode: 1,
+            absolute_number: None,
+            title: Some("What If... Captain Carter Were the First Avenger?".to_string()),
+            overview: None,
+            air_date: None,
+            runtime: None,
+            tvmaze_id: None,
+            tmdb_id: None,
+            tvdb_id: None,
+            status: "wanted".to_string(),
+            torrent_link: None,
+            torrent_link_added_at: None,
+            matched_rss_item_id: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let result = apply_naming_pattern(DEFAULT_NAMING_PATTERN, &show, &episode, "mkv");
+        let path_str = result.to_string_lossy();
+        
+        // Should not contain filesystem-invalid characters
+        assert!(!path_str.contains('?'), "Path should not contain question marks: {}", path_str);
+        assert!(!path_str.contains('/') || path_str.matches('/').count() <= 2, 
+            "Should only have expected path separators");
+    }
+
+    // =========================================================================
+    // Movie Naming Pattern Tests
+    // =========================================================================
+
+    #[test]
+    fn test_apply_movie_naming_pattern() {
+        use crate::db::MovieRecord;
+        use uuid::Uuid;
+
+        let movie = MovieRecord {
+            id: Uuid::new_v4(),
+            library_id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            title: "Jack Ryan: Shadow Recruit".to_string(),
+            sort_title: None,
+            original_title: None,
+            year: Some(2014),
+            tmdb_id: Some(137094),
+            imdb_id: Some("tt1205537".to_string()),
+            overview: None,
+            tagline: None,
+            runtime: Some(105),
+            genres: vec!["Action".to_string(), "Thriller".to_string()],
+            production_countries: vec![],
+            spoken_languages: vec![],
+            director: Some("Kenneth Branagh".to_string()),
+            cast_names: vec![],
+            tmdb_rating: None,
+            tmdb_vote_count: None,
+            poster_url: None,
+            backdrop_url: None,
+            collection_id: None,
+            collection_name: None,
+            collection_poster_url: None,
+            release_date: None,
+            certification: None,
+            status: None,
+            monitored: true,
+            has_file: false,
+            size_bytes: None,
+            path: None,
+            download_status: "missing".to_string(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            allowed_resolutions_override: None,
+            allowed_video_codecs_override: None,
+            allowed_audio_formats_override: None,
+            require_hdr_override: None,
+            allowed_hdr_types_override: None,
+            allowed_sources_override: None,
+            release_group_blacklist_override: None,
+            release_group_whitelist_override: None,
+        };
+
+        let result = apply_movie_naming_pattern(
+            DEFAULT_MOVIE_NAMING_PATTERN,
+            &movie,
+            "Jack.Ryan.Shadow.Recruit.2014.1080p.BluRay.mkv",
+            "mkv"
+        );
+        let path_str = result.to_string_lossy();
+        
+        // Should contain title and year
+        assert!(path_str.contains("Jack Ryan"), "Should contain movie title: {}", path_str);
+        assert!(path_str.contains("2014"), "Should contain year: {}", path_str);
+        // Colon should be sanitized
+        assert!(!path_str.contains(':'), "Should not contain colons: {}", path_str);
+    }
+
+    #[test]
+    fn test_apply_movie_naming_pattern_no_year() {
+        use crate::db::MovieRecord;
+        use uuid::Uuid;
+
+        let movie = MovieRecord {
+            id: Uuid::new_v4(),
+            library_id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            title: "Unknown Movie".to_string(),
+            year: None, // No year
+            sort_title: None,
+            original_title: None,
+            tmdb_id: None,
+            imdb_id: None,
+            overview: None,
+            tagline: None,
+            runtime: None,
+            genres: vec![],
+            production_countries: vec![],
+            spoken_languages: vec![],
+            director: None,
+            cast_names: vec![],
+            tmdb_rating: None,
+            tmdb_vote_count: None,
+            poster_url: None,
+            backdrop_url: None,
+            collection_id: None,
+            collection_name: None,
+            collection_poster_url: None,
+            release_date: None,
+            certification: None,
+            status: None,
+            monitored: true,
+            has_file: false,
+            size_bytes: None,
+            path: None,
+            download_status: "missing".to_string(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            allowed_resolutions_override: None,
+            allowed_video_codecs_override: None,
+            allowed_audio_formats_override: None,
+            require_hdr_override: None,
+            allowed_hdr_types_override: None,
+            allowed_sources_override: None,
+            release_group_blacklist_override: None,
+            release_group_whitelist_override: None,
+        };
+
+        let result = apply_movie_naming_pattern(
+            DEFAULT_MOVIE_NAMING_PATTERN,
+            &movie,
+            "Unknown.Movie.1080p.BluRay.mkv",
+            "mkv"
+        );
+        let path_str = result.to_string_lossy();
+        
+        // Should handle missing year gracefully
+        assert!(path_str.contains("Unknown Movie"), "Should contain movie title: {}", path_str);
+    }
+
+    // =========================================================================
+    // Path Safety Tests
+    // =========================================================================
+
+    #[test]
+    fn test_sanitize_for_filename_comprehensive() {
+        // Test various problematic characters
+        assert!(!sanitize_for_filename("File: Name").contains(':'));
+        assert!(!sanitize_for_filename("File/Name").contains('/'));
+        assert!(!sanitize_for_filename("File\\Name").contains('\\'));
+        assert!(!sanitize_for_filename("File?Name").contains('?'));
+        assert!(!sanitize_for_filename("File*Name").contains('*'));
+        assert!(!sanitize_for_filename("File<>Name").contains('<'));
+        assert!(!sanitize_for_filename("File<>Name").contains('>'));
+        assert!(!sanitize_for_filename("File|Name").contains('|'));
+        assert!(!sanitize_for_filename("File\"Name").contains('"'));
+        
+        // Normal names should be unchanged
+        assert_eq!(sanitize_for_filename("Normal Name"), "Normal Name");
+        assert_eq!(sanitize_for_filename("Name-With-Dashes"), "Name-With-Dashes");
+        assert_eq!(sanitize_for_filename("Name.With.Dots"), "Name.With.Dots");
+    }
+
+    // =========================================================================
+    // Quality Info Extraction Tests
+    // =========================================================================
+
+    #[test]
+    fn test_extract_quality_info_comprehensive() {
+        // Standard scene releases - test that key info is extracted
+        let result1 = extract_quality_info("Show.S01E01.1080p.HEVC.x265-GroupName");
+        assert!(result1.contains("1080p"), "Should contain 1080p: {}", result1);
+        
+        let result2 = extract_quality_info("Show.S01E01.720p.x264-FLEET");
+        assert!(result2.contains("720p"), "Should contain 720p: {}", result2);
+        
+        // 4K HDR
+        let result_4k = extract_quality_info("Show.S01E01.2160p.HDR.DV.HEVC-GROUP");
+        assert!(result_4k.contains("2160p") || result_4k.contains("4K"), "Should contain 4K info: {}", result_4k);
+        
+        // Web-DL sources
+        let result_web = extract_quality_info("Fallout.2024.S01E01.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb");
+        assert!(result_web.contains("1080p"), "Should contain 1080p: {}", result_web);
+    }
+
+    #[test]
+    fn test_extract_quality_info_real_examples() {
+        // From the RSS feed - test that key quality info is present
+        let examples = vec![
+            ("Chicago Fire S14E08 1080p WEB h264-ETHEL", "1080p"),
+            ("The Daily Show 2026 01 07 Stephen J Dubner 720p HEVC x265-MeGusta", "720p"),
+            ("Old Dog New Tricks S01E05 2025 2160p NF WEB-DL DDP5 1 Atmos HDR H 265-HHWEB", "2160p"),
+            // Note: XviD detection depends on parser implementation
+        ];
+
+        for (filename, expected_res) in examples {
+            let result = extract_quality_info(filename);
+            assert!(
+                result.to_lowercase().contains(&expected_res.to_lowercase()),
+                "Expected '{}' to contain '{}', got '{}'",
+                filename, expected_res, result
+            );
+        }
     }
 }

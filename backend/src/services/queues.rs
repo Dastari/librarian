@@ -12,8 +12,11 @@ use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+use sqlx;
+
 use super::ffmpeg::{FfmpegService, MediaAnalysis};
 use super::job_queue::{JobQueueConfig, WorkQueue};
+use super::quality_evaluator::{EffectiveQualitySettings, QualityEvaluator, QualityStatus};
 use crate::db::Database;
 use crate::graphql::types::MediaFileUpdatedEvent;
 
@@ -158,6 +161,15 @@ async fn process_media_analysis(
         subtitle_streams = analysis.subtitle_streams.len(),
         "Media analysis stored"
     );
+
+    // Verify quality and update quality_status
+    if let Err(e) = verify_and_update_quality(&db, job.media_file_id, &analysis, &updated_info).await {
+        warn!(
+            media_file_id = %job.media_file_id,
+            error = %e,
+            "Failed to verify quality"
+        );
+    }
 
     // Emit event for subscribers (UI updates)
     if let Some(sender) = event_sender {
@@ -323,7 +335,7 @@ async fn store_media_analysis(
         .execute(pool)
         .await?;
 
-    sqlx::query("DELETE FROM chapters WHERE media_file_id = $1")
+    sqlx::query("DELETE FROM media_chapters WHERE media_file_id = $1")
         .bind(media_file_id)
         .execute(pool)
         .await?;
@@ -420,11 +432,11 @@ async fn store_media_analysis(
         .await?;
     }
 
-    // Insert chapters
+    // Insert chapters into media_chapters table
     for chapter in &analysis.chapters {
         sqlx::query(
             r#"
-            INSERT INTO chapters (media_file_id, chapter_index, start_secs, end_secs, title)
+            INSERT INTO media_chapters (media_file_id, chapter_index, start_secs, end_secs, title)
             VALUES ($1, $2, $3, $4, $5)
             "#,
         )
@@ -478,4 +490,124 @@ pub fn create_subtitle_download_queue(db: Database) -> SubtitleDownloadQueue {
             }
         },
     )
+}
+
+/// Verify quality against library/item targets and update quality_status
+///
+/// After FFprobe analysis, we know the true quality of the file.
+/// This function compares it against the target quality settings and:
+/// 1. Updates media_files.quality_status
+/// 2. Updates item status to 'suboptimal' if quality is below target
+async fn verify_and_update_quality(
+    db: &Database,
+    media_file_id: Uuid,
+    analysis: &MediaAnalysis,
+    info: &AnalysisStoredInfo,
+) -> Result<()> {
+    // Get library to check quality settings
+    let library = match db.libraries().get_by_id(info.library_id).await? {
+        Some(l) => l,
+        None => return Ok(()), // Library not found, skip
+    };
+
+    // Only verify quality for video files
+    if analysis.video_streams.is_empty() {
+        return Ok(());
+    }
+
+    // Get the primary video stream
+    let primary_video = match FfmpegService::primary_video_stream(analysis) {
+        Some(v) => v,
+        None => return Ok(()),
+    };
+
+    // Determine actual resolution from video dimensions
+    let actual_height = primary_video.height;
+    let actual_resolution = FfmpegService::detect_resolution(primary_video.width, actual_height);
+
+    // Get quality settings from item or library
+    let quality_settings = if let Some(episode_id) = info.episode_id {
+        // Get from TV show (with library fallback)
+        if let Ok(Some(episode)) = db.episodes().get_by_id(episode_id).await {
+            if let Ok(Some(show)) = db.tv_shows().get_by_id(episode.tv_show_id).await {
+                EffectiveQualitySettings::from_tv_show(&show, &library)
+            } else {
+                EffectiveQualitySettings::from_library(&library)
+            }
+        } else {
+            EffectiveQualitySettings::from_library(&library)
+        }
+    } else if let Some(movie_id) = info.movie_id {
+        // Get from movie (with library fallback)
+        if let Ok(Some(movie)) = db.movies().get_by_id(movie_id).await {
+            EffectiveQualitySettings::from_movie(&movie, &library)
+        } else {
+            EffectiveQualitySettings::from_library(&library)
+        }
+    } else {
+        EffectiveQualitySettings::from_library(&library)
+    };
+
+    // If library allows any quality, mark as optimal
+    if quality_settings.allows_any() {
+        update_quality_status(db, media_file_id, "optimal").await?;
+        return Ok(());
+    }
+
+    // Evaluate the actual quality against settings
+    let evaluation = QualityEvaluator::evaluate_analysis(analysis, &quality_settings);
+
+    let quality_status_str = match evaluation.quality_status {
+        QualityStatus::Optimal => "optimal",
+        QualityStatus::Exceeds => "exceeds",
+        QualityStatus::Suboptimal => "suboptimal",
+        QualityStatus::Unknown => "unknown",
+    };
+
+    // Update quality_status on media_file
+    update_quality_status(db, media_file_id, quality_status_str).await?;
+
+    // If suboptimal, update the item's status
+    if matches!(evaluation.quality_status, QualityStatus::Suboptimal) {
+        if let Some(episode_id) = info.episode_id {
+            info!(
+                "Episode has suboptimal quality ({}p vs target), marking as suboptimal",
+                actual_resolution
+            );
+            db.episodes().update_status(episode_id, "suboptimal").await.ok();
+        } else if let Some(movie_id) = info.movie_id {
+            info!(
+                "Movie has suboptimal quality ({}p vs target), marking as suboptimal",
+                actual_resolution
+            );
+            // Update movie download_status to suboptimal
+            sqlx::query("UPDATE movies SET download_status = 'suboptimal' WHERE id = $1")
+                .bind(movie_id)
+                .execute(db.pool())
+                .await
+                .ok();
+        }
+    }
+
+    Ok(())
+}
+
+/// Update the quality_status field on a media file
+async fn update_quality_status(
+    db: &Database,
+    media_file_id: Uuid,
+    status: &str,
+) -> Result<()> {
+    sqlx::query("UPDATE media_files SET quality_status = $1 WHERE id = $2")
+        .bind(status)
+        .execute(db.pool())
+        .await?;
+    
+    debug!(
+        media_file_id = %media_file_id,
+        quality_status = %status,
+        "Updated media file quality status"
+    );
+    
+    Ok(())
 }

@@ -192,7 +192,7 @@ export function LibraryAudiobooksTab({
             )}
             <div>
               <p className="font-medium">{audiobook.title}</p>
-              {authorMap.get(audiobook.authorId) && (
+              {audiobook.authorId && authorMap.get(audiobook.authorId) && (
                 <p className="text-xs text-default-400">
                   {authorMap.get(audiobook.authorId)}
                 </p>
@@ -209,7 +209,7 @@ export function LibraryAudiobooksTab({
         render: (audiobook) => (
           <span className="flex items-center gap-1">
             <IconUser size={14} className="text-default-400" />
-            {authorMap.get(audiobook.authorId) || '—'}
+            {(audiobook.authorId && authorMap.get(audiobook.authorId)) || '—'}
           </span>
         ),
       },
@@ -272,7 +272,7 @@ export function LibraryAudiobooksTab({
     ({ item }: CardRendererProps<Audiobook>) => (
       <AudiobookCard
         audiobook={item}
-        authorName={authorMap.get(item.authorId)}
+        authorName={item.authorId ? authorMap.get(item.authorId) : undefined}
         onDelete={onDeleteAudiobook ? () => onDeleteAudiobook(item.id, item.title) : undefined}
       />
     ),

@@ -218,7 +218,10 @@ impl TmdbClient {
             anyhow::bail!("TMDB API key not configured");
         }
 
-        info!(query = %query, year = ?year, "Searching TMDB for movies");
+        info!("Searching TMDB for movie '{}'{}",
+            query,
+            year.map(|y| format!(" ({})", y)).unwrap_or_default()
+        );
 
         let url = format!("{}/search/movie", self.base_url);
         let client = self.client.clone();
@@ -280,7 +283,7 @@ impl TmdbClient {
             anyhow::bail!("TMDB API key not configured");
         }
 
-        info!(tmdb_id = tmdb_id, "Fetching movie from TMDB");
+        debug!("Fetching movie details from TMDB (ID: {})", tmdb_id);
 
         let url = format!("{}/movie/{}", self.base_url, tmdb_id);
         let client = self.client.clone();
@@ -419,7 +422,7 @@ impl TmdbClient {
             anyhow::bail!("TMDB API key not configured");
         }
 
-        info!(collection_id = collection_id, "Fetching collection from TMDB");
+        debug!("Fetching collection from TMDB (ID: {})", collection_id);
 
         let url = format!("{}/collection/{}", self.base_url, collection_id);
         let client = self.client.clone();
@@ -467,7 +470,7 @@ impl TmdbClient {
             anyhow::bail!("TMDB API key not configured");
         }
 
-        info!(imdb_id = %imdb_id, "Finding movie by IMDb ID on TMDB");
+        debug!("Looking up IMDb ID {} on TMDB", imdb_id);
 
         let url = format!("{}/find/{}", self.base_url, imdb_id);
         let client = self.client.clone();

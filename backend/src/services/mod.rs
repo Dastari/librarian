@@ -18,8 +18,10 @@ pub mod logging;
 pub mod metadata;
 pub mod metrics;
 pub mod musicbrainz;
+pub mod ollama;
 pub mod opensubtitles;
 pub mod organizer;
+pub mod quality_evaluator;
 pub mod queues;
 pub mod rate_limiter;
 pub mod rss;
@@ -27,6 +29,8 @@ pub mod scanner;
 pub mod supabase_storage;
 pub mod tmdb;
 pub mod torrent;
+pub mod torrent_completion_handler;
+pub mod torrent_file_matcher;
 pub mod torrent_metadata;
 pub mod torrent_processor;
 pub mod track_matcher;
@@ -51,10 +55,12 @@ pub use metadata::{
     AddMovieOptions, AddTvShowOptions, MetadataProvider, MetadataService, MetadataServiceConfig,
     MovieDetails, MovieSearchResult, create_metadata_service_with_artwork,
 };
+pub use ollama::{LlmParseResult, OllamaConfig, OllamaService};
 pub use opensubtitles::{
     DownloadedSubtitle, OpenSubtitlesClient, SubtitleSearchQuery, SubtitleSearchResult,
 };
 pub use organizer::{CleanupResult, ConsolidateResult, DeduplicationResult, OrganizerService, TorrentFileForOrganize};
+pub use quality_evaluator::{EffectiveQualitySettings, QualityEvaluation, QualityEvaluator, QualityStatus};
 pub use queues::{
     MediaAnalysisJob, MediaAnalysisQueue, SubtitleDownloadJob, SubtitleDownloadQueue,
     create_media_analysis_queue, create_subtitle_download_queue,
@@ -69,9 +75,13 @@ pub use tmdb::{
     TmdbReleaseDates, normalize_movie_status,
 };
 pub use torrent::{
-    PeerStats, TorrentDetails, TorrentEvent, TorrentInfo, TorrentService, TorrentServiceConfig,
-    TorrentState,
+    PeerStats, TorrentDetails, TorrentEvent, TorrentFile, TorrentInfo, TorrentService,
+    TorrentServiceConfig, TorrentState,
 };
+pub use torrent_completion_handler::{
+    CompletionHandlerConfig, CompletionHandlerHandle, TorrentCompletionHandler,
+};
+pub use torrent_file_matcher::{FileMatchResult, FileMatchTarget, FileMatchType, TorrentFileMatcher};
 pub use torrent_processor::{ProcessTorrentResult, TorrentProcessor};
 pub use torrent_metadata::{TorrentFileInfo, parse_torrent_files, extract_audio_files, is_single_file_album, audio_summary};
 pub use track_matcher::{TrackMatchResult, TrackMatch, MatchType, match_tracks};

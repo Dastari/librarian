@@ -30,7 +30,7 @@ pub async fn sync_schedule(pool: PgPool) -> Result<()> {
     for &country in DEFAULT_COUNTRIES {
         match sync_country(&client, &repo, country, DEFAULT_SYNC_DAYS).await {
             Ok(count) => {
-                info!(country = country, entries = count, "Schedule sync completed for country");
+                info!("Schedule sync completed for {}: {} entries", country, count);
             }
             Err(e) => {
                 error!(country = country, error = %e, "Failed to sync schedule for country");
@@ -46,7 +46,7 @@ pub async fn sync_schedule(pool: PgPool) -> Result<()> {
     let cleanup_date = time::OffsetDateTime::now_utc().date() - time::Duration::days(7);
     match repo.delete_before(cleanup_date).await {
         Ok(deleted) if deleted > 0 => {
-            info!(deleted = deleted, "Cleaned up old schedule entries");
+            info!("Cleaned up {} old schedule entries", deleted);
         }
         Ok(_) => {}
         Err(e) => {
@@ -65,7 +65,7 @@ async fn sync_country(
     country: &str,
     days: u32,
 ) -> Result<usize> {
-    info!(country = country, days = days, "Syncing TV schedule for country");
+    debug!("Syncing {} day TV schedule for {}", days, country);
 
     // Fetch schedule from TVMaze
     let schedule = client.get_upcoming_schedule(days, Some(country)).await?;

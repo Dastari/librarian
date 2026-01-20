@@ -20,6 +20,9 @@ export type {
   OrganizeTorrentResult,
   TorrentDetails,
   TorrentFileInfo,
+  TorrentFileMatch,
+  QualityStatus,
+  DownloadStatus,
   PeerStats,
   // Settings
   TorrentSettings,
@@ -150,6 +153,11 @@ export type {
   IndexerSearchResultItem,
   TorrentRelease,
   IndexerConfig,
+  // LLM Parser Types
+  LlmParserSettings,
+  OllamaConnectionResult,
+  FilenameParseResult,
+  TestFilenameParserResult,
 } from './types';
 
 // Constants
@@ -160,6 +168,7 @@ export {
   TORRENTS_QUERY,
   TORRENT_QUERY,
   TORRENT_DETAILS_QUERY,
+  TORRENT_FILE_MATCHES_QUERY,
   TORRENT_SETTINGS_QUERY,
   LIBRARIES_QUERY,
   LIBRARY_QUERY,
@@ -222,6 +231,8 @@ export {
   // Indexer Search Queries
   SEARCH_INDEXERS_QUERY,
   INDEXER_CONFIGS_QUERY,
+  // LLM Parser Queries
+  LLM_PARSER_SETTINGS_QUERY,
 } from './queries';
 
 // Mutations

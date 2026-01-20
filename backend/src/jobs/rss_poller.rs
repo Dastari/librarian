@@ -33,7 +33,7 @@ const FEED_BATCH_DELAY_MS: u64 = 200;
 
 /// Poll all RSS feeds that are due for polling
 pub async fn poll_feeds() -> Result<()> {
-    info!(job = "rss_poller", "Starting RSS feed poll job");
+    info!("Starting RSS feed poll job");
 
     // Get database pool from environment
     let database_url = std::env::var("DATABASE_URL")
@@ -125,7 +125,7 @@ pub async fn poll_feeds_with_db(db: &Database) -> Result<()> {
         }
     }
 
-    info!(job = "rss_poller", "RSS polling job completed");
+    debug!("RSS polling job completed");
     Ok(())
 }
 

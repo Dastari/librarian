@@ -562,31 +562,35 @@ pub async fn run_auto_hunt(
     torrent_service: Arc<TorrentService>,
     indexer_manager: Arc<IndexerManager>,
 ) -> Result<()> {
-    info!(job = "auto_hunt", "Starting auto-hunt job");
+    info!("Starting auto-hunt job");
 
     let db = Database::new(pool);
 
-    // Get all libraries with auto_hunt enabled
+    // Get all libraries that need auto-hunt processing:
+    // 1. Libraries with auto_hunt = true (library-level setting)
+    // 2. Libraries that have at least one TV show with auto_hunt_override = true
+    // Note: Movies don't support auto_hunt_override yet
     let libraries: Vec<LibraryRecord> = sqlx::query_as(
         r#"
-        SELECT id, user_id, name, path, library_type, icon, color,
-               auto_scan, scan_interval_minutes, watch_for_changes,
-               post_download_action, organize_files, rename_style, naming_pattern,
-               auto_add_discovered, auto_download, auto_hunt,
-               scanning, last_scanned_at, created_at, updated_at,
-               allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
-               require_hdr, allowed_hdr_types, allowed_sources,
-               release_group_blacklist, release_group_whitelist,
-               auto_download_subtitles, preferred_subtitle_languages
-        FROM libraries
-        WHERE auto_hunt = true
+        SELECT DISTINCT l.id, l.user_id, l.name, l.path, l.library_type, l.icon, l.color,
+               l.auto_scan, l.scan_interval_minutes, l.watch_for_changes,
+               l.post_download_action, l.organize_files, l.rename_style, l.naming_pattern,
+               l.auto_add_discovered, l.auto_download, l.auto_hunt,
+               l.scanning, l.last_scanned_at, l.created_at, l.updated_at,
+               l.allowed_resolutions, l.allowed_video_codecs, l.allowed_audio_formats,
+               l.require_hdr, l.allowed_hdr_types, l.allowed_sources,
+               l.release_group_blacklist, l.release_group_whitelist,
+               l.auto_download_subtitles, l.preferred_subtitle_languages
+        FROM libraries l
+        WHERE l.auto_hunt = true
+           OR EXISTS (SELECT 1 FROM tv_shows s WHERE s.library_id = l.id AND s.auto_hunt_override = true AND s.monitored = true)
         "#,
     )
     .fetch_all(db.pool())
     .await?;
 
     if libraries.is_empty() {
-        debug!(job = "auto_hunt", "No libraries with auto_hunt enabled");
+        debug!(job = "auto_hunt", "No libraries need auto-hunt processing");
         return Ok(());
     }
 
@@ -929,11 +933,11 @@ async fn hunt_movies_impl(
                allowed_audio_formats_override, require_hdr_override,
                allowed_hdr_types_override, allowed_sources_override,
                release_group_blacklist_override, release_group_whitelist_override,
-               has_file, size_bytes, path, created_at, updated_at
+               has_file, size_bytes, path, created_at, updated_at, download_status
         FROM movies
         WHERE library_id = $1
           AND monitored = true
-          AND has_file = false
+          AND (download_status IN ('missing', 'wanted', 'suboptimal') OR (download_status IS NULL AND has_file = false))
         ORDER BY created_at DESC
         LIMIT $2
         "#,
@@ -1148,25 +1152,29 @@ async fn hunt_tv_episodes_impl(
     );
 
     // Get monitored shows with auto_hunt enabled (via override or library default)
+    // - If show has auto_hunt_override = true, always include it
+    // - If show has auto_hunt_override = NULL, use library setting
+    // - If show has auto_hunt_override = false, exclude it
     let shows: Vec<TvShowRecord> = sqlx::query_as(
         r#"
-        SELECT id, library_id, user_id, name, sort_name, year, tvdb_id, tmdb_id,
-               tvmaze_id, imdb_id, status, network, genres, overview, first_aired,
-               rating, content_rating, runtime, path, poster_url, fanart_url,
-               banner_url, monitored, monitor_type, auto_download_override,
-               auto_hunt_override, organize_files_override, rename_style_override,
+        SELECT id, library_id, user_id, name, sort_name, year, status,
+               tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network, runtime,
+               genres, poster_url, backdrop_url, monitored, monitor_type, path,
+               auto_download_override, backfill_existing, organize_files_override,
+               rename_style_override, auto_hunt_override, episode_count,
+               episode_file_count, size_bytes, created_at, updated_at,
                allowed_resolutions_override, allowed_video_codecs_override,
                allowed_audio_formats_override, require_hdr_override,
                allowed_hdr_types_override, allowed_sources_override,
-               release_group_blacklist_override, release_group_whitelist_override,
-               created_at, updated_at
+               release_group_blacklist_override, release_group_whitelist_override
         FROM tv_shows
         WHERE library_id = $1
           AND monitored = true
-          AND (auto_hunt_override = true OR (auto_hunt_override IS NULL AND true))
+          AND (auto_hunt_override = true OR (auto_hunt_override IS NULL AND $2 = true))
         "#,
     )
     .bind(library.id)
+    .bind(library.auto_hunt)
     .fetch_all(db.pool())
     .await?;
 
@@ -1174,13 +1182,13 @@ async fn hunt_tv_episodes_impl(
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_SEARCHES));
 
     for show in shows {
-        // Get missing/wanted episodes for this show
+        // Get missing/wanted/suboptimal episodes for this show
         let episodes: Vec<(Uuid, i32, i32, String)> = sqlx::query_as(
             r#"
             SELECT id, season, episode, status
             FROM episodes
             WHERE tv_show_id = $1
-              AND (status = 'missing' OR status = 'wanted')
+              AND status IN ('missing', 'wanted', 'suboptimal')
             ORDER BY season, episode
             LIMIT $2
             "#,
@@ -1198,7 +1206,7 @@ async fn hunt_tv_episodes_impl(
             job = "auto_hunt",
             show_name = %show.name,
             episode_count = episodes.len(),
-            "Found missing episodes to hunt"
+            "Found missing/suboptimal episodes to hunt"
         );
 
         let quality_settings = EffectiveQualitySettings::from_library_and_show(library, &show);
@@ -1723,13 +1731,25 @@ pub async fn run_auto_hunt_for_library(
         return Ok(HuntResult::default());
     };
 
-    // Check if auto_hunt is enabled for this library
-    if !library.auto_hunt {
+    // Check if auto_hunt should run (library-level or show-level overrides)
+    let has_show_overrides = if library.library_type.to_lowercase() == "tv" {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM tv_shows WHERE library_id = $1 AND auto_hunt_override = true AND monitored = true)"
+        )
+        .bind(library_id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap_or(false)
+    } else {
+        false
+    };
+
+    if !library.auto_hunt && !has_show_overrides {
         debug!(
             job = "auto_hunt",
             library_id = %library_id,
             library_name = %library.name,
-            "Library does not have auto_hunt enabled, skipping"
+            "Library does not have auto_hunt enabled and no show overrides, skipping"
         );
         return Ok(HuntResult::default());
     }
@@ -1739,6 +1759,7 @@ pub async fn run_auto_hunt_for_library(
         library_id = %library_id,
         library_name = %library.name,
         library_type = %library.library_type,
+        has_show_overrides = has_show_overrides,
         "Running auto-hunt for library after scan"
     );
 

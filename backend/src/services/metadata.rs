@@ -323,7 +323,7 @@ impl MetadataService {
 
     /// Search for TV shows across providers
     pub async fn search_shows(&self, query: &str) -> Result<Vec<ShowSearchResult>> {
-        info!(query = %query, "Searching for shows");
+        info!("Searching for TV show '{}'", query);
 
         let mut results = Vec::new();
 
@@ -371,7 +371,7 @@ impl MetadataService {
         provider: MetadataProvider,
         provider_id: u32,
     ) -> Result<ShowDetails> {
-        info!(provider = ?provider, id = provider_id, "Fetching show details");
+        debug!("Fetching show details from {:?} (ID: {})", provider, provider_id);
 
         match provider {
             MetadataProvider::TvMaze => {
@@ -401,7 +401,7 @@ impl MetadataService {
         provider: MetadataProvider,
         provider_id: u32,
     ) -> Result<Vec<EpisodeDetails>> {
-        info!(provider = ?provider, id = provider_id, "Fetching episodes");
+        debug!("Fetching episodes from {:?} for show {}", provider, provider_id);
 
         match provider {
             MetadataProvider::TvMaze => {
@@ -428,7 +428,7 @@ impl MetadataService {
 
     /// Parse a filename and try to identify the show
     pub async fn parse_and_identify(&self, title: &str) -> Result<ParseAndIdentifyResult> {
-        info!(title = %title, "Parsing and identifying media");
+        info!("Parsing and identifying '{}'", title);
 
         // Parse the filename
         let parsed = parse_episode(title);
@@ -459,7 +459,10 @@ impl MetadataService {
         query: &str,
         year: Option<i32>,
     ) -> Result<Vec<MovieSearchResult>> {
-        info!(query = %query, year = ?year, "Searching for movies");
+        info!("Searching for movie '{}'{}",
+            query,
+            year.map(|y| format!(" ({})", y)).unwrap_or_default()
+        );
 
         let tmdb = self.tmdb.as_ref().ok_or_else(|| {
             anyhow::anyhow!("TMDB API key not configured. Add tmdb_api_key to settings.")
@@ -497,7 +500,7 @@ impl MetadataService {
 
     /// Get movie details from TMDB
     pub async fn get_movie(&self, tmdb_id: u32) -> Result<MovieDetails> {
-        info!(tmdb_id = tmdb_id, "Fetching movie details");
+        debug!("Fetching movie details from TMDB (ID: {})", tmdb_id);
 
         let tmdb = self.tmdb.as_ref().ok_or_else(|| {
             anyhow::anyhow!("TMDB API key not configured")
@@ -560,12 +563,7 @@ impl MetadataService {
 
     /// Add a movie from TMDB to a library
     pub async fn add_movie_from_provider(&self, options: AddMovieOptions) -> Result<MovieRecord> {
-        info!(
-            provider = ?options.provider,
-            provider_id = options.provider_id,
-            library_id = %options.library_id,
-            "Adding movie from provider"
-        );
+        debug!("Adding movie from {:?} (ID: {}) to library", options.provider, options.provider_id);
 
         // Only TMDB is supported for movies
         if options.provider != MetadataProvider::Tmdb {
@@ -578,11 +576,7 @@ impl MetadataService {
             .get_by_tmdb_id(options.library_id, options.provider_id as i32)
             .await?
         {
-            info!(
-                movie_id = %existing.id,
-                movie_title = %existing.title,
-                "Movie already exists in library, returning existing"
-            );
+            debug!("Movie '{}' already exists in library", existing.title);
             return Ok(existing);
         }
 
@@ -612,10 +606,8 @@ impl MetadataService {
                     )
                     .await;
 
-                info!(
-                    poster_cached = poster_url.is_some(),
-                    backdrop_cached = backdrop_url.is_some(),
-                    "Movie artwork caching completed"
+                debug!("Cached artwork for movie (poster: {}, backdrop: {})",
+                    poster_url.is_some(), backdrop_url.is_some()
                 );
 
                 (poster_url, backdrop_url)
@@ -670,11 +662,7 @@ impl MetadataService {
             })
             .await?;
 
-        info!(
-            movie_id = %movie.id,
-            movie_title = %movie.title,
-            "Created movie record"
-        );
+        info!("Added movie '{}' to library", movie.title);
 
         Ok(movie)
     }
@@ -685,7 +673,7 @@ impl MetadataService {
 
     /// Search for artists using MusicBrainz
     pub async fn search_artists(&self, query: &str) -> Result<Vec<ArtistSearchResult>> {
-        info!(query = %query, "Searching for artists");
+        info!("Searching MusicBrainz for artist '{}'", query);
 
         let artists = self.musicbrainz.search_artists(query).await?;
 
@@ -709,7 +697,7 @@ impl MetadataService {
 
     /// Search for albums using MusicBrainz
     pub async fn search_albums(&self, query: &str) -> Result<Vec<AlbumSearchResult>> {
-        info!(query = %query, "Searching for albums");
+        info!("Searching MusicBrainz for album '{}'", query);
 
         let albums = self.musicbrainz.search_albums(query).await?;
 
@@ -741,7 +729,7 @@ impl MetadataService {
 
     /// Get album details from MusicBrainz
     pub async fn get_album(&self, musicbrainz_id: Uuid) -> Result<MusicBrainzReleaseGroup> {
-        info!(mbid = %musicbrainz_id, "Fetching album details");
+        debug!("Fetching album details from MusicBrainz (ID: {})", musicbrainz_id);
         self.musicbrainz.get_release_group(musicbrainz_id).await
     }
 
@@ -749,11 +737,7 @@ impl MetadataService {
     /// 
     /// This fetches album metadata, cover art, and track listings from MusicBrainz.
     pub async fn add_album_from_provider(&self, options: AddAlbumOptions) -> Result<AlbumRecord> {
-        info!(
-            musicbrainz_id = %options.musicbrainz_id,
-            library_id = %options.library_id,
-            "Adding album from MusicBrainz"
-        );
+        debug!("Adding album {} from MusicBrainz to library", options.musicbrainz_id);
 
         let albums_repo = self.db.albums();
         let tracks_repo = self.db.tracks();
@@ -763,11 +747,7 @@ impl MetadataService {
             .get_by_musicbrainz_id(options.library_id, options.musicbrainz_id)
             .await?
         {
-            info!(
-                album_id = %existing.id,
-                album_name = %existing.name,
-                "Album already exists in library, returning existing"
-            );
+            debug!("Album '{}' already exists in library", existing.name);
             return Ok(existing);
         }
 
@@ -854,12 +834,8 @@ impl MetadataService {
             })
             .await?;
 
-        info!(
-            album_id = %album.id,
-            album_name = %album.name,
-            artist = %artist_name,
-            track_count = track_list.len(),
-            "Created album record"
+        info!("Added album '{}' by {} ({} tracks) to library",
+            album.name, artist_name, track_list.len()
         );
 
         // Create track records
@@ -883,18 +859,10 @@ impl MetadataService {
 
             match tracks_repo.create_many(tracks_to_create).await {
                 Ok(created_tracks) => {
-                    info!(
-                        album_id = %album.id,
-                        tracks_created = created_tracks.len(),
-                        "Created track records for album"
-                    );
+                    debug!("Created {} track records for album '{}'", created_tracks.len(), album.name);
                 }
                 Err(e) => {
-                    warn!(
-                        album_id = %album.id,
-                        error = %e,
-                        "Failed to create track records, album created without tracks"
-                    );
+                    warn!("Failed to create track records for '{}': {}", album.name, e);
                 }
             }
         }
@@ -908,7 +876,7 @@ impl MetadataService {
 
     /// Search for audiobooks using OpenLibrary
     pub async fn search_audiobooks(&self, query: &str) -> Result<Vec<AudiobookSearchResult>> {
-        info!(query = %query, "Searching for audiobooks");
+        info!("Searching OpenLibrary for audiobook '{}'", query);
         let results = self.openlibrary.search(query).await?;
         let audiobooks: Vec<AudiobookSearchResult> = results.into_iter().map(|r| AudiobookSearchResult {
             provider: MetadataProvider::OpenLibrary,
@@ -926,7 +894,7 @@ impl MetadataService {
 
     /// Add an audiobook from OpenLibrary to a library
     pub async fn add_audiobook_from_provider(&self, options: AddAudiobookOptions) -> Result<AudiobookRecord> {
-        info!(openlibrary_id = %options.openlibrary_id, library_id = %options.library_id, "Adding audiobook");
+        debug!("Adding audiobook {} to library", options.openlibrary_id);
         let audiobooks_repo = self.db.audiobooks();
         if let Some(existing) = audiobooks_repo.get_by_openlibrary_id(options.library_id, &options.openlibrary_id).await? {
             return Ok(existing);
@@ -935,7 +903,7 @@ impl MetadataService {
         let author = audiobooks_repo.find_or_create_author(options.library_id, options.user_id, &details.author_name, None).await?;
         let cover_url = details.cover_url.clone();
         let audiobook = audiobooks_repo.create(crate::db::CreateAudiobook {
-            author_id: author.id, library_id: options.library_id, user_id: options.user_id,
+            author_id: Some(author.id), library_id: options.library_id, user_id: options.user_id,
             title: details.title.clone(), sort_title: None, subtitle: details.subtitle,
             openlibrary_id: Some(options.openlibrary_id), isbn: details.isbn, description: details.description,
             publisher: details.publishers.first().cloned(), language: details.language, cover_url,
@@ -1024,11 +992,7 @@ impl MetadataService {
 
         // Cache is empty - fall back to direct API call
         // This should only happen on first run before the sync job runs
-        info!(
-            days = days,
-            country = country_code,
-            "Database cache empty, fetching directly from TVMaze"
-        );
+        debug!("Schedule cache empty, fetching {} days from TVMaze for {}", days, country_code);
 
         // Check in-memory cache as a secondary fallback
         let cache_key = format!("schedule:{}:{}", days, country_code);
@@ -1058,7 +1022,7 @@ impl MetadataService {
         use crate::jobs::schedule_sync;
 
         let country_code = country.unwrap_or("US");
-        info!(country = country_code, days = days, "Force refreshing schedule cache");
+        info!("Force refreshing {} day TV schedule cache for {}", days, country_code);
 
         // Use the sync job to update the database
         let count = schedule_sync::sync_country_on_demand(
@@ -1092,12 +1056,7 @@ impl MetadataService {
         &self,
         options: AddTvShowOptions,
     ) -> Result<TvShowRecord> {
-        info!(
-            provider = ?options.provider,
-            provider_id = options.provider_id,
-            library_id = %options.library_id,
-            "Adding TV show from provider"
-        );
+        debug!("Adding TV show from {:?} (ID: {}) to library", options.provider, options.provider_id);
 
         // Check if show already exists in this library
         let tv_shows_repo = self.db.tv_shows();
@@ -1106,11 +1065,7 @@ impl MetadataService {
                 .get_by_tvmaze_id(options.library_id, options.provider_id as i32)
                 .await?
             {
-                info!(
-                    show_id = %existing.id,
-                    show_name = %existing.name,
-                    "TV show already exists in library, returning existing"
-                );
+                debug!("TV show '{}' already exists in library", existing.name);
                 return Ok(existing);
             }
         }
@@ -1141,10 +1096,8 @@ impl MetadataService {
                     )
                     .await;
 
-                info!(
-                    poster_cached = poster_url.is_some(),
-                    backdrop_cached = backdrop_url.is_some(),
-                    "Artwork caching completed"
+                debug!("Cached artwork for show (poster: {}, backdrop: {})",
+                    poster_url.is_some(), backdrop_url.is_some()
                 );
 
                 (poster_url, backdrop_url)
@@ -1200,12 +1153,7 @@ impl MetadataService {
             })
             .await?;
 
-        info!(
-            show_id = %tv_show.id,
-            show_name = %tv_show.name,
-            poster_url = ?tv_show.poster_url,
-            "Created TV show record with cached artwork"
-        );
+        info!("Added TV show '{}' to library", tv_show.name);
 
         // Fetch and create episodes
         match self
@@ -1253,11 +1201,7 @@ impl MetadataService {
                     }
                 }
 
-                info!(
-                    show_id = %tv_show.id,
-                    episode_count = created_count,
-                    "Created episode records"
-                );
+                info!("Created {} episodes for '{}'", created_count, tv_show.name);
             }
             Err(e) => {
                 warn!(
@@ -1277,11 +1221,7 @@ impl MetadataService {
         match self.backfill_episodes_from_rss_cache(&tv_show).await {
             Ok(matched_count) => {
                 if matched_count > 0 {
-                    info!(
-                        show_id = %tv_show.id,
-                        matched_count = matched_count,
-                        "Backfilled episodes from RSS cache"
-                    );
+                    info!("Backfilled {} episodes for '{}' from RSS cache", matched_count, tv_show.name);
                 }
             }
             Err(e) => {
@@ -1315,12 +1255,7 @@ impl MetadataService {
             .collect::<Vec<_>>()
             .join(" ");
 
-        info!(
-            show_id = %tv_show.id,
-            show_name = %tv_show.name,
-            normalized = %normalized_name,
-            "Searching RSS cache for matching episodes"
-        );
+        debug!("Searching RSS cache for episodes of '{}'", tv_show.name);
 
         // Find RSS items that match this show name
         let matching_items: Vec<(uuid::Uuid, Option<String>, Option<i32>, Option<i32>, String)> = sqlx::query_as(
@@ -1350,11 +1285,7 @@ impl MetadataService {
             return Ok(0);
         }
 
-        info!(
-            show_name = %tv_show.name,
-            items_found = matching_items.len(),
-            "Found cached RSS items for show"
-        );
+        debug!("Found {} cached RSS items for '{}'", matching_items.len(), tv_show.name);
 
         // Get all seasons for this show to handle year-based season mapping
         let seasons: Vec<(i32,)> = sqlx::query_as(
@@ -1425,11 +1356,8 @@ impl MetadataService {
                             "Failed to mark episode as available from RSS cache"
                         );
                     } else {
-                        info!(
-                            show = %tv_show.name,
-                            season = ep.season,
-                            episode = ep.episode,
-                            "Backfilled episode from RSS cache"
+                        debug!("Backfilled {} S{:02}E{:02} from RSS cache",
+                            tv_show.name, ep.season, ep.episode
                         );
                         matched_count += 1;
                     }

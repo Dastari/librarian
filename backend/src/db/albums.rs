@@ -446,7 +446,8 @@ impl AlbumRepository {
                    cover_url, track_count, disc_count, total_duration_secs,
                    has_files, size_bytes, path, created_at, updated_at
             FROM albums
-            WHERE library_id = $1 AND has_files = false
+            WHERE library_id = $1 
+              AND (download_status IN ('missing', 'wanted', 'suboptimal') OR (download_status IS NULL AND has_files = false))
             ORDER BY created_at DESC
             LIMIT $2
             "#,

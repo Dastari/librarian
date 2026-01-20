@@ -8,6 +8,10 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 /// A torrent record in the database
+/// 
+/// Note: Media linking is now preferably done via the `torrent_file_matches` table which links
+/// individual files to episodes/movies/tracks/chapters. The legacy fields below are kept
+/// for backwards compatibility but should not be relied upon for new code.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TorrentRecord {
     pub id: Uuid,
@@ -23,6 +27,7 @@ pub struct TorrentRecord {
     pub save_path: String,
     pub download_path: Option<String>,
     pub source_url: Option<String>,
+    // Legacy fields - prefer using torrent_file_matches table for new code
     pub library_id: Option<Uuid>,
     pub episode_id: Option<Uuid>,
     pub movie_id: Option<Uuid>,
@@ -30,11 +35,15 @@ pub struct TorrentRecord {
     pub album_id: Option<Uuid>,
     pub audiobook_id: Option<Uuid>,
     pub source_feed_id: Option<Uuid>,
+    /// Which indexer this torrent was downloaded from (for post_download_action resolution)
+    pub source_indexer_id: Option<Uuid>,
     pub post_process_status: Option<String>,
     pub post_process_error: Option<String>,
     pub processed_at: Option<OffsetDateTime>,
     pub added_at: OffsetDateTime,
     pub completed_at: Option<OffsetDateTime>,
+    /// Array of file indices to exclude from download (0-based)
+    pub excluded_files: Vec<i32>,
 }
 
 /// Input for creating a new torrent record
@@ -199,7 +208,7 @@ impl TorrentRepository {
             SELECT id, user_id, info_hash, magnet_uri, name, state, progress,
                    total_bytes, downloaded_bytes, uploaded_bytes, save_path,
                    download_path, source_url, library_id, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, source_feed_id,
+                   track_id, album_id, audiobook_id, source_feed_id, source_indexer_id,
                    post_process_status, post_process_error, processed_at, added_at, completed_at
             FROM torrents 
             WHERE state = 'seeding' 
@@ -224,81 +233,68 @@ impl TorrentRepository {
         Ok(())
     }
 
-    /// Link torrent to a library
+    // -------------------------------------------------------------------------
+    // Legacy linking methods - prefer using torrent_file_matches table instead
+    // These are kept for backwards compatibility with existing code
+    // -------------------------------------------------------------------------
+
+    /// Link torrent to a library (legacy - prefer file-level matching)
     pub async fn link_to_library(&self, info_hash: &str, library_id: Uuid) -> Result<()> {
-        sqlx::query(
-            "UPDATE torrents SET library_id = $2, post_process_status = 'pending' WHERE info_hash = $1"
-        )
-        .bind(info_hash)
-        .bind(library_id)
-        .execute(&self.pool)
-        .await?;
-
+        sqlx::query("UPDATE torrents SET library_id = $2 WHERE info_hash = $1")
+            .bind(info_hash)
+            .bind(library_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
-    /// Link torrent to an episode
+    /// Link torrent to an episode (legacy - prefer file-level matching)
     pub async fn link_to_episode(&self, info_hash: &str, episode_id: Uuid) -> Result<()> {
-        sqlx::query(
-            "UPDATE torrents SET episode_id = $2, post_process_status = 'pending' WHERE info_hash = $1"
-        )
-        .bind(info_hash)
-        .bind(episode_id)
-        .execute(&self.pool)
-        .await?;
-
+        sqlx::query("UPDATE torrents SET episode_id = $2 WHERE info_hash = $1")
+            .bind(info_hash)
+            .bind(episode_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
-    /// Link torrent to a movie
+    /// Link torrent to a movie (legacy - prefer file-level matching)
     pub async fn link_to_movie(&self, info_hash: &str, movie_id: Uuid) -> Result<()> {
-        sqlx::query(
-            "UPDATE torrents SET movie_id = $2, post_process_status = 'pending' WHERE info_hash = $1"
-        )
-        .bind(info_hash)
-        .bind(movie_id)
-        .execute(&self.pool)
-        .await?;
-
+        sqlx::query("UPDATE torrents SET movie_id = $2 WHERE info_hash = $1")
+            .bind(info_hash)
+            .bind(movie_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
-    /// Link torrent to an album
+    /// Link torrent to an album (legacy - prefer file-level matching)
     pub async fn link_to_album(&self, info_hash: &str, album_id: Uuid) -> Result<()> {
-        sqlx::query(
-            "UPDATE torrents SET album_id = $2, post_process_status = 'pending' WHERE info_hash = $1"
-        )
-        .bind(info_hash)
-        .bind(album_id)
-        .execute(&self.pool)
-        .await?;
-
+        sqlx::query("UPDATE torrents SET album_id = $2 WHERE info_hash = $1")
+            .bind(info_hash)
+            .bind(album_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
-    /// Link torrent to a track
+    /// Link torrent to a track (legacy - prefer file-level matching)
     pub async fn link_to_track(&self, info_hash: &str, track_id: Uuid) -> Result<()> {
-        sqlx::query(
-            "UPDATE torrents SET track_id = $2, post_process_status = 'pending' WHERE info_hash = $1"
-        )
-        .bind(info_hash)
-        .bind(track_id)
-        .execute(&self.pool)
-        .await?;
-
+        sqlx::query("UPDATE torrents SET track_id = $2 WHERE info_hash = $1")
+            .bind(info_hash)
+            .bind(track_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
-    /// Link torrent to an audiobook
+    /// Link torrent to an audiobook (legacy - prefer file-level matching)
     pub async fn link_to_audiobook(&self, info_hash: &str, audiobook_id: Uuid) -> Result<()> {
-        sqlx::query(
-            "UPDATE torrents SET audiobook_id = $2, post_process_status = 'pending' WHERE info_hash = $1"
-        )
-        .bind(info_hash)
-        .bind(audiobook_id)
-        .execute(&self.pool)
-        .await?;
-
+        sqlx::query("UPDATE torrents SET audiobook_id = $2 WHERE info_hash = $1")
+            .bind(info_hash)
+            .bind(audiobook_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -428,7 +424,7 @@ impl TorrentRepository {
             SELECT id, user_id, info_hash, magnet_uri, name, state, progress,
                    total_bytes, downloaded_bytes, uploaded_bytes, save_path,
                    download_path, source_url, library_id, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, source_feed_id,
+                   track_id, album_id, audiobook_id, source_feed_id, source_indexer_id,
                    post_process_status, post_process_error, processed_at, added_at, completed_at
             FROM torrents 
             WHERE state = 'seeding' 

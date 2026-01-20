@@ -393,6 +393,7 @@ mod tests {
             artist_name: None,
             artist_id: None,
             media_file_id: None,
+            status: "wanted".to_string(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

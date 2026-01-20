@@ -296,6 +296,20 @@ async fn main() -> anyhow::Result<()> {
     .await?;
     tracing::info!("Job scheduler started");
 
+    // Start torrent completion handler for immediate processing
+    // This subscribes to TorrentEvent::Completed and processes torrents right away
+    // instead of waiting for the 1-minute cron job
+    let completion_handler = services::TorrentCompletionHandler::new(
+        db.clone(),
+        torrent_service.clone(),
+        services::CompletionHandlerConfig::default(),
+    )
+    .with_analysis_queue(analysis_queue.clone())
+    .with_metadata_service(metadata_service.clone());
+    
+    let _completion_handle = completion_handler.start();
+    tracing::info!("Torrent completion handler started");
+
     // Trigger initial schedule sync in the background
     // This ensures the schedule cache is populated on first startup
     let startup_pool = db.pool().clone();

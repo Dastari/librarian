@@ -40,16 +40,10 @@ pub async fn process_completed_torrents(
         _ => TorrentProcessor::new(db),
     };
 
-    let processed = processor.process_pending_torrents(&torrent_service).await?;
+    let processed = processor.process_pending_torrents(&torrent_service, "scheduled job").await?;
 
     if processed > 0 {
-        info!(
-            job = "download_monitor",
-            processed = processed,
-            "Processed completed torrents"
-        );
-    } else {
-        debug!(job = "download_monitor", "No completed torrents to process");
+        info!("Scheduled job processed {} completed torrents", processed);
     }
 
     Ok(())
@@ -73,15 +67,11 @@ pub async fn process_unmatched_on_startup(
     };
 
     let matched = processor
-        .process_unmatched_torrents(&torrent_service)
+        .process_unmatched_torrents(&torrent_service, "startup retry")
         .await?;
 
     if matched > 0 {
-        info!(
-            job = "download_monitor",
-            matched = matched,
-            "Matched previously unmatched torrents on startup"
-        );
+        info!("Startup retry matched {} previously unmatched torrents", matched);
     }
 
     Ok(())

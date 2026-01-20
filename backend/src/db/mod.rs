@@ -19,6 +19,7 @@ pub mod rss_feeds;
 pub mod schedule;
 pub mod settings;
 pub mod subtitles;
+pub mod torrent_file_matches;
 pub mod torrents;
 pub mod tracks;
 pub mod tv_shows;
@@ -29,7 +30,10 @@ use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
 pub use albums::{AlbumRecord, AlbumRepository, ArtistRecord};
-pub use audiobooks::{AudiobookAuthorRecord, AudiobookRecord, AudiobookRepository, CreateAudiobook};
+pub use audiobooks::{
+    AudiobookAuthorRecord, AudiobookChapterRecord, AudiobookChapterRepository, AudiobookRecord,
+    AudiobookRepository, CreateAudiobook, CreateAudiobookChapter,
+};
 pub use cast::{
     CastDeviceRecord, CastRepository, CastSessionRecord, CastSettingsRecord, CreateCastDevice,
     CreateCastSession, UpdateCastDevice, UpdateCastSession, UpdateCastSettings,
@@ -51,6 +55,9 @@ pub use subtitles::{
     AudioStreamRecord, ChapterRecord, CreateDownloadedSubtitle, CreateEmbeddedSubtitle,
     CreateExternalSubtitle, StreamRepository, SubtitleRecord, SubtitleRepository,
     SubtitleSourceType, VideoStreamRecord,
+};
+pub use torrent_file_matches::{
+    CreateTorrentFileMatch, MarkProcessed, TorrentFileMatchRecord, TorrentFileMatchRepository,
 };
 pub use torrents::{CreateTorrent, TorrentRecord, TorrentRepository};
 pub use tracks::{CreateTrack, TrackRecord, TrackRepository, TrackWithStatus, UpdateTrack};
@@ -217,9 +224,19 @@ impl Database {
         AudiobookRepository::new(self.pool.clone())
     }
 
+    /// Get an audiobook chapters repository
+    pub fn chapters(&self) -> AudiobookChapterRepository {
+        AudiobookChapterRepository::new(self.pool.clone())
+    }
+
     /// Get a tracks repository
     pub fn tracks(&self) -> TrackRepository {
         TrackRepository::new(self.pool.clone())
+    }
+
+    /// Get a torrent file matches repository
+    pub fn torrent_file_matches(&self) -> TorrentFileMatchRepository {
+        TorrentFileMatchRepository::new(self.pool.clone())
     }
 
     /// Run database migrations

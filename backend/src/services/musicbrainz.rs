@@ -223,7 +223,7 @@ impl MusicBrainzClient {
 
     /// Search for artists
     pub async fn search_artists(&self, query: &str) -> Result<Vec<MusicBrainzArtist>> {
-        info!(query = %query, "Searching MusicBrainz for artists");
+        debug!("Searching MusicBrainz for artist '{}'", query);
 
         let url = format!("{}/artist", self.base_url);
         let client = self.client.clone();
@@ -280,7 +280,7 @@ impl MusicBrainzClient {
 
     /// Search for albums (release groups)
     pub async fn search_albums(&self, query: &str) -> Result<Vec<MusicBrainzReleaseGroup>> {
-        info!(query = %query, "Searching MusicBrainz for albums");
+        debug!("Searching MusicBrainz for album '{}'", query);
 
         let url = format!("{}/release-group", self.base_url);
         let client = self.client.clone();
@@ -336,7 +336,7 @@ impl MusicBrainzClient {
 
     /// Get artist details by MBID
     pub async fn get_artist(&self, mbid: Uuid) -> Result<MusicBrainzArtist> {
-        info!(mbid = %mbid, "Fetching artist from MusicBrainz");
+        debug!("Fetching artist {} from MusicBrainz", mbid);
 
         let url = format!("{}/artist/{}", self.base_url, mbid);
         let client = self.client.clone();
@@ -385,7 +385,7 @@ impl MusicBrainzClient {
 
     /// Get release group (album) details by MBID
     pub async fn get_release_group(&self, mbid: Uuid) -> Result<MusicBrainzReleaseGroup> {
-        info!(mbid = %mbid, "Fetching release group from MusicBrainz");
+        debug!("Fetching release group {} from MusicBrainz", mbid);
 
         let url = format!("{}/release-group/{}", self.base_url, mbid);
         let client = self.client.clone();
@@ -471,7 +471,7 @@ impl MusicBrainzClient {
         &self,
         release_group_id: Uuid,
     ) -> Result<Vec<MusicBrainzRelease>> {
-        info!(release_group_id = %release_group_id, "Fetching releases with tracks from MusicBrainz");
+        debug!("Fetching releases with tracks for {} from MusicBrainz", release_group_id);
 
         let url = format!("{}/release", self.base_url);
         let client = self.client.clone();

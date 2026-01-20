@@ -44,6 +44,8 @@ pub struct MediaFileRecord {
     pub modified_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Content type: episode, movie, track, or audiobook
     pub content_type: Option<String>,
+    /// Quality relative to library/item target: unknown, optimal, suboptimal, exceeds
+    pub quality_status: Option<String>,
 }
 
 /// Input for creating a media file
@@ -89,7 +91,7 @@ impl MediaFileRepository {
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
-                   content_type
+                   content_type, quality_status
             FROM media_files
             WHERE library_id = $1
             ORDER BY path
@@ -124,7 +126,7 @@ impl MediaFileRepository {
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
-                   content_type
+                   content_type, quality_status
             FROM media_files
             WHERE path = $1
             "#,
@@ -147,7 +149,7 @@ impl MediaFileRepository {
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
-                   content_type
+                   content_type, quality_status
             FROM media_files
             WHERE episode_id = $1
             ORDER BY organized DESC, added_at ASC
@@ -177,7 +179,7 @@ impl MediaFileRepository {
                       original_name, video_bitrate, audio_channels, audio_language,
                       resolution, is_hdr, hdr_type, organized, organized_at,
                       original_path, organize_status, organize_error, added_at, modified_at,
-                      content_type
+                      content_type, quality_status
             "#,
         )
         .bind(input.library_id)
@@ -248,7 +250,7 @@ impl MediaFileRepository {
                       original_name, video_bitrate, audio_channels, audio_language,
                       resolution, is_hdr, hdr_type, organized, organized_at,
                       original_path, organize_status, organize_error, added_at, modified_at,
-                      content_type
+                      content_type, quality_status
             "#,
         )
         .bind(input.library_id)
@@ -373,7 +375,7 @@ impl MediaFileRepository {
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
-                   content_type
+                   content_type, quality_status
             FROM media_files
             WHERE episode_id = $1
             ORDER BY size_bytes DESC
@@ -401,7 +403,7 @@ impl MediaFileRepository {
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
-                   content_type
+                   content_type, quality_status
             FROM media_files
             WHERE library_id = $1 AND organized = false
             ORDER BY path
@@ -570,7 +572,7 @@ impl MediaFileRepository {
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
-                   content_type
+                   content_type, quality_status
             FROM media_files
             WHERE library_id = $1 AND organize_status = 'conflicted'
             ORDER BY path
@@ -605,7 +607,7 @@ impl MediaFileRepository {
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
-                   content_type
+                   content_type, quality_status
             FROM media_files
             WHERE id = $1
             "#,
@@ -634,7 +636,7 @@ impl MediaFileRepository {
                    mf.original_name, mf.video_bitrate, mf.audio_channels, mf.audio_language,
                    mf.resolution, mf.is_hdr, mf.hdr_type, mf.organized, mf.organized_at,
                    mf.original_path, mf.organize_status, mf.organize_error, mf.added_at, mf.modified_at,
-                   mf.content_type
+                   mf.content_type, mf.quality_status
             FROM media_files mf
             JOIN libraries l ON mf.library_id = l.id
             WHERE mf.library_id = $1 
@@ -684,7 +686,7 @@ impl MediaFileRepository {
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
-                   content_type
+                   content_type, quality_status
             FROM media_files
             WHERE movie_id = $1
             ORDER BY size_bytes DESC
@@ -708,7 +710,7 @@ impl MediaFileRepository {
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
-                   content_type
+                   content_type, quality_status
             FROM media_files
             WHERE movie_id = $1
             ORDER BY size_bytes DESC

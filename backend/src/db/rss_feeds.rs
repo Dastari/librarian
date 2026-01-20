@@ -14,6 +14,8 @@ pub struct RssFeedRecord {
     pub url: String,
     pub enabled: bool,
     pub poll_interval_minutes: i32,
+    /// Post-download action override (copy, move, hardlink) - NULL uses library setting
+    pub post_download_action: Option<String>,
     pub last_polled_at: Option<chrono::DateTime<chrono::Utc>>,
     pub last_successful_at: Option<chrono::DateTime<chrono::Utc>>,
     pub last_error: Option<String>,
@@ -105,7 +107,7 @@ impl RssFeedRepository {
         let records = sqlx::query_as::<_, RssFeedRecord>(
             r#"
             SELECT id, user_id, library_id, name, url, enabled,
-                   poll_interval_minutes, last_polled_at, last_successful_at,
+                   poll_interval_minutes, post_download_action, last_polled_at, last_successful_at,
                    last_error, consecutive_failures, created_at, updated_at
             FROM rss_feeds
             WHERE user_id = $1
@@ -124,7 +126,7 @@ impl RssFeedRepository {
         let records = sqlx::query_as::<_, RssFeedRecord>(
             r#"
             SELECT id, user_id, library_id, name, url, enabled,
-                   poll_interval_minutes, last_polled_at, last_successful_at,
+                   poll_interval_minutes, post_download_action, last_polled_at, last_successful_at,
                    last_error, consecutive_failures, created_at, updated_at
             FROM rss_feeds
             WHERE library_id = $1 OR library_id IS NULL
@@ -143,7 +145,7 @@ impl RssFeedRepository {
         let records = sqlx::query_as::<_, RssFeedRecord>(
             r#"
             SELECT id, user_id, library_id, name, url, enabled,
-                   poll_interval_minutes, last_polled_at, last_successful_at,
+                   poll_interval_minutes, post_download_action, last_polled_at, last_successful_at,
                    last_error, consecutive_failures, created_at, updated_at
             FROM rss_feeds
             WHERE enabled = true
@@ -163,7 +165,7 @@ impl RssFeedRepository {
         let record = sqlx::query_as::<_, RssFeedRecord>(
             r#"
             SELECT id, user_id, library_id, name, url, enabled,
-                   poll_interval_minutes, last_polled_at, last_successful_at,
+                   poll_interval_minutes, post_download_action, last_polled_at, last_successful_at,
                    last_error, consecutive_failures, created_at, updated_at
             FROM rss_feeds
             WHERE id = $1
@@ -185,7 +187,7 @@ impl RssFeedRepository {
             )
             VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING id, user_id, library_id, name, url, enabled,
-                      poll_interval_minutes, last_polled_at, last_successful_at,
+                      poll_interval_minutes, post_download_action, last_polled_at, last_successful_at,
                       last_error, consecutive_failures, created_at, updated_at
             "#,
         )
@@ -214,7 +216,7 @@ impl RssFeedRepository {
                 updated_at = NOW()
             WHERE id = $1
             RETURNING id, user_id, library_id, name, url, enabled,
-                      poll_interval_minutes, last_polled_at, last_successful_at,
+                      poll_interval_minutes, post_download_action, last_polled_at, last_successful_at,
                       last_error, consecutive_failures, created_at, updated_at
             "#,
         )
