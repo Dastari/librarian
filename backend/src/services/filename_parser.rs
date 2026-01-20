@@ -19,17 +19,18 @@ static SXXEXX_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)(.+?)\s*[Ss](\d{1,2})[Ee](\d{1,2})").unwrap());
 
 /// Pattern for multi-episode S01E01-E02 or S01E01E02 format
-static MULTI_EPISODE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)(.+?)\s*[Ss](\d{1,2})[Ee](\d{1,2})(?:[-\s]?[Ee](\d{1,2}))?").unwrap());
+static MULTI_EPISODE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)(.+?)\s*[Ss](\d{1,2})[Ee](\d{1,2})(?:[-\s]?[Ee](\d{1,2}))?").unwrap()
+});
 
 /// Pattern for season-only S01 format (season packs)
 /// Matches: "Show S01 720p", "Show.S01.2021.1080p", "Show S01 Complete"
-static SEASON_ONLY_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)(.+?)\s*[Ss](\d{1,2})(?:\s+\d{4}|\s+\d{3,4}p|\s+Complete|\s+Full|\s*$|\s+(?:720|1080|2160|480))").unwrap());
+static SEASON_ONLY_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)(.+?)\s*[Ss](\d{1,2})(?:\s+\d{4}|\s+\d{3,4}p|\s+Complete|\s+Full|\s*$|\s+(?:720|1080|2160|480))").unwrap()
+});
 
 /// Pattern for 1x01 format
-static NXNN_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)(.+?)\s*(\d{1,2})x(\d{2})").unwrap());
+static NXNN_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)(.+?)\s*(\d{1,2})x(\d{2})").unwrap());
 
 /// Pattern for "Season X Episode Y" format
 static VERBOSE_SEASON_RE: Lazy<Regex> =
@@ -37,8 +38,12 @@ static VERBOSE_SEASON_RE: Lazy<Regex> =
 
 /// Pattern for daily shows (2026 01 07) - requires spaces/dots between date parts
 /// Month must be 01-12, day must be 01-31
-static DAILY_SHOW_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)(.+?)\s*(\d{4})[\s\.\-]+(0[1-9]|1[0-2])[\s\.\-]+(0[1-9]|[12]\d|3[01])(?:\s|$|\.)").unwrap());
+static DAILY_SHOW_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)(.+?)\s*(\d{4})[\s\.\-]+(0[1-9]|1[0-2])[\s\.\-]+(0[1-9]|[12]\d|3[01])(?:\s|$|\.)",
+    )
+    .unwrap()
+});
 
 /// Pattern for standalone year extraction
 static YEAR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(19\d{2}|20\d{2})\b").unwrap());
@@ -79,12 +84,10 @@ static MOVIE_GROUP_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[-\s]([A-Za-z0-9]+)(?:\.\w{2,4})?$").unwrap());
 
 /// Pattern for trailing parentheses
-static TRAILING_PAREN_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\s*\([^)]*\)\s*$").unwrap());
+static TRAILING_PAREN_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s*\([^)]*\)\s*$").unwrap());
 
 /// Pattern for trailing brackets
-static TRAILING_BRACKET_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\s*\[[^\]]*\]\s*$").unwrap());
+static TRAILING_BRACKET_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s*\[[^\]]*\]\s*$").unwrap());
 
 /// Parsed episode information from a filename
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -244,10 +247,11 @@ pub fn parse_quality(filename: &str) -> ParsedQuality {
         || upper.contains("HEVC")
     {
         quality.codec = Some("HEVC".to_string());
-    } else if upper.contains("X264") 
-        || upper.contains("H264") 
+    } else if upper.contains("X264")
+        || upper.contains("H264")
         || upper.contains("H.264")
-        || upper.contains("H 264")  // With space
+        || upper.contains("H 264")
+    // With space
     {
         quality.codec = Some("H.264".to_string());
     } else if upper.contains("AV1") {
@@ -517,13 +521,18 @@ mod tests {
 
     #[test]
     fn test_parse_corner_gas() {
-        let result = parse_episode("Corner Gas S06E12 Super Sensitive 1080p AMZN WEB-DL DDP2 0 H 264-QOQ");
+        let result =
+            parse_episode("Corner Gas S06E12 Super Sensitive 1080p AMZN WEB-DL DDP2 0 H 264-QOQ");
         assert_eq!(result.show_name.as_deref(), Some("Corner Gas"));
         assert_eq!(result.season, Some(6));
         assert_eq!(result.episode, Some(12));
         assert_eq!(result.resolution.as_deref(), Some("1080p"));
         // Source may be detected in different formats
-        assert!(result.source.is_some(), "Should detect source: {:?}", result.source);
+        assert!(
+            result.source.is_some(),
+            "Should detect source: {:?}",
+            result.source
+        );
     }
 
     #[test]
@@ -550,7 +559,10 @@ mod tests {
     #[test]
     fn test_parse_percy_jackson() {
         let result = parse_episode("Percy.Jackson.and.the.Olympians.S02E06.1080p.WEB.h264-ETHEL");
-        assert_eq!(result.show_name.as_deref(), Some("Percy Jackson and the Olympians"));
+        assert_eq!(
+            result.show_name.as_deref(),
+            Some("Percy Jackson and the Olympians")
+        );
         assert_eq!(result.season, Some(2));
         assert_eq!(result.episode, Some(6));
         assert_eq!(result.resolution.as_deref(), Some("1080p"));
@@ -558,16 +570,25 @@ mod tests {
 
     #[test]
     fn test_parse_power_book_iii() {
-        let result = parse_episode("Power.Book.III.Raising.Kanan.S01E04.Dont.Sleep.1080p.HEVC.x265-MeGusta");
-        assert_eq!(result.show_name.as_deref(), Some("Power Book III Raising Kanan"));
+        let result =
+            parse_episode("Power.Book.III.Raising.Kanan.S01E04.Dont.Sleep.1080p.HEVC.x265-MeGusta");
+        assert_eq!(
+            result.show_name.as_deref(),
+            Some("Power Book III Raising Kanan")
+        );
         assert_eq!(result.season, Some(1));
         assert_eq!(result.episode, Some(4));
     }
 
     #[test]
     fn test_parse_repack() {
-        let result = parse_episode("Power Book III Raising Kanan S04E10 Gimme The Weight REPACK 1080p AMZN WEB-DL DDP5 1 H 264-NTb");
-        assert_eq!(result.show_name.as_deref(), Some("Power Book III Raising Kanan"));
+        let result = parse_episode(
+            "Power Book III Raising Kanan S04E10 Gimme The Weight REPACK 1080p AMZN WEB-DL DDP5 1 H 264-NTb",
+        );
+        assert_eq!(
+            result.show_name.as_deref(),
+            Some("Power Book III Raising Kanan")
+        );
         assert_eq!(result.season, Some(4));
         assert_eq!(result.episode, Some(10));
         assert!(result.is_repack);
@@ -584,7 +605,8 @@ mod tests {
 
     #[test]
     fn test_parse_girl_taken() {
-        let result = parse_episode("Girl Taken S01E02 Trapped 1080p AMZN WEB-DL DD 5 1 H 264-playWEB");
+        let result =
+            parse_episode("Girl Taken S01E02 Trapped 1080p AMZN WEB-DL DD 5 1 H 264-playWEB");
         assert_eq!(result.show_name.as_deref(), Some("Girl Taken"));
         assert_eq!(result.season, Some(1));
         assert_eq!(result.episode, Some(2));
@@ -604,8 +626,13 @@ mod tests {
 
     #[test]
     fn test_parse_ds9_episode_standard() {
-        let result = parse_episode("Star Trek- Deep Space Nine - S01E09 - The Passenger 960p-QueerWorm-Lela.mkv");
-        assert_eq!(result.show_name.as_deref(), Some("Star Trek Deep Space Nine"));
+        let result = parse_episode(
+            "Star Trek- Deep Space Nine - S01E09 - The Passenger 960p-QueerWorm-Lela.mkv",
+        );
+        assert_eq!(
+            result.show_name.as_deref(),
+            Some("Star Trek Deep Space Nine")
+        );
         assert_eq!(result.season, Some(1));
         assert_eq!(result.episode, Some(9));
     }
@@ -613,8 +640,13 @@ mod tests {
     #[test]
     fn test_parse_ds9_pilot() {
         // Pilot episodes often have double episode numbers
-        let result = parse_episode("Star Trek- Deep Space Nine - S01E01-E02 - Emissary 960p-QueerWorm-Lela.mkv");
-        assert_eq!(result.show_name.as_deref(), Some("Star Trek Deep Space Nine"));
+        let result = parse_episode(
+            "Star Trek- Deep Space Nine - S01E01-E02 - Emissary 960p-QueerWorm-Lela.mkv",
+        );
+        assert_eq!(
+            result.show_name.as_deref(),
+            Some("Star Trek Deep Space Nine")
+        );
         assert_eq!(result.season, Some(1));
         // Should capture at least the first episode
         assert!(result.episode == Some(1) || result.episode == Some(2));
@@ -623,16 +655,42 @@ mod tests {
     #[test]
     fn test_parse_ds9_various_episodes() {
         let test_cases = vec![
-            ("Star Trek- Deep Space Nine - S01E03 - Past Prologue 960p-QueerWorm-Lela.mkv", 1, 3),
-            ("Star Trek- Deep Space Nine - S01E10 - Move Along Home 960p-QueerWorm-Lela.mkv", 1, 10),
-            ("Star Trek- Deep Space Nine - S01E15 - Progress 960p-QueerWorm-Lela.mkv", 1, 15),
-            ("Star Trek- Deep Space Nine - S01E20 - In the Hands of the Prophets 960p-QueerWorm-Lela.mkv", 1, 20),
+            (
+                "Star Trek- Deep Space Nine - S01E03 - Past Prologue 960p-QueerWorm-Lela.mkv",
+                1,
+                3,
+            ),
+            (
+                "Star Trek- Deep Space Nine - S01E10 - Move Along Home 960p-QueerWorm-Lela.mkv",
+                1,
+                10,
+            ),
+            (
+                "Star Trek- Deep Space Nine - S01E15 - Progress 960p-QueerWorm-Lela.mkv",
+                1,
+                15,
+            ),
+            (
+                "Star Trek- Deep Space Nine - S01E20 - In the Hands of the Prophets 960p-QueerWorm-Lela.mkv",
+                1,
+                20,
+            ),
         ];
 
         for (filename, expected_season, expected_episode) in test_cases {
             let result = parse_episode(filename);
-            assert_eq!(result.season, Some(expected_season), "Season mismatch for {}", filename);
-            assert_eq!(result.episode, Some(expected_episode), "Episode mismatch for {}", filename);
+            assert_eq!(
+                result.season,
+                Some(expected_season),
+                "Season mismatch for {}",
+                filename
+            );
+            assert_eq!(
+                result.episode,
+                Some(expected_episode),
+                "Episode mismatch for {}",
+                filename
+            );
         }
     }
 
@@ -642,7 +700,8 @@ mod tests {
 
     #[test]
     fn test_parse_daily_show() {
-        let result = parse_episode("The.Daily.Show.2026.01.07.Stephen.J.Dubner.720p.WEB.h264-EDITH");
+        let result =
+            parse_episode("The.Daily.Show.2026.01.07.Stephen.J.Dubner.720p.WEB.h264-EDITH");
         assert_eq!(result.show_name.as_deref(), Some("The Daily Show"));
         assert_eq!(result.date.as_deref(), Some("2026-01-07"));
         assert_eq!(result.resolution.as_deref(), Some("720p"));
@@ -657,7 +716,8 @@ mod tests {
 
     #[test]
     fn test_parse_stephen_colbert() {
-        let result = parse_episode("Stephen.Colbert.2026.01.07.Chris.Hayes.1080p.HEVC.x265-MeGusta");
+        let result =
+            parse_episode("Stephen.Colbert.2026.01.07.Chris.Hayes.1080p.HEVC.x265-MeGusta");
         assert_eq!(result.show_name.as_deref(), Some("Stephen Colbert"));
         assert_eq!(result.date.as_deref(), Some("2026-01-07"));
         assert_eq!(result.resolution.as_deref(), Some("1080p"));
@@ -671,19 +731,36 @@ mod tests {
     fn test_parse_season_pack() {
         // Season pack format: S01 without episode number
         let result = parse_episode("His and Hers 2026 S01 720p NF WEB-DL DDP5.1 Atmos H.264-FLUX");
-        assert!(result.show_name.is_some(), "Should detect show name: {:?}", result);
+        assert!(
+            result.show_name.is_some(),
+            "Should detect show name: {:?}",
+            result
+        );
         assert_eq!(result.season, Some(1), "Should detect season 1");
-        assert_eq!(result.episode, None, "Episode should be None for season pack");
+        assert_eq!(
+            result.episode, None,
+            "Episode should be None for season pack"
+        );
     }
 
     #[test]
     fn test_parse_season_pack_young_sheldon() {
         // Season pack with year
         let result = parse_episode("Young.Sheldon.S05.2021.1080p.MAX.WEB-DL.DDP5.1.x265-HDSWEB");
-        assert!(result.show_name.as_ref().map(|n| n.contains("Sheldon")).unwrap_or(false),
-            "Should contain Sheldon: {:?}", result.show_name);
+        assert!(
+            result
+                .show_name
+                .as_ref()
+                .map(|n| n.contains("Sheldon"))
+                .unwrap_or(false),
+            "Should contain Sheldon: {:?}",
+            result.show_name
+        );
         assert_eq!(result.season, Some(5), "Should detect season 5");
-        assert_eq!(result.episode, None, "Episode should be None for season pack");
+        assert_eq!(
+            result.episode, None,
+            "Episode should be None for season pack"
+        );
     }
 
     // =========================================================================
@@ -695,37 +772,73 @@ mod tests {
         let quality = parse_quality("Show S01E01 2160p AMZN WEB-DL DDP5.1 Atmos HDR x265-GROUP");
         assert_eq!(quality.resolution.as_deref(), Some("2160p"));
         // Source detection may vary
-        assert!(quality.source.as_ref().map(|s| s.contains("AMZN") || s.contains("WEB")).unwrap_or(false),
-            "Source: {:?}", quality.source);
+        assert!(
+            quality
+                .source
+                .as_ref()
+                .map(|s| s.contains("AMZN") || s.contains("WEB"))
+                .unwrap_or(false),
+            "Source: {:?}",
+            quality.source
+        );
         assert_eq!(quality.codec.as_deref(), Some("HEVC"));
         // HDR detection
-        assert!(quality.hdr.is_some(), "Should detect HDR: {:?}", quality.hdr);
+        assert!(
+            quality.hdr.is_some(),
+            "Should detect HDR: {:?}",
+            quality.hdr
+        );
         // Atmos detection
-        assert!(quality.audio.as_ref().map(|a| a.contains("Atmos")).unwrap_or(false),
-            "Audio: {:?}", quality.audio);
+        assert!(
+            quality
+                .audio
+                .as_ref()
+                .map(|a| a.contains("Atmos"))
+                .unwrap_or(false),
+            "Audio: {:?}",
+            quality.audio
+        );
     }
 
     #[test]
     fn test_parse_quality_4k_hdr() {
         // "H 265" with space should now be detected as HEVC
-        let quality = parse_quality("Old Dog New Tricks S01E05 2025 2160p NF WEB-DL DDP5 1 Atmos HDR H 265-HHWEB");
+        let quality = parse_quality(
+            "Old Dog New Tricks S01E05 2025 2160p NF WEB-DL DDP5 1 Atmos HDR H 265-HHWEB",
+        );
         assert_eq!(quality.resolution.as_deref(), Some("2160p"));
-        assert!(quality.hdr.is_some(), "Should detect HDR: {:?}", quality.hdr);
-        assert_eq!(quality.codec.as_deref(), Some("HEVC"), "H 265 with space should be HEVC");
+        assert!(
+            quality.hdr.is_some(),
+            "Should detect HDR: {:?}",
+            quality.hdr
+        );
+        assert_eq!(
+            quality.codec.as_deref(),
+            Some("HEVC"),
+            "H 265 with space should be HEVC"
+        );
     }
 
     #[test]
     fn test_parse_quality_h264_with_space() {
         // "H 264" with space should be detected as H.264
         let quality = parse_quality("Show S01E01 1080p WEB-DL DDP5 1 H 264-GROUP");
-        assert_eq!(quality.codec.as_deref(), Some("H.264"), "H 264 with space should be H.264");
+        assert_eq!(
+            quality.codec.as_deref(),
+            Some("H.264"),
+            "H 264 with space should be H.264"
+        );
     }
 
     #[test]
     fn test_parse_quality_960p() {
         // 960p AI upscale format (like DS9)
         let quality = parse_quality("Star Trek Deep Space Nine S01E01 960p AI-Upscale x264");
-        assert_eq!(quality.resolution.as_deref(), Some("960p"), "Should detect 960p resolution");
+        assert_eq!(
+            quality.resolution.as_deref(),
+            Some("960p"),
+            "Should detect 960p resolution"
+        );
     }
 
     #[test]
@@ -769,15 +882,22 @@ mod tests {
     #[test]
     fn test_parse_movie_jack_ryan() {
         let result = parse_movie("Jack Ryan Shadow Recruit 2014 BluRay 1080p DD5.1 H265-d3g.mkv");
-        assert_eq!(result.show_name.as_deref(), Some("Jack Ryan Shadow Recruit"));
+        assert_eq!(
+            result.show_name.as_deref(),
+            Some("Jack Ryan Shadow Recruit")
+        );
         assert_eq!(result.year, Some(2014));
         assert_eq!(result.resolution.as_deref(), Some("1080p"));
     }
 
     #[test]
     fn test_parse_movie_clear_and_present_danger() {
-        let result = parse_movie("Clear.And.Present.Danger.1994.REMASTERED.PROPER.1080p.BluRay.x265");
-        assert_eq!(result.show_name.as_deref(), Some("Clear And Present Danger"));
+        let result =
+            parse_movie("Clear.And.Present.Danger.1994.REMASTERED.PROPER.1080p.BluRay.x265");
+        assert_eq!(
+            result.show_name.as_deref(),
+            Some("Clear And Present Danger")
+        );
         assert_eq!(result.year, Some(1994));
         assert_eq!(result.resolution.as_deref(), Some("1080p"));
         assert!(result.is_proper);
@@ -785,8 +905,12 @@ mod tests {
 
     #[test]
     fn test_parse_movie_hunt_for_red_october() {
-        let result = parse_movie("The.Hunt.for.Red.October.1990.REMASTERED.PROPER.1080p.BluRay.x265-LAMA");
-        assert_eq!(result.show_name.as_deref(), Some("The Hunt for Red October"));
+        let result =
+            parse_movie("The.Hunt.for.Red.October.1990.REMASTERED.PROPER.1080p.BluRay.x265-LAMA");
+        assert_eq!(
+            result.show_name.as_deref(),
+            Some("The Hunt for Red October")
+        );
         assert_eq!(result.year, Some(1990));
         assert!(result.is_proper);
         assert_eq!(result.release_group.as_deref(), Some("LAMA"));
@@ -807,7 +931,8 @@ mod tests {
 
     #[test]
     fn test_parse_show_with_episode_title() {
-        let result = parse_episode("Desert Law S01E01 Welcome to Pima County 1080p HULU WEB-DL H264-RAWR");
+        let result =
+            parse_episode("Desert Law S01E01 Welcome to Pima County 1080p HULU WEB-DL H264-RAWR");
         assert_eq!(result.show_name.as_deref(), Some("Desert Law"));
         assert_eq!(result.season, Some(1));
         assert_eq!(result.episode, Some(1));
@@ -830,14 +955,18 @@ mod tests {
     fn test_show_name_similarity() {
         // Exact match should be 1.0
         assert!(show_name_similarity("Chicago Fire", "Chicago Fire") > 0.99);
-        
+
         // Similar but not exact
         let office_sim = show_name_similarity("The Office", "Office");
         assert!(office_sim > 0.5, "Office similarity: {}", office_sim);
-        
+
         // Partial match
         let chicago_sim = show_name_similarity("Chicago Fire", "Chicago PD");
-        assert!(chicago_sim > 0.4, "Chicago shows similarity: {}", chicago_sim);
+        assert!(
+            chicago_sim > 0.4,
+            "Chicago shows similarity: {}",
+            chicago_sim
+        );
     }
 
     #[test]
@@ -849,9 +978,10 @@ mod tests {
     #[test]
     fn test_show_name_similarity_star_trek() {
         // Near exact match with punctuation difference
-        let ds9_sim = show_name_similarity("Star Trek Deep Space Nine", "Star Trek: Deep Space Nine");
+        let ds9_sim =
+            show_name_similarity("Star Trek Deep Space Nine", "Star Trek: Deep Space Nine");
         assert!(ds9_sim > 0.8, "DS9 with colon similarity: {}", ds9_sim);
-        
+
         // Partial match - "Deep Space Nine" vs full name
         let partial_sim = show_name_similarity("Star Trek Deep Space Nine", "Deep Space Nine");
         // This is a substring match, similarity depends on algorithm
@@ -872,80 +1002,302 @@ mod tests {
         // Test cases: (filename, expected_show, expected_season, expected_episode)
         let test_cases = vec![
             // Standard format
-            ("Fallout 2024 S02E05 1080p WEB h264-ETHEL", "Fallout", Some(2), Some(5)),
-            ("Landman S02E10 1080p WEB h264-ETHEL", "Landman", Some(2), Some(10)),
-            ("The Pitt S02E02 1080p WEB h264-ETHEL", "The Pitt", Some(2), Some(2)),
-            ("High Potential S02E09 1080p WEB h264-ETHEL", "High Potential", Some(2), Some(9)),
-            ("Percy Jackson and the Olympians S02E07 1080p WEB h264-ETHEL", "Percy Jackson and the Olympians", Some(2), Some(7)),
-            ("Hijack 2023 S02E01 1080p WEB h264-ETHEL", "Hijack", Some(2), Some(1)),
-            ("Abbott Elementary S05E10 1080p WEB h264-ETHEL", "Abbott Elementary", Some(5), Some(10)),
-            ("Chicago Med S11E09 1080p WEB h264-ETHEL", "Chicago Med", Some(11), Some(9)),
-            ("Chicago PD S13E09 1080p WEB h264-ETHEL", "Chicago PD", Some(13), Some(9)),
-            ("Chicago Fire S14E09 1080p WEB h264-ETHEL", "Chicago Fire", Some(14), Some(9)),
-            ("The Night Manager S02E04 1080p WEB h264-ETHEL", "The Night Manager", Some(2), Some(4)),
-            ("9-1-1 S09E08 1080p WEB h264-ETHEL", "9 1 1", Some(9), Some(8)),
-            ("Tell Me Lies S03E04 1080p WEB h264-ETHEL", "Tell Me Lies", Some(3), Some(4)),
-            ("Primal S03E02 1080p WEB h264-GRACE", "Primal", Some(3), Some(2)),
-            
+            (
+                "Fallout 2024 S02E05 1080p WEB h264-ETHEL",
+                "Fallout",
+                Some(2),
+                Some(5),
+            ),
+            (
+                "Landman S02E10 1080p WEB h264-ETHEL",
+                "Landman",
+                Some(2),
+                Some(10),
+            ),
+            (
+                "The Pitt S02E02 1080p WEB h264-ETHEL",
+                "The Pitt",
+                Some(2),
+                Some(2),
+            ),
+            (
+                "High Potential S02E09 1080p WEB h264-ETHEL",
+                "High Potential",
+                Some(2),
+                Some(9),
+            ),
+            (
+                "Percy Jackson and the Olympians S02E07 1080p WEB h264-ETHEL",
+                "Percy Jackson and the Olympians",
+                Some(2),
+                Some(7),
+            ),
+            (
+                "Hijack 2023 S02E01 1080p WEB h264-ETHEL",
+                "Hijack",
+                Some(2),
+                Some(1),
+            ),
+            (
+                "Abbott Elementary S05E10 1080p WEB h264-ETHEL",
+                "Abbott Elementary",
+                Some(5),
+                Some(10),
+            ),
+            (
+                "Chicago Med S11E09 1080p WEB h264-ETHEL",
+                "Chicago Med",
+                Some(11),
+                Some(9),
+            ),
+            (
+                "Chicago PD S13E09 1080p WEB h264-ETHEL",
+                "Chicago PD",
+                Some(13),
+                Some(9),
+            ),
+            (
+                "Chicago Fire S14E09 1080p WEB h264-ETHEL",
+                "Chicago Fire",
+                Some(14),
+                Some(9),
+            ),
+            (
+                "The Night Manager S02E04 1080p WEB h264-ETHEL",
+                "The Night Manager",
+                Some(2),
+                Some(4),
+            ),
+            (
+                "9-1-1 S09E08 1080p WEB h264-ETHEL",
+                "9 1 1",
+                Some(9),
+                Some(8),
+            ),
+            (
+                "Tell Me Lies S03E04 1080p WEB h264-ETHEL",
+                "Tell Me Lies",
+                Some(3),
+                Some(4),
+            ),
+            (
+                "Primal S03E02 1080p WEB h264-GRACE",
+                "Primal",
+                Some(3),
+                Some(2),
+            ),
             // With episode titles
-            ("A Knight of the Seven Kingdoms S01E01 The Hedge Knight 1080p AMZN WEB-DL DDP5 1 Atmos H 264-FLUX", "A Knight of the Seven Kingdoms", Some(1), Some(1)),
-            ("The Rookie S08E02 Fast Andy 1080p AMZN WEB-DL DDP5 1 H 264-Kitsune", "The Rookie", Some(8), Some(2)),
-            ("Fallout S02E05 The Wrangler 1080p HEVC x265-MeGusta", "Fallout", Some(2), Some(5)),
-            ("Shoresy S05E05 Total Buy-In 1080p AMZN WEB-DL DDP5 1 H 264-Kitsune", "Shoresy", Some(5), Some(5)),
-            ("Landman S02E10 Tragedy and Flies 1080p HEVC x265-MeGusta", "Landman", Some(2), Some(10)),
-            ("Gold Rush S16E10 New Levels of Chaos 1080p DSCP WEB-DL DDP2 0 H 264-SNAKE", "Gold Rush", Some(16), Some(10)),
-            ("Star Trek Starfleet Academy S01E01 Kids These Days 1080p HEVC x265-MeGusta", "Star Trek Starfleet Academy", Some(1), Some(1)),
-            ("Star Trek Starfleet Academy S01E02 Beta Test 1080p HEVC x265-MeGusta", "Star Trek Starfleet Academy", Some(1), Some(2)),
-            ("The Pitt S02E02 8 00 A M 1080p HEVC x265-MeGusta", "The Pitt", Some(2), Some(2)),
-            
+            (
+                "A Knight of the Seven Kingdoms S01E01 The Hedge Knight 1080p AMZN WEB-DL DDP5 1 Atmos H 264-FLUX",
+                "A Knight of the Seven Kingdoms",
+                Some(1),
+                Some(1),
+            ),
+            (
+                "The Rookie S08E02 Fast Andy 1080p AMZN WEB-DL DDP5 1 H 264-Kitsune",
+                "The Rookie",
+                Some(8),
+                Some(2),
+            ),
+            (
+                "Fallout S02E05 The Wrangler 1080p HEVC x265-MeGusta",
+                "Fallout",
+                Some(2),
+                Some(5),
+            ),
+            (
+                "Shoresy S05E05 Total Buy-In 1080p AMZN WEB-DL DDP5 1 H 264-Kitsune",
+                "Shoresy",
+                Some(5),
+                Some(5),
+            ),
+            (
+                "Landman S02E10 Tragedy and Flies 1080p HEVC x265-MeGusta",
+                "Landman",
+                Some(2),
+                Some(10),
+            ),
+            (
+                "Gold Rush S16E10 New Levels of Chaos 1080p DSCP WEB-DL DDP2 0 H 264-SNAKE",
+                "Gold Rush",
+                Some(16),
+                Some(10),
+            ),
+            (
+                "Star Trek Starfleet Academy S01E01 Kids These Days 1080p HEVC x265-MeGusta",
+                "Star Trek Starfleet Academy",
+                Some(1),
+                Some(1),
+            ),
+            (
+                "Star Trek Starfleet Academy S01E02 Beta Test 1080p HEVC x265-MeGusta",
+                "Star Trek Starfleet Academy",
+                Some(1),
+                Some(2),
+            ),
+            (
+                "The Pitt S02E02 8 00 A M 1080p HEVC x265-MeGusta",
+                "The Pitt",
+                Some(2),
+                Some(2),
+            ),
             // HEVC/x265 releases
-            ("Fallout 2024 S02E05 1080p HEVC x265-MeGusta", "Fallout", Some(2), Some(5)),
-            ("Landman S02E10 1080p HEVC x265-MeGusta", "Landman", Some(2), Some(10)),
-            ("A Knight of the Seven Kingdoms S01E01 The Hedge Knight 1080p HEVC x265-MeGusta", "A Knight of the Seven Kingdoms", Some(1), Some(1)),
-            ("The Pitt S02E02 1080p HEVC x265-MeGusta", "The Pitt", Some(2), Some(2)),
-            ("Star Trek Starfleet Academy S01E01 1080p HEVC x265-MeGusta", "Star Trek Starfleet Academy", Some(1), Some(1)),
-            ("Star Trek Starfleet Academy S01E02 1080p HEVC x265-MeGusta", "Star Trek Starfleet Academy", Some(1), Some(2)),
-            ("Hijack 2023 S02E01 1080p HEVC x265-MeGusta", "Hijack", Some(2), Some(1)),
-            ("High Potential S02E09 1080p HEVC x265-MeGusta", "High Potential", Some(2), Some(9)),
-            ("Shoresy S05E05 Total Buy-In 1080p HEVC x265-MeGusta", "Shoresy", Some(5), Some(5)),
-            ("The Rookie S08E02 1080p HEVC x265-MeGusta", "The Rookie", Some(8), Some(2)),
-            ("Percy Jackson and the Olympians S02E07 1080p HEVC x265-MeGusta", "Percy Jackson and the Olympians", Some(2), Some(7)),
-            ("Saturday Night Live S51E10 Finn Wolfhard 1080p HEVC x265-MeGusta", "Saturday Night Live", Some(51), Some(10)),
-            
+            (
+                "Fallout 2024 S02E05 1080p HEVC x265-MeGusta",
+                "Fallout",
+                Some(2),
+                Some(5),
+            ),
+            (
+                "Landman S02E10 1080p HEVC x265-MeGusta",
+                "Landman",
+                Some(2),
+                Some(10),
+            ),
+            (
+                "A Knight of the Seven Kingdoms S01E01 The Hedge Knight 1080p HEVC x265-MeGusta",
+                "A Knight of the Seven Kingdoms",
+                Some(1),
+                Some(1),
+            ),
+            (
+                "The Pitt S02E02 1080p HEVC x265-MeGusta",
+                "The Pitt",
+                Some(2),
+                Some(2),
+            ),
+            (
+                "Star Trek Starfleet Academy S01E01 1080p HEVC x265-MeGusta",
+                "Star Trek Starfleet Academy",
+                Some(1),
+                Some(1),
+            ),
+            (
+                "Star Trek Starfleet Academy S01E02 1080p HEVC x265-MeGusta",
+                "Star Trek Starfleet Academy",
+                Some(1),
+                Some(2),
+            ),
+            (
+                "Hijack 2023 S02E01 1080p HEVC x265-MeGusta",
+                "Hijack",
+                Some(2),
+                Some(1),
+            ),
+            (
+                "High Potential S02E09 1080p HEVC x265-MeGusta",
+                "High Potential",
+                Some(2),
+                Some(9),
+            ),
+            (
+                "Shoresy S05E05 Total Buy-In 1080p HEVC x265-MeGusta",
+                "Shoresy",
+                Some(5),
+                Some(5),
+            ),
+            (
+                "The Rookie S08E02 1080p HEVC x265-MeGusta",
+                "The Rookie",
+                Some(8),
+                Some(2),
+            ),
+            (
+                "Percy Jackson and the Olympians S02E07 1080p HEVC x265-MeGusta",
+                "Percy Jackson and the Olympians",
+                Some(2),
+                Some(7),
+            ),
+            (
+                "Saturday Night Live S51E10 Finn Wolfhard 1080p HEVC x265-MeGusta",
+                "Saturday Night Live",
+                Some(51),
+                Some(10),
+            ),
             // 720p HDTV releases
-            ("Greys Anatomy S22E08 720p HDTV x264-SYNCOPY", "Greys Anatomy", Some(22), Some(8)),
-            ("Law and Order SVU S27E10 720p HDTV x264-SYNCOPY", "Law and Order SVU", Some(27), Some(10)),
-            ("9-1-1 S09E08 720p HDTV x264-SYNCOPY", "9 1 1", Some(9), Some(8)),
-            
+            (
+                "Greys Anatomy S22E08 720p HDTV x264-SYNCOPY",
+                "Greys Anatomy",
+                Some(22),
+                Some(8),
+            ),
+            (
+                "Law and Order SVU S27E10 720p HDTV x264-SYNCOPY",
+                "Law and Order SVU",
+                Some(27),
+                Some(10),
+            ),
+            (
+                "9-1-1 S09E08 720p HDTV x264-SYNCOPY",
+                "9 1 1",
+                Some(9),
+                Some(8),
+            ),
             // 4K/2160p releases
-            ("A Knight of the Seven Kingdoms S01E01 The Hedge Knight 2160p HMAX WEB-DL DDP5 1 Atmos DV HDR H 265-FLUX", "A Knight of the Seven Kingdoms", Some(1), Some(1)),
-            ("Fallout S02E05 The Wrangler 2160p AMZN WEB-DL DDP5 1 Atmos DV HDR10Plus H 265-Kitsune", "Fallout", Some(2), Some(5)),
-            
+            (
+                "A Knight of the Seven Kingdoms S01E01 The Hedge Knight 2160p HMAX WEB-DL DDP5 1 Atmos DV HDR H 265-FLUX",
+                "A Knight of the Seven Kingdoms",
+                Some(1),
+                Some(1),
+            ),
+            (
+                "Fallout S02E05 The Wrangler 2160p AMZN WEB-DL DDP5 1 Atmos DV HDR10Plus H 265-Kitsune",
+                "Fallout",
+                Some(2),
+                Some(5),
+            ),
             // 720p WEB releases
-            ("A Knight of the Seven Kingdoms S01E01 The Hedge Knight 720p HMAX WEB-DL DDP5 1 H 264-NTb", "A Knight of the Seven Kingdoms", Some(1), Some(1)),
-            
+            (
+                "A Knight of the Seven Kingdoms S01E01 The Hedge Knight 720p HMAX WEB-DL DDP5 1 H 264-NTb",
+                "A Knight of the Seven Kingdoms",
+                Some(1),
+                Some(1),
+            ),
             // Older shows with different naming
-            ("The Traitors 2023 S04E05 1080p WEB h264-EDITH", "The Traitors", Some(4), Some(5)),
-            ("The Traitors 2023 S04E04 1080p WEB h264-EDITH", "The Traitors", Some(4), Some(4)),
-            ("Hells Kitchen US S24E15 1080p WEB h264-EDITH", "Hells Kitchen US", Some(24), Some(15)),
-            
+            (
+                "The Traitors 2023 S04E05 1080p WEB h264-EDITH",
+                "The Traitors",
+                Some(4),
+                Some(5),
+            ),
+            (
+                "The Traitors 2023 S04E04 1080p WEB h264-EDITH",
+                "The Traitors",
+                Some(4),
+                Some(4),
+            ),
+            (
+                "Hells Kitchen US S24E15 1080p WEB h264-EDITH",
+                "Hells Kitchen US",
+                Some(24),
+                Some(15),
+            ),
             // WEB-DL with Atmos
-            ("Fallout S02E05 The Wrangler 1080p AMZN WEB-DL DD 5 1 Atmos H 264-playWEB", "Fallout", Some(2), Some(5)),
+            (
+                "Fallout S02E05 The Wrangler 1080p AMZN WEB-DL DD 5 1 Atmos H 264-playWEB",
+                "Fallout",
+                Some(2),
+                Some(5),
+            ),
         ];
 
         for (filename, expected_show, expected_season, expected_episode) in test_cases {
             let result = parse_episode(filename);
-            
+
             // Check show name contains key words (parser may clean differently)
             let show_name = result.show_name.as_deref().unwrap_or("");
             let expected_words: Vec<&str> = expected_show.split_whitespace().collect();
             let first_word = expected_words.first().unwrap_or(&"");
             assert!(
-                show_name.to_lowercase().contains(&first_word.to_lowercase()),
+                show_name
+                    .to_lowercase()
+                    .contains(&first_word.to_lowercase()),
                 "Show name '{}' should contain '{}' for: {}",
-                show_name, first_word, filename
+                show_name,
+                first_word,
+                filename
             );
-            
+
             assert_eq!(
                 result.season, expected_season,
                 "Season mismatch for: {} (got {:?})",
@@ -964,37 +1316,76 @@ mod tests {
         // Test quality parsing from real-world examples
         let test_cases = vec![
             // (filename, expected_resolution, expected_codec, source_should_exist)
-            ("Fallout 2024 S02E05 1080p WEB h264-ETHEL", Some("1080p"), Some("H.264"), false),
-            ("Fallout 2024 S02E05 1080p HEVC x265-MeGusta", Some("1080p"), Some("HEVC"), false),
-            ("A Knight of the Seven Kingdoms S01E01 The Hedge Knight 1080p AMZN WEB-DL DDP5 1 Atmos H 264-FLUX", Some("1080p"), Some("H.264"), true),
-            ("A Knight of the Seven Kingdoms S01E01 The Hedge Knight 2160p HMAX WEB-DL DDP5 1 Atmos DV HDR H 265-FLUX", Some("2160p"), Some("HEVC"), true),
-            ("Greys Anatomy S22E08 720p HDTV x264-SYNCOPY", Some("720p"), Some("H.264"), true),
-            ("Gold Rush S16E10 New Levels of Chaos 1080p DSCP WEB-DL DDP2 0 H 264-SNAKE", Some("1080p"), Some("H.264"), true),
-            ("Fallout S02E05 The Wrangler 2160p AMZN WEB-DL DDP5 1 Atmos DV HDR10Plus H 265-Kitsune", Some("2160p"), Some("HEVC"), true),
+            (
+                "Fallout 2024 S02E05 1080p WEB h264-ETHEL",
+                Some("1080p"),
+                Some("H.264"),
+                false,
+            ),
+            (
+                "Fallout 2024 S02E05 1080p HEVC x265-MeGusta",
+                Some("1080p"),
+                Some("HEVC"),
+                false,
+            ),
+            (
+                "A Knight of the Seven Kingdoms S01E01 The Hedge Knight 1080p AMZN WEB-DL DDP5 1 Atmos H 264-FLUX",
+                Some("1080p"),
+                Some("H.264"),
+                true,
+            ),
+            (
+                "A Knight of the Seven Kingdoms S01E01 The Hedge Knight 2160p HMAX WEB-DL DDP5 1 Atmos DV HDR H 265-FLUX",
+                Some("2160p"),
+                Some("HEVC"),
+                true,
+            ),
+            (
+                "Greys Anatomy S22E08 720p HDTV x264-SYNCOPY",
+                Some("720p"),
+                Some("H.264"),
+                true,
+            ),
+            (
+                "Gold Rush S16E10 New Levels of Chaos 1080p DSCP WEB-DL DDP2 0 H 264-SNAKE",
+                Some("1080p"),
+                Some("H.264"),
+                true,
+            ),
+            (
+                "Fallout S02E05 The Wrangler 2160p AMZN WEB-DL DDP5 1 Atmos DV HDR10Plus H 265-Kitsune",
+                Some("2160p"),
+                Some("HEVC"),
+                true,
+            ),
         ];
 
         for (filename, expected_res, expected_codec, source_should_exist) in test_cases {
             let quality = parse_quality(filename);
-            
+
             assert_eq!(
-                quality.resolution.as_deref(), expected_res,
+                quality.resolution.as_deref(),
+                expected_res,
                 "Resolution mismatch for: {}",
                 filename
             );
-            
+
             if let Some(codec) = expected_codec {
                 assert_eq!(
-                    quality.codec.as_deref(), Some(codec),
+                    quality.codec.as_deref(),
+                    Some(codec),
                     "Codec mismatch for: {} (got {:?})",
-                    filename, quality.codec
+                    filename,
+                    quality.codec
                 );
             }
-            
+
             if source_should_exist {
                 assert!(
                     quality.source.is_some(),
                     "Source should be detected for: {} (got {:?})",
-                    filename, quality.source
+                    filename,
+                    quality.source
                 );
             }
         }
@@ -1013,7 +1404,8 @@ mod tests {
             assert!(
                 quality.hdr.is_some(),
                 "Should detect HDR in: {} (got {:?})",
-                filename, quality.hdr
+                filename,
+                quality.hdr
             );
         }
     }
@@ -1031,9 +1423,14 @@ mod tests {
             let quality = parse_quality(filename);
             if filename.contains("Atmos") {
                 assert!(
-                    quality.audio.as_ref().map(|a| a.contains("Atmos")).unwrap_or(false),
+                    quality
+                        .audio
+                        .as_ref()
+                        .map(|a| a.contains("Atmos"))
+                        .unwrap_or(false),
                     "Should detect Atmos in: {} (got {:?})",
-                    filename, quality.audio
+                    filename,
+                    quality.audio
                 );
             }
         }
@@ -1044,23 +1441,40 @@ mod tests {
         // Test release group detection
         let test_cases = vec![
             ("Fallout 2024 S02E05 1080p WEB h264-ETHEL", "ETHEL"),
-            ("A Knight of the Seven Kingdoms S01E01 The Hedge Knight 1080p AMZN WEB-DL DDP5 1 Atmos H 264-FLUX", "FLUX"),
+            (
+                "A Knight of the Seven Kingdoms S01E01 The Hedge Knight 1080p AMZN WEB-DL DDP5 1 Atmos H 264-FLUX",
+                "FLUX",
+            ),
             ("Fallout 2024 S02E05 1080p HEVC x265-MeGusta", "MeGusta"),
             ("Greys Anatomy S22E08 720p HDTV x264-SYNCOPY", "SYNCOPY"),
-            ("Gold Rush S16E10 New Levels of Chaos 1080p DSCP WEB-DL DDP2 0 H 264-SNAKE", "SNAKE"),
-            ("A Knight of the Seven Kingdoms S01E01 The Hedge Knight 720p HMAX WEB-DL DDP5 1 H 264-NTb", "NTb"),
-            ("Fallout S02E05 The Wrangler 1080p AMZN WEB-DL DD 5 1 Atmos H 264-playWEB", "playWEB"),
+            (
+                "Gold Rush S16E10 New Levels of Chaos 1080p DSCP WEB-DL DDP2 0 H 264-SNAKE",
+                "SNAKE",
+            ),
+            (
+                "A Knight of the Seven Kingdoms S01E01 The Hedge Knight 720p HMAX WEB-DL DDP5 1 H 264-NTb",
+                "NTb",
+            ),
+            (
+                "Fallout S02E05 The Wrangler 1080p AMZN WEB-DL DD 5 1 Atmos H 264-playWEB",
+                "playWEB",
+            ),
             ("Primal S03E02 1080p WEB h264-GRACE", "GRACE"),
             ("The Traitors 2023 S04E05 1080p WEB h264-EDITH", "EDITH"),
-            ("The Rookie S08E02 Fast Andy 1080p AMZN WEB-DL DDP5 1 H 264-Kitsune", "Kitsune"),
+            (
+                "The Rookie S08E02 Fast Andy 1080p AMZN WEB-DL DDP5 1 H 264-Kitsune",
+                "Kitsune",
+            ),
         ];
 
         for (filename, expected_group) in test_cases {
             let result = parse_episode(filename);
             assert_eq!(
-                result.release_group.as_deref(), Some(expected_group),
+                result.release_group.as_deref(),
+                Some(expected_group),
                 "Release group mismatch for: {} (got {:?})",
-                filename, result.release_group
+                filename,
+                result.release_group
             );
         }
     }

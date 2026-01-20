@@ -28,14 +28,17 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use tracing::{debug, error, info, warn};
 
-use crate::db::{Database, EpisodeRecord, LibraryRecord, MediaFileRecord, MovieRecord, TorrentFileMatchRecord, TorrentRecord, TvShowRecord};
+use crate::db::{
+    Database, EpisodeRecord, LibraryRecord, MediaFileRecord, MovieRecord, TorrentFileMatchRecord,
+    TorrentRecord, TvShowRecord,
+};
 use crate::services::extractor::ExtractorService;
 use crate::services::file_utils::{get_container, is_audio_file, is_video_file};
 use crate::services::filename_parser;
 use crate::services::organizer::OrganizerService;
 // Quality evaluation imports (used for future quality verification)
-use crate::services::queues::{MediaAnalysisJob, MediaAnalysisQueue};
 use crate::services::TorrentService;
+use crate::services::queues::{MediaAnalysisJob, MediaAnalysisQueue};
 
 /// Result of processing a single torrent
 #[derive(Debug, Clone)]
@@ -87,8 +90,7 @@ impl TorrentProcessor {
     pub fn new(db: Database) -> Self {
         let organizer = OrganizerService::new(db.clone());
         // Create extractor with temp directory from env or default
-        let temp_dir = std::env::var("TEMP_PATH")
-            .unwrap_or_else(|_| "/tmp/librarian".to_string());
+        let temp_dir = std::env::var("TEMP_PATH").unwrap_or_else(|_| "/tmp/librarian".to_string());
         let extractor = ExtractorService::new(PathBuf::from(temp_dir));
         Self {
             db,
@@ -102,8 +104,7 @@ impl TorrentProcessor {
     /// Create with a media analysis queue for FFmpeg metadata extraction
     pub fn with_analysis_queue(db: Database, queue: Arc<MediaAnalysisQueue>) -> Self {
         let organizer = OrganizerService::new(db.clone());
-        let temp_dir = std::env::var("TEMP_PATH")
-            .unwrap_or_else(|_| "/tmp/librarian".to_string());
+        let temp_dir = std::env::var("TEMP_PATH").unwrap_or_else(|_| "/tmp/librarian".to_string());
         let extractor = ExtractorService::new(PathBuf::from(temp_dir));
         Self {
             db,
@@ -121,8 +122,7 @@ impl TorrentProcessor {
         metadata: Arc<crate::services::MetadataService>,
     ) -> Self {
         let organizer = OrganizerService::new(db.clone());
-        let temp_dir = std::env::var("TEMP_PATH")
-            .unwrap_or_else(|_| "/tmp/librarian".to_string());
+        let temp_dir = std::env::var("TEMP_PATH").unwrap_or_else(|_| "/tmp/librarian".to_string());
         let extractor = ExtractorService::new(PathBuf::from(temp_dir));
         Self {
             db,
@@ -224,14 +224,18 @@ impl TorrentProcessor {
         let torrent = match self.db.torrents().get_by_info_hash(info_hash).await? {
             Some(t) => t,
             None => {
-                result.messages.push(format!("Torrent not found: {}", info_hash));
+                result
+                    .messages
+                    .push(format!("Torrent not found: {}", info_hash));
                 return Ok(result);
             }
         };
 
         // Check if already processed (unless forcing)
         if !force && torrent.post_process_status.as_deref() == Some("completed") {
-            result.messages.push("Torrent already processed".to_string());
+            result
+                .messages
+                .push("Torrent already processed".to_string());
             result.success = true;
             return Ok(result);
         }
@@ -260,7 +264,9 @@ impl TorrentProcessor {
         };
 
         if files.is_empty() {
-            result.messages.push("No files found in torrent".to_string());
+            result
+                .messages
+                .push("No files found in torrent".to_string());
             self.db
                 .torrents()
                 .update_post_process_status(info_hash, "completed")
@@ -276,7 +282,10 @@ impl TorrentProcessor {
             // Check if any files are archives
             let has_archives = files.iter().any(|f| {
                 let path = Path::new(&f.path);
-                let ext = path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase());
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase());
                 matches!(ext.as_deref(), Some("rar") | Some("zip") | Some("7z"))
             });
 
@@ -295,8 +304,13 @@ impl TorrentProcessor {
                                     }
                                 }
                                 Err(e) => {
-                                    warn!("Archive extraction failed for '{}': {}", torrent.name, e);
-                                    result.messages.push(format!("Archive extraction failed: {}", e));
+                                    warn!(
+                                        "Archive extraction failed for '{}': {}",
+                                        torrent.name, e
+                                    );
+                                    result
+                                        .messages
+                                        .push(format!("Archive extraction failed: {}", e));
                                     // Continue processing without extraction
                                 }
                             }
@@ -309,45 +323,67 @@ impl TorrentProcessor {
         // When force=true, delete existing media_file records for files in the downloads folder
         // This allows re-organization of files that were previously processed but not organized correctly
         if force {
-            let downloads_path = std::env::var("DOWNLOADS_PATH").unwrap_or_else(|_| "/data/downloads".to_string());
+            let downloads_path =
+                std::env::var("DOWNLOADS_PATH").unwrap_or_else(|_| "/data/downloads".to_string());
             let mut deleted_count = 0;
-            
+
             for file_info in &files {
                 if file_info.path.starts_with(&downloads_path) {
-                    if let Some(existing) = self.db.media_files().get_by_path(&file_info.path).await? {
-                        debug!("Force reprocess: deleting existing media_file for '{}'",
-                            std::path::Path::new(&file_info.path).file_name()
-                                .and_then(|n| n.to_str()).unwrap_or(&file_info.path)
+                    if let Some(existing) =
+                        self.db.media_files().get_by_path(&file_info.path).await?
+                    {
+                        debug!(
+                            "Force reprocess: deleting existing media_file for '{}'",
+                            std::path::Path::new(&file_info.path)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or(&file_info.path)
                         );
                         // Reset has_file flags on linked items based on media_file links
                         if let Some(movie_id) = existing.movie_id {
                             self.db.movies().update_has_file(movie_id, false).await.ok();
                         }
                         if let Some(album_id) = existing.album_id {
-                            self.db.albums().update_has_files(album_id, false).await.ok();
+                            self.db
+                                .albums()
+                                .update_has_files(album_id, false)
+                                .await
+                                .ok();
                         }
                         if let Some(audiobook_id) = existing.audiobook_id {
-                            self.db.audiobooks().update_has_files(audiobook_id, false).await.ok();
+                            self.db
+                                .audiobooks()
+                                .update_has_files(audiobook_id, false)
+                                .await
+                                .ok();
                         }
                         self.db.media_files().delete(existing.id).await.ok();
                         deleted_count += 1;
                     }
                 }
             }
-            
+
             if deleted_count > 0 {
-                debug!("Force reprocess: cleared {} existing media_file records", deleted_count);
+                debug!(
+                    "Force reprocess: cleared {} existing media_file records",
+                    deleted_count
+                );
             }
         }
 
         // Check if we have file-level matches
-        let file_matches = self.db.torrent_file_matches().list_unprocessed(torrent.id).await?;
-        
+        let file_matches = self
+            .db
+            .torrent_file_matches()
+            .list_unprocessed(torrent.id)
+            .await?;
+
         // Route processing based on available matches
         let process_result = if !file_matches.is_empty() {
             // Use file-level matching flow
             debug!("Using file-level matching ({} matches)", file_matches.len());
-            self.process_with_file_matches(&torrent, &files, file_matches).await
+            self.process_with_file_matches(&torrent, &files, file_matches)
+                .await
         } else {
             // No file matches - try to auto-match against all user libraries
             self.process_without_library(&torrent, &files).await
@@ -386,7 +422,6 @@ impl TorrentProcessor {
     // Legacy process_linked_* methods removed - all processing now uses
     // process_with_file_matches or process_without_library
 
-
     /// Process a torrent using file-level matches from torrent_file_matches table
     ///
     /// This is the new unified processing flow that uses pre-computed file matches
@@ -402,22 +437,34 @@ impl TorrentProcessor {
         result.matched = true; // We have pre-matched files
 
         // Count match types for logging
-        let episode_count = file_matches.iter().filter(|m| m.episode_id.is_some()).count();
+        let episode_count = file_matches
+            .iter()
+            .filter(|m| m.episode_id.is_some())
+            .count();
         let movie_count = file_matches.iter().filter(|m| m.movie_id.is_some()).count();
         let track_count = file_matches.iter().filter(|m| m.track_id.is_some()).count();
-        let chapter_count = file_matches.iter().filter(|m| m.chapter_id.is_some()).count();
+        let chapter_count = file_matches
+            .iter()
+            .filter(|m| m.chapter_id.is_some())
+            .count();
 
         info!(
             "Organizing '{}': {} matched files ({} episodes, {} movies, {} tracks, {} chapters)",
-            torrent.name, file_matches.len(), episode_count, movie_count, track_count, chapter_count
+            torrent.name,
+            file_matches.len(),
+            episode_count,
+            movie_count,
+            track_count,
+            chapter_count
         );
 
         // Build a map of file index to file info
-        let file_map: std::collections::HashMap<i32, &crate::services::torrent::TorrentFile> = files
-            .iter()
-            .enumerate()
-            .map(|(i, f)| (i as i32, f))
-            .collect();
+        let file_map: std::collections::HashMap<i32, &crate::services::torrent::TorrentFile> =
+            files
+                .iter()
+                .enumerate()
+                .map(|(i, f)| (i as i32, f))
+                .collect();
 
         // Track which items need status updates after all files are processed
         let mut episodes_to_update: Vec<uuid::Uuid> = Vec::new();
@@ -448,35 +495,47 @@ impl TorrentProcessor {
 
             // Process based on what the file is matched to
             let process_result = if let Some(episode_id) = file_match.episode_id {
-                self.process_matched_episode_file(file_match, file_info, episode_id).await
+                self.process_matched_episode_file(file_match, file_info, episode_id)
+                    .await
             } else if let Some(movie_id) = file_match.movie_id {
-                self.process_matched_movie_file(file_match, file_info, movie_id).await
+                self.process_matched_movie_file(file_match, file_info, movie_id)
+                    .await
             } else if let Some(track_id) = file_match.track_id {
-                self.process_matched_track_file(file_match, file_info, track_id).await
+                self.process_matched_track_file(file_match, file_info, track_id)
+                    .await
             } else if let Some(chapter_id) = file_match.chapter_id {
-                self.process_matched_chapter_file(file_match, file_info, chapter_id).await
+                self.process_matched_chapter_file(file_match, file_info, chapter_id)
+                    .await
             } else {
                 // Unmatched file - just mark as processed
-                self.db.torrent_file_matches().mark_processed(
-                    file_match.id,
-                    crate::db::MarkProcessed {
-                        media_file_id: None,
-                        error_message: None,
-                    },
-                ).await.ok();
+                self.db
+                    .torrent_file_matches()
+                    .mark_processed(
+                        file_match.id,
+                        crate::db::MarkProcessed {
+                            media_file_id: None,
+                            error_message: None,
+                        },
+                    )
+                    .await
+                    .ok();
                 continue;
             };
 
             match process_result {
                 Ok(Some(media_file_id)) => {
                     // Mark the file match as processed
-                    self.db.torrent_file_matches().mark_processed(
-                        file_match.id,
-                        crate::db::MarkProcessed {
-                            media_file_id: Some(media_file_id),
-                            error_message: None,
-                        },
-                    ).await.ok();
+                    self.db
+                        .torrent_file_matches()
+                        .mark_processed(
+                            file_match.id,
+                            crate::db::MarkProcessed {
+                                media_file_id: Some(media_file_id),
+                                error_message: None,
+                            },
+                        )
+                        .await
+                        .ok();
 
                     info!("Organized file '{}'", file_name);
 
@@ -507,39 +566,54 @@ impl TorrentProcessor {
                 }
                 Ok(None) => {
                     // File was processed but no media file created (e.g., organize disabled)
-                    self.db.torrent_file_matches().mark_processed(
-                        file_match.id,
-                        crate::db::MarkProcessed {
-                            media_file_id: None,
-                            error_message: None,
-                        },
-                    ).await.ok();
+                    self.db
+                        .torrent_file_matches()
+                        .mark_processed(
+                            file_match.id,
+                            crate::db::MarkProcessed {
+                                media_file_id: None,
+                                error_message: None,
+                            },
+                        )
+                        .await
+                        .ok();
                     result.files_processed += 1;
                 }
                 Err(e) => {
                     // Mark as processed with error
-                    self.db.torrent_file_matches().mark_processed(
-                        file_match.id,
-                        crate::db::MarkProcessed {
-                            media_file_id: None,
-                            error_message: Some(e.to_string()),
-                        },
-                    ).await.ok();
+                    self.db
+                        .torrent_file_matches()
+                        .mark_processed(
+                            file_match.id,
+                            crate::db::MarkProcessed {
+                                media_file_id: None,
+                                error_message: Some(e.to_string()),
+                            },
+                        )
+                        .await
+                        .ok();
                     error!("Failed to organize '{}': {}", file_name, e);
                     result.files_failed += 1;
-                    result.messages.push(format!(
-                        "Failed to process {}: {}",
-                        file_match.file_path, e
-                    ));
+                    result
+                        .messages
+                        .push(format!("Failed to process {}: {}", file_match.file_path, e));
                 }
             }
         }
 
         // Update item statuses from 'downloading' to 'downloaded'
         for episode_id in &episodes_to_update {
-            self.db.episodes().update_status(*episode_id, "downloaded").await.ok();
+            self.db
+                .episodes()
+                .update_status(*episode_id, "downloaded")
+                .await
+                .ok();
             if let Ok(Some(episode)) = self.db.episodes().get_by_id(*episode_id).await {
-                self.db.tv_shows().update_stats(episode.tv_show_id).await.ok();
+                self.db
+                    .tv_shows()
+                    .update_stats(episode.tv_show_id)
+                    .await
+                    .ok();
             }
         }
 
@@ -553,7 +627,11 @@ impl TorrentProcessor {
         }
 
         for track_id in &tracks_to_update {
-            self.db.tracks().update_status(*track_id, "downloaded").await.ok();
+            self.db
+                .tracks()
+                .update_status(*track_id, "downloaded")
+                .await
+                .ok();
         }
 
         for chapter_id in &chapters_to_update {
@@ -565,8 +643,11 @@ impl TorrentProcessor {
         }
 
         result.success = result.files_processed > 0 || result.files_failed == 0;
-        
-        let items_updated = episodes_to_update.len() + movies_to_update.len() + tracks_to_update.len() + chapters_to_update.len();
+
+        let items_updated = episodes_to_update.len()
+            + movies_to_update.len()
+            + tracks_to_update.len()
+            + chapters_to_update.len();
         if items_updated > 0 {
             info!(
                 "Marked {} items as downloaded for '{}'",
@@ -584,41 +665,60 @@ impl TorrentProcessor {
         file_info: &crate::services::torrent::TorrentFile,
         episode_id: uuid::Uuid,
     ) -> Result<Option<uuid::Uuid>> {
-        let episode = self.db.episodes().get_by_id(episode_id).await?
+        let episode = self
+            .db
+            .episodes()
+            .get_by_id(episode_id)
+            .await?
             .context("Episode not found")?;
-        let show = self.db.tv_shows().get_by_id(episode.tv_show_id).await?
+        let show = self
+            .db
+            .tv_shows()
+            .get_by_id(episode.tv_show_id)
+            .await?
             .context("Show not found")?;
-        let library = self.db.libraries().get_by_id(show.library_id).await?
+        let library = self
+            .db
+            .libraries()
+            .get_by_id(show.library_id)
+            .await?
             .context("Library not found")?;
 
         // Create media file record
         let parsed = filename_parser::parse_episode(
-            Path::new(&file_info.path).file_name().and_then(|n| n.to_str()).unwrap_or("")
-        );
-
-        let media_file = self.db.media_files().upsert(crate::db::CreateMediaFile {
-            library_id: library.id,
-            path: file_info.path.clone(),
-            size_bytes: file_info.size as i64,
-            container: get_container(&file_info.path),
-            video_codec: parsed.codec.clone(),
-            audio_codec: parsed.audio.clone(),
-            width: None,
-            height: None,
-            duration: None,
-            bitrate: None,
-            file_hash: None,
-            episode_id: Some(episode_id),
-            movie_id: None,
-            relative_path: None,
-            original_name: Path::new(&file_info.path)
+            Path::new(&file_info.path)
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map(|s| s.to_string()),
-            resolution: parsed.resolution.clone(),
-            is_hdr: parsed.hdr.is_some().then_some(true),
-            hdr_type: parsed.hdr.clone(),
-        }).await?;
+                .unwrap_or(""),
+        );
+
+        let media_file = self
+            .db
+            .media_files()
+            .upsert(crate::db::CreateMediaFile {
+                library_id: library.id,
+                path: file_info.path.clone(),
+                size_bytes: file_info.size as i64,
+                container: get_container(&file_info.path),
+                video_codec: parsed.codec.clone(),
+                audio_codec: parsed.audio.clone(),
+                width: None,
+                height: None,
+                duration: None,
+                bitrate: None,
+                file_hash: None,
+                episode_id: Some(episode_id),
+                movie_id: None,
+                relative_path: None,
+                original_name: Path::new(&file_info.path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string()),
+                resolution: parsed.resolution.clone(),
+                is_hdr: parsed.hdr.is_some().then_some(true),
+                hdr_type: parsed.hdr.clone(),
+            })
+            .await?;
 
         // Queue for analysis
         self.queue_for_analysis(&media_file).await;
@@ -631,17 +731,21 @@ impl TorrentProcessor {
                 "preserve_info" => crate::services::organizer::RenameStyle::PreserveInfo,
                 _ => crate::services::organizer::RenameStyle::None,
             };
-            
-            match self.organizer.organize_file(
-                &media_file,
-                &show,
-                &episode,
-                &library.path,
-                rename_style,
-                library.naming_pattern.as_deref(),
-                &library.post_download_action,
-                false,
-            ).await {
+
+            match self
+                .organizer
+                .organize_file(
+                    &media_file,
+                    &show,
+                    &episode,
+                    &library.path,
+                    rename_style,
+                    library.naming_pattern.as_deref(),
+                    &library.post_download_action,
+                    false,
+                )
+                .await
+            {
                 Ok(org_result) if org_result.success => {
                     info!(
                         episode = %format!("{} S{:02}E{:02}", show.name, episode.season, episode.episode),
@@ -672,53 +776,72 @@ impl TorrentProcessor {
         file_info: &crate::services::torrent::TorrentFile,
         movie_id: uuid::Uuid,
     ) -> Result<Option<uuid::Uuid>> {
-        let movie = self.db.movies().get_by_id(movie_id).await?
+        let movie = self
+            .db
+            .movies()
+            .get_by_id(movie_id)
+            .await?
             .context("Movie not found")?;
-        let library = self.db.libraries().get_by_id(movie.library_id).await?
+        let library = self
+            .db
+            .libraries()
+            .get_by_id(movie.library_id)
+            .await?
             .context("Library not found")?;
 
         // Create media file record
         let parsed = filename_parser::parse_movie(
-            Path::new(&file_info.path).file_name().and_then(|n| n.to_str()).unwrap_or("")
-        );
-
-        let media_file = self.db.media_files().upsert(crate::db::CreateMediaFile {
-            library_id: library.id,
-            path: file_info.path.clone(),
-            size_bytes: file_info.size as i64,
-            container: get_container(&file_info.path),
-            video_codec: parsed.codec.clone(),
-            audio_codec: parsed.audio.clone(),
-            width: None,
-            height: None,
-            duration: None,
-            bitrate: None,
-            file_hash: None,
-            episode_id: None,
-            movie_id: Some(movie_id),
-            relative_path: None,
-            original_name: Path::new(&file_info.path)
+            Path::new(&file_info.path)
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map(|s| s.to_string()),
-            resolution: parsed.resolution.clone(),
-            is_hdr: parsed.hdr.is_some().then_some(true),
-            hdr_type: parsed.hdr.clone(),
-        }).await?;
+                .unwrap_or(""),
+        );
+
+        let media_file = self
+            .db
+            .media_files()
+            .upsert(crate::db::CreateMediaFile {
+                library_id: library.id,
+                path: file_info.path.clone(),
+                size_bytes: file_info.size as i64,
+                container: get_container(&file_info.path),
+                video_codec: parsed.codec.clone(),
+                audio_codec: parsed.audio.clone(),
+                width: None,
+                height: None,
+                duration: None,
+                bitrate: None,
+                file_hash: None,
+                episode_id: None,
+                movie_id: Some(movie_id),
+                relative_path: None,
+                original_name: Path::new(&file_info.path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string()),
+                resolution: parsed.resolution.clone(),
+                is_hdr: parsed.hdr.is_some().then_some(true),
+                hdr_type: parsed.hdr.clone(),
+            })
+            .await?;
 
         // Queue for analysis
         self.queue_for_analysis(&media_file).await;
 
         // Organize if enabled
         if library.organize_files {
-            match self.organizer.organize_movie_file(
-                &media_file,
-                &movie,
-                &library.path,
-                library.naming_pattern.as_deref(),
-                &library.post_download_action,
-                false,
-            ).await {
+            match self
+                .organizer
+                .organize_movie_file(
+                    &media_file,
+                    &movie,
+                    &library.path,
+                    library.naming_pattern.as_deref(),
+                    &library.post_download_action,
+                    false,
+                )
+                .await
+            {
                 Ok(org_result) if org_result.success => {
                     info!(
                         movie = %movie.title,
@@ -749,44 +872,69 @@ impl TorrentProcessor {
         file_info: &crate::services::torrent::TorrentFile,
         track_id: uuid::Uuid,
     ) -> Result<Option<uuid::Uuid>> {
-        let track = self.db.tracks().get_by_id(track_id).await?
+        let track = self
+            .db
+            .tracks()
+            .get_by_id(track_id)
+            .await?
             .context("Track not found")?;
-        let album = self.db.albums().get_by_id(track.album_id).await?
+        let album = self
+            .db
+            .albums()
+            .get_by_id(track.album_id)
+            .await?
             .context("Album not found")?;
-        let library = self.db.libraries().get_by_id(track.library_id).await?
+        let library = self
+            .db
+            .libraries()
+            .get_by_id(track.library_id)
+            .await?
             .context("Library not found")?;
 
         // Create media file record
-        let media_file = self.db.media_files().upsert(crate::db::CreateMediaFile {
-            library_id: library.id,
-            path: file_info.path.clone(),
-            size_bytes: file_info.size as i64,
-            container: get_container(&file_info.path),
-            video_codec: None,
-            audio_codec: None,
-            width: None,
-            height: None,
-            duration: None,
-            bitrate: None,
-            file_hash: None,
-            episode_id: None,
-            movie_id: None,
-            relative_path: None,
-            original_name: Path::new(&file_info.path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|s| s.to_string()),
-            resolution: None,
-            is_hdr: None,
-            hdr_type: None,
-        }).await?;
+        let media_file = self
+            .db
+            .media_files()
+            .upsert(crate::db::CreateMediaFile {
+                library_id: library.id,
+                path: file_info.path.clone(),
+                size_bytes: file_info.size as i64,
+                container: get_container(&file_info.path),
+                video_codec: None,
+                audio_codec: None,
+                width: None,
+                height: None,
+                duration: None,
+                bitrate: None,
+                file_hash: None,
+                episode_id: None,
+                movie_id: None,
+                relative_path: None,
+                original_name: Path::new(&file_info.path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string()),
+                resolution: None,
+                is_hdr: None,
+                hdr_type: None,
+            })
+            .await?;
 
         // Link to track and album
-        self.db.media_files().link_to_track(media_file.id, track_id).await?;
-        self.db.media_files().link_to_album(media_file.id, album.id).await?;
-        
+        self.db
+            .media_files()
+            .link_to_track(media_file.id, track_id)
+            .await?;
+        self.db
+            .media_files()
+            .link_to_album(media_file.id, album.id)
+            .await?;
+
         // Link track to media file
-        self.db.tracks().link_media_file(track_id, media_file.id).await?;
+        self.db
+            .tracks()
+            .link_media_file(track_id, media_file.id)
+            .await?;
 
         // Queue for analysis
         self.queue_for_analysis(&media_file).await;
@@ -804,45 +952,59 @@ impl TorrentProcessor {
         chapter_id: uuid::Uuid,
     ) -> Result<Option<uuid::Uuid>> {
         // Get chapter info
-        let chapter: (uuid::Uuid, i32) = sqlx::query_as(
-            "SELECT audiobook_id, chapter_number FROM chapters WHERE id = $1"
-        )
-        .bind(chapter_id)
-        .fetch_one(self.db.pool())
-        .await?;
+        let chapter: (uuid::Uuid, i32) =
+            sqlx::query_as("SELECT audiobook_id, chapter_number FROM chapters WHERE id = $1")
+                .bind(chapter_id)
+                .fetch_one(self.db.pool())
+                .await?;
 
-        let audiobook = self.db.audiobooks().get_by_id(chapter.0).await?
+        let audiobook = self
+            .db
+            .audiobooks()
+            .get_by_id(chapter.0)
+            .await?
             .context("Audiobook not found")?;
-        let library = self.db.libraries().get_by_id(audiobook.library_id).await?
+        let library = self
+            .db
+            .libraries()
+            .get_by_id(audiobook.library_id)
+            .await?
             .context("Library not found")?;
 
         // Create media file record
-        let media_file = self.db.media_files().upsert(crate::db::CreateMediaFile {
-            library_id: library.id,
-            path: file_info.path.clone(),
-            size_bytes: file_info.size as i64,
-            container: get_container(&file_info.path),
-            video_codec: None,
-            audio_codec: None,
-            width: None,
-            height: None,
-            duration: None,
-            bitrate: None,
-            file_hash: None,
-            episode_id: None,
-            movie_id: None,
-            relative_path: None,
-            original_name: Path::new(&file_info.path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|s| s.to_string()),
-            resolution: None,
-            is_hdr: None,
-            hdr_type: None,
-        }).await?;
+        let media_file = self
+            .db
+            .media_files()
+            .upsert(crate::db::CreateMediaFile {
+                library_id: library.id,
+                path: file_info.path.clone(),
+                size_bytes: file_info.size as i64,
+                container: get_container(&file_info.path),
+                video_codec: None,
+                audio_codec: None,
+                width: None,
+                height: None,
+                duration: None,
+                bitrate: None,
+                file_hash: None,
+                episode_id: None,
+                movie_id: None,
+                relative_path: None,
+                original_name: Path::new(&file_info.path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string()),
+                resolution: None,
+                is_hdr: None,
+                hdr_type: None,
+            })
+            .await?;
 
         // Link to audiobook
-        self.db.media_files().link_to_audiobook(media_file.id, audiobook.id).await?;
+        self.db
+            .media_files()
+            .link_to_audiobook(media_file.id, audiobook.id)
+            .await?;
 
         // Update chapter to point to this media file
         sqlx::query("UPDATE chapters SET media_file_id = $2 WHERE id = $1")
@@ -857,7 +1019,6 @@ impl TorrentProcessor {
         Ok(Some(media_file.id))
     }
 
-
     /// Process a torrent with no library linked
     /// Attempts to match against all user libraries (TV, movies, music, audiobooks)
     async fn process_without_library(
@@ -869,15 +1030,29 @@ impl TorrentProcessor {
 
         let libraries = self.db.libraries().list_by_user(torrent.user_id).await?;
         if libraries.is_empty() {
-            result.messages.push("No libraries found for user".to_string());
+            result
+                .messages
+                .push("No libraries found for user".to_string());
             return Ok(result);
         }
 
         // Separate libraries by type
-        let tv_libraries: Vec<_> = libraries.iter().filter(|l| l.library_type == "tv").collect();
-        let movie_libraries: Vec<_> = libraries.iter().filter(|l| l.library_type == "movies").collect();
-        let music_libraries: Vec<_> = libraries.iter().filter(|l| l.library_type == "music").collect();
-        let audiobook_libraries: Vec<_> = libraries.iter().filter(|l| l.library_type == "audiobooks").collect();
+        let tv_libraries: Vec<_> = libraries
+            .iter()
+            .filter(|l| l.library_type == "tv")
+            .collect();
+        let movie_libraries: Vec<_> = libraries
+            .iter()
+            .filter(|l| l.library_type == "movies")
+            .collect();
+        let music_libraries: Vec<_> = libraries
+            .iter()
+            .filter(|l| l.library_type == "music")
+            .collect();
+        let audiobook_libraries: Vec<_> = libraries
+            .iter()
+            .filter(|l| l.library_type == "audiobooks")
+            .collect();
 
         for file_info in files {
             let file_path = &file_info.path;
@@ -888,7 +1063,10 @@ impl TorrentProcessor {
                 result.files_processed += 1;
                 result.messages.push(format!(
                     "File already tracked: {}",
-                    Path::new(file_path).file_name().and_then(|n| n.to_str()).unwrap_or(file_path)
+                    Path::new(file_path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(file_path)
                 ));
                 continue;
             }
@@ -965,7 +1143,9 @@ impl TorrentProcessor {
                                     break;
                                 }
                                 Err(e) => {
-                                    result.messages.push(format!("Failed to process movie: {}", e));
+                                    result
+                                        .messages
+                                        .push(format!("Failed to process movie: {}", e));
                                 }
                             }
                         }
@@ -977,7 +1157,9 @@ impl TorrentProcessor {
             if !matched && is_audio_file(file_path) {
                 // Try to match against music libraries first
                 for library in &music_libraries {
-                    if let Ok(Some((album, artist_name))) = self.try_match_music_file(file_path, library).await {
+                    if let Ok(Some((album, artist_name))) =
+                        self.try_match_music_file(file_path, library).await
+                    {
                         debug!(
                             path = %file_path,
                             album = %album.name,
@@ -985,8 +1167,18 @@ impl TorrentProcessor {
                             library = %library.name,
                             "Matched audio file to album"
                         );
-                        if let Err(e) = self.create_linked_music_file(file_path, file_info.size as i64, library, &album).await {
-                            result.messages.push(format!("Error creating music file: {}", e));
+                        if let Err(e) = self
+                            .create_linked_music_file(
+                                file_path,
+                                file_info.size as i64,
+                                library,
+                                &album,
+                            )
+                            .await
+                        {
+                            result
+                                .messages
+                                .push(format!("Error creating music file: {}", e));
                         } else {
                             result.files_processed += 1;
                             matched = true;
@@ -998,7 +1190,9 @@ impl TorrentProcessor {
                 // If not matched as music, try audiobook libraries
                 if !matched {
                     for library in &audiobook_libraries {
-                        if let Ok(Some((audiobook, author_name))) = self.try_match_audiobook_file(file_path, library).await {
+                        if let Ok(Some((audiobook, author_name))) =
+                            self.try_match_audiobook_file(file_path, library).await
+                        {
                             debug!(
                                 path = %file_path,
                                 audiobook = %audiobook.title,
@@ -1006,8 +1200,18 @@ impl TorrentProcessor {
                                 library = %library.name,
                                 "Matched audio file to audiobook"
                             );
-                            if let Err(e) = self.create_linked_audiobook_file(file_path, file_info.size as i64, library, &audiobook).await {
-                                result.messages.push(format!("Error creating audiobook file: {}", e));
+                            if let Err(e) = self
+                                .create_linked_audiobook_file(
+                                    file_path,
+                                    file_info.size as i64,
+                                    library,
+                                    &audiobook,
+                                )
+                                .await
+                            {
+                                result
+                                    .messages
+                                    .push(format!("Error creating audiobook file: {}", e));
                             } else {
                                 result.files_processed += 1;
                                 matched = true;
@@ -1242,7 +1446,7 @@ impl TorrentProcessor {
         // Confidence check: If we have a year, it should match within 1 year
         let year_matches = match (year, best_match.year) {
             (Some(parsed_year), Some(result_year)) => (parsed_year - result_year).abs() <= 1,
-            (None, _) => true, // No year in filename, accept any
+            (None, _) => true,        // No year in filename, accept any
             (Some(_), None) => false, // We have year but result doesn't, skip
         };
 
@@ -1307,16 +1511,15 @@ impl TorrentProcessor {
 
         // Parse album info from torrent name
         // Common patterns: "Artist - Album (Year)" or "Artist-Album-YEAR-FORMAT"
-        let cleaned = torrent_name
-            .replace('_', " ")
-            .replace('.', " ");
-        
+        let cleaned = torrent_name.replace('_', " ").replace('.', " ");
+
         // Try to extract artist and album from the name
         let (artist_name, album_name) = if let Some(pos) = cleaned.find(" - ") {
             let artist = cleaned[..pos].trim().to_string();
             let rest = &cleaned[pos + 3..];
             // Remove year and format info from album name
-            let album = rest.split(|c: char| c == '(' || c == '[' || c.is_ascii_digit())
+            let album = rest
+                .split(|c: char| c == '(' || c == '[' || c.is_ascii_digit())
                 .next()
                 .unwrap_or(rest)
                 .trim()
@@ -1384,7 +1587,7 @@ impl TorrentProcessor {
         }
 
         let best_match = &search_results[0];
-        
+
         info!(
             title = %best_match.title,
             artist = ?best_match.artist_name,
@@ -1433,16 +1636,15 @@ impl TorrentProcessor {
 
         // Parse audiobook info from torrent name
         // Common patterns: "Author - Title" or "Title by Author"
-        let cleaned = torrent_name
-            .replace('_', " ")
-            .replace('.', " ");
-        
+        let cleaned = torrent_name.replace('_', " ").replace('.', " ");
+
         // Try to extract author and title
         let (author_name, title) = if cleaned.to_lowercase().contains(" by ") {
             let lower = cleaned.to_lowercase();
             if let Some(pos) = lower.find(" by ") {
                 let title = cleaned[..pos].trim().to_string();
-                let author = cleaned[pos + 4..].split(|c: char| c == '(' || c == '[')
+                let author = cleaned[pos + 4..]
+                    .split(|c: char| c == '(' || c == '[')
                     .next()
                     .unwrap_or(&cleaned[pos + 4..])
                     .trim()
@@ -1482,7 +1684,7 @@ impl TorrentProcessor {
         } else {
             format!("{} {}", author_name, title)
         };
-        
+
         let search_results = match metadata_service.search_audiobooks(&query).await {
             Ok(results) => results,
             Err(e) => {
@@ -1497,7 +1699,7 @@ impl TorrentProcessor {
         }
 
         let best_match = &search_results[0];
-        
+
         info!(
             title = %best_match.title,
             author = ?best_match.author_name,
@@ -1627,7 +1829,10 @@ impl TorrentProcessor {
         let file_size = std::fs::metadata(file_path)
             .map(|m| m.len() as i64)
             .unwrap_or(size_bytes);
-        self.db.movies().update_file_status(movie.id, true, Some(file_size)).await?;
+        self.db
+            .movies()
+            .update_file_status(movie.id, true, Some(file_size))
+            .await?;
 
         Ok(true)
     }
@@ -1689,7 +1894,10 @@ impl TorrentProcessor {
 
         // Update episode status if linked
         if let Some(ep) = episode {
-            self.db.episodes().update_status(ep.id, "downloaded").await?;
+            self.db
+                .episodes()
+                .update_status(ep.id, "downloaded")
+                .await?;
             if let Some(s) = show {
                 self.db.tv_shows().update_stats(s.id).await?;
             }
@@ -1903,7 +2111,11 @@ impl TorrentProcessor {
             return Ok(0);
         }
 
-        info!("Found {} unmatched torrents to retry (triggered by {})", torrents.len(), trigger_reason);
+        info!(
+            "Found {} unmatched torrents to retry (triggered by {})",
+            torrents.len(),
+            trigger_reason
+        );
 
         let mut processed = 0;
         for torrent in torrents {
@@ -1942,12 +2154,19 @@ impl TorrentProcessor {
             return Ok(0);
         }
 
-        info!("Found {} pending torrents to process (triggered by {})", torrents.len(), trigger_reason);
+        info!(
+            "Found {} pending torrents to process (triggered by {})",
+            torrents.len(),
+            trigger_reason
+        );
 
         let mut processed = 0;
         for torrent in torrents {
-            info!("Processing '{}' (triggered by {})", torrent.name, trigger_reason);
-            
+            info!(
+                "Processing '{}' (triggered by {})",
+                torrent.name, trigger_reason
+            );
+
             match self
                 .process_torrent(torrent_service, &torrent.info_hash, false)
                 .await
@@ -1956,7 +2175,10 @@ impl TorrentProcessor {
                     if result.success {
                         processed += 1;
                         if result.files_processed > 0 {
-                            info!("Finished processing '{}': {} files organized", torrent.name, result.files_processed);
+                            info!(
+                                "Finished processing '{}': {} files organized",
+                                torrent.name, result.files_processed
+                            );
                         }
                     }
                     if !result.messages.is_empty() {
@@ -2043,12 +2265,20 @@ impl TorrentProcessor {
         let audiobooks = self.db.audiobooks().list_by_library(library.id).await?;
         for audiobook in audiobooks {
             // Case-insensitive partial match (audiobooks often have varied naming)
-            if audiobook.title.to_lowercase().contains(&search_name.to_lowercase())
-                || search_name.to_lowercase().contains(&audiobook.title.to_lowercase())
+            if audiobook
+                .title
+                .to_lowercase()
+                .contains(&search_name.to_lowercase())
+                || search_name
+                    .to_lowercase()
+                    .contains(&audiobook.title.to_lowercase())
             {
                 // Get author name
                 let author_name = if let Some(author_id) = audiobook.author_id {
-                    self.db.audiobooks().get_author_by_id(author_id).await?
+                    self.db
+                        .audiobooks()
+                        .get_author_by_id(author_id)
+                        .await?
                         .map(|a| a.name)
                         .unwrap_or_else(|| "Unknown Author".to_string())
                 } else {
@@ -2070,32 +2300,39 @@ impl TorrentProcessor {
         album: &crate::db::AlbumRecord,
     ) -> Result<crate::db::MediaFileRecord> {
         // Use upsert to handle existing records gracefully
-        let media_file = self.db.media_files().upsert(crate::db::CreateMediaFile {
-            library_id: library.id,
-            path: file_path.to_string(),
-            size_bytes,
-            container: get_container(file_path),
-            video_codec: None,
-            audio_codec: None,
-            width: None,
-            height: None,
-            duration: None,
-            bitrate: None,
-            file_hash: None,
-            episode_id: None,
-            movie_id: None,
-            relative_path: None,
-            original_name: Path::new(file_path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|s| s.to_string()),
-            resolution: None,
-            is_hdr: None,
-            hdr_type: None,
-        }).await?;
+        let media_file = self
+            .db
+            .media_files()
+            .upsert(crate::db::CreateMediaFile {
+                library_id: library.id,
+                path: file_path.to_string(),
+                size_bytes,
+                container: get_container(file_path),
+                video_codec: None,
+                audio_codec: None,
+                width: None,
+                height: None,
+                duration: None,
+                bitrate: None,
+                file_hash: None,
+                episode_id: None,
+                movie_id: None,
+                relative_path: None,
+                original_name: Path::new(file_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string()),
+                resolution: None,
+                is_hdr: None,
+                hdr_type: None,
+            })
+            .await?;
 
         // Link to album (will update if already linked)
-        self.db.media_files().link_to_album(media_file.id, album.id).await?;
+        self.db
+            .media_files()
+            .link_to_album(media_file.id, album.id)
+            .await?;
 
         // Update album has_files
         self.db.albums().update_has_files(album.id, true).await?;
@@ -2122,35 +2359,45 @@ impl TorrentProcessor {
         audiobook: &crate::db::AudiobookRecord,
     ) -> Result<crate::db::MediaFileRecord> {
         // Use upsert to handle existing records gracefully
-        let media_file = self.db.media_files().upsert(crate::db::CreateMediaFile {
-            library_id: library.id,
-            path: file_path.to_string(),
-            size_bytes,
-            container: get_container(file_path),
-            video_codec: None,
-            audio_codec: None,
-            width: None,
-            height: None,
-            duration: None,
-            bitrate: None,
-            file_hash: None,
-            episode_id: None,
-            movie_id: None,
-            relative_path: None,
-            original_name: Path::new(file_path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|s| s.to_string()),
-            resolution: None,
-            is_hdr: None,
-            hdr_type: None,
-        }).await?;
+        let media_file = self
+            .db
+            .media_files()
+            .upsert(crate::db::CreateMediaFile {
+                library_id: library.id,
+                path: file_path.to_string(),
+                size_bytes,
+                container: get_container(file_path),
+                video_codec: None,
+                audio_codec: None,
+                width: None,
+                height: None,
+                duration: None,
+                bitrate: None,
+                file_hash: None,
+                episode_id: None,
+                movie_id: None,
+                relative_path: None,
+                original_name: Path::new(file_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string()),
+                resolution: None,
+                is_hdr: None,
+                hdr_type: None,
+            })
+            .await?;
 
         // Link to audiobook (will update if already linked)
-        self.db.media_files().link_to_audiobook(media_file.id, audiobook.id).await?;
+        self.db
+            .media_files()
+            .link_to_audiobook(media_file.id, audiobook.id)
+            .await?;
 
         // Update audiobook has_files
-        self.db.audiobooks().update_has_files(audiobook.id, true).await?;
+        self.db
+            .audiobooks()
+            .update_has_files(audiobook.id, true)
+            .await?;
 
         // Queue for analysis
         self.queue_for_analysis(&media_file).await;
@@ -2171,7 +2418,9 @@ impl TorrentProcessor {
         use lofty::probe::Probe;
 
         let tagged_file = Probe::open(path).ok()?.read().ok()?;
-        let tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag())?;
+        let tag = tagged_file
+            .primary_tag()
+            .or_else(|| tagged_file.first_tag())?;
 
         Some(AudioMetadata {
             artist: tag.artist().map(|s| s.to_string()),
@@ -2198,14 +2447,11 @@ struct AudioMetadata {
 }
 
 /// Match a music filename to a track in the album track list
-/// 
+///
 /// Tries multiple matching strategies:
 /// 1. Extract track number from filename (e.g., "01 - Song Title.flac", "Track01.mp3")
 /// 2. Match by title similarity
-fn match_track_to_file(
-    filename: &str,
-    tracks: &[crate::db::TrackRecord],
-) -> Option<uuid::Uuid> {
+fn match_track_to_file(filename: &str, tracks: &[crate::db::TrackRecord]) -> Option<uuid::Uuid> {
     if tracks.is_empty() {
         return None;
     }
@@ -2224,17 +2470,18 @@ fn match_track_to_file(
     // "Track 01 - Song Title"
     // "(01) Song Title"
     // "1-01 Song Title" (disc-track)
-    
+
     let parsed = parse_track_number_from_filename(name_without_ext);
 
     if let Some((disc_num, track_num)) = parsed {
         // Try exact disc+track match first
-        if let Some(track) = tracks.iter().find(|t| {
-            t.disc_number == disc_num && t.track_number == track_num
-        }) {
+        if let Some(track) = tracks
+            .iter()
+            .find(|t| t.disc_number == disc_num && t.track_number == track_num)
+        {
             return Some(track.id);
         }
-        
+
         // If no disc match, just try track number on disc 1
         if disc_num == 1 {
             if let Some(track) = tracks.iter().find(|t| t.track_number == track_num) {
@@ -2245,17 +2492,13 @@ fn match_track_to_file(
 
     // Fallback: Try matching by title similarity
     let clean_name = clean_title_for_matching(name_without_ext);
-    
+
     let best_match = tracks
         .iter()
         .filter_map(|t| {
             let clean_track = clean_title_for_matching(&t.title);
             let score = title_similarity(&clean_name, &clean_track);
-            if score >= 0.8 {
-                Some((t, score))
-            } else {
-                None
-            }
+            if score >= 0.8 { Some((t, score)) } else { None }
         })
         .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -2265,7 +2508,7 @@ fn match_track_to_file(
 /// Parse track number (and optionally disc number) from filename
 fn parse_track_number_from_filename(filename: &str) -> Option<(i32, i32)> {
     use regex::Regex;
-    
+
     // Match patterns like "1-05" or "2-01" (disc-track)
     if let Ok(disc_track_re) = Regex::new(r"^(\d{1,2})[.-](\d{1,2})") {
         if let Some(caps) = disc_track_re.captures(filename) {
@@ -2297,7 +2540,10 @@ fn parse_track_number_from_filename(filename: &str) -> Option<(i32, i32)> {
     }
 
     // Last resort: find any leading number
-    let leading_num: String = filename.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let leading_num: String = filename
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     if !leading_num.is_empty() {
         if let Ok(track) = leading_num.parse::<i32>() {
             if track >= 1 && track <= 999 {
@@ -2320,7 +2566,7 @@ fn clean_title_for_matching(title: &str) -> String {
             result.push(' ');
         }
     }
-    
+
     // Normalize whitespace
     result.split_whitespace().collect::<Vec<_>>().join(" ")
 }

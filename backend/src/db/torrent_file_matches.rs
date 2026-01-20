@@ -133,7 +133,10 @@ impl TorrentFileMatchRepository {
     }
 
     /// Create multiple file matches at once
-    pub async fn create_batch(&self, inputs: Vec<CreateTorrentFileMatch>) -> Result<Vec<TorrentFileMatchRecord>> {
+    pub async fn create_batch(
+        &self,
+        inputs: Vec<CreateTorrentFileMatch>,
+    ) -> Result<Vec<TorrentFileMatchRecord>> {
         let mut records = Vec::with_capacity(inputs.len());
         for input in inputs {
             let record = self.create(input).await?;
@@ -337,12 +340,11 @@ impl TorrentFileMatchRepository {
 
     /// Count total file matches for a torrent
     pub async fn count_by_torrent_id(&self, torrent_id: Uuid) -> Result<i64> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM torrent_file_matches WHERE torrent_id = $1",
-        )
-        .bind(torrent_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM torrent_file_matches WHERE torrent_id = $1")
+                .bind(torrent_id)
+                .fetch_one(&self.pool)
+                .await?;
 
         Ok(count)
     }

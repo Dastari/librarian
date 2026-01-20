@@ -61,7 +61,7 @@ pub fn parse_torrent_files(torrent_bytes: &[u8]) -> Result<Vec<TorrentFileInfo>>
 /// Internal implementation that parses the bencoded torrent
 fn parse_torrent_files_internal(torrent_bytes: &[u8]) -> Result<Vec<TorrentFileInfo>> {
     use serde::Deserialize;
-    
+
     // Minimal bencode structures for extracting file info
     #[derive(Debug, Deserialize)]
     struct TorrentFile {
@@ -69,7 +69,7 @@ fn parse_torrent_files_internal(torrent_bytes: &[u8]) -> Result<Vec<TorrentFileI
         #[serde(default)]
         path: Vec<String>,
     }
-    
+
     #[derive(Debug, Deserialize)]
     struct TorrentInfo {
         name: String,
@@ -78,15 +78,15 @@ fn parse_torrent_files_internal(torrent_bytes: &[u8]) -> Result<Vec<TorrentFileI
         #[serde(default)]
         files: Option<Vec<TorrentFile>>,
     }
-    
+
     #[derive(Debug, Deserialize)]
     struct Torrent {
         info: TorrentInfo,
     }
-    
+
     // Parse the bencoded torrent file
-    let torrent: Torrent = serde_bencode::from_bytes(torrent_bytes)
-        .context("Failed to parse torrent file")?;
+    let torrent: Torrent =
+        serde_bencode::from_bytes(torrent_bytes).context("Failed to parse torrent file")?;
 
     let mut files = Vec::new();
 
@@ -112,7 +112,7 @@ fn parse_torrent_files_internal(torrent_bytes: &[u8]) -> Result<Vec<TorrentFileI
         // Single-file torrent
         let path = PathBuf::from(&torrent.info.name);
         let name = torrent.info.name.clone();
-        
+
         files.push(TorrentFileInfo {
             path,
             name,

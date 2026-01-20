@@ -32,7 +32,10 @@ pub fn validate_url_for_ssrf(url_str: &str) -> Result<()> {
     // Only allow HTTP and HTTPS schemes
     match url.scheme() {
         "http" | "https" => {}
-        scheme => anyhow::bail!("URL scheme '{}' is not allowed. Only HTTP(S) is permitted.", scheme),
+        scheme => anyhow::bail!(
+            "URL scheme '{}' is not allowed. Only HTTP(S) is permitted.",
+            scheme
+        ),
     }
 
     // Get the host
@@ -70,7 +73,10 @@ pub fn validate_url_for_ssrf(url_str: &str) -> Result<()> {
         Err(e) => {
             // DNS resolution failed - this could be a temporary issue or invalid hostname
             // Log a warning but allow the request to proceed (reqwest will fail anyway)
-            warn!("Failed to resolve hostname '{}': {}. Allowing request to proceed.", host, e);
+            warn!(
+                "Failed to resolve hostname '{}': {}. Allowing request to proceed.",
+                host, e
+            );
         }
     }
 

@@ -24,13 +24,16 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use tokio::sync::{broadcast, Semaphore};
+use tokio::sync::{Semaphore, broadcast};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
 use super::filename_parser::{self, ParsedEpisode};
-use super::metadata::{AddAlbumOptions, AddAudiobookOptions, AddMovieOptions, AddTvShowOptions, MetadataProvider, MetadataService};
+use super::metadata::{
+    AddAlbumOptions, AddAudiobookOptions, AddMovieOptions, AddTvShowOptions, MetadataProvider,
+    MetadataService,
+};
 use super::organizer::OrganizerService;
 use super::queues::{MediaAnalysisJob, MediaAnalysisQueue};
 use crate::db::{CreateEpisode, CreateMediaFile, Database};
@@ -70,9 +73,7 @@ const AUDIO_EXTENSIONS: &[&str] = &[
 ];
 
 /// Audiobook file extensions
-const AUDIOBOOK_EXTENSIONS: &[&str] = &[
-    "mp3", "m4a", "m4b", "aac", "ogg", "opus", "flac",
-];
+const AUDIOBOOK_EXTENSIONS: &[&str] = &["mp3", "m4a", "m4b", "aac", "ogg", "opus", "flac"];
 
 /// Get file extensions for a library type
 pub fn get_extensions_for_library_type(library_type: &str) -> &'static [&'static str] {
@@ -122,7 +123,7 @@ struct AudioMetadata {
 }
 
 /// Scanner service for discovering media files
-use crate::graphql::{Library as GqlLibrary, LibraryChangedEvent, LibraryChangeType};
+use crate::graphql::{Library as GqlLibrary, LibraryChangeType, LibraryChangedEvent};
 use crate::indexer::manager::IndexerManager;
 use crate::services::TorrentService;
 
@@ -289,14 +290,17 @@ impl ScannerService {
                     }
                 }
                 Err(e) => {
-                    warn!("Pre-scan consolidation failed for '{}': {}", library.name, e);
+                    warn!(
+                        "Pre-scan consolidation failed for '{}': {}",
+                        library.name, e
+                    );
                 }
             }
         }
 
         // Get extensions for this library type
         let valid_extensions = get_extensions_for_library_type(&library.library_type);
-        
+
         // First pass: collect all media files
         let mut video_files: Vec<DiscoveredFile> = Vec::new();
 
@@ -317,14 +321,14 @@ impl ScannerService {
                     .and_then(|n| n.to_str())
                     .unwrap_or("")
                     .to_string();
-                
+
                 // Parse based on library type
                 let parsed = match library.library_type.as_str() {
                     "tv" => filename_parser::parse_episode(&filename),
                     "movies" => filename_parser::parse_movie(&filename),
                     _ => filename_parser::parse_episode(&filename), // Fallback
                 };
-                
+
                 let relative_path = path
                     .strip_prefix(library_path)
                     .map(|p| p.to_string_lossy().to_string())
@@ -341,7 +345,10 @@ impl ScannerService {
         }
 
         let total_files = video_files.len() as i32;
-        info!("Found {} media files to scan in '{}'", total_files, library.name);
+        info!(
+            "Found {} media files to scan in '{}'",
+            total_files, library.name
+        );
 
         // Initialize progress
         let mut progress = ScanProgress {
@@ -421,7 +428,9 @@ impl ScannerService {
         // Auto-organize files if the library has organize_files enabled
         let is_music_library = library_type == "music";
         let is_audiobook_library = library_type == "audiobook";
-        if library.organize_files && (is_tv_library || is_movie_library || is_music_library || is_audiobook_library) {
+        if library.organize_files
+            && (is_tv_library || is_movie_library || is_music_library || is_audiobook_library)
+        {
             info!("Running automatic file organization for '{}'", library.name);
             if let Err(e) = self.organize_library_files(library_id).await {
                 error!("Failed to organize '{}': {}", library.name, e);
@@ -466,14 +475,23 @@ impl ScannerService {
         };
 
         if should_auto_hunt {
-            if let (Some(torrent_svc), Some(indexer_mgr)) = (&self.torrent_service, &self.indexer_manager) {
-                info!("Triggering auto-hunt for '{}'{}", library.name, 
-                    if !library.auto_hunt { " (show-level override)" } else { "" });
-                
+            if let (Some(torrent_svc), Some(indexer_mgr)) =
+                (&self.torrent_service, &self.indexer_manager)
+            {
+                info!(
+                    "Triggering auto-hunt for '{}'{}",
+                    library.name,
+                    if !library.auto_hunt {
+                        " (show-level override)"
+                    } else {
+                        ""
+                    }
+                );
+
                 let pool = self.db.pool().clone();
                 let torrent_svc = torrent_svc.clone();
                 let indexer_mgr = indexer_mgr.clone();
-                
+
                 // Run auto-hunt in background to not block scan completion
                 tokio::spawn(async move {
                     match crate::jobs::auto_hunt::run_auto_hunt_for_library(
@@ -481,7 +499,9 @@ impl ScannerService {
                         library_id,
                         torrent_svc,
                         indexer_mgr,
-                    ).await {
+                    )
+                    .await
+                    {
                         Ok(result) => {
                             info!(
                                 library_id = %library_id,
@@ -558,14 +578,14 @@ impl ScannerService {
 
         // Collect show groups into a vec for parallel processing
         let show_groups: Vec<(String, Vec<DiscoveredFile>)> = files_by_show.into_iter().collect();
-        
+
         // Process shows in chunks to avoid overwhelming the system
         let chunk_size = self.config.max_concurrent_metadata;
         let mut processed_shows = 0;
-        
+
         for chunk in show_groups.chunks(chunk_size) {
             let mut handles = Vec::with_capacity(chunk.len());
-            
+
             for (_normalized_name, show_files) in chunk {
                 if show_files.is_empty() {
                     continue;
@@ -590,11 +610,15 @@ impl ScannerService {
                 let handle = tokio::spawn(async move {
                     // Acquire semaphore permit for metadata operations
                     let _permit = semaphore.acquire().await.expect("Semaphore closed");
-                    
+
                     let show_name = show_files[0].parsed.show_name.clone().unwrap_or_default();
                     let year = show_files[0].parsed.year;
 
-                    info!("Processing {} files for show '{}'", show_files.len(), show_name);
+                    info!(
+                        "Processing {} files for show '{}'",
+                        show_files.len(),
+                        show_name
+                    );
 
                     // Try to find or create the TV show
                     let tv_show_id = match Self::find_or_create_tv_show_static(
@@ -705,7 +729,8 @@ impl ScannerService {
 
             // Small delay between chunks
             if self.config.metadata_batch_delay_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(self.config.metadata_batch_delay_ms)).await;
+                tokio::time::sleep(Duration::from_millis(self.config.metadata_batch_delay_ms))
+                    .await;
             }
         }
 
@@ -731,7 +756,8 @@ impl ScannerService {
     ) -> Result<ScanProgress> {
         // Group files by parsed movie title+year
         // Key is (normalized_title, year) tuple
-        let mut files_by_movie: HashMap<(String, Option<u32>), Vec<DiscoveredFile>> = HashMap::new();
+        let mut files_by_movie: HashMap<(String, Option<u32>), Vec<DiscoveredFile>> =
+            HashMap::new();
         let mut unlinked_files: Vec<DiscoveredFile> = Vec::new();
 
         for file in files {
@@ -802,14 +828,12 @@ impl ScannerService {
                     // Acquire semaphore permit for metadata operations
                     let _permit = semaphore.acquire().await.expect("Semaphore closed");
 
-                    let title = movie_files[0]
-                        .parsed
-                        .show_name
-                        .clone()
-                        .unwrap_or_default();
+                    let title = movie_files[0].parsed.show_name.clone().unwrap_or_default();
 
-                    info!("Processing {} files for movie '{}'{}",
-                        movie_files.len(), title,
+                    info!(
+                        "Processing {} files for movie '{}'{}",
+                        movie_files.len(),
+                        title,
                         year.map(|y| format!(" ({})", y)).unwrap_or_default()
                     );
 
@@ -900,7 +924,11 @@ impl ScannerService {
 
                     // Update movie stats if we have a movie
                     if let Some(movie_id) = movie_id {
-                        if let Err(e) = db.movies().update_file_status(movie_id, true, Some(total_size)).await {
+                        if let Err(e) = db
+                            .movies()
+                            .update_file_status(movie_id, true, Some(total_size))
+                            .await
+                        {
                             warn!(movie_id = %movie_id, error = %e, "Failed to update movie file status");
                         }
                     }
@@ -925,7 +953,8 @@ impl ScannerService {
 
             // Small delay between chunks
             if self.config.metadata_batch_delay_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(self.config.metadata_batch_delay_ms)).await;
+                tokio::time::sleep(Duration::from_millis(self.config.metadata_batch_delay_ms))
+                    .await;
             }
         }
 
@@ -1032,9 +1061,12 @@ impl ScannerService {
                 media_files_repo
                     .link_to_movie(existing_file.id, movie_id)
                     .await?;
-                debug!("Linked file to movie: {}", 
-                    std::path::Path::new(&file.path).file_name()
-                        .and_then(|n| n.to_str()).unwrap_or(&file.path)
+                debug!(
+                    "Linked file to movie: {}",
+                    std::path::Path::new(&file.path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(&file.path)
                 );
                 files_linked.fetch_add(1, Ordering::SeqCst);
             } else {
@@ -1309,7 +1341,8 @@ impl ScannerService {
 
             // Small delay between chunks
             if self.config.metadata_batch_delay_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(self.config.metadata_batch_delay_ms)).await;
+                tokio::time::sleep(Duration::from_millis(self.config.metadata_batch_delay_ms))
+                    .await;
             }
         }
 
@@ -1512,7 +1545,8 @@ impl ScannerService {
 
             // Small delay between chunks
             if self.config.metadata_batch_delay_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(self.config.metadata_batch_delay_ms)).await;
+                tokio::time::sleep(Duration::from_millis(self.config.metadata_batch_delay_ms))
+                    .await;
             }
         }
 
@@ -1601,7 +1635,9 @@ impl ScannerService {
         use lofty::probe::Probe;
 
         let tagged_file = Probe::open(path).ok()?.read().ok()?;
-        let tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag())?;
+        let tag = tagged_file
+            .primary_tag()
+            .or_else(|| tagged_file.first_tag())?;
 
         Some(AudioMetadata {
             artist: tag.artist().map(|s| s.to_string()),
@@ -1767,12 +1803,16 @@ impl ScannerService {
                         .await?
                     {
                         // Link the existing file to the episode
-                        media_files_repo.link_to_episode(existing_file.id, ep.id).await?;
+                        media_files_repo
+                            .link_to_episode(existing_file.id, ep.id)
+                            .await?;
                         debug!("Linked file to S{:02}E{:02}", season, episode);
                         episodes_linked.fetch_add(1, Ordering::SeqCst);
 
                         // Mark episode as downloaded
-                        episodes_repo.mark_downloaded(ep.id, existing_file.id).await?;
+                        episodes_repo
+                            .mark_downloaded(ep.id, existing_file.id)
+                            .await?;
                     }
                 }
             } else {
@@ -1782,46 +1822,51 @@ impl ScannerService {
         }
 
         // Try to link to an episode
-        let episode_id = if let (Some(season), Some(episode)) = (file.parsed.season, file.parsed.episode) {
-            let episodes_repo = db.episodes();
-            if let Some(ep) = episodes_repo
-                .get_by_show_season_episode(tv_show_id, season as i32, episode as i32)
-                .await?
-            {
-                episodes_linked.fetch_add(1, Ordering::SeqCst);
-                Some(ep.id)
-            } else {
-                // Try to create placeholder episode
-                match episodes_repo.create(CreateEpisode {
-                    tv_show_id,
-                    season: season as i32,
-                    episode: episode as i32,
-                    absolute_number: None,
-                    title: None,
-                    overview: None,
-                    air_date: None,
-                    runtime: None,
-                    tvmaze_id: None,
-                    tmdb_id: None,
-                    tvdb_id: None,
-                    status: Some("downloaded".to_string()),
-                }).await {
-                    Ok(ep) => {
-                        episodes_linked.fetch_add(1, Ordering::SeqCst);
-                        Some(ep.id)
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "Failed to create placeholder episode");
-                        None
+        let episode_id =
+            if let (Some(season), Some(episode)) = (file.parsed.season, file.parsed.episode) {
+                let episodes_repo = db.episodes();
+                if let Some(ep) = episodes_repo
+                    .get_by_show_season_episode(tv_show_id, season as i32, episode as i32)
+                    .await?
+                {
+                    episodes_linked.fetch_add(1, Ordering::SeqCst);
+                    Some(ep.id)
+                } else {
+                    // Try to create placeholder episode
+                    match episodes_repo
+                        .create(CreateEpisode {
+                            tv_show_id,
+                            season: season as i32,
+                            episode: episode as i32,
+                            absolute_number: None,
+                            title: None,
+                            overview: None,
+                            air_date: None,
+                            runtime: None,
+                            tvmaze_id: None,
+                            tmdb_id: None,
+                            tvdb_id: None,
+                            status: Some("downloaded".to_string()),
+                        })
+                        .await
+                    {
+                        Ok(ep) => {
+                            episodes_linked.fetch_add(1, Ordering::SeqCst);
+                            Some(ep.id)
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "Failed to create placeholder episode");
+                            None
+                        }
                     }
                 }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
 
         // Create media file record
-        Self::create_media_file_static(db, library_id, file, episode_id, new_files, analysis_queue).await
+        Self::create_media_file_static(db, library_id, file, episode_id, new_files, analysis_queue)
+            .await
     }
 
     /// Static version of create_media_file for use in spawned tasks

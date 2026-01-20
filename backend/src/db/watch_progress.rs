@@ -322,7 +322,8 @@ impl WatchProgressRepository {
         user_id: Uuid,
         episode_id: Uuid,
     ) -> Result<Option<WatchProgressRecord>> {
-        self.get_progress(user_id, ContentType::Episode, episode_id).await
+        self.get_progress(user_id, ContentType::Episode, episode_id)
+            .await
     }
 
     /// Get watch progress for a movie (convenience method)
@@ -331,7 +332,8 @@ impl WatchProgressRepository {
         user_id: Uuid,
         movie_id: Uuid,
     ) -> Result<Option<WatchProgressRecord>> {
-        self.get_progress(user_id, ContentType::Movie, movie_id).await
+        self.get_progress(user_id, ContentType::Movie, movie_id)
+            .await
     }
 
     /// Get watch progress for multiple episodes (batch fetch)

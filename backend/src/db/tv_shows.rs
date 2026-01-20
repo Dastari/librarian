@@ -520,54 +520,54 @@ impl TvShowRepository {
     }
 
     /// Update a TV show
-    /// 
+    ///
     /// For nullable override fields (Option<Option<T>>):
     /// - None (outer) = don't update the field
     /// - Some(None) = set the field to NULL (inherit from library)
     /// - Some(Some(value)) = set the field to the value
     pub async fn update(&self, id: Uuid, input: UpdateTvShow) -> Result<Option<TvShowRecord>> {
         // For Option<Option<T>> fields, we need to distinguish between:
-        // - "don't update" (outer None) 
+        // - "don't update" (outer None)
         // - "set to NULL" (Some(None))
         // We use CASE expressions with boolean flags to handle this.
-        
+
         // Extract the "should update" flags and flattened values for nullable override fields
         let update_auto_download = input.auto_download_override.is_some();
         let auto_download_value = input.auto_download_override.flatten();
-        
+
         let update_organize_files = input.organize_files_override.is_some();
         let organize_files_value = input.organize_files_override.flatten();
-        
+
         let update_rename_style = input.rename_style_override.is_some();
         let rename_style_value = input.rename_style_override.flatten();
-        
+
         let update_auto_hunt = input.auto_hunt_override.is_some();
         let auto_hunt_value = input.auto_hunt_override.flatten();
-        
+
         let update_resolutions = input.allowed_resolutions_override.is_some();
         let resolutions_value = input.allowed_resolutions_override.flatten();
-        
+
         let update_codecs = input.allowed_video_codecs_override.is_some();
         let codecs_value = input.allowed_video_codecs_override.flatten();
-        
+
         let update_audio = input.allowed_audio_formats_override.is_some();
         let audio_value = input.allowed_audio_formats_override.flatten();
-        
+
         let update_require_hdr = input.require_hdr_override.is_some();
         let require_hdr_value = input.require_hdr_override.flatten();
-        
+
         let update_hdr_types = input.allowed_hdr_types_override.is_some();
         let hdr_types_value = input.allowed_hdr_types_override.flatten();
-        
+
         let update_sources = input.allowed_sources_override.is_some();
         let sources_value = input.allowed_sources_override.flatten();
-        
+
         let update_blacklist = input.release_group_blacklist_override.is_some();
         let blacklist_value = input.release_group_blacklist_override.flatten();
-        
+
         let update_whitelist = input.release_group_whitelist_override.is_some();
         let whitelist_value = input.release_group_whitelist_override.flatten();
-        
+
         let record = sqlx::query_as::<_, TvShowRecord>(
             r#"
             UPDATE tv_shows SET

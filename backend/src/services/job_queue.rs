@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::{Semaphore, mpsc};
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
@@ -77,11 +77,7 @@ pub struct WorkQueue<T> {
 
 impl<T: Send + 'static> WorkQueue<T> {
     /// Create a new work queue with a processor function
-    pub fn new<F, Fut>(
-        name: &str,
-        config: JobQueueConfig,
-        processor: F,
-    ) -> Self
+    pub fn new<F, Fut>(name: &str, config: JobQueueConfig, processor: F) -> Self
     where
         F: Fn(T) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = ()> + Send,
@@ -96,18 +92,18 @@ impl<T: Send + 'static> WorkQueue<T> {
 
         tokio::spawn(async move {
             info!(queue = %queue_name, "Work queue started");
-            
+
             while let Some(job) = receiver.recv().await {
                 let sem = sem_clone.clone();
                 let proc = processor.clone();
                 let name = queue_name.clone();
-                
+
                 tokio::spawn(async move {
                     let _permit = sem.acquire().await.expect("Semaphore closed");
                     debug!(queue = %name, job_id = %job.id, "Processing job");
-                    
+
                     proc(job.payload).await;
-                    
+
                     debug!(queue = %name, job_id = %job.id, "Job completed");
                 });
 
@@ -116,7 +112,7 @@ impl<T: Send + 'static> WorkQueue<T> {
                     tokio::time::sleep(job_delay).await;
                 }
             }
-            
+
             info!(queue = %queue_name, "Work queue stopped");
         });
 
@@ -169,7 +165,7 @@ pub struct QueueStats {
 }
 
 /// Concurrency limiter for ad-hoc bounded parallel operations
-/// 
+///
 /// Use this when you need to limit concurrency for a batch of operations
 /// without setting up a full work queue.
 #[derive(Clone)]
@@ -207,7 +203,7 @@ impl ConcurrencyLimiter {
 }
 
 /// Process items in chunks with bounded concurrency
-/// 
+///
 /// This is useful for batch operations where you want to:
 /// 1. Process multiple items in parallel (up to max_concurrent)
 /// 2. Wait for a chunk to complete before starting the next
@@ -227,22 +223,26 @@ where
 {
     let mut all_results = Vec::with_capacity(items.len());
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
-    
-    for chunk in items.chunks(chunk_size).map(|c| c.to_vec()).collect::<Vec<_>>() {
+
+    for chunk in items
+        .chunks(chunk_size)
+        .map(|c| c.to_vec())
+        .collect::<Vec<_>>()
+    {
         let mut handles = Vec::with_capacity(chunk.len());
-        
+
         for item in chunk {
             let sem = semaphore.clone();
             let proc = processor.clone();
-            
+
             let handle = tokio::spawn(async move {
                 let _permit = sem.acquire().await.expect("Semaphore closed");
                 proc(item).await
             });
-            
+
             handles.push(handle);
         }
-        
+
         // Wait for all items in this chunk to complete
         for handle in handles {
             match handle.await {
@@ -252,18 +252,18 @@ where
                 }
             }
         }
-        
+
         // Delay between chunks
         if chunk_delay > Duration::ZERO {
             tokio::time::sleep(chunk_delay).await;
         }
     }
-    
+
     all_results
 }
 
 /// Process items with bounded concurrency using streams
-/// 
+///
 /// More memory-efficient than chunks for large datasets
 pub async fn process_concurrent<T, F, Fut, R>(
     items: impl IntoIterator<Item = T>,
@@ -277,9 +277,9 @@ where
     R: Send + 'static,
 {
     use futures::stream::{self, StreamExt};
-    
+
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
-    
+
     stream::iter(items)
         .map(|item| {
             let sem = semaphore.clone();
@@ -302,7 +302,7 @@ pub struct MetadataQueue {
 
 impl MetadataQueue {
     /// Create a new metadata queue
-    /// 
+    ///
     /// Default: 3 concurrent fetches with 200ms delay between operations
     pub fn new() -> Self {
         Self {
@@ -347,40 +347,42 @@ mod tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let max_seen = Arc::new(AtomicUsize::new(0));
         let limiter = ConcurrencyLimiter::new("test", 3);
-        
+
         let mut handles = vec![];
-        
+
         for _ in 0..10 {
             let c = counter.clone();
             let m = max_seen.clone();
             let l = limiter.clone();
-            
+
             handles.push(tokio::spawn(async move {
                 l.run(|| async {
                     let current = c.fetch_add(1, Ordering::SeqCst) + 1;
                     m.fetch_max(current, Ordering::SeqCst);
                     tokio::time::sleep(Duration::from_millis(10)).await;
                     c.fetch_sub(1, Ordering::SeqCst);
-                }).await;
+                })
+                .await;
             }));
         }
-        
+
         for h in handles {
             h.await.unwrap();
         }
-        
+
         assert!(max_seen.load(Ordering::SeqCst) <= 3);
     }
 
     #[tokio::test]
     async fn test_process_concurrent() {
         let items: Vec<i32> = (1..=10).collect();
-        
+
         let results = process_concurrent(items, 3, |x| async move {
             tokio::time::sleep(Duration::from_millis(10)).await;
             x * 2
-        }).await;
-        
+        })
+        .await;
+
         assert_eq!(results.len(), 10);
         // Results may be in any order due to concurrency
         let mut sorted = results.clone();

@@ -12,9 +12,9 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-use crate::db::{Database, EpisodeRecord, MediaFileRecord, TvShowRecord};
-use crate::db::libraries::LibraryRecord;
 use super::file_utils::{is_video_file, sanitize_for_filename};
+use crate::db::libraries::LibraryRecord;
+use crate::db::{Database, EpisodeRecord, MediaFileRecord, TvShowRecord};
 
 /// Rename style options
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -233,7 +233,11 @@ impl OrganizerService {
             Some(p) if !p.is_empty() => Some(p.to_string()),
             _ => {
                 // Fetch default from database
-                let pattern = self.db.naming_patterns().get_default_pattern_for_type("tv").await?;
+                let pattern = self
+                    .db
+                    .naming_patterns()
+                    .get_default_pattern_for_type("tv")
+                    .await?;
                 Some(pattern)
             }
         };
@@ -315,8 +319,10 @@ impl OrganizerService {
                 // Different file - conflict!
                 // Move the existing file to the conflicts folder instead of failing
                 let conflicts_folder = self.get_conflicts_folder(library_path).await;
-                
-                if let Some(conflict_path) = self.move_to_conflicts(&new_path, &conflicts_folder).await? {
+
+                if let Some(conflict_path) =
+                    self.move_to_conflicts(&new_path, &conflicts_folder).await?
+                {
                     info!(
                         file_id = %file.id,
                         original_target = %new_path_str,
@@ -377,9 +383,12 @@ impl OrganizerService {
                                     "Failed to delete duplicate source file"
                                 );
                             } else {
-                                debug!("Deleted duplicate source file: {}",
-                                    std::path::Path::new(&original_path).file_name()
-                                        .and_then(|n| n.to_str()).unwrap_or(&original_path)
+                                debug!(
+                                    "Deleted duplicate source file: {}",
+                                    std::path::Path::new(&original_path)
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or(&original_path)
                                 );
                             }
                         }
@@ -591,7 +600,12 @@ impl OrganizerService {
         // Get pattern from library, or fetch default from database
         let effective_pattern = match naming_pattern {
             Some(p) => p.to_string(),
-            None => self.db.naming_patterns().get_default_pattern_for_type("movies").await?,
+            None => {
+                self.db
+                    .naming_patterns()
+                    .get_default_pattern_for_type("movies")
+                    .await?
+            }
         };
 
         let new_path = self.generate_movie_organized_path(
@@ -669,8 +683,10 @@ impl OrganizerService {
                 // Different file - conflict!
                 // Move the existing file to the conflicts folder instead of failing
                 let conflicts_folder = self.get_conflicts_folder(library_path).await;
-                
-                if let Some(conflict_path) = self.move_to_conflicts(&new_path, &conflicts_folder).await? {
+
+                if let Some(conflict_path) =
+                    self.move_to_conflicts(&new_path, &conflicts_folder).await?
+                {
                     info!(
                         file_id = %file.id,
                         original_target = %new_path_str,
@@ -776,11 +792,7 @@ impl OrganizerService {
         // - If source is already in the library folder, use "move" (rename in-place)
         // - If source is in downloads folder, use the specified action
         let source_in_library = source_path.starts_with(library_path);
-        let effective_action = if source_in_library {
-            "move"
-        } else {
-            action
-        };
+        let effective_action = if source_in_library { "move" } else { action };
 
         if source_in_library && effective_action != action {
             debug!(
@@ -929,7 +941,8 @@ impl OrganizerService {
             .unwrap_or("mp3");
 
         let pattern = naming_pattern.unwrap_or(DEFAULT_MUSIC_NAMING_PATTERN);
-        let relative_path = apply_music_naming_pattern(pattern, artist_name, album, original_filename, ext);
+        let relative_path =
+            apply_music_naming_pattern(pattern, artist_name, album, original_filename, ext);
         PathBuf::from(library_path).join(relative_path)
     }
 
@@ -953,7 +966,12 @@ impl OrganizerService {
         // Get pattern from library, or fetch default from database
         let effective_pattern = match naming_pattern {
             Some(p) => p.to_string(),
-            None => self.db.naming_patterns().get_default_pattern_for_type("music").await?,
+            None => {
+                self.db
+                    .naming_patterns()
+                    .get_default_pattern_for_type("music")
+                    .await?
+            }
         };
 
         let new_path = self.generate_music_organized_path(
@@ -1069,7 +1087,8 @@ impl OrganizerService {
                 "Music target file already exists, marking as organized"
             );
 
-            if let Err(e) = self.db
+            if let Err(e) = self
+                .db
                 .media_files()
                 .mark_organized(file.id, &new_path_str, &original_path)
                 .await
@@ -1107,16 +1126,14 @@ impl OrganizerService {
 
         // Perform file operation
         let operation_result = match effective_action {
-            "move" => {
-                match tokio::fs::rename(source_path, &new_path).await {
-                    Ok(_) => Ok(()),
-                    Err(_) => {
-                        tokio::fs::copy(source_path, &new_path).await?;
-                        tokio::fs::remove_file(source_path).await?;
-                        Ok(())
-                    }
+            "move" => match tokio::fs::rename(source_path, &new_path).await {
+                Ok(_) => Ok(()),
+                Err(_) => {
+                    tokio::fs::copy(source_path, &new_path).await?;
+                    tokio::fs::remove_file(source_path).await?;
+                    Ok(())
                 }
-            }
+            },
             "hardlink" => {
                 #[cfg(unix)]
                 {
@@ -1181,7 +1198,8 @@ impl OrganizerService {
         }
 
         // Update database
-        if let Err(e) = self.db
+        if let Err(e) = self
+            .db
             .media_files()
             .mark_organized(file.id, &new_path_str, &original_path)
             .await
@@ -1237,7 +1255,8 @@ impl OrganizerService {
             .unwrap_or("m4b");
 
         let pattern = naming_pattern.unwrap_or(DEFAULT_AUDIOBOOK_NAMING_PATTERN);
-        let relative_path = apply_audiobook_naming_pattern(pattern, author_name, audiobook, original_filename, ext);
+        let relative_path =
+            apply_audiobook_naming_pattern(pattern, author_name, audiobook, original_filename, ext);
         PathBuf::from(library_path).join(relative_path)
     }
 
@@ -1261,7 +1280,12 @@ impl OrganizerService {
         // Get pattern from library, or fetch default from database
         let effective_pattern = match naming_pattern {
             Some(p) => p.to_string(),
-            None => self.db.naming_patterns().get_default_pattern_for_type("audiobooks").await?,
+            None => {
+                self.db
+                    .naming_patterns()
+                    .get_default_pattern_for_type("audiobooks")
+                    .await?
+            }
         };
 
         let new_path = self.generate_audiobook_organized_path(
@@ -1377,7 +1401,8 @@ impl OrganizerService {
                 "Audiobook target file already exists, marking as organized"
             );
 
-            if let Err(e) = self.db
+            if let Err(e) = self
+                .db
                 .media_files()
                 .mark_organized(file.id, &new_path_str, &original_path)
                 .await
@@ -1415,16 +1440,14 @@ impl OrganizerService {
 
         // Perform file operation
         let operation_result = match effective_action {
-            "move" => {
-                match tokio::fs::rename(source_path, &new_path).await {
-                    Ok(_) => Ok(()),
-                    Err(_) => {
-                        tokio::fs::copy(source_path, &new_path).await?;
-                        tokio::fs::remove_file(source_path).await?;
-                        Ok(())
-                    }
+            "move" => match tokio::fs::rename(source_path, &new_path).await {
+                Ok(_) => Ok(()),
+                Err(_) => {
+                    tokio::fs::copy(source_path, &new_path).await?;
+                    tokio::fs::remove_file(source_path).await?;
+                    Ok(())
                 }
-            }
+            },
             "hardlink" => {
                 #[cfg(unix)]
                 {
@@ -1489,7 +1512,8 @@ impl OrganizerService {
         }
 
         // Update database
-        if let Err(e) = self.db
+        if let Err(e) = self
+            .db
             .media_files()
             .mark_organized(file.id, &new_path_str, &original_path)
             .await
@@ -1558,19 +1582,14 @@ impl OrganizerService {
 
             for episode in episodes {
                 // Get all media files linked to this episode
-                let files = self
-                    .db
-                    .media_files()
-                    .list_by_episode(episode.id)
-                    .await?;
+                let files = self.db.media_files().list_by_episode(episode.id).await?;
 
                 if files.len() <= 1 {
                     continue; // No duplicates
                 }
 
                 // Generate the canonical path for this episode
-                let (organize_files, rename_style) =
-                    self.get_show_organize_settings(&show).await?;
+                let (organize_files, rename_style) = self.get_show_organize_settings(&show).await?;
 
                 // Find the "best" file to keep
                 // Priority: 1. Already at canonical path, 2. Highest resolution, 3. Best codec
@@ -1728,7 +1747,8 @@ impl OrganizerService {
             tracked_files.iter().map(|f| f.path.clone()).collect();
 
         // Get extensions for this library type
-        let valid_extensions = crate::services::scanner::get_extensions_for_library_type(&library.library_type);
+        let valid_extensions =
+            crate::services::scanner::get_extensions_for_library_type(&library.library_type);
 
         // Walk the library and find orphan files
         for entry in WalkDir::new(library_path)
@@ -1747,7 +1767,11 @@ impl OrganizerService {
                 .map(|s| s.to_lowercase());
 
             // Skip non-media files
-            if !ext.as_ref().map(|e| valid_extensions.contains(&e.as_str())).unwrap_or(false) {
+            if !ext
+                .as_ref()
+                .map(|e| valid_extensions.contains(&e.as_str()))
+                .unwrap_or(false)
+            {
                 continue;
             }
 
@@ -2044,7 +2068,9 @@ impl OrganizerService {
                 success: true,
                 folders_removed: 0,
                 files_moved: 0,
-                messages: vec!["Consolidation is only supported for TV libraries currently".to_string()],
+                messages: vec![
+                    "Consolidation is only supported for TV libraries currently".to_string(),
+                ],
             });
         }
 
@@ -2176,7 +2202,8 @@ impl OrganizerService {
 
             if entry_path.is_dir() {
                 // Recursively move directory contents (e.g., Season folders)
-                let sub_moved = Box::pin(self.move_folder_contents(&entry_path, &dest_path, messages)).await?;
+                let sub_moved =
+                    Box::pin(self.move_folder_contents(&entry_path, &dest_path, messages)).await?;
                 moved_count += sub_moved;
 
                 // Try to remove the now-empty source directory
@@ -2195,10 +2222,8 @@ impl OrganizerService {
                             moved_count += 1; // Count as "handled"
                         }
                         Err(e) => {
-                            messages.push(format!(
-                                "Failed to delete duplicate {}: {}",
-                                entry_name, e
-                            ));
+                            messages
+                                .push(format!("Failed to delete duplicate {}: {}", entry_name, e));
                         }
                     }
                     continue;
@@ -2206,7 +2231,8 @@ impl OrganizerService {
 
                 match tokio::fs::rename(&entry_path, &dest_path).await {
                     Ok(_) => {
-                        messages.push(format!("Moved: {} -> {}", 
+                        messages.push(format!(
+                            "Moved: {} -> {}",
                             entry_path.display(),
                             dest_path.display()
                         ));
@@ -2217,7 +2243,8 @@ impl OrganizerService {
                         match tokio::fs::copy(&entry_path, &dest_path).await {
                             Ok(_) => {
                                 tokio::fs::remove_file(&entry_path).await.ok();
-                                messages.push(format!("Moved: {} -> {}",
+                                messages.push(format!(
+                                    "Moved: {} -> {}",
                                     entry_path.display(),
                                     dest_path.display()
                                 ));
@@ -2268,7 +2295,11 @@ impl OrganizerService {
     /// Move a file to the conflicts folder
     ///
     /// Returns the new path if successful, None if failed
-    async fn move_to_conflicts(&self, file_path: &Path, conflicts_folder: &Path) -> Result<Option<String>> {
+    async fn move_to_conflicts(
+        &self,
+        file_path: &Path,
+        conflicts_folder: &Path,
+    ) -> Result<Option<String>> {
         // Create conflicts folder if it doesn't exist
         if let Err(e) = tokio::fs::create_dir_all(conflicts_folder).await {
             warn!(
@@ -2362,7 +2393,7 @@ impl OrganizerService {
 
             // Parse the filename
             let parsed = crate::services::filename_parser::parse_episode(filename);
-            
+
             let Some(ref show_name) = parsed.show_name else {
                 continue;
             };
@@ -2396,10 +2427,11 @@ impl OrganizerService {
 
             // Create target directory and move file
             tokio::fs::create_dir_all(&target_dir).await.ok();
-            
+
             match tokio::fs::rename(&entry_path, &target_path).await {
                 Ok(_) => {
-                    messages.push(format!("Moved root file: {} -> {}/{}/{}",
+                    messages.push(format!(
+                        "Moved root file: {} -> {}/{}/{}",
                         filename, show_folder, season_folder, filename
                     ));
                     moved_count += 1;
@@ -2408,7 +2440,8 @@ impl OrganizerService {
                     // Try copy + delete
                     if tokio::fs::copy(&entry_path, &target_path).await.is_ok() {
                         tokio::fs::remove_file(&entry_path).await.ok();
-                        messages.push(format!("Moved root file: {} -> {}/{}/{}",
+                        messages.push(format!(
+                            "Moved root file: {} -> {}/{}/{}",
                             filename, show_folder, season_folder, filename
                         ));
                         moved_count += 1;
@@ -2432,16 +2465,14 @@ impl OrganizerService {
 
         for file in media_files {
             let current_path = Path::new(&file.path);
-            
+
             // Check if file exists at current path
             if current_path.exists() {
                 continue;
             }
 
             // Try to find the file by name in the library
-            let filename = current_path
-                .file_name()
-                .and_then(|n| n.to_str());
+            let filename = current_path.file_name().and_then(|n| n.to_str());
 
             let Some(name) = filename else {
                 continue;
@@ -2450,7 +2481,13 @@ impl OrganizerService {
             // Search for file in library
             if let Some(new_path) = find_file_in_directory(&lib.path, name).await {
                 // Update database
-                if self.db.media_files().update_path(file.id, &new_path).await.is_ok() {
+                if self
+                    .db
+                    .media_files()
+                    .update_path(file.id, &new_path)
+                    .await
+                    .is_ok()
+                {
                     updated_count += 1;
                 }
             }
@@ -2484,7 +2521,10 @@ impl OrganizerService {
         }
 
         match library.library_type.as_str() {
-            "tv" => self.cleanup_empty_folders_tv(library_id, library_path).await,
+            "tv" => {
+                self.cleanup_empty_folders_tv(library_id, library_path)
+                    .await
+            }
             "movies" => self.cleanup_empty_folders_movies(library_path).await,
             _ => {
                 // For other library types, do generic cleanup
@@ -2534,14 +2574,15 @@ impl OrganizerService {
             if let Some(ref path) = show.path {
                 let actual_path = PathBuf::from(path);
                 protected_paths.insert(actual_path.clone());
-                
+
                 // And its season folders
                 if actual_path.exists() {
                     if let Ok(mut entries) = tokio::fs::read_dir(&actual_path).await {
                         while let Ok(Some(entry)) = entries.next_entry().await {
                             let entry_path = entry.path();
                             if entry_path.is_dir() {
-                                let name = entry_path.file_name()
+                                let name = entry_path
+                                    .file_name()
                                     .and_then(|n| n.to_str())
                                     .unwrap_or("");
                                 // Protect Season folders
@@ -2563,7 +2604,7 @@ impl OrganizerService {
         // Now walk the library and find empty folders to remove
         // We need to process depth-first (deepest folders first)
         let folders_to_check = collect_all_folders(library_path).await?;
-        
+
         // Sort by depth (deepest first) so we remove children before parents
         let mut sorted_folders: Vec<_> = folders_to_check.into_iter().collect();
         sorted_folders.sort_by(|a, b| {
@@ -2627,7 +2668,7 @@ impl OrganizerService {
 
         // Collect all folders depth-first
         let folders_to_check = collect_all_folders(library_path).await?;
-        
+
         // Sort by depth (deepest first)
         let mut sorted_folders: Vec<_> = folders_to_check.into_iter().collect();
         sorted_folders.sort_by(|a, b| {
@@ -2689,9 +2730,9 @@ pub struct DeduplicationResult {
 /// Collect all folders in a directory tree
 async fn collect_all_folders(root: &Path) -> Result<Vec<PathBuf>> {
     use walkdir::WalkDir;
-    
+
     let mut folders = Vec::new();
-    
+
     for entry in WalkDir::new(root)
         .min_depth(1) // Skip the root itself
         .into_iter()
@@ -2701,7 +2742,7 @@ async fn collect_all_folders(root: &Path) -> Result<Vec<PathBuf>> {
             folders.push(entry.path().to_path_buf());
         }
     }
-    
+
     Ok(folders)
 }
 
@@ -2710,21 +2751,25 @@ async fn collect_all_folders(root: &Path) -> Result<Vec<PathBuf>> {
 /// Returns true if the folder and all its subdirectories contain no files
 async fn is_folder_empty_of_files(path: &Path) -> Result<bool> {
     use walkdir::WalkDir;
-    
+
     for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
         if entry.file_type().is_file() {
             return Ok(false);
         }
     }
-    
+
     Ok(true)
 }
 
 /// Find a file by name within a directory tree
 async fn find_file_in_directory(dir: &str, filename: &str) -> Option<String> {
     use walkdir::WalkDir;
-    
-    for entry in WalkDir::new(dir).max_depth(5).into_iter().filter_map(|e| e.ok()) {
+
+    for entry in WalkDir::new(dir)
+        .max_depth(5)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if entry.file_type().is_file() {
             if let Some(name) = entry.file_name().to_str() {
                 if name == filename {
@@ -2910,7 +2955,10 @@ pub fn apply_movie_naming_pattern(
     result = result.replace("{title}", &sanitize_for_filename(&movie.title));
 
     // Replace {year} with movie year
-    let year_str = movie.year.map(|y| y.to_string()).unwrap_or_else(|| "Unknown".to_string());
+    let year_str = movie
+        .year
+        .map(|y| y.to_string())
+        .unwrap_or_else(|| "Unknown".to_string());
     result = result.replace("{year}", &year_str);
 
     // Replace {ext} with extension (without leading dot)
@@ -2959,7 +3007,10 @@ pub fn apply_music_naming_pattern(
     result = result.replace("{album}", &sanitize_for_filename(&album.name));
 
     // Replace {year} with album year
-    let year_str = album.year.map(|y| y.to_string()).unwrap_or_else(|| "Unknown".to_string());
+    let year_str = album
+        .year
+        .map(|y| y.to_string())
+        .unwrap_or_else(|| "Unknown".to_string());
     result = result.replace("{year}", &year_str);
 
     // Replace {ext} with extension (without leading dot)
@@ -2977,7 +3028,10 @@ pub fn apply_music_naming_pattern(
     // Common patterns: "01 - Track Title.mp3", "01. Track Title.mp3", "01 Track Title.mp3"
     let track_re = Regex::new(r"^(\d+)[.\-\s]+(.+)$").unwrap();
     let (track_num, track_title) = if let Some(caps) = track_re.captures(original_stem) {
-        let num: i32 = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+        let num: i32 = caps
+            .get(1)
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(0);
         let title = caps.get(2).map(|m| m.as_str()).unwrap_or(original_stem);
         (num, sanitize_for_filename(title))
     } else {
@@ -3029,19 +3083,24 @@ pub fn apply_audiobook_naming_pattern(
     result = result.replace("{title}", &sanitize_for_filename(&audiobook.title));
 
     // Replace {series} with series name (or empty)
-    let series_name = audiobook.series_name.as_ref()
+    let series_name = audiobook
+        .series_name
+        .as_ref()
         .map(|s| sanitize_for_filename(s))
         .unwrap_or_default();
     result = result.replace("{series}", &series_name);
 
     // Replace {series_position} with position
-    let series_pos = audiobook.series_position
+    let series_pos = audiobook
+        .series_position
         .map(|p| p.to_string())
         .unwrap_or_default();
     result = result.replace("{series_position}", &series_pos);
 
     // Replace {narrator} with first narrator
-    let narrator = audiobook.narrators.first()
+    let narrator = audiobook
+        .narrators
+        .first()
         .map(|n| sanitize_for_filename(n))
         .unwrap_or_default();
     result = result.replace("{narrator}", &narrator);
@@ -3082,7 +3141,8 @@ pub const DEFAULT_MOVIE_NAMING_PATTERN: &str = "{title} ({year})/{title} ({year}
 /// - `{title}` - Track title
 /// - `{ext}` - File extension (without dot)
 /// - `{original}` - Original filename (without extension)
-pub const DEFAULT_MUSIC_NAMING_PATTERN: &str = "{artist}/{album} ({year})/{track:02} - {title}.{ext}";
+pub const DEFAULT_MUSIC_NAMING_PATTERN: &str =
+    "{artist}/{album} ({year})/{track:02} - {title}.{ext}";
 
 /// Default naming pattern for audiobooks
 /// Supported variables:
@@ -3104,11 +3164,11 @@ mod tests {
         // sanitize_filename crate removes invalid characters
         let result = sanitize_for_filename("Show: Name");
         assert!(!result.contains(':'), "Should not contain colon");
-        
+
         let result = sanitize_for_filename("What/If?");
         assert!(!result.contains('/'), "Should not contain slash");
         assert!(!result.contains('?'), "Should not contain question mark");
-        
+
         // Normal names should be unchanged
         assert_eq!(sanitize_for_filename("Normal Name"), "Normal Name");
     }
@@ -3117,9 +3177,13 @@ mod tests {
     fn test_extract_quality_info() {
         // extract_quality_info returns resolution + codec (group may or may not be included)
         let result1 = extract_quality_info("Show.S01E01.1080p.HEVC.x265-GroupName");
-        assert!(result1.contains("1080p"), "Should contain 1080p: {}", result1);
+        assert!(
+            result1.contains("1080p"),
+            "Should contain 1080p: {}",
+            result1
+        );
         assert!(result1.contains("HEVC"), "Should contain HEVC: {}", result1);
-        
+
         let result2 = extract_quality_info("Show.S01E01.720p.x264-FLEET");
         assert!(result2.contains("720p"), "Should contain 720p: {}", result2);
     }
@@ -3283,7 +3347,11 @@ mod tests {
         let result = apply_naming_pattern(DEFAULT_NAMING_PATTERN, &show, &episode, "mkv");
         // Colon should be sanitized
         let path_str = result.to_string_lossy();
-        assert!(!path_str.contains(':'), "Path should not contain colons: {}", path_str);
+        assert!(
+            !path_str.contains(':'),
+            "Path should not contain colons: {}",
+            path_str
+        );
         assert!(path_str.contains("Deep Space Nine"));
         assert!(path_str.contains("S01E09"));
         assert!(path_str.contains("The Passenger"));
@@ -3358,11 +3426,17 @@ mod tests {
 
         let result = apply_naming_pattern(DEFAULT_NAMING_PATTERN, &show, &episode, "mkv");
         let path_str = result.to_string_lossy();
-        
+
         // Should not contain filesystem-invalid characters
-        assert!(!path_str.contains('?'), "Path should not contain question marks: {}", path_str);
-        assert!(!path_str.contains('/') || path_str.matches('/').count() <= 2, 
-            "Should only have expected path separators");
+        assert!(
+            !path_str.contains('?'),
+            "Path should not contain question marks: {}",
+            path_str
+        );
+        assert!(
+            !path_str.contains('/') || path_str.matches('/').count() <= 2,
+            "Should only have expected path separators"
+        );
     }
 
     // =========================================================================
@@ -3423,15 +3497,27 @@ mod tests {
             DEFAULT_MOVIE_NAMING_PATTERN,
             &movie,
             "Jack.Ryan.Shadow.Recruit.2014.1080p.BluRay.mkv",
-            "mkv"
+            "mkv",
         );
         let path_str = result.to_string_lossy();
-        
+
         // Should contain title and year
-        assert!(path_str.contains("Jack Ryan"), "Should contain movie title: {}", path_str);
-        assert!(path_str.contains("2014"), "Should contain year: {}", path_str);
+        assert!(
+            path_str.contains("Jack Ryan"),
+            "Should contain movie title: {}",
+            path_str
+        );
+        assert!(
+            path_str.contains("2014"),
+            "Should contain year: {}",
+            path_str
+        );
         // Colon should be sanitized
-        assert!(!path_str.contains(':'), "Should not contain colons: {}", path_str);
+        assert!(
+            !path_str.contains(':'),
+            "Should not contain colons: {}",
+            path_str
+        );
     }
 
     #[test]
@@ -3488,12 +3574,16 @@ mod tests {
             DEFAULT_MOVIE_NAMING_PATTERN,
             &movie,
             "Unknown.Movie.1080p.BluRay.mkv",
-            "mkv"
+            "mkv",
         );
         let path_str = result.to_string_lossy();
-        
+
         // Should handle missing year gracefully
-        assert!(path_str.contains("Unknown Movie"), "Should contain movie title: {}", path_str);
+        assert!(
+            path_str.contains("Unknown Movie"),
+            "Should contain movie title: {}",
+            path_str
+        );
     }
 
     // =========================================================================
@@ -3512,10 +3602,13 @@ mod tests {
         assert!(!sanitize_for_filename("File<>Name").contains('>'));
         assert!(!sanitize_for_filename("File|Name").contains('|'));
         assert!(!sanitize_for_filename("File\"Name").contains('"'));
-        
+
         // Normal names should be unchanged
         assert_eq!(sanitize_for_filename("Normal Name"), "Normal Name");
-        assert_eq!(sanitize_for_filename("Name-With-Dashes"), "Name-With-Dashes");
+        assert_eq!(
+            sanitize_for_filename("Name-With-Dashes"),
+            "Name-With-Dashes"
+        );
         assert_eq!(sanitize_for_filename("Name.With.Dots"), "Name.With.Dots");
     }
 
@@ -3527,18 +3620,31 @@ mod tests {
     fn test_extract_quality_info_comprehensive() {
         // Standard scene releases - test that key info is extracted
         let result1 = extract_quality_info("Show.S01E01.1080p.HEVC.x265-GroupName");
-        assert!(result1.contains("1080p"), "Should contain 1080p: {}", result1);
-        
+        assert!(
+            result1.contains("1080p"),
+            "Should contain 1080p: {}",
+            result1
+        );
+
         let result2 = extract_quality_info("Show.S01E01.720p.x264-FLEET");
         assert!(result2.contains("720p"), "Should contain 720p: {}", result2);
-        
+
         // 4K HDR
         let result_4k = extract_quality_info("Show.S01E01.2160p.HDR.DV.HEVC-GROUP");
-        assert!(result_4k.contains("2160p") || result_4k.contains("4K"), "Should contain 4K info: {}", result_4k);
-        
+        assert!(
+            result_4k.contains("2160p") || result_4k.contains("4K"),
+            "Should contain 4K info: {}",
+            result_4k
+        );
+
         // Web-DL sources
-        let result_web = extract_quality_info("Fallout.2024.S01E01.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb");
-        assert!(result_web.contains("1080p"), "Should contain 1080p: {}", result_web);
+        let result_web =
+            extract_quality_info("Fallout.2024.S01E01.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb");
+        assert!(
+            result_web.contains("1080p"),
+            "Should contain 1080p: {}",
+            result_web
+        );
     }
 
     #[test]
@@ -3546,8 +3652,14 @@ mod tests {
         // From the RSS feed - test that key quality info is present
         let examples = vec![
             ("Chicago Fire S14E08 1080p WEB h264-ETHEL", "1080p"),
-            ("The Daily Show 2026 01 07 Stephen J Dubner 720p HEVC x265-MeGusta", "720p"),
-            ("Old Dog New Tricks S01E05 2025 2160p NF WEB-DL DDP5 1 Atmos HDR H 265-HHWEB", "2160p"),
+            (
+                "The Daily Show 2026 01 07 Stephen J Dubner 720p HEVC x265-MeGusta",
+                "720p",
+            ),
+            (
+                "Old Dog New Tricks S01E05 2025 2160p NF WEB-DL DDP5 1 Atmos HDR H 265-HHWEB",
+                "2160p",
+            ),
             // Note: XviD detection depends on parser implementation
         ];
 
@@ -3556,7 +3668,9 @@ mod tests {
             assert!(
                 result.to_lowercase().contains(&expected_res.to_lowercase()),
                 "Expected '{}' to contain '{}', got '{}'",
-                filename, expected_res, result
+                filename,
+                expected_res,
+                result
             );
         }
     }

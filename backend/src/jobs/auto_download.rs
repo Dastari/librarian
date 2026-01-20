@@ -18,9 +18,9 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::db::Database;
+use crate::services::TorrentService;
 use crate::services::torrent::TorrentInfo;
 use crate::services::torrent_file_matcher::TorrentFileMatcher;
-use crate::services::TorrentService;
 
 /// Create file-level matches for an episode after torrent download starts
 async fn create_file_matches_for_episode(
@@ -57,7 +57,7 @@ const MAX_CONCURRENT_DOWNLOADS: usize = 3;
 const BATCH_DELAY_MS: u64 = 500;
 
 /// Check for available episodes and start downloading them
-/// 
+///
 /// Uses bounded concurrency to prevent overwhelming the torrent client.
 pub async fn process_available_episodes(
     pool: PgPool,
@@ -92,16 +92,16 @@ pub async fn process_available_episodes(
     let downloaded = Arc::new(AtomicI32::new(0));
     let skipped = Arc::new(AtomicI32::new(0));
     let failed = Arc::new(AtomicI32::new(0));
-    
+
     // Semaphore to limit concurrent downloads
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS));
-    
+
     // Process episodes in chunks
     let chunk_size = MAX_CONCURRENT_DOWNLOADS;
-    
+
     for chunk in available_episodes.chunks(chunk_size) {
         let mut handles = Vec::with_capacity(chunk.len());
-        
+
         for episode in chunk {
             let db = db.clone();
             let torrent_service = torrent_service.clone();
@@ -110,10 +110,10 @@ pub async fn process_available_episodes(
             let skipped = skipped.clone();
             let failed = failed.clone();
             let episode = episode.clone();
-            
+
             let handle = tokio::spawn(async move {
                 let _permit = semaphore.acquire().await.expect("Semaphore closed");
-                
+
                 // Get show info
                 let show = match db.tv_shows().get_by_id(episode.tv_show_id).await {
                     Ok(Some(s)) => s,
@@ -205,7 +205,9 @@ pub async fn process_available_episodes(
                         );
 
                         // Create file-level matches for the episode
-                        if let Err(e) = create_file_matches_for_episode(&db, &torrent_info, episode.id).await {
+                        if let Err(e) =
+                            create_file_matches_for_episode(&db, &torrent_info, episode.id).await
+                        {
                             error!(
                                 job = "auto_download",
                                 show_name = %show.name,
@@ -230,17 +232,17 @@ pub async fn process_available_episodes(
                     }
                 }
             });
-            
+
             handles.push(handle);
         }
-        
+
         // Wait for all downloads in this chunk to start
         for handle in handles {
             if let Err(e) = handle.await {
                 error!(job = "auto_download", error = %e, "Download task panicked");
             }
         }
-        
+
         // Small delay between chunks
         if BATCH_DELAY_MS > 0 {
             tokio::time::sleep(Duration::from_millis(BATCH_DELAY_MS)).await;
@@ -347,7 +349,9 @@ pub async fn download_available_for_show(
                 );
 
                 // Create file-level matches for the episode
-                if let Err(e) = create_file_matches_for_episode(&db, &torrent_info, episode.id).await {
+                if let Err(e) =
+                    create_file_matches_for_episode(&db, &torrent_info, episode.id).await
+                {
                     error!("Failed to create file matches for episode: {:?}", e);
                 }
 

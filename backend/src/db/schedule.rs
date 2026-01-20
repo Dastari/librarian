@@ -266,7 +266,10 @@ impl ScheduleRepository {
     }
 
     /// Get sync state for a country
-    pub async fn get_sync_state(&self, country_code: &str) -> Result<Option<ScheduleSyncStateRecord>> {
+    pub async fn get_sync_state(
+        &self,
+        country_code: &str,
+    ) -> Result<Option<ScheduleSyncStateRecord>> {
         let record = sqlx::query_as::<_, ScheduleSyncStateRecord>(
             "SELECT * FROM schedule_sync_state WHERE country_code = $1",
         )

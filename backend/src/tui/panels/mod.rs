@@ -12,7 +12,7 @@ pub use database::{DatabasePanel, create_shared_table_counts, spawn_table_counts
 pub use libraries::{LibrariesPanel, create_shared_libraries, spawn_libraries_updater};
 pub use logs::LogsPanel;
 pub use system::SystemPanel;
-pub use torrents::{TorrentsPanel, spawn_torrent_updater, create_shared_torrents};
+pub use torrents::{TorrentsPanel, create_shared_torrents, spawn_torrent_updater};
 
 use ratatui::Frame;
 use ratatui::layout::Rect;

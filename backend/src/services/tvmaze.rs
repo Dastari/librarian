@@ -181,9 +181,7 @@ impl TvMazeClient {
                 let client = client.clone();
                 let q = query_owned.clone();
                 async move {
-                    let response = client
-                        .get_with_query(&url, &[("q", &q)])
-                        .await?;
+                    let response = client.get_with_query(&url, &[("q", &q)]).await?;
 
                     if response.status().as_u16() == 429 {
                         warn!("TVMaze rate limit hit, will retry");
@@ -351,9 +349,7 @@ impl TvMazeClient {
                 let client = client.clone();
                 let q = query_owned.clone();
                 async move {
-                    let response = client
-                        .get_with_query(&url, &[("q", &q)])
-                        .await?;
+                    let response = client.get_with_query(&url, &[("q", &q)]).await?;
 
                     if response.status().is_client_error() && response.status().as_u16() != 429 {
                         return Ok(None);
@@ -397,9 +393,7 @@ impl TvMazeClient {
                 let client = client.clone();
                 let tvdb = tvdb_id.to_string();
                 async move {
-                    let response = client
-                        .get_with_query(&url, &[("thetvdb", &tvdb)])
-                        .await?;
+                    let response = client.get_with_query(&url, &[("thetvdb", &tvdb)]).await?;
 
                     if response.status().is_client_error() && response.status().as_u16() != 429 {
                         return Ok(None);
@@ -444,9 +438,7 @@ impl TvMazeClient {
                 let client = client.clone();
                 let imdb = imdb_owned.clone();
                 async move {
-                    let response = client
-                        .get_with_query(&url, &[("imdb", &imdb)])
-                        .await?;
+                    let response = client.get_with_query(&url, &[("imdb", &imdb)]).await?;
 
                     if response.status().is_client_error() && response.status().as_u16() != 429 {
                         return Ok(None);
@@ -552,7 +544,11 @@ impl TvMazeClient {
         days: u32,
         country: Option<&str>,
     ) -> Result<Vec<TvMazeScheduleEntry>> {
-        debug!("Fetching {} day TV schedule from TVMaze for {}", days, country.unwrap_or("US"));
+        debug!(
+            "Fetching {} day TV schedule from TVMaze for {}",
+            days,
+            country.unwrap_or("US")
+        );
 
         let today = chrono::Utc::now().date_naive();
         let mut all_episodes = Vec::new();
@@ -586,7 +582,10 @@ impl TvMazeClient {
     /// Returns episodes from streaming platforms like Netflix, Hulu, etc.
     #[allow(dead_code)]
     pub async fn get_web_schedule(&self, date: Option<&str>) -> Result<Vec<TvMazeScheduleEntry>> {
-        debug!("Fetching web schedule from TVMaze for {}", date.unwrap_or("today"));
+        debug!(
+            "Fetching web schedule from TVMaze for {}",
+            date.unwrap_or("today")
+        );
 
         let url = format!("{}/schedule/web", self.base_url);
         let client = self.client.clone();

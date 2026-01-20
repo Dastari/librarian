@@ -139,9 +139,7 @@ where
 }
 
 /// Create a TUI logging layer
-pub fn create_tui_layer(
-    min_level: Level,
-) -> (TuiLoggingLayer, broadcast::Receiver<LogEvent>) {
+pub fn create_tui_layer(min_level: Level) -> (TuiLoggingLayer, broadcast::Receiver<LogEvent>) {
     let (tx, rx) = broadcast::channel(1000);
     (TuiLoggingLayer::new(min_level, tx), rx)
 }

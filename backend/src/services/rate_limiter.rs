@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use backoff::backoff::Backoff;
 use backoff::ExponentialBackoff;
+use backoff::backoff::Backoff;
 use governor::{
     Quota, RateLimiter,
     clock::DefaultClock,
@@ -46,11 +46,13 @@ pub struct RateLimitedClient {
 impl RateLimitedClient {
     /// Create a new rate-limited client
     pub fn new(name: &str, config: RateLimitConfig) -> Self {
-        let quota = Quota::per_second(NonZeroU32::new(config.requests_per_second).unwrap_or(NonZeroU32::MIN))
-            .allow_burst(NonZeroU32::new(config.burst_size).unwrap_or(NonZeroU32::MIN));
-        
+        let quota = Quota::per_second(
+            NonZeroU32::new(config.requests_per_second).unwrap_or(NonZeroU32::MIN),
+        )
+        .allow_burst(NonZeroU32::new(config.burst_size).unwrap_or(NonZeroU32::MIN));
+
         let limiter = Arc::new(RateLimiter::direct(quota));
-        
+
         Self {
             client: Client::builder()
                 .timeout(Duration::from_secs(30))
@@ -64,70 +66,91 @@ impl RateLimitedClient {
     /// Create a client with custom settings for a specific API
     pub fn for_tvmaze() -> Self {
         // TVMaze allows ~20 requests per 10 seconds, so ~2/sec with burst of 5
-        Self::new("tvmaze", RateLimitConfig {
-            requests_per_second: 2,
-            burst_size: 5,
-        })
+        Self::new(
+            "tvmaze",
+            RateLimitConfig {
+                requests_per_second: 2,
+                burst_size: 5,
+            },
+        )
     }
 
     /// Create a client for TMDB API
     pub fn for_tmdb() -> Self {
         // TMDB allows ~40 requests per 10 seconds, so ~4/sec with burst of 10
-        Self::new("tmdb", RateLimitConfig {
-            requests_per_second: 4,
-            burst_size: 10,
-        })
+        Self::new(
+            "tmdb",
+            RateLimitConfig {
+                requests_per_second: 4,
+                burst_size: 10,
+            },
+        )
     }
 
     /// Create a client for MusicBrainz API
     pub fn for_musicbrainz() -> Self {
         // MusicBrainz requires max 1 request per second
-        Self::new("musicbrainz", RateLimitConfig {
-            requests_per_second: 1,
-            burst_size: 1,
-        })
+        Self::new(
+            "musicbrainz",
+            RateLimitConfig {
+                requests_per_second: 1,
+                burst_size: 1,
+            },
+        )
     }
 
     /// Create a client for Audible API
     pub fn for_audible() -> Self {
         // Conservative rate for Audible (no official limits published)
-        Self::new("audible", RateLimitConfig {
-            requests_per_second: 2,
-            burst_size: 5,
-        })
+        Self::new(
+            "audible",
+            RateLimitConfig {
+                requests_per_second: 2,
+                burst_size: 5,
+            },
+        )
     }
 
     /// Create a client for OpenSubtitles API
     pub fn for_opensubtitles() -> Self {
         // OpenSubtitles REST API has rate limits
-        Self::new("opensubtitles", RateLimitConfig {
-            requests_per_second: 2,
-            burst_size: 5,
-        })
+        Self::new(
+            "opensubtitles",
+            RateLimitConfig {
+                requests_per_second: 2,
+                burst_size: 5,
+            },
+        )
     }
 
     /// Create a client for RSS feed fetching (more lenient)
     pub fn for_rss() -> Self {
-        Self::new("rss", RateLimitConfig {
-            requests_per_second: 5,
-            burst_size: 10,
-        })
+        Self::new(
+            "rss",
+            RateLimitConfig {
+                requests_per_second: 5,
+                burst_size: 10,
+            },
+        )
     }
 
     /// Create a client for torrent indexers
     pub fn for_indexer() -> Self {
         // Be conservative with indexers
-        Self::new("indexer", RateLimitConfig {
-            requests_per_second: 1,
-            burst_size: 3,
-        })
+        Self::new(
+            "indexer",
+            RateLimitConfig {
+                requests_per_second: 1,
+                burst_size: 3,
+            },
+        )
     }
 
     /// Wait for rate limit and make a GET request
     pub async fn get(&self, url: &str) -> Result<Response> {
         self.wait_for_permit().await;
         debug!(client = %self.name, url = %url, "Making rate-limited GET request");
-        
+
         self.client
             .get(url)
             .send()
@@ -143,7 +166,7 @@ impl RateLimitedClient {
     ) -> Result<Response> {
         self.wait_for_permit().await;
         debug!(client = %self.name, url = %url, "Making rate-limited GET request with query");
-        
+
         self.client
             .get(url)
             .query(query)
@@ -161,7 +184,7 @@ impl RateLimitedClient {
     ) -> Result<Response> {
         self.wait_for_permit().await;
         debug!(client = %self.name, url = %url, "Making rate-limited GET request with headers and query");
-        
+
         let mut request = self.client.get(url);
         for (key, value) in headers {
             request = request.header(*key, *value);
@@ -235,7 +258,7 @@ where
 {
     let mut attempts = 0;
     let mut backoff = config.to_backoff();
-    
+
     loop {
         attempts += 1;
         match operation().await {
@@ -250,7 +273,7 @@ where
                     );
                     return Err(e);
                 }
-                
+
                 if let Some(duration) = backoff.next_backoff() {
                     let retry_ms: u128 = duration.as_millis();
                     warn!(
@@ -273,7 +296,7 @@ where
 pub trait ResponseExt {
     /// Check if the response indicates rate limiting (429)
     fn is_rate_limited(&self) -> bool;
-    
+
     /// Check if the response indicates a transient error that should be retried
     fn is_transient_error(&self) -> bool;
 }
@@ -282,7 +305,7 @@ impl ResponseExt for Response {
     fn is_rate_limited(&self) -> bool {
         self.status().as_u16() == 429
     }
-    
+
     fn is_transient_error(&self) -> bool {
         let status = self.status().as_u16();
         // 429 (rate limit), 500-599 (server errors), 408 (timeout)

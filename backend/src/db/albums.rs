@@ -435,10 +435,14 @@ impl AlbumRepository {
     }
 
     /// List albums that need files (for auto-hunt)
-    /// 
+    ///
     /// Returns albums in the library that don't have complete files.
     /// For now, this returns albums where has_files = false.
-    pub async fn list_needing_files(&self, library_id: Uuid, limit: i64) -> Result<Vec<AlbumRecord>> {
+    pub async fn list_needing_files(
+        &self,
+        library_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<AlbumRecord>> {
         let records = sqlx::query_as::<_, AlbumRecord>(
             r#"
             SELECT id, artist_id, library_id, user_id, name, sort_name, year,
@@ -461,7 +465,7 @@ impl AlbumRepository {
     }
 
     /// Delete an album and its associated data
-    /// 
+    ///
     /// This will also delete:
     /// - All tracks for this album
     /// - All media files linked to this album's tracks

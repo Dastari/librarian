@@ -8,7 +8,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 /// A torrent record in the database
-/// 
+///
 /// Media linking is done via the `torrent_file_matches` table which links
 /// individual files to episodes/movies/tracks/chapters.
 #[derive(Debug, Clone, sqlx::FromRow)]

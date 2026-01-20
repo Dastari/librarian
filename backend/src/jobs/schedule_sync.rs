@@ -35,7 +35,10 @@ pub async fn sync_schedule(pool: PgPool) -> Result<()> {
             Err(e) => {
                 error!(country = country, error = %e, "Failed to sync schedule for country");
                 // Update sync state with error
-                if let Err(e2) = repo.update_sync_state(country, 0, Some(&e.to_string())).await {
+                if let Err(e2) = repo
+                    .update_sync_state(country, 0, Some(&e.to_string()))
+                    .await
+                {
                     warn!(error = %e2, "Failed to update sync state with error");
                 }
             }
@@ -69,7 +72,11 @@ async fn sync_country(
 
     // Fetch schedule from TVMaze
     let schedule = client.get_upcoming_schedule(days, Some(country)).await?;
-    debug!(country = country, entries = schedule.len(), "Fetched schedule from TVMaze");
+    debug!(
+        country = country,
+        entries = schedule.len(),
+        "Fetched schedule from TVMaze"
+    );
 
     // Convert to database entries
     let entries: Vec<UpsertScheduleEntry> = schedule
@@ -81,16 +88,16 @@ async fn sync_country(
 
             // Parse air_date
             let air_date = entry.airdate.as_ref().and_then(|d| {
-                time::Date::parse(
-                    d,
-                    time::macros::format_description!("[year]-[month]-[day]"),
-                )
-                .ok()
+                time::Date::parse(d, time::macros::format_description!("[year]-[month]-[day]")).ok()
             })?;
 
             // Parse air_stamp
             let air_stamp = entry.air_stamp.as_ref().and_then(|s| {
-                time::OffsetDateTime::parse(s, &time::format_description::well_known::Iso8601::DEFAULT).ok()
+                time::OffsetDateTime::parse(
+                    s,
+                    &time::format_description::well_known::Iso8601::DEFAULT,
+                )
+                .ok()
             });
 
             // Strip HTML from summary
@@ -154,11 +161,7 @@ pub async fn needs_sync(pool: PgPool) -> Result<bool> {
 }
 
 /// Sync a specific country on demand
-pub async fn sync_country_on_demand(
-    pool: PgPool,
-    country: &str,
-    days: u32,
-) -> Result<usize> {
+pub async fn sync_country_on_demand(pool: PgPool, country: &str, days: u32) -> Result<usize> {
     let client = TvMazeClient::new();
     let repo = ScheduleRepository::new(pool);
 

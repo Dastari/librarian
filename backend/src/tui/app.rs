@@ -16,7 +16,11 @@ use tokio::sync::broadcast;
 
 use crate::services::{LogEvent, SharedMetrics, TorrentService};
 use crate::tui::input::{Action, InputHandler};
-use crate::tui::panels::{DatabasePanel, LibrariesPanel, LogsPanel, Panel, SystemPanel, TorrentsPanel, spawn_torrent_updater, spawn_libraries_updater, spawn_table_counts_updater, create_shared_libraries, create_shared_table_counts, create_shared_torrents};
+use crate::tui::panels::{
+    DatabasePanel, LibrariesPanel, LogsPanel, Panel, SystemPanel, TorrentsPanel,
+    create_shared_libraries, create_shared_table_counts, create_shared_torrents,
+    spawn_libraries_updater, spawn_table_counts_updater, spawn_torrent_updater,
+};
 use crate::tui::ui::{PanelId, UiLayout, render_panels};
 
 /// TUI configuration
@@ -171,7 +175,11 @@ impl TuiApp {
                 // Focus panel and scroll
                 if let Some(panel) = self.panel_at_position(x, y) {
                     self.layout.focused = panel;
-                    let scroll_action = if delta < 0 { Action::ScrollUp } else { Action::ScrollDown };
+                    let scroll_action = if delta < 0 {
+                        Action::ScrollUp
+                    } else {
+                        Action::ScrollDown
+                    };
                     self.delegate_action(&scroll_action);
                 }
             }
@@ -201,11 +209,21 @@ impl TuiApp {
         let areas = self.layout.calculate_areas(area);
 
         // Check each panel area
-        if contains_point(&areas.logs, x, y) { return Some(PanelId::Logs); }
-        if contains_point(&areas.torrents, x, y) { return Some(PanelId::Torrents); }
-        if contains_point(&areas.system, x, y) { return Some(PanelId::System); }
-        if contains_point(&areas.libraries, x, y) { return Some(PanelId::Libraries); }
-        if contains_point(&areas.database, x, y) { return Some(PanelId::Database); }
+        if contains_point(&areas.logs, x, y) {
+            return Some(PanelId::Logs);
+        }
+        if contains_point(&areas.torrents, x, y) {
+            return Some(PanelId::Torrents);
+        }
+        if contains_point(&areas.system, x, y) {
+            return Some(PanelId::System);
+        }
+        if contains_point(&areas.libraries, x, y) {
+            return Some(PanelId::Libraries);
+        }
+        if contains_point(&areas.database, x, y) {
+            return Some(PanelId::Database);
+        }
         None
     }
 

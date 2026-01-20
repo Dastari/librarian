@@ -245,11 +245,7 @@ impl MusicBrainzClient {
                     ];
 
                     let response = client
-                        .get_with_headers_and_query(
-                            &url,
-                            &[("User-Agent", &ua)],
-                            &query_params,
-                        )
+                        .get_with_headers_and_query(&url, &[("User-Agent", &ua)], &query_params)
                         .await?;
 
                     if response.status().as_u16() == 503 {
@@ -258,7 +254,10 @@ impl MusicBrainzClient {
                     }
 
                     if !response.status().is_success() {
-                        anyhow::bail!("MusicBrainz search failed with status: {}", response.status());
+                        anyhow::bail!(
+                            "MusicBrainz search failed with status: {}",
+                            response.status()
+                        );
                     }
 
                     let results: MusicBrainzArtistSearch = response
@@ -274,7 +273,10 @@ impl MusicBrainzClient {
         )
         .await?;
 
-        debug!(count = result.len(), "MusicBrainz artist search returned results");
+        debug!(
+            count = result.len(),
+            "MusicBrainz artist search returned results"
+        );
         Ok(result)
     }
 
@@ -302,11 +304,7 @@ impl MusicBrainzClient {
                     ];
 
                     let response = client
-                        .get_with_headers_and_query(
-                            &url,
-                            &[("User-Agent", &ua)],
-                            &query_params,
-                        )
+                        .get_with_headers_and_query(&url, &[("User-Agent", &ua)], &query_params)
                         .await?;
 
                     if response.status().as_u16() == 503 {
@@ -314,7 +312,10 @@ impl MusicBrainzClient {
                     }
 
                     if !response.status().is_success() {
-                        anyhow::bail!("MusicBrainz album search failed with status: {}", response.status());
+                        anyhow::bail!(
+                            "MusicBrainz album search failed with status: {}",
+                            response.status()
+                        );
                     }
 
                     let results: MusicBrainzReleaseGroupSearch = response
@@ -330,7 +331,10 @@ impl MusicBrainzClient {
         )
         .await?;
 
-        debug!(count = result.len(), "MusicBrainz album search returned results");
+        debug!(
+            count = result.len(),
+            "MusicBrainz album search returned results"
+        );
         Ok(result)
     }
 
@@ -366,7 +370,10 @@ impl MusicBrainzClient {
                     }
 
                     if !response.status().is_success() {
-                        anyhow::bail!("MusicBrainz get artist failed with status: {}", response.status());
+                        anyhow::bail!(
+                            "MusicBrainz get artist failed with status: {}",
+                            response.status()
+                        );
                     }
 
                     let artist: MusicBrainzArtist = response
@@ -412,7 +419,10 @@ impl MusicBrainzClient {
                     }
 
                     if !response.status().is_success() {
-                        anyhow::bail!("MusicBrainz get release group failed with status: {}", response.status());
+                        anyhow::bail!(
+                            "MusicBrainz get release group failed with status: {}",
+                            response.status()
+                        );
                     }
 
                     let rg: MusicBrainzReleaseGroup = response
@@ -464,14 +474,17 @@ impl MusicBrainzClient {
     }
 
     /// Get releases for a release group, including track listings
-    /// 
+    ///
     /// This fetches all releases (editions) of an album and their track listings.
     /// We use the "Official" status release with the most complete track listing.
     pub async fn get_releases_for_release_group(
         &self,
         release_group_id: Uuid,
     ) -> Result<Vec<MusicBrainzRelease>> {
-        debug!("Fetching releases with tracks for {} from MusicBrainz", release_group_id);
+        debug!(
+            "Fetching releases with tracks for {} from MusicBrainz",
+            release_group_id
+        );
 
         let url = format!("{}/release", self.base_url);
         let client = self.client.clone();
@@ -531,7 +544,9 @@ impl MusicBrainzClient {
         &self,
         release_group_id: Uuid,
     ) -> Result<Vec<TrackInfo>> {
-        let releases = self.get_releases_for_release_group(release_group_id).await?;
+        let releases = self
+            .get_releases_for_release_group(release_group_id)
+            .await?;
 
         if releases.is_empty() {
             warn!(release_group_id = %release_group_id, "No releases found for release group");
@@ -578,16 +593,13 @@ impl MusicBrainzClient {
 
                 if let Some(ref medium_tracks) = medium.tracks {
                     for track in medium_tracks {
-                        let track_number = track.position.unwrap_or_else(|| {
-                            track.number.parse().unwrap_or(1)
-                        });
+                        let track_number = track
+                            .position
+                            .unwrap_or_else(|| track.number.parse().unwrap_or(1));
 
                         // Get artist name from recording's artist credit
-                        let artist_name = track
-                            .recording
-                            .artist_credit
-                            .as_ref()
-                            .and_then(|credits| {
+                        let artist_name =
+                            track.recording.artist_credit.as_ref().and_then(|credits| {
                                 credits.first().map(|c| {
                                     c.name.clone().unwrap_or_else(|| c.artist.name.clone())
                                 })
@@ -621,10 +633,7 @@ impl MusicBrainzClient {
             }
         }
 
-        info!(
-            track_count = tracks.len(),
-            "Extracted tracks from release"
-        );
+        info!(track_count = tracks.len(), "Extracted tracks from release");
 
         Ok(tracks)
     }

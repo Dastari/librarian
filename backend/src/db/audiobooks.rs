@@ -395,7 +395,10 @@ impl AudiobookRepository {
             "name"
         };
         let order_dir = if sort_asc { "ASC" } else { "DESC" };
-        let order_clause = format!("ORDER BY COALESCE({}, name) {} NULLS LAST", sort_col, order_dir);
+        let order_clause = format!(
+            "ORDER BY COALESCE({}, name) {} NULLS LAST",
+            sort_col, order_dir
+        );
 
         let count_query = format!("SELECT COUNT(*) FROM authors WHERE {}", where_clause);
         let data_query = format!(
@@ -416,7 +419,8 @@ impl AudiobookRepository {
 
         let total: i64 = count_builder.fetch_one(&self.pool).await?;
 
-        let mut data_builder = sqlx::query_as::<_, AudiobookAuthorRecord>(&data_query).bind(library_id);
+        let mut data_builder =
+            sqlx::query_as::<_, AudiobookAuthorRecord>(&data_query).bind(library_id);
         if let Some(name) = name_filter {
             data_builder = data_builder.bind(format!("%{}%", name.to_lowercase()));
         }
@@ -449,7 +453,7 @@ impl AudiobookRepository {
     }
 
     /// Delete an audiobook and its associated data
-    /// 
+    ///
     /// This will also delete:
     /// - All media files linked to this audiobook
     /// - Torrent links to this audiobook
@@ -538,7 +542,10 @@ impl AudiobookChapterRepository {
     }
 
     /// List all chapters for an audiobook
-    pub async fn list_by_audiobook(&self, audiobook_id: Uuid) -> Result<Vec<AudiobookChapterRecord>> {
+    pub async fn list_by_audiobook(
+        &self,
+        audiobook_id: Uuid,
+    ) -> Result<Vec<AudiobookChapterRecord>> {
         let records = sqlx::query_as::<_, AudiobookChapterRecord>(
             r#"
             SELECT id, audiobook_id, chapter_number, title, start_secs, end_secs,
@@ -604,7 +611,8 @@ impl AudiobookChapterRepository {
 
         let total: i64 = count_builder.fetch_one(&self.pool).await?;
 
-        let mut data_builder = sqlx::query_as::<_, AudiobookChapterRecord>(&data_query).bind(audiobook_id);
+        let mut data_builder =
+            sqlx::query_as::<_, AudiobookChapterRecord>(&data_query).bind(audiobook_id);
         if let Some(status) = status_filter {
             data_builder = data_builder.bind(status);
         }

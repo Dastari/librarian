@@ -15,18 +15,20 @@ use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+use crate::db::Database;
 use crate::db::libraries::LibraryRecord;
 use crate::db::movies::MovieRecord;
 use crate::db::tv_shows::TvShowRecord;
-use crate::db::Database;
 use crate::indexer::manager::IndexerManager;
 use crate::indexer::{ReleaseInfo, TorznabQuery};
+use crate::services::TorrentService;
 use crate::services::text_utils::normalize_quality;
 use crate::services::torrent::TorrentInfo;
 use crate::services::torrent_file_matcher::TorrentFileMatcher;
-use crate::services::torrent_metadata::{parse_torrent_files, extract_audio_files, is_single_file_album};
-use crate::services::track_matcher::{match_tracks, TrackMatchResult};
-use crate::services::TorrentService;
+use crate::services::torrent_metadata::{
+    extract_audio_files, is_single_file_album, parse_torrent_files,
+};
+use crate::services::track_matcher::{TrackMatchResult, match_tracks};
 
 /// Maximum concurrent searches to indexers
 const MAX_CONCURRENT_SEARCHES: usize = 2;
@@ -70,11 +72,28 @@ mod categories {
     pub const BOOKS_FOREIGN: i32 = 7060;
 
     pub fn movies_all() -> Vec<i32> {
-        vec![MOVIES, MOVIES_FOREIGN, MOVIES_SD, MOVIES_HD, MOVIES_UHD, MOVIES_BLURAY, MOVIES_3D]
+        vec![
+            MOVIES,
+            MOVIES_FOREIGN,
+            MOVIES_SD,
+            MOVIES_HD,
+            MOVIES_UHD,
+            MOVIES_BLURAY,
+            MOVIES_3D,
+        ]
     }
 
     pub fn tv_all() -> Vec<i32> {
-        vec![TV, TV_FOREIGN, TV_SD, TV_HD, TV_UHD, TV_SPORT, TV_ANIME, TV_DOCUMENTARY]
+        vec![
+            TV,
+            TV_FOREIGN,
+            TV_SD,
+            TV_HD,
+            TV_UHD,
+            TV_SPORT,
+            TV_ANIME,
+            TV_DOCUMENTARY,
+        ]
     }
 
     pub fn music_all() -> Vec<i32> {
@@ -121,7 +140,9 @@ async fn download_release(
             let torrent_bytes = indexer_manager.download_torrent(indexer_id, link).await?;
 
             // Add the torrent from bytes
-            return torrent_service.add_torrent_bytes(&torrent_bytes, None).await;
+            return torrent_service
+                .add_torrent_bytes(&torrent_bytes, None)
+                .await;
         } else {
             // No indexer_id - try direct download (might fail for private trackers)
             warn!(
@@ -132,11 +153,13 @@ async fn download_release(
         }
     }
 
-    Err(anyhow::anyhow!("Release has no download link or magnet URI"))
+    Err(anyhow::anyhow!(
+        "Release has no download link or magnet URI"
+    ))
 }
 
 /// Create file-level matches after a torrent download starts
-/// 
+///
 /// This replaces the legacy torrent-level linking (link_to_movie, link_to_episode, etc.)
 /// with the new file-level matching system.
 async fn create_file_matches_for_movie(
@@ -149,7 +172,12 @@ async fn create_file_matches_for_movie(
         .torrents()
         .get_by_info_hash(&torrent_info.info_hash)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("Torrent record not found for info_hash: {}", torrent_info.info_hash))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Torrent record not found for info_hash: {}",
+                torrent_info.info_hash
+            )
+        })?;
 
     // Create file-level matches
     let matcher = TorrentFileMatcher::new(db.clone());
@@ -340,7 +368,10 @@ impl ParsedQualityInfo {
         let title_lower = title.to_lowercase();
 
         // Resolution
-        let resolution = if title_lower.contains("2160p") || title_lower.contains("4k") || title_lower.contains("uhd") {
+        let resolution = if title_lower.contains("2160p")
+            || title_lower.contains("4k")
+            || title_lower.contains("uhd")
+        {
             Some("2160p".to_string())
         } else if title_lower.contains("1080p") {
             Some("1080p".to_string())
@@ -353,9 +384,15 @@ impl ParsedQualityInfo {
         };
 
         // Codec
-        let codec = if title_lower.contains("x265") || title_lower.contains("hevc") || title_lower.contains("h.265") {
+        let codec = if title_lower.contains("x265")
+            || title_lower.contains("hevc")
+            || title_lower.contains("h.265")
+        {
             Some("x265".to_string())
-        } else if title_lower.contains("x264") || title_lower.contains("h.264") || title_lower.contains("avc") {
+        } else if title_lower.contains("x264")
+            || title_lower.contains("h.264")
+            || title_lower.contains("avc")
+        {
             Some("x264".to_string())
         } else if title_lower.contains("av1") {
             Some("AV1".to_string())
@@ -370,7 +407,10 @@ impl ParsedQualityInfo {
             Some("DTS-HD".to_string())
         } else if title_lower.contains("atmos") {
             Some("Atmos".to_string())
-        } else if title_lower.contains("dd+") || title_lower.contains("ddp") || title_lower.contains("eac3") {
+        } else if title_lower.contains("dd+")
+            || title_lower.contains("ddp")
+            || title_lower.contains("eac3")
+        {
             Some("DD+".to_string())
         } else if title_lower.contains("dd5.1") || title_lower.contains("ac3") {
             Some("DD5.1".to_string())
@@ -383,7 +423,10 @@ impl ParsedQualityInfo {
         };
 
         // HDR
-        let hdr = if title_lower.contains("dv") || title_lower.contains("dolby vision") || title_lower.contains("dolbyvision") {
+        let hdr = if title_lower.contains("dv")
+            || title_lower.contains("dolby vision")
+            || title_lower.contains("dolbyvision")
+        {
             Some("DV".to_string())
         } else if title_lower.contains("hdr10+") {
             Some("HDR10+".to_string())
@@ -394,9 +437,15 @@ impl ParsedQualityInfo {
         };
 
         // Source
-        let source = if title_lower.contains("bluray") || title_lower.contains("blu-ray") || title_lower.contains("bdrip") {
+        let source = if title_lower.contains("bluray")
+            || title_lower.contains("blu-ray")
+            || title_lower.contains("bdrip")
+        {
             Some("BluRay".to_string())
-        } else if title_lower.contains("webdl") || title_lower.contains("web-dl") || title_lower.contains("web dl") {
+        } else if title_lower.contains("webdl")
+            || title_lower.contains("web-dl")
+            || title_lower.contains("web dl")
+        {
             Some("WEB-DL".to_string())
         } else if title_lower.contains("webrip") || title_lower.contains("web-rip") {
             Some("WEBRip".to_string())
@@ -432,7 +481,10 @@ fn extract_release_group(title: &str) -> Option<String> {
 }
 
 /// Check if a release matches the quality settings
-fn matches_quality_settings(parsed: &ParsedQualityInfo, settings: &EffectiveQualitySettings) -> bool {
+fn matches_quality_settings(
+    parsed: &ParsedQualityInfo,
+    settings: &EffectiveQualitySettings,
+) -> bool {
     // Check resolution (empty = any)
     if !settings.allowed_resolutions.is_empty() {
         let resolution = parsed.resolution.as_deref().unwrap_or("");
@@ -559,7 +611,11 @@ fn matches_quality_settings(parsed: &ParsedQualityInfo, settings: &EffectiveQual
 }
 
 /// Score a release for ranking (higher is better)
-fn score_release(release: &ReleaseInfo, parsed: &ParsedQualityInfo, settings: &EffectiveQualitySettings) -> i32 {
+fn score_release(
+    release: &ReleaseInfo,
+    parsed: &ParsedQualityInfo,
+    settings: &EffectiveQualitySettings,
+) -> i32 {
     let mut score = 0;
 
     // Prefer releases with more seeders
@@ -706,7 +762,9 @@ pub async fn run_auto_hunt(
             "movies" => hunt_movies(&db, &library, &torrent_service, &indexer_manager).await,
             "tv" => hunt_tv_episodes(&db, &library, &torrent_service, &indexer_manager).await,
             "music" => hunt_music(&db, &library, &torrent_service, &indexer_manager).await,
-            "audiobooks" => hunt_audiobooks(&db, &library, &torrent_service, &indexer_manager).await,
+            "audiobooks" => {
+                hunt_audiobooks(&db, &library, &torrent_service, &indexer_manager).await
+            }
             _ => {
                 debug!(
                     job = "auto_hunt",
@@ -958,7 +1016,7 @@ async fn hunt_movies_impl(
            WHERE m.library_id = $1 
            AND tfm.movie_id IS NOT NULL 
            AND NOT tfm.processed
-           AND t.state NOT IN ('removed', 'error')"#
+           AND t.state NOT IN ('removed', 'error')"#,
     )
     .bind(library.id)
     .fetch_one(db.pool())
@@ -975,13 +1033,12 @@ async fn hunt_movies_impl(
     }
 
     // Debug: Get all movies in this library to understand state
-    let all_movies: Vec<(String, bool, bool)> = sqlx::query_as(
-        r#"SELECT title, monitored, has_file FROM movies WHERE library_id = $1"#
-    )
-    .bind(library.id)
-    .fetch_all(db.pool())
-    .await
-    .unwrap_or_default();
+    let all_movies: Vec<(String, bool, bool)> =
+        sqlx::query_as(r#"SELECT title, monitored, has_file FROM movies WHERE library_id = $1"#)
+            .bind(library.id)
+            .fetch_all(db.pool())
+            .await
+            .unwrap_or_default();
 
     for (title, monitored, has_file) in &all_movies {
         debug!(
@@ -1135,7 +1192,8 @@ async fn hunt_movies_impl(
                     );
 
                     // Create file-level matches for the movie
-                    if let Err(e) = create_file_matches_for_movie(db, &torrent_info, movie.id).await {
+                    if let Err(e) = create_file_matches_for_movie(db, &torrent_info, movie.id).await
+                    {
                         error!(
                             job = "auto_hunt",
                             movie_title = %movie.title,
@@ -1328,7 +1386,9 @@ async fn hunt_tv_episodes_impl(
                         );
 
                         // Create file-level matches for the episode
-                        if let Err(e) = create_file_matches_for_episode(db, &torrent_info, episode_id).await {
+                        if let Err(e) =
+                            create_file_matches_for_episode(db, &torrent_info, episode_id).await
+                        {
                             error!(job = "auto_hunt", error = %e, "Failed to create file matches for episode");
                         }
 
@@ -1356,7 +1416,7 @@ async fn hunt_tv_episodes_impl(
 }
 
 /// Hunt for missing music albums
-/// 
+///
 /// This function validates torrents against expected track listings before downloading.
 /// For releases with .torrent files, it downloads and parses the torrent metadata to
 /// ensure the files match the expected tracks from MusicBrainz.
@@ -1374,7 +1434,10 @@ async fn hunt_music(
     );
 
     // Get albums without files
-    let albums = db.albums().list_needing_files(library.id, MAX_HUNT_PER_RUN as i64).await?;
+    let albums = db
+        .albums()
+        .list_needing_files(library.id, MAX_HUNT_PER_RUN as i64)
+        .await?;
 
     if albums.is_empty() {
         debug!(
@@ -1528,11 +1591,15 @@ async fn hunt_music(
                                 );
 
                                 // Check if match meets threshold (80%)
-                                if match_result.meets_threshold(TrackMatchResult::DEFAULT_THRESHOLD) {
+                                if match_result.meets_threshold(TrackMatchResult::DEFAULT_THRESHOLD)
+                                {
                                     // Good match! Add the torrent
                                     result.matched += 1;
 
-                                    match torrent_service.add_torrent_bytes(&torrent_bytes, Some(library.user_id)).await {
+                                    match torrent_service
+                                        .add_torrent_bytes(&torrent_bytes, Some(library.user_id))
+                                        .await
+                                    {
                                         Ok(info) => {
                                             info!(
                                                 job = "auto_hunt",
@@ -1544,7 +1611,10 @@ async fn hunt_music(
                                             );
 
                                             // Create file-level matches for the album
-                                            if let Err(e) = create_file_matches_for_album(db, &info, album.id).await {
+                                            if let Err(e) =
+                                                create_file_matches_for_album(db, &info, album.id)
+                                                    .await
+                                            {
                                                 warn!(job = "auto_hunt", error = %e, "Failed to create file matches for album");
                                             }
 
@@ -1599,7 +1669,8 @@ async fn hunt_music(
         // Fall back to magnet releases (no validation possible) or if no track info
         if !downloaded {
             // Use the best magnet release, or best torrent if no magnets
-            let fallback_release = magnet_releases.first()
+            let fallback_release = magnet_releases
+                .first()
                 .or_else(|| torrent_releases.first())
                 .map(|(r, _)| r);
 
@@ -1733,7 +1804,7 @@ async fn hunt_audiobooks(
 }
 
 /// Run auto-hunt for a single library
-/// 
+///
 /// This is called after library scans complete or can be triggered manually.
 /// It respects the library's auto_hunt setting.
 pub async fn run_auto_hunt_for_library(
@@ -1879,9 +1950,7 @@ mod tests {
 
     #[test]
     fn test_parse_quality_1080p_web() {
-        let parsed = ParsedQualityInfo::from_title(
-            "Show.S01E01.1080p.WEB-DL.x264.DD5.1-TEAM",
-        );
+        let parsed = ParsedQualityInfo::from_title("Show.S01E01.1080p.WEB-DL.x264.DD5.1-TEAM");
         assert_eq!(parsed.resolution, Some("1080p".to_string()));
         assert_eq!(parsed.codec, Some("x264".to_string()));
         assert_eq!(parsed.source, Some("WEB-DL".to_string()));
@@ -1891,7 +1960,7 @@ mod tests {
     #[test]
     fn test_quality_matching() {
         let parsed = ParsedQualityInfo::from_title("Movie.2024.1080p.BluRay.x264-GROUP");
-        
+
         // Empty settings = match anything
         let settings = EffectiveQualitySettings::default();
         assert!(matches_quality_settings(&parsed, &settings));

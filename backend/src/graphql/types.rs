@@ -189,17 +189,20 @@ impl Torrent {
     /// File-level matches for this torrent (lazy loaded from database)
     async fn matches(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<TorrentFileMatch>> {
         let db = ctx.data_unchecked::<crate::db::Database>();
-        
+
         // Look up torrent record by info_hash to get the UUID
         let torrent_record = db.torrents().get_by_info_hash(&self.info_hash).await?;
-        
+
         let Some(record) = torrent_record else {
             // Torrent not in database yet (still being added)
             return Ok(vec![]);
         };
-        
+
         let matches = db.torrent_file_matches().list_by_torrent(record.id).await?;
-        Ok(matches.into_iter().map(TorrentFileMatch::from_record).collect())
+        Ok(matches
+            .into_iter()
+            .map(TorrentFileMatch::from_record)
+            .collect())
     }
 
     /// Database record for this torrent (if persisted)
@@ -2230,7 +2233,11 @@ pub struct AudiobookAuthorOrderByInput {
 }
 
 // Define the AudiobookAuthorConnection and AudiobookAuthorEdge types
-crate::define_connection!(AudiobookAuthorConnection, AudiobookAuthorEdge, AudiobookAuthor);
+crate::define_connection!(
+    AudiobookAuthorConnection,
+    AudiobookAuthorEdge,
+    AudiobookAuthor
+);
 
 // ============================================================================
 // Audiobook Chapter Types
@@ -2295,7 +2302,11 @@ pub struct AudiobookChapterOrderByInput {
 }
 
 // Define the AudiobookChapterConnection and AudiobookChapterEdge types
-crate::define_connection!(AudiobookChapterConnection, AudiobookChapterEdge, AudiobookChapter);
+crate::define_connection!(
+    AudiobookChapterConnection,
+    AudiobookChapterEdge,
+    AudiobookChapter
+);
 
 // ============================================================================
 // Episode Types
@@ -2426,7 +2437,11 @@ impl Episode {
 
         // Extract watch progress fields
         let (wp_progress, wp_position, wp_is_watched) = if let Some(wp) = watch_progress {
-            (Some(wp.progress_percent), Some(wp.current_position), Some(wp.is_watched))
+            (
+                Some(wp.progress_percent),
+                Some(wp.current_position),
+                Some(wp.is_watched),
+            )
         } else {
             (None, None, None)
         };
@@ -3056,7 +3071,10 @@ pub struct PlaybackSession {
 
 impl PlaybackSession {
     pub fn from_record(record: crate::db::PlaybackSessionRecord) -> Self {
-        let content_type = record.content_type.as_deref().and_then(PlaybackContentType::from_str);
+        let content_type = record
+            .content_type
+            .as_deref()
+            .and_then(PlaybackContentType::from_str);
         let content_id = match content_type {
             Some(PlaybackContentType::Episode) => record.episode_id.map(|id| id.to_string()),
             Some(PlaybackContentType::Movie) => record.movie_id.map(|id| id.to_string()),
@@ -3341,7 +3359,11 @@ impl MediaFile {
             organized: record.organized,
             organize_status: record.organize_status,
             organize_error: record.organize_error,
-            quality_status: record.quality_status.as_deref().map(QualityStatus::from).unwrap_or(QualityStatus::Unknown),
+            quality_status: record
+                .quality_status
+                .as_deref()
+                .map(QualityStatus::from)
+                .unwrap_or(QualityStatus::Unknown),
             added_at: record.added_at.to_rfc3339(),
         }
     }
@@ -4235,7 +4257,9 @@ impl TorrentFileMatch {
             track_id: record.track_id.map(|id| id.to_string()),
             chapter_id: record.chapter_id.map(|id| id.to_string()),
             match_type: record.match_type,
-            match_confidence: record.match_confidence.map(|d| d.to_string().parse().unwrap_or(0.0)),
+            match_confidence: record
+                .match_confidence
+                .map(|d| d.to_string().parse().unwrap_or(0.0)),
             parsed_resolution: record.parsed_resolution,
             parsed_codec: record.parsed_codec,
             parsed_source: record.parsed_source,
