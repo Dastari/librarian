@@ -12,8 +12,9 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::services::{
-    CastDevicesEvent, CastService, CastSessionEvent, DirectoryChangeEvent as ServiceDirectoryChangeEvent,
-    FilesystemService, LogEvent, TorrentEvent, TorrentService,
+    CastDevicesEvent, CastService, CastSessionEvent,
+    DirectoryChangeEvent as ServiceDirectoryChangeEvent, FilesystemService, LogEvent, TorrentEvent,
+    TorrentService,
 };
 
 use super::auth::AuthGuard;
@@ -416,5 +417,4 @@ impl SubscriptionRoot {
             })
         })
     }
-
 }

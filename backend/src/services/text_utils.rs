@@ -158,15 +158,27 @@ mod tests {
 
     #[test]
     fn test_normalize_show_name_no_articles() {
-        assert_eq!(normalize_show_name_no_articles("The Walking Dead"), "walking dead");
-        assert_eq!(normalize_show_name_no_articles("A Series of Events"), "series of events");
-        assert_eq!(normalize_show_name_no_articles("Breaking Bad"), "breaking bad");
+        assert_eq!(
+            normalize_show_name_no_articles("The Walking Dead"),
+            "walking dead"
+        );
+        assert_eq!(
+            normalize_show_name_no_articles("A Series of Events"),
+            "series of events"
+        );
+        assert_eq!(
+            normalize_show_name_no_articles("Breaking Bad"),
+            "breaking bad"
+        );
     }
 
     #[test]
     fn test_normalize_title() {
         assert_eq!(normalize_title("The Lord's Return"), "the lords return");
-        assert_eq!(normalize_title("Spider-Man: No Way Home"), "spiderman no way home");
+        assert_eq!(
+            normalize_title("Spider-Man: No Way Home"),
+            "spiderman no way home"
+        );
     }
 
     #[test]

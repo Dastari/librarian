@@ -190,12 +190,10 @@ impl TrackRepository {
 
     /// Count tracks in an album
     pub async fn count_by_album(&self, album_id: Uuid) -> Result<i64> {
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM tracks WHERE album_id = $1",
-        )
-        .bind(album_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tracks WHERE album_id = $1")
+            .bind(album_id)
+            .fetch_one(&self.pool)
+            .await?;
 
         Ok(count.0)
     }
@@ -247,12 +245,12 @@ impl TrackRepository {
     /// Create multiple tracks at once
     pub async fn create_many(&self, tracks: Vec<CreateTrack>) -> Result<Vec<TrackRecord>> {
         let mut created = Vec::with_capacity(tracks.len());
-        
+
         for input in tracks {
             let record = self.create(input).await?;
             created.push(record);
         }
-        
+
         Ok(created)
     }
 

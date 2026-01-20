@@ -8,8 +8,8 @@ use regex::Regex;
 use std::collections::HashSet;
 use tracing::debug;
 
-use crate::db::tracks::TrackRecord;
 use super::torrent_metadata::TorrentFileInfo;
+use crate::db::tracks::TrackRecord;
 
 /// Result of matching torrent files against expected tracks
 #[derive(Debug, Clone)]
@@ -76,10 +76,8 @@ pub fn match_tracks(
     expected_tracks: &[TrackRecord],
     torrent_files: &[TorrentFileInfo],
 ) -> TrackMatchResult {
-    let audio_files: Vec<&TorrentFileInfo> = torrent_files
-        .iter()
-        .filter(|f| f.is_audio())
-        .collect();
+    let audio_files: Vec<&TorrentFileInfo> =
+        torrent_files.iter().filter(|f| f.is_audio()).collect();
 
     if expected_tracks.is_empty() {
         return TrackMatchResult {
@@ -182,7 +180,8 @@ fn find_best_match(
         }
 
         // 2. File contains the track title
-        if normalized_file.contains(normalized_title) || normalized_title.contains(&normalized_file) {
+        if normalized_file.contains(normalized_title) || normalized_title.contains(&normalized_file)
+        {
             let confidence = 0.9;
             if best_match.as_ref().map(|m| m.1).unwrap_or(0.0) < confidence {
                 best_match = Some((idx, confidence, MatchType::ContainsTitle));
@@ -193,7 +192,7 @@ fn find_best_match(
         // 3. Track number matching
         if let Some(file_track_num) = extract_track_number(&file.name) {
             let file_disc_num = extract_disc_number(&file.name).unwrap_or(1);
-            
+
             if file_track_num == track_number && file_disc_num == disc_number {
                 let confidence = 0.85;
                 if best_match.as_ref().map(|m| m.1).unwrap_or(0.0) < confidence {
@@ -230,9 +229,9 @@ fn normalize_title(title: &str) -> String {
 
     without_brackets
         .to_lowercase()
-        .replace(['\'', '"', '`'], "")  // Remove quotes
-        .replace(['–', '—'], "-")  // Normalize dashes
-        .replace(['-', '_', '.', ',', ':', ';', '!', '?'], " ")  // Separators to space
+        .replace(['\'', '"', '`'], "") // Remove quotes
+        .replace(['–', '—'], "-") // Normalize dashes
+        .replace(['-', '_', '.', ',', ':', ';', '!', '?'], " ") // Separators to space
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -250,15 +249,14 @@ fn extract_title_from_filename(filename: &str) -> String {
 
     // Remove leading track number patterns like "01 - ", "1. ", "01_", "01-"
     // Pattern: digits followed by separator(s) including space-dash-space
-    let track_num_re = Regex::new(r"^(\d{1,2})\s*[-._]\s*")
-        .unwrap();
+    let track_num_re = Regex::new(r"^(\d{1,2})\s*[-._]\s*").unwrap();
     let without_track = track_num_re.replace(without_ext, "").to_string();
 
     // Remove common artist separator patterns like "Artist - Title" → "Title"
     // This handles "Pink Floyd - 01 - Speak to Me" after track number is removed
     // Now we have "Pink Floyd - Speak to Me" and want "Speak to Me"
     // But also handle "01 - Speak to Me" → "Speak to Me" (already removed track)
-    
+
     // If there's still a "something - " pattern, try to extract the last part
     if let Some(idx) = without_track.rfind(" - ") {
         let after_sep = &without_track[idx + 3..];
@@ -267,7 +265,7 @@ fn extract_title_from_filename(filename: &str) -> String {
             return after_sep.to_string();
         }
     }
-    
+
     // Also try single dash with spaces
     if let Some(idx) = without_track.find(" - ") {
         let after_sep = &without_track[idx + 3..];
@@ -374,9 +372,9 @@ fn calculate_similarity(a: &str, b: &str) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
     use chrono::Utc;
     use std::path::PathBuf;
+    use uuid::Uuid;
 
     fn make_track(title: &str, track_num: i32, disc_num: i32) -> TrackRecord {
         TrackRecord {
@@ -515,7 +513,12 @@ mod tests {
 
         // Should match by track number
         assert_eq!(result.matched_count, 2);
-        assert!(result.matches.iter().all(|m| m.match_type == MatchType::TrackNumber));
+        assert!(
+            result
+                .matches
+                .iter()
+                .all(|m| m.match_type == MatchType::TrackNumber)
+        );
     }
 
     #[test]

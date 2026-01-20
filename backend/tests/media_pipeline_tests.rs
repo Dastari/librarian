@@ -11,7 +11,14 @@
 // ============================================================================
 
 /// Valid status values for episodes/tracks/movies
-const VALID_STATUSES: &[&str] = &["missing", "wanted", "downloading", "downloaded", "ignored", "suboptimal"];
+const VALID_STATUSES: &[&str] = &[
+    "missing",
+    "wanted",
+    "downloading",
+    "downloaded",
+    "ignored",
+    "suboptimal",
+];
 
 /// Status transition rules as defined in media-pipeline.md
 mod status_transitions {
@@ -58,7 +65,7 @@ mod status_transitions {
     fn test_suboptimal_transitions() {
         // Downloaded can become suboptimal
         assert!(is_valid_transition("downloaded", "suboptimal"));
-        
+
         // Suboptimal can trigger re-download
         assert!(is_valid_transition("suboptimal", "downloading"));
         assert!(is_valid_transition("suboptimal", "downloaded"));
@@ -68,10 +75,13 @@ mod status_transitions {
     fn test_ignore_transitions() {
         // Any status can be ignored
         for status in VALID_STATUSES {
-            assert!(is_valid_transition(status, "ignored"), 
-                "Should be able to ignore from {}", status);
+            assert!(
+                is_valid_transition(status, "ignored"),
+                "Should be able to ignore from {}",
+                status
+            );
         }
-        
+
         // Can un-ignore back to wanted
         assert!(is_valid_transition("ignored", "wanted"));
     }
@@ -82,7 +92,7 @@ mod status_transitions {
         assert!(!is_valid_transition("downloaded", "downloading"));
         assert!(!is_valid_transition("downloading", "missing"));
         assert!(!is_valid_transition("wanted", "missing"));
-        
+
         // Can't skip steps
         assert!(!is_valid_transition("missing", "downloading"));
         assert!(!is_valid_transition("missing", "downloaded"));
@@ -99,8 +109,11 @@ mod status_transitions {
     fn test_same_status_transition() {
         // Setting same status should be allowed (no-op)
         for status in VALID_STATUSES {
-            assert!(is_valid_transition(status, status),
-                "Same status transition should be valid: {}", status);
+            assert!(
+                is_valid_transition(status, status),
+                "Same status transition should be valid: {}",
+                status
+            );
         }
     }
 }
@@ -112,30 +125,43 @@ mod status_transitions {
 mod file_types {
     /// Check if a file extension is a video type
     fn is_video_extension(ext: &str) -> bool {
-        matches!(ext.to_lowercase().as_str(),
-            "mkv" | "mp4" | "avi" | "wmv" | "mov" | "m4v" | "ts" | "webm" | 
-            "m2ts" | "ogv" | "flv" | "divx"
+        matches!(
+            ext.to_lowercase().as_str(),
+            "mkv"
+                | "mp4"
+                | "avi"
+                | "wmv"
+                | "mov"
+                | "m4v"
+                | "ts"
+                | "webm"
+                | "m2ts"
+                | "ogv"
+                | "flv"
+                | "divx"
         )
     }
 
     /// Check if a file extension is an audio type
     fn is_audio_extension(ext: &str) -> bool {
-        matches!(ext.to_lowercase().as_str(),
-            "mp3" | "flac" | "m4a" | "aac" | "ogg" | "wav" | "wma" | 
-            "opus" | "ape" | "alac"
+        matches!(
+            ext.to_lowercase().as_str(),
+            "mp3" | "flac" | "m4a" | "aac" | "ogg" | "wav" | "wma" | "opus" | "ape" | "alac"
         )
     }
 
     /// Check if a file extension is a subtitle type
     fn is_subtitle_extension(ext: &str) -> bool {
-        matches!(ext.to_lowercase().as_str(),
+        matches!(
+            ext.to_lowercase().as_str(),
             "srt" | "sub" | "ass" | "ssa" | "vtt" | "idx"
         )
     }
 
     /// Check if a file extension is an archive type
     fn is_archive_extension(ext: &str) -> bool {
-        matches!(ext.to_lowercase().as_str(),
+        matches!(
+            ext.to_lowercase().as_str(),
             "zip" | "rar" | "7z" | "tar" | "gz" | "bz2"
         )
     }
@@ -143,19 +169,19 @@ mod file_types {
     /// Check if a file is a sample based on filename patterns
     fn is_sample_file(filename: &str, size_bytes: u64) -> bool {
         let lower = filename.to_lowercase();
-        
+
         // Explicit sample markers
         if lower.contains("sample") {
             return true;
         }
-        
+
         // Very small video files are likely samples
         if is_video_extension(&get_extension(filename)) && size_bytes < 100_000_000 {
             // Less than 100MB for video is suspicious
             // But only if it doesn't match a short episode pattern
             return true;
         }
-        
+
         false
     }
 
@@ -169,10 +195,16 @@ mod file_types {
 
     #[test]
     fn test_video_extensions() {
-        let video_exts = vec!["mkv", "mp4", "avi", "wmv", "mov", "m4v", "ts", "webm", "m2ts"];
+        let video_exts = vec![
+            "mkv", "mp4", "avi", "wmv", "mov", "m4v", "ts", "webm", "m2ts",
+        ];
         for ext in video_exts {
             assert!(is_video_extension(ext), "{} should be video", ext);
-            assert!(is_video_extension(&ext.to_uppercase()), "{} uppercase should be video", ext);
+            assert!(
+                is_video_extension(&ext.to_uppercase()),
+                "{} uppercase should be video",
+                ext
+            );
         }
     }
 
@@ -220,7 +252,7 @@ mod file_types {
     fn test_sample_detection_by_size() {
         // Small video file is a sample
         assert!(is_sample_file("episode.mkv", 50_000_000)); // 50MB
-        
+
         // Normal sized video is not a sample
         assert!(!is_sample_file("episode.mkv", 500_000_000)); // 500MB
     }
@@ -293,23 +325,43 @@ mod torrent_files {
     fn test_ds9_season_pack() {
         // Simulate Deep Space Nine S01 torrent structure
         let files = vec![
-            TorrentFile { path: "README.md".into(), size: 5000 },
-            TorrentFile { path: "Star Trek- Deep Space Nine - S01E01-E02 - Emissary 960p-QueerWorm-Lela.mkv".into(), size: 2_500_000_000 },
-            TorrentFile { path: "Star Trek- Deep Space Nine - S01E03 - Past Prologue 960p-QueerWorm-Lela.mkv".into(), size: 1_200_000_000 },
-            TorrentFile { path: "Star Trek- Deep Space Nine - S01E04 - A Man Alone 960p-QueerWorm-Lela.mkv".into(), size: 1_100_000_000 },
-            TorrentFile { path: "Star Trek- Deep Space Nine - S01E05 - Babel 960p-QueerWorm-Lela.mkv".into(), size: 1_150_000_000 },
+            TorrentFile {
+                path: "README.md".into(),
+                size: 5000,
+            },
+            TorrentFile {
+                path: "Star Trek- Deep Space Nine - S01E01-E02 - Emissary 960p-QueerWorm-Lela.mkv"
+                    .into(),
+                size: 2_500_000_000,
+            },
+            TorrentFile {
+                path: "Star Trek- Deep Space Nine - S01E03 - Past Prologue 960p-QueerWorm-Lela.mkv"
+                    .into(),
+                size: 1_200_000_000,
+            },
+            TorrentFile {
+                path: "Star Trek- Deep Space Nine - S01E04 - A Man Alone 960p-QueerWorm-Lela.mkv"
+                    .into(),
+                size: 1_100_000_000,
+            },
+            TorrentFile {
+                path: "Star Trek- Deep Space Nine - S01E05 - Babel 960p-QueerWorm-Lela.mkv".into(),
+                size: 1_150_000_000,
+            },
         ];
 
-        let video_count = files.iter()
+        let video_count = files
+            .iter()
             .filter(|f| categorize_file(f) == FileCategory::Video)
             .count();
-        
+
         assert_eq!(video_count, 4, "Should find 4 video files");
-        
-        let metadata_count = files.iter()
+
+        let metadata_count = files
+            .iter()
             .filter(|f| categorize_file(f) == FileCategory::Metadata)
             .count();
-        
+
         assert_eq!(metadata_count, 1, "Should find 1 metadata file (README)");
     }
 
@@ -317,15 +369,30 @@ mod torrent_files {
     fn test_single_episode_with_extras() {
         // Simulate single episode torrent with screenshots
         let files = vec![
-            TorrentFile { path: "Fallout.2024.S01E01.1080p.HEVC.x265-MeGusta.mkv".into(), size: 800_000_000 },
-            TorrentFile { path: "Fallout.2024.S01E01.1080p.HEVC.x265-MeGusta.nfo".into(), size: 3000 },
-            TorrentFile { path: "Screens/screen0001.png".into(), size: 500_000 },
-            TorrentFile { path: "Screens/screen0002.png".into(), size: 500_000 },
-            TorrentFile { path: "Screens/screen0003.png".into(), size: 500_000 },
+            TorrentFile {
+                path: "Fallout.2024.S01E01.1080p.HEVC.x265-MeGusta.mkv".into(),
+                size: 800_000_000,
+            },
+            TorrentFile {
+                path: "Fallout.2024.S01E01.1080p.HEVC.x265-MeGusta.nfo".into(),
+                size: 3000,
+            },
+            TorrentFile {
+                path: "Screens/screen0001.png".into(),
+                size: 500_000,
+            },
+            TorrentFile {
+                path: "Screens/screen0002.png".into(),
+                size: 500_000,
+            },
+            TorrentFile {
+                path: "Screens/screen0003.png".into(),
+                size: 500_000,
+            },
         ];
 
         let categories: Vec<_> = files.iter().map(|f| categorize_file(f)).collect();
-        
+
         assert_eq!(categories[0], FileCategory::Video);
         assert_eq!(categories[1], FileCategory::Metadata);
         assert_eq!(categories[2], FileCategory::Image);
@@ -336,13 +403,22 @@ mod torrent_files {
     #[test]
     fn test_torrent_with_sample() {
         let files = vec![
-            TorrentFile { path: "Movie.2024.1080p.BluRay.mkv".into(), size: 8_000_000_000 },
-            TorrentFile { path: "Sample/sample.mkv".into(), size: 50_000_000 },
-            TorrentFile { path: "Movie.2024.1080p.BluRay.nfo".into(), size: 3000 },
+            TorrentFile {
+                path: "Movie.2024.1080p.BluRay.mkv".into(),
+                size: 8_000_000_000,
+            },
+            TorrentFile {
+                path: "Sample/sample.mkv".into(),
+                size: 50_000_000,
+            },
+            TorrentFile {
+                path: "Movie.2024.1080p.BluRay.nfo".into(),
+                size: 3000,
+            },
         ];
 
         let categories: Vec<_> = files.iter().map(|f| categorize_file(f)).collect();
-        
+
         assert_eq!(categories[0], FileCategory::Video);
         assert_eq!(categories[1], FileCategory::Sample);
         assert_eq!(categories[2], FileCategory::Metadata);
@@ -351,36 +427,62 @@ mod torrent_files {
     #[test]
     fn test_music_album() {
         let files = vec![
-            TorrentFile { path: "01 - Track One.flac".into(), size: 50_000_000 },
-            TorrentFile { path: "02 - Track Two.flac".into(), size: 45_000_000 },
-            TorrentFile { path: "03 - Track Three.flac".into(), size: 55_000_000 },
-            TorrentFile { path: "cover.jpg".into(), size: 2_000_000 },
-            TorrentFile { path: "album.nfo".into(), size: 1000 },
+            TorrentFile {
+                path: "01 - Track One.flac".into(),
+                size: 50_000_000,
+            },
+            TorrentFile {
+                path: "02 - Track Two.flac".into(),
+                size: 45_000_000,
+            },
+            TorrentFile {
+                path: "03 - Track Three.flac".into(),
+                size: 55_000_000,
+            },
+            TorrentFile {
+                path: "cover.jpg".into(),
+                size: 2_000_000,
+            },
+            TorrentFile {
+                path: "album.nfo".into(),
+                size: 1000,
+            },
         ];
 
-        let audio_count = files.iter()
+        let audio_count = files
+            .iter()
             .filter(|f| categorize_file(f) == FileCategory::Audio)
             .count();
-        
+
         assert_eq!(audio_count, 3, "Should find 3 audio files");
 
-        let image_count = files.iter()
+        let image_count = files
+            .iter()
             .filter(|f| categorize_file(f) == FileCategory::Image)
             .count();
-        
+
         assert_eq!(image_count, 1, "Should find 1 image file (cover art)");
     }
 
     #[test]
     fn test_movie_with_subtitles() {
         let files = vec![
-            TorrentFile { path: "The.Hunt.for.Red.October.1990.1080p.BluRay.x265.mp4".into(), size: 5_000_000_000 },
-            TorrentFile { path: "The.Hunt.for.Red.October.1990.1080p.BluRay.x265.srt".into(), size: 80_000 },
-            TorrentFile { path: "The.Hunt.for.Red.October.1990.1080p.BluRay.x265.nfo".into(), size: 3000 },
+            TorrentFile {
+                path: "The.Hunt.for.Red.October.1990.1080p.BluRay.x265.mp4".into(),
+                size: 5_000_000_000,
+            },
+            TorrentFile {
+                path: "The.Hunt.for.Red.October.1990.1080p.BluRay.x265.srt".into(),
+                size: 80_000,
+            },
+            TorrentFile {
+                path: "The.Hunt.for.Red.October.1990.1080p.BluRay.x265.nfo".into(),
+                size: 3000,
+            },
         ];
 
         let categories: Vec<_> = files.iter().map(|f| categorize_file(f)).collect();
-        
+
         assert_eq!(categories[0], FileCategory::Video);
         assert_eq!(categories[1], FileCategory::Subtitle);
         assert_eq!(categories[2], FileCategory::Metadata);
@@ -388,7 +490,7 @@ mod torrent_files {
 }
 
 // ============================================================================
-// Quality Matching Tests  
+// Quality Matching Tests
 // ============================================================================
 
 mod quality_matching {
@@ -411,11 +513,11 @@ mod quality_matching {
         }
 
         let file_rank = resolution_rank(file_resolution);
-        
+
         // Check if file matches or exceeds any target
-        target_resolutions.iter().any(|target| {
-            resolution_rank(target) <= file_rank
-        })
+        target_resolutions
+            .iter()
+            .any(|target| resolution_rank(target) <= file_rank)
     }
 
     /// Check if new quality is an upgrade over existing
@@ -428,7 +530,7 @@ mod quality_matching {
         assert!(resolution_rank("2160p") > resolution_rank("1080p"));
         assert!(resolution_rank("1080p") > resolution_rank("720p"));
         assert!(resolution_rank("720p") > resolution_rank("480p"));
-        
+
         // Aliases should be equal
         assert_eq!(resolution_rank("4k"), resolution_rank("2160p"));
         assert_eq!(resolution_rank("uhd"), resolution_rank("2160p"));
@@ -438,16 +540,16 @@ mod quality_matching {
     fn test_meets_quality_target() {
         // 1080p meets 1080p target
         assert!(meets_quality_target("1080p", &["1080p"]));
-        
+
         // 1080p meets 720p target (exceeds)
         assert!(meets_quality_target("1080p", &["720p"]));
-        
+
         // 720p does NOT meet 1080p target
         assert!(!meets_quality_target("720p", &["1080p"]));
-        
+
         // No restrictions means anything is acceptable
         assert!(meets_quality_target("480p", &[]));
-        
+
         // Multiple targets - meets if matches any
         assert!(meets_quality_target("720p", &["720p", "1080p"]));
     }
@@ -456,13 +558,13 @@ mod quality_matching {
     fn test_is_quality_upgrade() {
         // 720p -> 1080p is upgrade
         assert!(is_quality_upgrade("720p", "1080p"));
-        
+
         // 1080p -> 2160p is upgrade
         assert!(is_quality_upgrade("1080p", "2160p"));
-        
+
         // 1080p -> 720p is NOT upgrade
         assert!(!is_quality_upgrade("1080p", "720p"));
-        
+
         // Same resolution is NOT upgrade
         assert!(!is_quality_upgrade("1080p", "1080p"));
     }
@@ -472,15 +574,15 @@ mod quality_matching {
         // Scenario: Library wants 1080p, we find 720p release
         // Should NOT match
         assert!(!meets_quality_target("720p", &["1080p"]));
-        
+
         // Scenario: Library wants 720p or 1080p, we find 1080p
         // Should match
         assert!(meets_quality_target("1080p", &["720p", "1080p"]));
-        
+
         // Scenario: DS9 960p upscale against 720p target
         // 960p is between 720p and 1080p, closer to 1080p
         // For this test, treat 960p as custom - would need special handling
-        
+
         // Scenario: Library wants any quality (no restrictions)
         assert!(meets_quality_target("480p", &[]));
     }
@@ -527,9 +629,18 @@ mod episode_matching {
     #[test]
     fn test_parse_season_episode_variations() {
         // Various naming styles
-        assert_eq!(parse_season_episode("Chicago.Fire.S14E08.1080p.mkv"), Some((14, 8)));
-        assert_eq!(parse_season_episode("Star Trek- Deep Space Nine - S01E09 - The Passenger.mkv"), Some((1, 9)));
-        assert_eq!(parse_season_episode("Fallout.2024.S02E04.720p.mkv"), Some((2, 4)));
+        assert_eq!(
+            parse_season_episode("Chicago.Fire.S14E08.1080p.mkv"),
+            Some((14, 8))
+        );
+        assert_eq!(
+            parse_season_episode("Star Trek- Deep Space Nine - S01E09 - The Passenger.mkv"),
+            Some((1, 9))
+        );
+        assert_eq!(
+            parse_season_episode("Fallout.2024.S02E04.720p.mkv"),
+            Some((2, 4))
+        );
     }
 
     #[test]

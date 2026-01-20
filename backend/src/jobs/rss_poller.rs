@@ -22,9 +22,9 @@ use uuid::Uuid;
 use crate::db::libraries::LibraryRecord;
 use crate::db::tv_shows::TvShowRecord;
 use crate::db::{CreateRssFeedItem, Database, RssFeedRecord};
-use crate::services::text_utils::{normalize_quality, normalize_show_name};
 use crate::services::ParsedRssItem;
 use crate::services::RssService;
+use crate::services::text_utils::{normalize_quality, normalize_show_name};
 
 /// Maximum concurrent feed fetches
 const MAX_CONCURRENT_FEEDS: usize = 5;
@@ -47,19 +47,19 @@ pub async fn poll_feeds() -> Result<()> {
 }
 
 /// Poll feeds with a provided database connection
-/// 
+///
 /// Uses bounded concurrency to prevent overwhelming external RSS servers.
 pub async fn poll_feeds_with_db(db: &Database) -> Result<()> {
     let rss_service = Arc::new(RssService::new());
 
     // Get feeds that need polling
     let feeds = db.rss_feeds().list_due_for_poll().await?;
-    
+
     if feeds.is_empty() {
         debug!(job = "rss_poller", "No feeds due for polling");
         return Ok(());
     }
-    
+
     info!(
         job = "rss_poller",
         feed_count = feeds.len(),
@@ -69,22 +69,22 @@ pub async fn poll_feeds_with_db(db: &Database) -> Result<()> {
 
     // Semaphore to limit concurrent feed fetches
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_FEEDS));
-    
+
     // Process feeds in chunks
     let chunk_size = MAX_CONCURRENT_FEEDS;
-    
+
     for chunk in feeds.chunks(chunk_size) {
         let mut handles = Vec::with_capacity(chunk.len());
-        
+
         for feed in chunk {
             let db = db.clone();
             let rss_service = rss_service.clone();
             let semaphore = semaphore.clone();
             let feed = feed.clone();
-            
+
             let handle = tokio::spawn(async move {
                 let _permit = semaphore.acquire().await.expect("Semaphore closed");
-                
+
                 if let Err(e) = poll_single_feed(&db, &rss_service, &feed).await {
                     error!(
                         job = "rss_poller",
@@ -109,17 +109,17 @@ pub async fn poll_feeds_with_db(db: &Database) -> Result<()> {
                     }
                 }
             });
-            
+
             handles.push(handle);
         }
-        
+
         // Wait for all feeds in this chunk to complete
         for handle in handles {
             if let Err(e) = handle.await {
                 error!(job = "rss_poller", error = %e, "Feed poll task panicked");
             }
         }
-        
+
         // Small delay between chunks
         if FEED_BATCH_DELAY_MS > 0 {
             tokio::time::sleep(Duration::from_millis(FEED_BATCH_DELAY_MS)).await;

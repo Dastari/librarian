@@ -203,10 +203,7 @@ impl Panel for LogsPanel {
                 let spans = vec![
                     Span::styled(&log.timestamp, Theme::dim()),
                     Span::raw(" "),
-                    Span::styled(
-                        format!("{:5}", log.level),
-                        Theme::log_level(&log.level),
-                    ),
+                    Span::styled(format!("{:5}", log.level), Theme::log_level(&log.level)),
                     Span::raw(" "),
                     Span::styled(
                         format!("{:20}", truncate_str(&log.target, 20)),
@@ -221,12 +218,16 @@ impl Panel for LogsPanel {
 
         // Build title with decorators
         let status = if self.paused { " ⏸" } else { "" };
-        let border_style = if focused { Theme::border(PanelKind::Logs) } else { Theme::border_dim() };
-        
+        let border_style = if focused {
+            Theme::border(PanelKind::Logs)
+        } else {
+            Theme::border_dim()
+        };
+
         // Current time
         let now = chrono::Local::now();
         let time_str = now.format("%H:%M:%S").to_string();
-        
+
         // Level filter indicator
         let filter_indicator = match self.level_filter.as_deref() {
             Some("WARN") => " [W]",
@@ -234,13 +235,16 @@ impl Panel for LogsPanel {
             Some("ERROR") => " [E]",
             _ => "",
         };
-        
+
         // Left title: panel name and options
         let left_title = Line::from(vec![
             Span::styled("┐", border_style),
             Span::styled(PanelKind::Logs.superscript(), Theme::panel_number()),
             Span::styled("logs", Theme::panel_title(PanelKind::Logs)),
-            Span::styled(format!(" ({}){}{}", filtered.len(), status, filter_indicator), Theme::dim()),
+            Span::styled(
+                format!(" ({}){}{}", filtered.len(), status, filter_indicator),
+                Theme::dim(),
+            ),
             Span::styled("┌─┐", border_style),
             Span::styled("p", Theme::keybind_key()),
             Span::styled("ause", Theme::keybind()),

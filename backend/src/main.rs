@@ -33,15 +33,15 @@ use crate::api::media::{MediaState, media_routes};
 use crate::config::Config;
 use crate::db::Database;
 use crate::graphql::{AuthUser, LibrarianSchema, verify_token};
+use crate::graphql::{LibraryChangedEvent, MediaFileUpdatedEvent};
 use crate::services::{
-    ArtworkService, CastService, CastServiceConfig, DatabaseLoggerConfig,
-    FfmpegService, FilesystemService, FilesystemServiceConfig, MediaAnalysisQueue,
-    MetadataServiceConfig, ScannerService, StorageClient, TorrentService, TorrentServiceConfig,
+    ArtworkService, CastService, CastServiceConfig, DatabaseLoggerConfig, FfmpegService,
+    FilesystemService, FilesystemServiceConfig, MediaAnalysisQueue, MetadataServiceConfig,
+    ScannerService, StorageClient, TorrentService, TorrentServiceConfig,
     artwork::ensure_artwork_bucket, create_database_layer, create_media_analysis_queue,
     create_metadata_service_with_artwork, create_metrics_collector,
 };
-use crate::graphql::{LibraryChangedEvent, MediaFileUpdatedEvent};
-use crate::tui::{TuiApp, TuiConfig, should_use_tui, create_tui_layer};
+use crate::tui::{TuiApp, TuiConfig, create_tui_layer, should_use_tui};
 
 /// Application state shared across all handlers
 #[derive(Clone)]
@@ -66,10 +66,8 @@ async fn main() -> anyhow::Result<()> {
     // Initialize database connection early so we can use it for logging
     // Uses retry logic to wait for database to become available
     eprintln!("Connecting to database...");
-    let db = Database::connect_with_retry(
-        &config.database_url,
-        std::time::Duration::from_secs(30),
-    ).await;
+    let db = Database::connect_with_retry(&config.database_url, std::time::Duration::from_secs(30))
+        .await;
     eprintln!("Database connected!");
 
     // Run migrations to ensure schema is up to date
@@ -97,7 +95,7 @@ async fn main() -> anyhow::Result<()> {
     // Create TUI layer if needed (we need the receiver before init)
     let tui_log_rx = if use_tui {
         let (tui_layer, tui_rx) = create_tui_layer(tracing::Level::INFO);
-        
+
         // Initialize tracing with TUI layer (no stdout output)
         tracing_subscriber::registry()
             .with(
@@ -107,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
             .with(tui_layer)
             .with(db_layer)
             .init();
-        
+
         Some(tui_rx)
     } else {
         // Initialize tracing with JSON console output (headless mode)
@@ -119,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
             .with(tracing_subscriber::fmt::layer().json())
             .with(db_layer)
             .init();
-        
+
         None
     };
 
@@ -161,7 +159,11 @@ async fn main() -> anyhow::Result<()> {
         Some(key) if !key.is_empty() => Some(key),
         _ => {
             // Try to read from database settings
-            match db.settings().get_value::<String>("metadata.tmdb_api_key").await {
+            match db
+                .settings()
+                .get_value::<String>("metadata.tmdb_api_key")
+                .await
+            {
                 Ok(Some(key)) if !key.is_empty() => {
                     tracing::info!("Using TMDB API key from database settings");
                     Some(key)
@@ -172,13 +174,23 @@ async fn main() -> anyhow::Result<()> {
     };
     let tvdb_api_key = match std::env::var("TVDB_API_KEY").ok() {
         Some(key) if !key.is_empty() => Some(key),
-        _ => db.settings().get_value::<String>("metadata.tvdb_api_key").await.ok().flatten(),
+        _ => db
+            .settings()
+            .get_value::<String>("metadata.tvdb_api_key")
+            .await
+            .ok()
+            .flatten(),
     };
     let openai_api_key = match std::env::var("OPENAI_API_KEY").ok() {
         Some(key) if !key.is_empty() => Some(key),
-        _ => db.settings().get_value::<String>("metadata.openai_api_key").await.ok().flatten(),
+        _ => db
+            .settings()
+            .get_value::<String>("metadata.openai_api_key")
+            .await
+            .ok()
+            .flatten(),
     };
-    
+
     let metadata_config = MetadataServiceConfig {
         tmdb_api_key,
         tvdb_api_key,
@@ -193,7 +205,9 @@ async fn main() -> anyhow::Result<()> {
     if ffmpeg_service.is_available().await {
         tracing::info!("FFmpeg service initialized (ffprobe available)");
     } else {
-        tracing::warn!("FFmpeg service initialized but ffprobe not found in PATH - media analysis will fail");
+        tracing::warn!(
+            "FFmpeg service initialized but ffprobe not found in PATH - media analysis will fail"
+        );
     }
 
     // Create media file updated broadcast channel for real-time UI updates
@@ -237,24 +251,28 @@ async fn main() -> anyhow::Result<()> {
             .with_analysis_queue(analysis_queue.clone())
             .with_library_changed_tx(library_changed_tx.clone())
             .with_torrent_service(torrent_service.clone());
-        
+
         // Add IndexerManager if available for post-scan auto-hunt
         if let Some(ref mgr) = indexer_manager {
             scanner = scanner.with_indexer_manager(mgr.clone());
         }
-        
+
         Arc::new(scanner)
     };
     tracing::info!("Scanner service initialized with FFmpeg analysis and auto-hunt");
 
     // Initialize cast service for Chromecast/AirPlay support
     let cast_config = CastServiceConfig {
-        media_base_url: format!("http://{}:{}", config.host.as_deref().unwrap_or("0.0.0.0"), config.port),
+        media_base_url: format!(
+            "http://{}:{}",
+            config.host.as_deref().unwrap_or("0.0.0.0"),
+            config.port
+        ),
         auto_discovery: true,
         discovery_interval_secs: 30,
     };
     let cast_service = Arc::new(CastService::new(db.clone(), cast_config));
-    
+
     // Start mDNS device discovery in background
     if let Err(e) = cast_service.start_discovery().await {
         tracing::warn!(error = %e, "Failed to start cast device discovery");
@@ -305,7 +323,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .with_analysis_queue(analysis_queue.clone())
     .with_metadata_service(metadata_service.clone());
-    
+
     let _completion_handle = completion_handler.start();
     tracing::info!("Torrent completion handler started");
 
@@ -315,7 +333,10 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(async move {
         tracing::info!("Starting initial TV schedule sync...");
         if let Err(e) = jobs::schedule_sync::sync_schedule(startup_pool).await {
-            tracing::warn!("Initial schedule sync failed (will retry on schedule): {}", e);
+            tracing::warn!(
+                "Initial schedule sync failed (will retry on schedule): {}",
+                e
+            );
         } else {
             tracing::info!("Initial TV schedule sync completed");
         }
@@ -330,7 +351,7 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(async move {
         // Short delay to ensure everything is initialized
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        
+
         // First, process any pending torrents (newly completed)
         tracing::info!("Checking for unprocessed completed torrents...");
         if let Err(e) = jobs::download_monitor::process_completed_torrents(
@@ -338,12 +359,17 @@ async fn main() -> anyhow::Result<()> {
             startup_torrent_service.clone(),
             Some(startup_analysis_queue.clone()),
             Some(startup_metadata_service.clone()),
-        ).await {
-            tracing::warn!("Startup torrent processing failed (will retry on schedule): {}", e);
+        )
+        .await
+        {
+            tracing::warn!(
+                "Startup torrent processing failed (will retry on schedule): {}",
+                e
+            );
         } else {
             tracing::info!("Startup torrent processing completed");
         }
-        
+
         // Then, retry matching for previously unmatched torrents
         // (e.g., shows that were added after the torrent completed)
         tracing::info!("Checking for unmatched torrents to retry...");
@@ -352,7 +378,9 @@ async fn main() -> anyhow::Result<()> {
             startup_torrent_service,
             Some(startup_analysis_queue),
             Some(startup_metadata_service),
-        ).await {
+        )
+        .await
+        {
             tracing::warn!("Unmatched torrent processing failed: {}", e);
         }
     });
@@ -372,7 +400,7 @@ async fn main() -> anyhow::Result<()> {
         filesystem_service,
         analysis_queue,
     };
-    
+
     // Build media state for streaming routes
     let media_state = MediaState { db };
 

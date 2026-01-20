@@ -410,11 +410,12 @@ impl SubtitleRepository {
         media_file_id: Uuid,
         source_type: SubtitleSourceType,
     ) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM subtitles WHERE media_file_id = $1 AND source_type = $2")
-            .bind(media_file_id)
-            .bind(source_type.as_str())
-            .execute(&self.pool)
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM subtitles WHERE media_file_id = $1 AND source_type = $2")
+                .bind(media_file_id)
+                .bind(source_type.as_str())
+                .execute(&self.pool)
+                .await?;
 
         Ok(result.rows_affected())
     }

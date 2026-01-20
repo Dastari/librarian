@@ -118,7 +118,10 @@ impl PlaybackRepository {
     }
 
     /// Create or update a playback session (upsert by user_id)
-    pub async fn upsert_session(&self, input: UpsertPlaybackSession) -> Result<PlaybackSessionRecord> {
+    pub async fn upsert_session(
+        &self,
+        input: UpsertPlaybackSession,
+    ) -> Result<PlaybackSessionRecord> {
         let record = sqlx::query_as::<_, PlaybackSessionRecord>(
             r#"
             INSERT INTO playback_sessions (

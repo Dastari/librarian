@@ -226,7 +226,10 @@ impl AudiobookMetadataClient {
                     }
 
                     if !response.status().is_success() {
-                        anyhow::bail!("OpenLibrary get author failed with status: {}", response.status());
+                        anyhow::bail!(
+                            "OpenLibrary get author failed with status: {}",
+                            response.status()
+                        );
                     }
 
                     let author: OpenLibraryAuthor = response
@@ -289,7 +292,10 @@ impl AudiobookMetadataClient {
                     let response = client.get(&url).await?;
 
                     if !response.status().is_success() {
-                        anyhow::bail!("OpenLibrary get work failed with status: {}", response.status());
+                        anyhow::bail!(
+                            "OpenLibrary get work failed with status: {}",
+                            response.status()
+                        );
                     }
 
                     response
@@ -309,7 +315,10 @@ impl AudiobookMetadataClient {
                 let author_key = first_author.author.key.clone();
                 let author = self.get_author(&author_key).await.ok();
                 (
-                    author.as_ref().map(|a| a.name.clone()).unwrap_or_else(|| "Unknown".to_string()),
+                    author
+                        .as_ref()
+                        .map(|a| a.name.clone())
+                        .unwrap_or_else(|| "Unknown".to_string()),
                     Some(author_key),
                 )
             } else {
@@ -321,17 +330,16 @@ impl AudiobookMetadataClient {
 
         // Get cover URL
         let cover_url = work.covers.and_then(|covers| {
-            covers.into_iter().next().map(|id| {
-                format!("https://covers.openlibrary.org/b/id/{}-L.jpg", id)
-            })
+            covers
+                .into_iter()
+                .next()
+                .map(|id| format!("https://covers.openlibrary.org/b/id/{}-L.jpg", id))
         });
 
         // Parse year from first_publish_date
-        let year = work.first_publish_date.and_then(|d| {
-            d.split_whitespace()
-                .last()
-                .and_then(|y| y.parse().ok())
-        });
+        let year = work
+            .first_publish_date
+            .and_then(|d| d.split_whitespace().last().and_then(|y| y.parse().ok()));
 
         Ok(AudiobookDetails {
             title: work.title,
@@ -352,12 +360,18 @@ impl AudiobookMetadataClient {
     /// Get cover image URL for a work
     pub fn get_cover_url(cover_id: i64, size: &str) -> String {
         // Size can be S, M, or L
-        format!("https://covers.openlibrary.org/b/id/{}-{}.jpg", cover_id, size)
+        format!(
+            "https://covers.openlibrary.org/b/id/{}-{}.jpg",
+            cover_id, size
+        )
     }
 
     /// Get author photo URL
     pub fn get_author_photo_url(photo_id: i64, size: &str) -> String {
-        format!("https://covers.openlibrary.org/a/id/{}-{}.jpg", photo_id, size)
+        format!(
+            "https://covers.openlibrary.org/a/id/{}-{}.jpg",
+            photo_id, size
+        )
     }
 }
 
@@ -375,6 +389,7 @@ impl OpenLibraryWork {
 
     /// Get cover URL in specified size (S, M, L)
     pub fn cover_url(&self, size: &str) -> Option<String> {
-        self.cover_i.map(|id| AudiobookMetadataClient::get_cover_url(id, size))
+        self.cover_i
+            .map(|id| AudiobookMetadataClient::get_cover_url(id, size))
     }
 }

@@ -18,10 +18,10 @@ use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
 use crate::db::Database;
+use crate::services::MetadataService;
 use crate::services::queues::MediaAnalysisQueue;
 use crate::services::torrent::{TorrentEvent, TorrentService};
 use crate::services::torrent_processor::TorrentProcessor;
-use crate::services::MetadataService;
 
 /// Handler configuration
 #[derive(Debug, Clone)]
@@ -81,9 +81,9 @@ impl TorrentCompletionHandler {
     /// Returns a handle that can be used to stop the handler.
     pub fn start(self) -> CompletionHandlerHandle {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        
+
         let handle = tokio::spawn(self.run(shutdown_rx));
-        
+
         CompletionHandlerHandle {
             shutdown_tx: Some(shutdown_tx),
             task_handle: Some(handle),
@@ -96,7 +96,7 @@ impl TorrentCompletionHandler {
 
         // Subscribe to torrent events
         let mut event_rx = self.torrent_service.subscribe();
-        
+
         // Semaphore for limiting concurrent processing
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.max_concurrent));
 
@@ -107,13 +107,13 @@ impl TorrentCompletionHandler {
                     info!("Torrent completion handler shutting down");
                     break;
                 }
-                
+
                 // Handle torrent events
                 event = event_rx.recv() => {
                     match event {
                         Ok(TorrentEvent::Completed { id: _, info_hash, name }) => {
                             info!("Download finished for '{}', starting post-download processing", name);
-                            
+
                             // Acquire semaphore permit
                             let permit = match semaphore.clone().try_acquire_owned() {
                                 Ok(permit) => permit,
@@ -125,7 +125,7 @@ impl TorrentCompletionHandler {
                                     continue;
                                 }
                             };
-                            
+
                             // Spawn processing task
                             let db = self.db.clone();
                             let torrent_service = self.torrent_service.clone();
@@ -133,10 +133,10 @@ impl TorrentCompletionHandler {
                             let metadata_service = self.metadata_service.clone();
                             let info_hash_clone = info_hash.clone();
                             let name_clone = name.clone();
-                            
+
                             tokio::spawn(async move {
                                 let _permit = permit;
-                                
+
                                 if let Err(e) = process_completed_torrent(
                                     db,
                                     torrent_service,
@@ -154,13 +154,13 @@ impl TorrentCompletionHandler {
                         }
                         Ok(TorrentEvent::Added { id: _, name, info_hash }) => {
                             info!("New torrent added: '{}', matching files to library items", name);
-                            
+
                             // Spawn matching task
                             let db = self.db.clone();
                             let torrent_service = self.torrent_service.clone();
                             let info_hash_clone = info_hash.clone();
                             let name_clone = name.clone();
-                            
+
                             tokio::spawn(async move {
                                 if let Err(e) = match_torrent_files_on_add(
                                     db,
@@ -241,16 +241,17 @@ async fn process_completed_torrent(
         .map(|t| t.name.clone())
         .unwrap_or_else(|| "Unknown".to_string());
 
-    info!("Processing '{}' (triggered by {})", torrent_name, trigger_reason);
+    info!(
+        "Processing '{}' (triggered by {})",
+        torrent_name, trigger_reason
+    );
 
     // Create processor with appropriate services
     let processor = match (&analysis_queue, &metadata_service) {
         (Some(queue), Some(metadata)) => {
             TorrentProcessor::with_services(db.clone(), queue.clone(), metadata.clone())
         }
-        (Some(queue), None) => {
-            TorrentProcessor::with_analysis_queue(db.clone(), queue.clone())
-        }
+        (Some(queue), None) => TorrentProcessor::with_analysis_queue(db.clone(), queue.clone()),
         _ => TorrentProcessor::new(db.clone()),
     };
 
@@ -297,20 +298,28 @@ async fn match_torrent_files_on_add(
     let files = match torrent_service.get_files_for_torrent(info_hash).await {
         Ok(f) => f,
         Err(_) => {
-            debug!("Cannot get files for '{}' yet, metadata still loading", torrent.name);
+            debug!(
+                "Cannot get files for '{}' yet, metadata still loading",
+                torrent.name
+            );
             return Ok(());
         }
     };
 
     if files.is_empty() {
-        debug!("Torrent '{}' has no files yet, metadata still loading", torrent.name);
+        debug!(
+            "Torrent '{}' has no files yet, metadata still loading",
+            torrent.name
+        );
         return Ok(());
     }
 
     let total_size_mb = files.iter().map(|f| f.size).sum::<u64>() / 1_000_000;
     info!(
         "Starting file matching for '{}' ({} files, {} MB)",
-        torrent.name, files.len(), total_size_mb
+        torrent.name,
+        files.len(),
+        total_size_mb
     );
 
     // Create file matcher
@@ -325,12 +334,21 @@ async fn match_torrent_files_on_add(
     let _saved = matcher.save_matches(torrent.id, &matches).await?;
 
     // Update item statuses to 'downloading'
-    let status_updates = matches.iter().filter(|m| {
-        !m.skip_download && !matches!(m.match_target, crate::services::torrent_file_matcher::FileMatchTarget::Unmatched { .. })
-    }).count();
-    
+    let status_updates = matches
+        .iter()
+        .filter(|m| {
+            !m.skip_download
+                && !matches!(
+                    m.match_target,
+                    crate::services::torrent_file_matcher::FileMatchTarget::Unmatched { .. }
+                )
+        })
+        .count();
+
     if status_updates > 0 {
-        matcher.update_item_statuses_to_downloading(&matches).await?;
+        matcher
+            .update_item_statuses_to_downloading(&matches)
+            .await?;
         info!(
             "Updated {} items to 'downloading' status for '{}'",
             status_updates, torrent.name

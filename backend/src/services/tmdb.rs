@@ -218,7 +218,8 @@ impl TmdbClient {
             anyhow::bail!("TMDB API key not configured");
         }
 
-        info!("Searching TMDB for movie '{}'{}",
+        info!(
+            "Searching TMDB for movie '{}'{}",
             query,
             year.map(|y| format!(" ({})", y)).unwrap_or_default()
         );
@@ -296,9 +297,7 @@ impl TmdbClient {
                 let client = client.clone();
                 let key = api_key.clone();
                 async move {
-                    let response = client
-                        .get_with_query(&url, &[("api_key", &key)])
-                        .await?;
+                    let response = client.get_with_query(&url, &[("api_key", &key)]).await?;
 
                     if response.status().as_u16() == 429 {
                         warn!("TMDB rate limit hit, will retry");
@@ -344,9 +343,7 @@ impl TmdbClient {
                 let client = client.clone();
                 let key = api_key.clone();
                 async move {
-                    let response = client
-                        .get_with_query(&url, &[("api_key", &key)])
-                        .await?;
+                    let response = client.get_with_query(&url, &[("api_key", &key)]).await?;
 
                     if response.status().as_u16() == 429 {
                         anyhow::bail!("Rate limited (429)");
@@ -387,9 +384,7 @@ impl TmdbClient {
                 let client = client.clone();
                 let key = api_key.clone();
                 async move {
-                    let response = client
-                        .get_with_query(&url, &[("api_key", &key)])
-                        .await?;
+                    let response = client.get_with_query(&url, &[("api_key", &key)]).await?;
 
                     if response.status().as_u16() == 429 {
                         anyhow::bail!("Rate limited (429)");
@@ -435,9 +430,7 @@ impl TmdbClient {
                 let client = client.clone();
                 let key = api_key.clone();
                 async move {
-                    let response = client
-                        .get_with_query(&url, &[("api_key", &key)])
-                        .await?;
+                    let response = client.get_with_query(&url, &[("api_key", &key)]).await?;
 
                     if response.status().as_u16() == 429 {
                         anyhow::bail!("Rate limited (429)");
@@ -566,10 +559,7 @@ impl TmdbCredits {
     pub fn top_cast(&self, limit: usize) -> Vec<String> {
         let mut cast = self.cast.clone();
         cast.sort_by(|a, b| a.order.cmp(&b.order));
-        cast.into_iter()
-            .take(limit)
-            .map(|c| c.name)
-            .collect()
+        cast.into_iter().take(limit).map(|c| c.name).collect()
     }
 }
 

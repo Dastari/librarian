@@ -33,15 +33,23 @@ impl SystemPanel {
 }
 
 impl Panel for SystemPanel {
-    fn title(&self) -> &str { "sys" }
-    fn kind(&self) -> PanelKind { PanelKind::System }
+    fn title(&self) -> &str {
+        "sys"
+    }
+    fn kind(&self) -> PanelKind {
+        PanelKind::System
+    }
 
     fn render(&self, frame: &mut Frame, area: Rect, focused: bool) {
-        let border_style = if focused { Theme::border(PanelKind::System) } else { Theme::border_dim() };
+        let border_style = if focused {
+            Theme::border(PanelKind::System)
+        } else {
+            Theme::border_dim()
+        };
 
         // Get local IP address
         let ip_addr = get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
-        
+
         let title = Line::from(vec![
             Span::styled("┐", border_style),
             Span::styled(PanelKind::System.superscript(), Theme::panel_number()),
@@ -60,66 +68,115 @@ impl Panel for SystemPanel {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        if inner.height < 4 || inner.width < 20 { return; }
+        if inner.height < 4 || inner.width < 20 {
+            return;
+        }
 
         let chunks = Layout::vertical([
             Constraint::Length(1), // CPU
             Constraint::Length(1), // Memory
             Constraint::Length(1), // Uptime
             Constraint::Length(1), // Requests
-        ]).split(inner);
+        ])
+        .split(inner);
 
         // CPU line with sparkline - use minimal label width for maximum graph space
-        let cpu_history: Vec<u64> = self.snapshot.cpu_history.iter().map(|v| *v as u64).collect();
+        let cpu_history: Vec<u64> = self
+            .snapshot
+            .cpu_history
+            .iter()
+            .map(|v| *v as u64)
+            .collect();
         let label_width = 14; // Reduced for more graph space
         let sparkline_width = inner.width.saturating_sub(label_width + 1) as usize;
         let cpu_data: Vec<u64> = if cpu_history.len() > sparkline_width {
             cpu_history[cpu_history.len() - sparkline_width..].to_vec()
-        } else { cpu_history };
+        } else {
+            cpu_history
+        };
 
         let cpu_row = chunks[0];
-        let cpu_chunks = Layout::horizontal([Constraint::Length(label_width), Constraint::Min(10)]).split(cpu_row);
+        let cpu_chunks = Layout::horizontal([Constraint::Length(label_width), Constraint::Min(10)])
+            .split(cpu_row);
 
         let cpu_text = Paragraph::new(Line::from(vec![
             Span::styled("CPU ", Theme::dim()),
             Span::styled(format!("{:5.1}%", self.snapshot.cpu_percent), Theme::text()),
         ]));
         frame.render_widget(cpu_text, cpu_chunks[0]);
-        frame.render_widget(Sparkline::default().data(&cpu_data).max(100).style(Theme::sparkline_cpu()), cpu_chunks[1]);
+        frame.render_widget(
+            Sparkline::default()
+                .data(&cpu_data)
+                .max(100)
+                .style(Theme::sparkline_cpu()),
+            cpu_chunks[1],
+        );
 
         // Memory line with actual values
         let mem_used_gb = self.snapshot.memory_used as f64 / 1_073_741_824.0;
         let mem_total_gb = self.snapshot.memory_total as f64 / 1_073_741_824.0;
-        let mem_history: Vec<u64> = self.snapshot.mem_history.iter().map(|v| *v as u64).collect();
+        let mem_history: Vec<u64> = self
+            .snapshot
+            .mem_history
+            .iter()
+            .map(|v| *v as u64)
+            .collect();
         let mem_data: Vec<u64> = if mem_history.len() > sparkline_width {
             mem_history[mem_history.len() - sparkline_width..].to_vec()
-        } else { mem_history };
+        } else {
+            mem_history
+        };
 
         let mem_row = chunks[1];
-        let mem_chunks = Layout::horizontal([Constraint::Length(label_width), Constraint::Min(10)]).split(mem_row);
+        let mem_chunks = Layout::horizontal([Constraint::Length(label_width), Constraint::Min(10)])
+            .split(mem_row);
 
         let mem_text = Paragraph::new(Line::from(vec![
             Span::styled("MEM ", Theme::dim()),
-            Span::styled(format!("{:.1}G/{:.1}G", mem_used_gb, mem_total_gb), Theme::text()),
+            Span::styled(
+                format!("{:.1}G/{:.1}G", mem_used_gb, mem_total_gb),
+                Theme::text(),
+            ),
         ]));
         frame.render_widget(mem_text, mem_chunks[0]);
-        frame.render_widget(Sparkline::default().data(&mem_data).max(100).style(Theme::sparkline_mem()), mem_chunks[1]);
+        frame.render_widget(
+            Sparkline::default()
+                .data(&mem_data)
+                .max(100)
+                .style(Theme::sparkline_mem()),
+            mem_chunks[1],
+        );
 
         // Uptime line
         let uptime = format_uptime(self.snapshot.uptime_secs);
-        frame.render_widget(Paragraph::new(Line::from(vec![
-            Span::styled("UP  ", Theme::dim()),
-            Span::styled(uptime, Theme::text()),
-        ])), chunks[2]);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("UP  ", Theme::dim()),
+                Span::styled(uptime, Theme::text()),
+            ])),
+            chunks[2],
+        );
 
         // Requests line
-        frame.render_widget(Paragraph::new(Line::from(vec![
-            Span::styled("REQ ", Theme::dim()),
-            Span::styled(format!("{} total", format_number(self.snapshot.total_requests)), Theme::text()),
-            Span::styled("  ", Theme::dim()),
-            Span::styled(format!("{} active", self.snapshot.active_requests),
-                if self.snapshot.active_requests > 0 { Theme::log_level("INFO") } else { Theme::dim() }),
-        ])), chunks[3]);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("REQ ", Theme::dim()),
+                Span::styled(
+                    format!("{} total", format_number(self.snapshot.total_requests)),
+                    Theme::text(),
+                ),
+                Span::styled("  ", Theme::dim()),
+                Span::styled(
+                    format!("{} active", self.snapshot.active_requests),
+                    if self.snapshot.active_requests > 0 {
+                        Theme::log_level("INFO")
+                    } else {
+                        Theme::dim()
+                    },
+                ),
+            ])),
+            chunks[3],
+        );
     }
 
     fn handle_action(&mut self, action: &Action) {
@@ -160,12 +217,9 @@ fn get_local_ip() -> Option<String> {
         }
         Err(_) => {}
     }
-    
+
     // Fallback: try to get any local IP from network interfaces
-    if let Ok(hostname) = std::process::Command::new("hostname")
-        .arg("-I")
-        .output()
-    {
+    if let Ok(hostname) = std::process::Command::new("hostname").arg("-I").output() {
         if hostname.status.success() {
             let output = String::from_utf8_lossy(&hostname.stdout);
             if let Some(ip) = output.split_whitespace().next() {
@@ -173,6 +227,6 @@ fn get_local_ip() -> Option<String> {
             }
         }
     }
-    
+
     None
 }

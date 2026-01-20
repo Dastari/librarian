@@ -63,7 +63,7 @@ async fn fetch_library_stats(pool: &PgPool) -> Vec<LibraryStats> {
         for (library_id, name, library_type, path) in libs {
             // Get total size from media_files (same as frontend)
             let total_size = sqlx::query_scalar::<_, i64>(
-                "SELECT COALESCE(SUM(size), 0)::BIGINT FROM media_files WHERE library_id = $1"
+                "SELECT COALESCE(SUM(size), 0)::BIGINT FROM media_files WHERE library_id = $1",
             )
             .bind(library_id)
             .fetch_one(pool)
@@ -74,15 +74,15 @@ async fn fetch_library_stats(pool: &PgPool) -> Vec<LibraryStats> {
             let (item_count, missing_count) = match library_type.as_str() {
                 "movies" => {
                     let count = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM movies WHERE library_id = $1"
+                        "SELECT COUNT(*) FROM movies WHERE library_id = $1",
                     )
                     .bind(library_id)
                     .fetch_one(pool)
                     .await
                     .unwrap_or(0);
-                    
+
                     let missing = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM movies WHERE library_id = $1 AND has_file = false"
+                        "SELECT COUNT(*) FROM movies WHERE library_id = $1 AND has_file = false",
                     )
                     .bind(library_id)
                     .fetch_one(pool)
@@ -93,7 +93,7 @@ async fn fetch_library_stats(pool: &PgPool) -> Vec<LibraryStats> {
                 }
                 "tv" => {
                     let count = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM tv_shows WHERE library_id = $1"
+                        "SELECT COUNT(*) FROM tv_shows WHERE library_id = $1",
                     )
                     .bind(library_id)
                     .fetch_one(pool)
@@ -112,7 +112,7 @@ async fn fetch_library_stats(pool: &PgPool) -> Vec<LibraryStats> {
                 }
                 "music" => {
                     let count = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM albums WHERE library_id = $1"
+                        "SELECT COUNT(*) FROM albums WHERE library_id = $1",
                     )
                     .bind(library_id)
                     .fetch_one(pool)
@@ -123,7 +123,7 @@ async fn fetch_library_stats(pool: &PgPool) -> Vec<LibraryStats> {
                 }
                 "audiobooks" => {
                     let count = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM audiobooks WHERE library_id = $1"
+                        "SELECT COUNT(*) FROM audiobooks WHERE library_id = $1",
                     )
                     .bind(library_id)
                     .fetch_one(pool)
@@ -152,11 +152,11 @@ async fn fetch_library_stats(pool: &PgPool) -> Vec<LibraryStats> {
 /// Get icon for library type
 fn library_icon(library_type: &str) -> &'static str {
     match library_type.to_lowercase().as_str() {
-        "movies" => "\u{25B6}",      // ▶
-        "tv" => "\u{25A3}",          // ▣
-        "music" => "\u{266B}",       // ♫
-        "audiobooks" => "\u{25C9}",  // ◉
-        _ => "\u{25CF}",             // ●
+        "movies" => "\u{25B6}",     // ▶
+        "tv" => "\u{25A3}",         // ▣
+        "music" => "\u{266B}",      // ♫
+        "audiobooks" => "\u{25C9}", // ◉
+        _ => "\u{25CF}",            // ●
     }
 }
 
@@ -181,7 +181,10 @@ impl LibrariesPanel {
     pub fn new(libraries: SharedLibraries) -> Self {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
-        Self { libraries, list_state }
+        Self {
+            libraries,
+            list_state,
+        }
     }
 
     fn get_libraries(&self) -> Vec<LibraryStats> {
@@ -190,12 +193,20 @@ impl LibrariesPanel {
 }
 
 impl Panel for LibrariesPanel {
-    fn title(&self) -> &str { "libs" }
-    fn kind(&self) -> PanelKind { PanelKind::Libraries }
+    fn title(&self) -> &str {
+        "libs"
+    }
+    fn kind(&self) -> PanelKind {
+        PanelKind::Libraries
+    }
 
     fn render(&self, frame: &mut Frame, area: Rect, focused: bool) {
         let libs = self.get_libraries();
-        let border_style = if focused { Theme::border(PanelKind::Libraries) } else { Theme::border_dim() };
+        let border_style = if focused {
+            Theme::border(PanelKind::Libraries)
+        } else {
+            Theme::border_dim()
+        };
 
         let title = Line::from(vec![
             Span::styled("┐", border_style),
@@ -216,8 +227,16 @@ impl Panel for LibrariesPanel {
 
         if libs.is_empty() {
             if inner.height > 0 && inner.width > 15 {
-                let text_area = Rect { x: inner.x + 1, y: inner.y + inner.height / 2, width: inner.width - 2, height: 1 };
-                frame.render_widget(Paragraph::new(Span::styled("No libraries configured", Theme::dim())), text_area);
+                let text_area = Rect {
+                    x: inner.x + 1,
+                    y: inner.y + inner.height / 2,
+                    width: inner.width - 2,
+                    height: 1,
+                };
+                frame.render_widget(
+                    Paragraph::new(Span::styled("No libraries configured", Theme::dim())),
+                    text_area,
+                );
             }
             return;
         }
@@ -228,44 +247,56 @@ impl Panel for LibrariesPanel {
         let count_width = 12; // "123 movies"
         let missing_width = 9; // "45 miss"
         let size_width = 10; // "14.8 GB"
-        let name_width = content_width.saturating_sub(icon_width + count_width + missing_width + size_width + 4).min(20);
-        let path_width = content_width.saturating_sub(icon_width + name_width + count_width + missing_width + size_width + 5);
+        let name_width = content_width
+            .saturating_sub(icon_width + count_width + missing_width + size_width + 4)
+            .min(20);
+        let path_width = content_width
+            .saturating_sub(icon_width + name_width + count_width + missing_width + size_width + 5);
 
-        let items: Vec<ListItem> = libs.iter().map(|lib| {
-            let icon = library_icon(&lib.library_type);
-            let label = item_label(&lib.library_type);
-            let name = truncate_str(&lib.name, name_width);
-            let count_str = format!("{} {}", lib.item_count, label);
-            let missing_str = if lib.missing_count > 0 {
-                format!("{} miss", lib.missing_count)
-            } else {
-                String::new()
-            };
-            let size_str = format_size(lib.total_size_bytes);
-            let path = truncate_str(&lib.path, path_width);
+        let items: Vec<ListItem> = libs
+            .iter()
+            .map(|lib| {
+                let icon = library_icon(&lib.library_type);
+                let label = item_label(&lib.library_type);
+                let name = truncate_str(&lib.name, name_width);
+                let count_str = format!("{} {}", lib.item_count, label);
+                let missing_str = if lib.missing_count > 0 {
+                    format!("{} miss", lib.missing_count)
+                } else {
+                    String::new()
+                };
+                let size_str = format_size(lib.total_size_bytes);
+                let path = truncate_str(&lib.path, path_width);
 
-            let mut spans = vec![
-                Span::styled(icon, Theme::panel_title(PanelKind::Libraries)),
-                Span::raw(" "),
-                Span::styled(format!("{:<width$}", name, width = name_width), Theme::text()),
-                Span::raw(" "),
-                Span::styled(format!("{:>12}", count_str), Theme::dim()),
-            ];
+                let mut spans = vec![
+                    Span::styled(icon, Theme::panel_title(PanelKind::Libraries)),
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("{:<width$}", name, width = name_width),
+                        Theme::text(),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(format!("{:>12}", count_str), Theme::dim()),
+                ];
 
-            if !missing_str.is_empty() {
+                if !missing_str.is_empty() {
+                    spans.push(Span::raw(" "));
+                    spans.push(Span::styled(
+                        format!("{:>9}", missing_str),
+                        Theme::log_level("WARN"),
+                    ));
+                } else {
+                    spans.push(Span::styled(format!("{:>10}", ""), Theme::dim()));
+                }
+
                 spans.push(Span::raw(" "));
-                spans.push(Span::styled(format!("{:>9}", missing_str), Theme::log_level("WARN")));
-            } else {
-                spans.push(Span::styled(format!("{:>10}", ""), Theme::dim()));
-            }
+                spans.push(Span::styled(format!("{:>10}", size_str), Theme::text()));
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(path, Theme::dim()));
 
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(format!("{:>10}", size_str), Theme::text()));
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(path, Theme::dim()));
-
-            ListItem::new(Line::from(spans))
-        }).collect();
+                ListItem::new(Line::from(spans))
+            })
+            .collect();
 
         let list = List::new(items).highlight_style(Theme::selected());
         let mut state = self.list_state.clone();
@@ -274,12 +305,30 @@ impl Panel for LibrariesPanel {
 
     fn handle_action(&mut self, action: &Action) {
         let len = self.get_libraries().len();
-        if len == 0 { return; }
+        if len == 0 {
+            return;
+        }
         match action {
-            Action::ScrollUp => { if let Some(s) = self.list_state.selected() { if s > 0 { self.list_state.select(Some(s - 1)); } } }
-            Action::ScrollDown => { if let Some(s) = self.list_state.selected() { if s + 1 < len { self.list_state.select(Some(s + 1)); } } }
-            Action::Home => { self.list_state.select(Some(0)); }
-            Action::End => { self.list_state.select(Some(len.saturating_sub(1))); }
+            Action::ScrollUp => {
+                if let Some(s) = self.list_state.selected() {
+                    if s > 0 {
+                        self.list_state.select(Some(s - 1));
+                    }
+                }
+            }
+            Action::ScrollDown => {
+                if let Some(s) = self.list_state.selected() {
+                    if s + 1 < len {
+                        self.list_state.select(Some(s + 1));
+                    }
+                }
+            }
+            Action::Home => {
+                self.list_state.select(Some(0));
+            }
+            Action::End => {
+                self.list_state.select(Some(len.saturating_sub(1)));
+            }
             _ => {}
         }
     }
@@ -288,14 +337,22 @@ impl Panel for LibrariesPanel {
 
     fn scroll_position(&self) -> Option<(usize, usize)> {
         let libs = self.get_libraries();
-        if libs.is_empty() { None } else { self.list_state.selected().map(|p| (p + 1, libs.len())) }
+        if libs.is_empty() {
+            None
+        } else {
+            self.list_state.selected().map(|p| (p + 1, libs.len()))
+        }
     }
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len { s.to_string() }
-    else if max_len > 3 { format!("{}...", &s[..max_len - 3]) }
-    else { s[..max_len].to_string() }
+    if s.len() <= max_len {
+        s.to_string()
+    } else if max_len > 3 {
+        format!("{}...", &s[..max_len - 3])
+    } else {
+        s[..max_len].to_string()
+    }
 }
 
 fn format_size(bytes: i64) -> String {
@@ -304,9 +361,15 @@ fn format_size(bytes: i64) -> String {
     const GB: i64 = MB * 1024;
     const TB: i64 = GB * 1024;
 
-    if bytes >= TB { format!("{:.1} TB", bytes as f64 / TB as f64) }
-    else if bytes >= GB { format!("{:.1} GB", bytes as f64 / GB as f64) }
-    else if bytes >= MB { format!("{:.0} MB", bytes as f64 / MB as f64) }
-    else if bytes >= KB { format!("{:.0} KB", bytes as f64 / KB as f64) }
-    else { format!("{} B", bytes) }
+    if bytes >= TB {
+        format!("{:.1} TB", bytes as f64 / TB as f64)
+    } else if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.0} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.0} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
 }

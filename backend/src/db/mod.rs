@@ -45,10 +45,14 @@ pub use logs::{CreateLog, LogFilter, LogsRepository};
 pub use media_files::{CreateMediaFile, MediaFileRecord, MediaFileRepository};
 pub use movies::{CreateMovie, MovieCollectionRecord, MovieRecord, MovieRepository, UpdateMovie};
 pub use naming_patterns::{CreateNamingPattern, NamingPatternRecord, NamingPatternRepository};
-pub use playback::{PlaybackRepository, PlaybackSessionRecord, UpdatePlaybackPosition, UpsertPlaybackSession};
-pub use schedule::{ScheduleCacheRecord, ScheduleRepository, ScheduleSyncStateRecord, UpsertScheduleEntry};
+pub use playback::{
+    PlaybackRepository, PlaybackSessionRecord, UpdatePlaybackPosition, UpsertPlaybackSession,
+};
 pub use rss_feeds::{
     CreateRssFeed, CreateRssFeedItem, RssFeedRecord, RssFeedRepository, UpdateRssFeed,
+};
+pub use schedule::{
+    ScheduleCacheRecord, ScheduleRepository, ScheduleSyncStateRecord, UpsertScheduleEntry,
 };
 pub use settings::SettingsRepository;
 pub use subtitles::{
@@ -97,10 +101,7 @@ impl Database {
 
     /// Create a new database connection pool with retry logic
     /// Retries every `retry_interval` until successful
-    pub async fn connect_with_retry(
-        url: &str,
-        retry_interval: std::time::Duration,
-    ) -> Self {
+    pub async fn connect_with_retry(url: &str, retry_interval: std::time::Duration) -> Self {
         let max_connections = Self::get_max_connections();
         loop {
             match PgPoolOptions::new()

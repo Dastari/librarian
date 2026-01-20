@@ -121,18 +121,19 @@ impl OllamaService {
     /// Test connection to Ollama server
     pub async fn test_connection(&self) -> Result<Vec<String>> {
         let url = format!("{}/api/tags", self.config.url);
-        
+
         #[derive(Deserialize)]
         struct TagsResponse {
             models: Vec<ModelInfo>,
         }
-        
+
         #[derive(Deserialize)]
         struct ModelInfo {
             name: String,
         }
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
@@ -142,7 +143,9 @@ impl OllamaService {
             anyhow::bail!("Ollama server returned status: {}", response.status());
         }
 
-        let tags: TagsResponse = response.json().await
+        let tags: TagsResponse = response
+            .json()
+            .await
             .context("Failed to parse Ollama response")?;
 
         Ok(tags.models.into_iter().map(|m| m.name).collect())
@@ -150,7 +153,8 @@ impl OllamaService {
 
     /// Parse a filename using the LLM
     pub async fn parse_filename(&self, filename: &str) -> Result<LlmParseResult> {
-        self.parse_filename_with_overrides(filename, None, None).await
+        self.parse_filename_with_overrides(filename, None, None)
+            .await
     }
 
     /// Parse a filename with optional model and prompt overrides
@@ -163,7 +167,7 @@ impl OllamaService {
         let prompt_template = prompt_override.unwrap_or(&self.config.prompt_template);
         let prompt = prompt_template.replace("{filename}", filename);
         let model = model_override.unwrap_or(&self.config.model);
-        
+
         let request = OllamaRequest {
             model: model.to_string(),
             prompt,
@@ -175,10 +179,11 @@ impl OllamaService {
         };
 
         let url = format!("{}/api/generate", self.config.url);
-        
+
         debug!("Sending request to Ollama for filename: {}", filename);
-        
-        let response = self.client
+
+        let response = self
+            .client
             .post(&url)
             .json(&request)
             .send()
@@ -191,7 +196,9 @@ impl OllamaService {
             anyhow::bail!("Ollama API error: {} - {}", status, body);
         }
 
-        let ollama_response: OllamaResponse = response.json().await
+        let ollama_response: OllamaResponse = response
+            .json()
+            .await
             .context("Failed to parse Ollama response")?;
 
         let duration_ms = ollama_response.total_duration / 1_000_000;
@@ -202,9 +209,9 @@ impl OllamaService {
 
         // Extract JSON from response (may be wrapped in ```json ... ```)
         let json_str = extract_json(&ollama_response.response)?;
-        
-        let result: LlmParseResult = serde_json::from_str(&json_str)
-            .context("Failed to parse LLM JSON output")?;
+
+        let result: LlmParseResult =
+            serde_json::from_str(&json_str).context("Failed to parse LLM JSON output")?;
 
         Ok(result)
     }
@@ -218,13 +225,13 @@ impl OllamaService {
 /// Extract JSON from a response that may be wrapped in markdown code fences
 fn extract_json(response: &str) -> Result<String> {
     let trimmed = response.trim();
-    
+
     // Check if wrapped in ```json ... ```
     if trimmed.starts_with("```") {
         let lines: Vec<&str> = trimmed.lines().collect();
         if lines.len() >= 3 {
             // Skip first line (```json) and last line (```)
-            let json_lines: Vec<&str> = lines[1..lines.len()-1]
+            let json_lines: Vec<&str> = lines[1..lines.len() - 1]
                 .iter()
                 .filter(|l| !l.trim().is_empty())
                 .copied()
@@ -232,19 +239,19 @@ fn extract_json(response: &str) -> Result<String> {
             return Ok(json_lines.join("\n"));
         }
     }
-    
+
     // Check if it starts with { (raw JSON)
     if trimmed.starts_with('{') {
         return Ok(trimmed.to_string());
     }
-    
+
     // Try to find JSON object in the response
     if let Some(start) = trimmed.find('{') {
         if let Some(end) = trimmed.rfind('}') {
             return Ok(trimmed[start..=end].to_string());
         }
     }
-    
+
     warn!("Could not extract JSON from LLM response: {}", trimmed);
     anyhow::bail!("No valid JSON found in LLM response")
 }

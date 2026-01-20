@@ -359,12 +359,11 @@ impl LibraryRepository {
     /// not files in other locations (like downloads) that happen to be linked.
     pub async fn get_stats(&self, id: Uuid) -> Result<LibraryStats> {
         // First get the library path to filter files
-        let library_path: Option<String> = sqlx::query_scalar(
-            "SELECT path FROM libraries WHERE id = $1"
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let library_path: Option<String> =
+            sqlx::query_scalar("SELECT path FROM libraries WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?;
 
         let path_pattern = library_path
             .map(|p| format!("{}%", p))
@@ -372,7 +371,7 @@ impl LibraryRepository {
 
         // Count only files that are within the library path
         let file_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM media_files WHERE library_id = $1 AND path LIKE $2"
+            "SELECT COUNT(*) FROM media_files WHERE library_id = $1 AND path LIKE $2",
         )
         .bind(id)
         .bind(&path_pattern)

@@ -260,7 +260,7 @@ mod ffprobe {
         pub codec_long_name: Option<String>,
         pub codec_type: Option<String>,
         pub profile: Option<String>,
-        
+
         // Video specific
         pub width: Option<u32>,
         pub height: Option<u32>,
@@ -274,19 +274,19 @@ mod ffprobe {
         pub color_transfer: Option<String>,
         pub color_primaries: Option<String>,
         pub bits_per_raw_sample: Option<String>,
-        
+
         // Audio specific
         pub channels: Option<u16>,
         pub channel_layout: Option<String>,
         pub sample_rate: Option<String>,
         pub bits_per_sample: Option<u8>,
-        
+
         // Common
         pub bit_rate: Option<String>,
         pub duration: Option<String>,
         pub disposition: Option<Disposition>,
         pub tags: Option<HashMap<String, String>>,
-        
+
         // Side data for HDR detection
         pub side_data_list: Option<Vec<SideData>>,
     }
@@ -350,7 +350,10 @@ impl FfmpegService {
 
         // Check if file exists first
         if !path.exists() {
-            anyhow::bail!("ffprobe failed for '{}': file does not exist", path.display());
+            anyhow::bail!(
+                "ffprobe failed for '{}': file does not exist",
+                path.display()
+            );
         }
 
         let output = Command::new(&self.ffprobe_path)
@@ -364,12 +367,20 @@ impl FfmpegService {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let exit_code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "unknown".to_string());
+            let exit_code = output
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
             anyhow::bail!(
                 "ffprobe failed for '{}' (exit code {}): {}",
                 path.display(),
                 exit_code,
-                if stderr.is_empty() { "no error output" } else { stderr.trim() }
+                if stderr.is_empty() {
+                    "no error output"
+                } else {
+                    stderr.trim()
+                }
             );
         }
 
@@ -487,7 +498,7 @@ impl FfmpegService {
 
         let codec = stream.codec_name.clone().unwrap_or_default();
         let codec_long_name = stream.codec_long_name.clone();
-        
+
         let tags = stream.tags.clone().unwrap_or_default();
         let language = tags.get("language").cloned();
         let title = tags.get("title").cloned();
@@ -681,7 +692,10 @@ fn detect_hdr_type(
         Some(transfer) if transfer.contains("smpte2084") => {
             // PQ transfer = HDR10 (could be HDR10+ but we need side data for that)
             // Also verify BT.2020 primaries for proper HDR10
-            if color_primaries.map(|p| p.contains("bt2020")).unwrap_or(false) {
+            if color_primaries
+                .map(|p| p.contains("bt2020"))
+                .unwrap_or(false)
+            {
                 Some(HdrType::Hdr10)
             } else {
                 Some(HdrType::Hdr10) // Still HDR10 even without bt2020
@@ -695,10 +709,11 @@ fn detect_hdr_type(
 /// Detect bit depth from pixel format string
 fn detect_bit_depth(pixel_format: Option<&str>) -> Option<u8> {
     let pf = pixel_format?;
-    
+
     if pf.contains("10le") || pf.contains("10be") || pf.contains("p10") || pf.ends_with("10") {
         Some(10)
-    } else if pf.contains("12le") || pf.contains("12be") || pf.contains("p12") || pf.ends_with("12") {
+    } else if pf.contains("12le") || pf.contains("12be") || pf.contains("p12") || pf.ends_with("12")
+    {
         Some(12)
     } else if pf.contains("16le") || pf.contains("16be") {
         Some(16)

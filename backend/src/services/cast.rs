@@ -11,9 +11,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use parking_lot::RwLock;
+use rust_cast::CastDevice as RustCastDevice;
 use rust_cast::channels::media::{Media, StreamType};
 use rust_cast::channels::receiver::CastDeviceApp;
-use rust_cast::CastDevice as RustCastDevice;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
@@ -282,15 +282,19 @@ impl CastService {
                                     let db_clone = db.clone();
                                     let devices_tx_clone = devices_tx.clone();
                                     let device_clone = device.clone();
-                                    
+
                                     tokio::spawn(async move {
-                                        if let Err(e) = Self::save_discovered_device(&db_clone, &device_clone).await {
+                                        if let Err(e) =
+                                            Self::save_discovered_device(&db_clone, &device_clone)
+                                                .await
+                                        {
                                             warn!("Failed to save discovered device: {}", e);
                                         }
-                                        
+
                                         // Broadcast device change
                                         if let Ok(devices) = db_clone.cast().list_devices().await {
-                                            let _ = devices_tx_clone.send(CastDevicesEvent { devices });
+                                            let _ =
+                                                devices_tx_clone.send(CastDevicesEvent { devices });
                                         }
                                     });
                                 }
@@ -363,7 +367,10 @@ impl CastService {
         };
 
         let device = self.db.cast().create_device(input).await?;
-        info!("Added manual cast device: {} at {}:{}", device.name, address, port);
+        info!(
+            "Added manual cast device: {} at {}:{}",
+            device.name, address, port
+        );
 
         // Broadcast device change
         if let Ok(devices) = self.db.cast().list_devices().await {
@@ -376,15 +383,17 @@ impl CastService {
     /// Probe a device to get its model info
     async fn probe_device(&self, address: IpAddr, port: u16) -> Result<Option<String>> {
         let addr_str = address.to_string();
-        
+
         tokio::task::spawn_blocking(move || {
             let device = RustCastDevice::connect_without_host_verification(&addr_str, port)
                 .context("Failed to connect to cast device")?;
-            
+
             // Get receiver status to determine device model
-            let status = device.receiver.get_status()
+            let status = device
+                .receiver
+                .get_status()
                 .context("Failed to get receiver status")?;
-            
+
             // The status contains volume info but not model directly
             // Model info comes from mDNS TXT records, so return None here
             drop(status);
@@ -407,17 +416,17 @@ impl CastService {
     pub async fn remove_device(&self, id: Uuid) -> Result<bool> {
         // End any active sessions for this device
         self.db.cast().end_sessions_for_device(id).await?;
-        
+
         // Remove from connections
         self.connections.write().remove(&id);
-        
+
         let result = self.db.cast().delete_device(id).await?;
-        
+
         // Broadcast device change
         if let Ok(devices) = self.db.cast().list_devices().await {
             let _ = self.devices_tx.send(CastDevicesEvent { devices });
         }
-        
+
         Ok(result)
     }
 
@@ -467,8 +476,7 @@ impl CastService {
         // Generate stream URL
         let stream_url = format!(
             "{}/api/media/{}/stream",
-            self.config.media_base_url,
-            media_file_id
+            self.config.media_base_url, media_file_id
         );
 
         // End any existing session on this device
@@ -501,7 +509,7 @@ impl CastService {
             match Self::cast_media_blocking(&addr, port, &stream_url, &content_type, start_pos) {
                 Ok((_transport_id, duration)) => {
                     info!("Started casting to {} (session: {})", addr, session_id);
-                    
+
                     // Update session with duration and playing state
                     let db_clone = db.clone();
                     let session_id_clone = session_id;
@@ -512,7 +520,11 @@ impl CastService {
                             current_position: Some(start_pos),
                             ..Default::default()
                         };
-                        if let Err(e) = db_clone.cast().update_session(session_id_clone, input).await {
+                        if let Err(e) = db_clone
+                            .cast()
+                            .update_session(session_id_clone, input)
+                            .await
+                        {
                             error!("Failed to update session: {}", e);
                         }
                     });
@@ -583,16 +595,24 @@ impl CastService {
             // Get media session ID from status
             if let Ok(status) = device.media.get_status(&transport_id, None) {
                 if let Some(entry) = status.entries.first() {
-                    let _ = device.media.seek(&transport_id, entry.media_session_id, Some(start_position as f32), None);
+                    let _ = device.media.seek(
+                        &transport_id,
+                        entry.media_session_id,
+                        Some(start_position as f32),
+                        None,
+                    );
                 }
             }
         }
 
         // Get media status to get duration
-        let duration = device.media.get_status(&transport_id, None)
+        let duration = device
+            .media
+            .get_status(&transport_id, None)
             .ok()
             .and_then(|s| {
-                s.entries.first()
+                s.entries
+                    .first()
                     .and_then(|e| e.media.as_ref())
                     .and_then(|m| m.duration)
                     .map(|d| d as f64)
@@ -653,7 +673,7 @@ impl CastService {
             player_state: Some("playing".to_string()),
             ..Default::default()
         };
-        
+
         let updated = self
             .db
             .cast()
@@ -693,7 +713,7 @@ impl CastService {
             player_state: Some("paused".to_string()),
             ..Default::default()
         };
-        
+
         let updated = self
             .db
             .cast()
@@ -759,7 +779,7 @@ impl CastService {
             current_position: Some(position),
             ..Default::default()
         };
-        
+
         let updated = self
             .db
             .cast()
@@ -791,16 +811,14 @@ impl CastService {
         let port = device.port as u16;
         let vol = volume.clamp(0.0, 1.0);
 
-        tokio::task::spawn_blocking(move || {
-            Self::control_volume_blocking(&addr, port, vol, None)
-        })
-        .await??;
+        tokio::task::spawn_blocking(move || Self::control_volume_blocking(&addr, port, vol, None))
+            .await??;
 
         let input = UpdateCastSession {
             volume: Some(vol),
             ..Default::default()
         };
-        
+
         let updated = self
             .db
             .cast()
@@ -840,7 +858,7 @@ impl CastService {
             is_muted: Some(muted),
             ..Default::default()
         };
-        
+
         let updated = self
             .db
             .cast()
@@ -875,7 +893,7 @@ impl CastService {
 
         // Connect to receiver
         device.connection.connect("receiver-0")?;
-        
+
         let status = device.receiver.get_status()?;
         let app = status
             .applications
@@ -905,7 +923,9 @@ impl CastService {
                 device.media.stop(transport_id, media_session_id)?;
             }
             PlaybackCommand::Seek(position) => {
-                device.media.seek(transport_id, media_session_id, Some(position as f32), None)?;
+                device
+                    .media
+                    .seek(transport_id, media_session_id, Some(position as f32), None)?;
             }
         }
 
@@ -913,7 +933,12 @@ impl CastService {
     }
 
     /// Control volume (blocking)
-    fn control_volume_blocking(addr: &str, port: u16, volume: f32, muted: Option<bool>) -> Result<()> {
+    fn control_volume_blocking(
+        addr: &str,
+        port: u16,
+        volume: f32,
+        muted: Option<bool>,
+    ) -> Result<()> {
         let device = RustCastDevice::connect_without_host_verification(addr, port)
             .context("Failed to connect to cast device")?;
 

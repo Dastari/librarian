@@ -6,6 +6,7 @@
 use std::io::SeekFrom;
 use std::path::Path;
 
+use axum::Router;
 use axum::body::Body;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::header::{
@@ -14,7 +15,6 @@ use axum::http::header::{
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 use serde::Deserialize;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -69,7 +69,7 @@ async fn stream_media(
         })?;
 
     let path = Path::new(&media_file.path);
-    
+
     // Check if file exists
     if !path.exists() {
         warn!("Media file path does not exist: {}", media_file.path);

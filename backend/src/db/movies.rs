@@ -223,13 +223,7 @@ impl MovieRepository {
         let where_clause = conditions.join(" AND ");
 
         // Validate sort column to prevent SQL injection
-        let valid_sort_columns = [
-            "title",
-            "sort_title",
-            "year",
-            "created_at",
-            "release_date",
-        ];
+        let valid_sort_columns = ["title", "sort_title", "year", "created_at", "release_date"];
         let sort_col = if valid_sort_columns.contains(&sort_column) {
             sort_column
         } else {
@@ -242,10 +236,7 @@ impl MovieRepository {
         );
 
         // Build count query
-        let count_query = format!(
-            "SELECT COUNT(*) FROM movies WHERE {}",
-            where_clause
-        );
+        let count_query = format!("SELECT COUNT(*) FROM movies WHERE {}", where_clause);
 
         // Build data query
         let data_query = format!(
@@ -290,8 +281,7 @@ impl MovieRepository {
         let total: i64 = count_builder.fetch_one(&self.pool).await?;
 
         // Build and execute data query with bindings
-        let mut data_builder =
-            sqlx::query_as::<_, MovieRecord>(&data_query).bind(library_id);
+        let mut data_builder = sqlx::query_as::<_, MovieRecord>(&data_query).bind(library_id);
         if let Some(title) = title_filter {
             data_builder = data_builder.bind(format!("%{}%", title.to_lowercase()));
         }
@@ -573,11 +563,10 @@ impl MovieRepository {
 
     /// Get movie count for a library
     pub async fn count_by_library(&self, library_id: Uuid) -> Result<i64> {
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM movies WHERE library_id = $1")
-                .bind(library_id)
-                .fetch_one(&self.pool)
-                .await?;
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM movies WHERE library_id = $1")
+            .bind(library_id)
+            .fetch_one(&self.pool)
+            .await?;
 
         Ok(count)
     }

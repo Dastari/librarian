@@ -9,8 +9,8 @@ use sanitize_filename;
 // TODO: Consider using `file` command or `ffprobe` to determine file type
 // more reliably instead of relying solely on extensions
 pub const VIDEO_EXTENSIONS: &[&str] = &[
-    ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".ts", ".m2ts",
-    ".mpg", ".mpeg",
+    ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".ts", ".m2ts", ".mpg",
+    ".mpeg",
 ];
 
 /// Audio file extensions (lowercase)
@@ -212,7 +212,7 @@ mod tests {
         // Basic sanitization
         let result = sanitize_for_filename("Show: The Movie");
         assert!(!result.contains(':'));
-        
+
         // Should handle slashes
         let result = sanitize_for_filename("path/to/file");
         assert!(!result.contains('/'));

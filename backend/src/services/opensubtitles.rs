@@ -310,7 +310,7 @@ impl OpenSubtitlesClient {
 
         // Build query parameters
         let mut params: Vec<(String, String)> = Vec::new();
-        
+
         if let Some(ref imdb_id) = query.imdb_id {
             // Strip "tt" prefix if present
             let id = imdb_id.trim_start_matches("tt");
@@ -332,7 +332,10 @@ impl OpenSubtitlesClient {
             params.push(("languages".to_string(), languages.clone()));
         }
         if let Some(hi) = query.hearing_impaired {
-            params.push(("hearing_impaired".to_string(), if hi { "include" } else { "exclude" }.to_string()));
+            params.push((
+                "hearing_impaired".to_string(),
+                if hi { "include" } else { "exclude" }.to_string(),
+            ));
         }
         if let Some(trusted) = query.trusted_sources {
             if trusted {
@@ -358,7 +361,7 @@ impl OpenSubtitlesClient {
                 let params = params.clone();
                 async move {
                     let mut request = client.inner().get(&url);
-                    
+
                     // Add query parameters
                     for (key, value) in &params {
                         request = request.query(&[(key.as_str(), value.as_str())]);
@@ -518,7 +521,11 @@ impl OpenSubtitlesClient {
     ) -> Result<Vec<SubtitleSearchResult>> {
         let query = SubtitleSearchQuery {
             imdb_id: imdb_id.map(String::from),
-            query: if imdb_id.is_none() { show_name.map(String::from) } else { None },
+            query: if imdb_id.is_none() {
+                show_name.map(String::from)
+            } else {
+                None
+            },
             season_number: Some(season),
             episode_number: Some(episode),
             languages: Some(languages.join(",")),
@@ -573,10 +580,7 @@ pub struct DownloadedSubtitle {
 impl DownloadedSubtitle {
     /// Get the subtitle format from the filename
     pub fn format(&self) -> &str {
-        self.file_name
-            .rsplit('.')
-            .next()
-            .unwrap_or("srt")
+        self.file_name.rsplit('.').next().unwrap_or("srt")
     }
 }
 

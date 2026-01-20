@@ -70,12 +70,18 @@ macro_rules! define_connection {
 
         impl $conn_name {
             /// Create from a generic Connection
-            pub fn from_connection(conn: $crate::graphql::pagination::Connection<$node_type>) -> Self {
+            pub fn from_connection(
+                conn: $crate::graphql::pagination::Connection<$node_type>,
+            ) -> Self {
                 Self {
-                    edges: conn.edges.into_iter().map(|e| $edge_name {
-                        node: e.node,
-                        cursor: e.cursor,
-                    }).collect(),
+                    edges: conn
+                        .edges
+                        .into_iter()
+                        .map(|e| $edge_name {
+                            node: e.node,
+                            cursor: e.cursor,
+                        })
+                        .collect(),
                     page_info: conn.page_info,
                 }
             }
@@ -105,7 +111,7 @@ impl<T> Connection<T> {
     /// * `offset` - The offset of the first item (for cursor generation)
     /// * `limit` - The requested limit (to determine if there are more pages)
     /// * `total` - Total count of items matching the query
-    pub fn from_items(items: Vec<T>, offset: i64, _limit: i64, total: i64) -> Self 
+    pub fn from_items(items: Vec<T>, offset: i64, _limit: i64, total: i64) -> Self
     where
         T: Clone,
     {
@@ -140,20 +146,15 @@ pub fn encode_cursor(offset: i64) -> String {
 
 /// Decode a cursor string to an offset
 pub fn decode_cursor(cursor: &str) -> Result<i64, &'static str> {
-    let decoded = BASE64
-        .decode(cursor)
-        .map_err(|_| "invalid cursor format")?;
-    
-    let s = String::from_utf8(decoded)
-        .map_err(|_| "invalid cursor encoding")?;
-    
+    let decoded = BASE64.decode(cursor).map_err(|_| "invalid cursor format")?;
+
+    let s = String::from_utf8(decoded).map_err(|_| "invalid cursor encoding")?;
+
     if !s.starts_with("cursor:") {
         return Err("invalid cursor prefix");
     }
-    
-    s[7..]
-        .parse()
-        .map_err(|_| "invalid cursor value")
+
+    s[7..].parse().map_err(|_| "invalid cursor value")
 }
 
 /// Parse pagination arguments into offset and limit
@@ -162,13 +163,13 @@ pub fn parse_pagination_args(
     after: Option<String>,
 ) -> Result<(i64, i64), &'static str> {
     let limit = first.unwrap_or(25).min(100) as i64;
-    
+
     let offset = if let Some(cursor) = after {
         decode_cursor(&cursor)? + 1 // Start after the cursor
     } else {
         0
     };
-    
+
     Ok((offset, limit))
 }
 

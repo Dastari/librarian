@@ -156,8 +156,7 @@ impl ExtractorService {
 
     /// Extract a single archive
     async fn extract_single(&self, archive: &Path, dest_dir: &Path) -> Result<()> {
-        let archive_type = Self::get_archive_type(archive)
-            .context("Unknown archive type")?;
+        let archive_type = Self::get_archive_type(archive).context("Unknown archive type")?;
 
         info!(
             archive = %archive.display(),
@@ -176,9 +175,9 @@ impl ExtractorService {
     /// Extract RAR archive using unrar
     async fn extract_rar(&self, archive: &Path, dest_dir: &Path) -> Result<()> {
         let output = Command::new("unrar")
-            .arg("x")           // Extract with full paths
-            .arg("-o+")         // Overwrite existing files
-            .arg("-y")          // Assume yes on all queries
+            .arg("x") // Extract with full paths
+            .arg("-o+") // Overwrite existing files
+            .arg("-y") // Assume yes on all queries
             .arg(archive)
             .arg(dest_dir)
             .stdout(Stdio::piped())
@@ -203,8 +202,8 @@ impl ExtractorService {
     /// Extract ZIP archive using unzip
     async fn extract_zip(&self, archive: &Path, dest_dir: &Path) -> Result<()> {
         let output = Command::new("unzip")
-            .arg("-o")          // Overwrite existing files
-            .arg("-q")          // Quiet mode
+            .arg("-o") // Overwrite existing files
+            .arg("-q") // Quiet mode
             .arg(archive)
             .arg("-d")
             .arg(dest_dir)
@@ -230,8 +229,8 @@ impl ExtractorService {
     /// Extract 7z archive using 7z
     async fn extract_7z(&self, archive: &Path, dest_dir: &Path) -> Result<()> {
         let output = Command::new("7z")
-            .arg("x")           // Extract with full paths
-            .arg("-y")          // Assume yes on all queries
+            .arg("x") // Extract with full paths
+            .arg("-y") // Assume yes on all queries
             .arg(format!("-o{}", dest_dir.display()))
             .arg(archive)
             .stdout(Stdio::piped())

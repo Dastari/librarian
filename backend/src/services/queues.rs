@@ -59,8 +59,8 @@ pub type SubtitleDownloadQueue = WorkQueue<SubtitleDownloadJob>;
 /// Configuration for the media analysis queue
 pub fn media_analysis_queue_config() -> JobQueueConfig {
     JobQueueConfig {
-        max_concurrent: 2,       // FFmpeg is CPU-intensive
-        queue_capacity: 500,     // Allow queueing during large scans
+        max_concurrent: 2,   // FFmpeg is CPU-intensive
+        queue_capacity: 500, // Allow queueing during large scans
         job_delay: Duration::from_millis(100),
     }
 }
@@ -68,9 +68,9 @@ pub fn media_analysis_queue_config() -> JobQueueConfig {
 /// Configuration for the subtitle download queue
 pub fn subtitle_download_queue_config() -> JobQueueConfig {
     JobQueueConfig {
-        max_concurrent: 1,       // Strict rate limiting for API
+        max_concurrent: 1, // Strict rate limiting for API
         queue_capacity: 200,
-        job_delay: Duration::from_secs(2),  // API allows ~1 req/sec, be conservative
+        job_delay: Duration::from_secs(2), // API allows ~1 req/sec, be conservative
     }
 }
 
@@ -90,7 +90,9 @@ pub fn create_media_analysis_queue(
         let event_sender = event_sender.clone();
 
         async move {
-            if let Err(e) = process_media_analysis(ffmpeg, db, subtitle_queue, event_sender, job).await {
+            if let Err(e) =
+                process_media_analysis(ffmpeg, db, subtitle_queue, event_sender, job).await
+            {
                 error!(error = %e, "Media analysis job failed");
             }
         }
@@ -107,7 +109,12 @@ async fn process_media_analysis(
 ) -> Result<()> {
     // First check if the media file still exists before doing any work
     // (it may have been deleted as a duplicate during organization)
-    if db.media_files().get_by_id(job.media_file_id).await?.is_none() {
+    if db
+        .media_files()
+        .get_by_id(job.media_file_id)
+        .await?
+        .is_none()
+    {
         debug!(
             media_file_id = %job.media_file_id,
             path = %job.path.display(),
@@ -163,7 +170,9 @@ async fn process_media_analysis(
     );
 
     // Verify quality and update quality_status
-    if let Err(e) = verify_and_update_quality(&db, job.media_file_id, &analysis, &updated_info).await {
+    if let Err(e) =
+        verify_and_update_quality(&db, job.media_file_id, &analysis, &updated_info).await
+    {
         warn!(
             media_file_id = %job.media_file_id,
             error = %e,
@@ -460,7 +469,8 @@ async fn store_media_analysis(
         library_id: media_file.library_id,
         episode_id: media_file.episode_id,
         movie_id: media_file.movie_id,
-        resolution: primary_video.map(|v| FfmpegService::detect_resolution(v.width, v.height).to_string()),
+        resolution: primary_video
+            .map(|v| FfmpegService::detect_resolution(v.width, v.height).to_string()),
         video_codec: primary_video.map(|v| v.codec.clone()),
         audio_codec: primary_audio.map(|a| a.codec.clone()),
         audio_channels: primary_audio.and_then(|a| a.channel_layout.clone()),
@@ -574,7 +584,10 @@ async fn verify_and_update_quality(
                 "Episode has suboptimal quality ({}p vs target), marking as suboptimal",
                 actual_resolution
             );
-            db.episodes().update_status(episode_id, "suboptimal").await.ok();
+            db.episodes()
+                .update_status(episode_id, "suboptimal")
+                .await
+                .ok();
         } else if let Some(movie_id) = info.movie_id {
             info!(
                 "Movie has suboptimal quality ({}p vs target), marking as suboptimal",
@@ -593,21 +606,17 @@ async fn verify_and_update_quality(
 }
 
 /// Update the quality_status field on a media file
-async fn update_quality_status(
-    db: &Database,
-    media_file_id: Uuid,
-    status: &str,
-) -> Result<()> {
+async fn update_quality_status(db: &Database, media_file_id: Uuid, status: &str) -> Result<()> {
     sqlx::query("UPDATE media_files SET quality_status = $1 WHERE id = $2")
         .bind(status)
         .execute(db.pool())
         .await?;
-    
+
     debug!(
         media_file_id = %media_file_id,
         quality_status = %status,
         "Updated media file quality status"
     );
-    
+
     Ok(())
 }

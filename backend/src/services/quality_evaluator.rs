@@ -8,9 +8,9 @@
 
 use tracing::debug;
 
-use crate::db::{LibraryRecord, TvShowRecord, MovieRecord};
-use crate::services::filename_parser::ParsedQuality;
+use crate::db::{LibraryRecord, MovieRecord, TvShowRecord};
 use crate::services::ffmpeg::MediaAnalysis;
+use crate::services::filename_parser::ParsedQuality;
 
 /// Result of quality evaluation
 #[derive(Debug, Clone)]
@@ -88,9 +88,7 @@ impl EffectiveQualitySettings {
                 .allowed_audio_formats_override
                 .clone()
                 .unwrap_or_else(|| library.allowed_audio_formats.clone()),
-            require_hdr: show
-                .require_hdr_override
-                .unwrap_or(library.require_hdr),
+            require_hdr: show.require_hdr_override.unwrap_or(library.require_hdr),
             allowed_hdr_types: show
                 .allowed_hdr_types_override
                 .clone()
@@ -117,9 +115,7 @@ impl EffectiveQualitySettings {
                 .allowed_audio_formats_override
                 .clone()
                 .unwrap_or_else(|| library.allowed_audio_formats.clone()),
-            require_hdr: movie
-                .require_hdr_override
-                .unwrap_or(library.require_hdr),
+            require_hdr: movie.require_hdr_override.unwrap_or(library.require_hdr),
             allowed_hdr_types: movie
                 .allowed_hdr_types_override
                 .clone()
@@ -165,7 +161,11 @@ impl QualityEvaluator {
         if !settings.allowed_resolutions.is_empty() {
             if let Some(ref resolution) = parsed.resolution {
                 let normalized = normalize_resolution(resolution);
-                if !settings.allowed_resolutions.iter().any(|r| normalize_resolution(r) == normalized) {
+                if !settings
+                    .allowed_resolutions
+                    .iter()
+                    .any(|r| normalize_resolution(r) == normalized)
+                {
                     // Check if it's better than allowed
                     let parsed_rank = resolution_rank(&normalized);
                     let best_allowed_rank = settings
@@ -181,10 +181,7 @@ impl QualityEvaluator {
                             meets_target: true,
                             is_upgrade: true,
                             quality_status: QualityStatus::Exceeds,
-                            reason: Some(format!(
-                                "Resolution {} exceeds target",
-                                resolution
-                            )),
+                            reason: Some(format!("Resolution {} exceeds target", resolution)),
                         };
                     } else {
                         issues.push(format!("Resolution {} not in allowed list", resolution));
@@ -204,7 +201,11 @@ impl QualityEvaluator {
         if !settings.allowed_hdr_types.is_empty() {
             if let Some(ref hdr) = parsed.hdr {
                 let hdr_lower = hdr.to_lowercase();
-                if !settings.allowed_hdr_types.iter().any(|h| h.to_lowercase() == hdr_lower) {
+                if !settings
+                    .allowed_hdr_types
+                    .iter()
+                    .any(|h| h.to_lowercase() == hdr_lower)
+                {
                     issues.push(format!("HDR type {} not in allowed list", hdr));
                 }
             }
@@ -214,7 +215,11 @@ impl QualityEvaluator {
         if !settings.allowed_sources.is_empty() {
             if let Some(ref source) = parsed.source {
                 let source_lower = source.to_lowercase();
-                if !settings.allowed_sources.iter().any(|s| s.to_lowercase() == source_lower) {
+                if !settings
+                    .allowed_sources
+                    .iter()
+                    .any(|s| s.to_lowercase() == source_lower)
+                {
                     issues.push(format!("Source {} not in allowed list", source));
                 }
             }
@@ -260,7 +265,11 @@ impl QualityEvaluator {
                 let actual_resolution = height_to_resolution(video.height);
                 let normalized = normalize_resolution(&actual_resolution);
 
-                if !settings.allowed_resolutions.iter().any(|r| normalize_resolution(r) == normalized) {
+                if !settings
+                    .allowed_resolutions
+                    .iter()
+                    .any(|r| normalize_resolution(r) == normalized)
+                {
                     let actual_rank = resolution_rank(&normalized);
                     let best_allowed_rank = settings
                         .allowed_resolutions
@@ -302,9 +311,11 @@ impl QualityEvaluator {
             for video in &analysis.video_streams {
                 if let Some(ref hdr_type) = video.hdr_type {
                     let hdr_str = format!("{:?}", hdr_type);
-                    if !settings.allowed_hdr_types.iter().any(|h| {
-                        h.to_lowercase() == hdr_str.to_lowercase()
-                    }) {
+                    if !settings
+                        .allowed_hdr_types
+                        .iter()
+                        .any(|h| h.to_lowercase() == hdr_str.to_lowercase())
+                    {
                         issues.push(format!("HDR type {:?} not in allowed list", hdr_type));
                     }
                 }
@@ -463,7 +474,7 @@ mod tests {
         assert_eq!(height_to_resolution(2161), "2160p");
         assert_eq!(height_to_resolution(1081), "1080p");
         assert_eq!(height_to_resolution(721), "720p");
-        
+
         // Slightly below threshold
         assert_eq!(height_to_resolution(2159), "1080p");
         assert_eq!(height_to_resolution(1079), "720p");
@@ -613,7 +624,7 @@ mod tests {
     fn test_evaluate_parsed_no_restrictions() {
         let settings = EffectiveQualitySettings::default();
         let parsed = parse_quality("Show.S01E01.720p.WEB-DL");
-        
+
         let result = QualityEvaluator::evaluate_parsed(&parsed, &settings);
         assert!(result.meets_target);
         assert_eq!(result.quality_status, QualityStatus::Optimal);
@@ -626,7 +637,7 @@ mod tests {
             ..Default::default()
         };
         let parsed = parse_quality("Show.S01E01.1080p.WEB-DL");
-        
+
         let result = QualityEvaluator::evaluate_parsed(&parsed, &settings);
         assert!(result.meets_target);
         assert_eq!(result.quality_status, QualityStatus::Optimal);
@@ -639,7 +650,7 @@ mod tests {
             ..Default::default()
         };
         let parsed = parse_quality("Show.S01E01.2160p.WEB-DL");
-        
+
         let result = QualityEvaluator::evaluate_parsed(&parsed, &settings);
         assert!(result.meets_target);
         assert!(result.is_upgrade);
@@ -653,7 +664,7 @@ mod tests {
             ..Default::default()
         };
         let parsed = parse_quality("Show.S01E01.720p.WEB-DL");
-        
+
         let result = QualityEvaluator::evaluate_parsed(&parsed, &settings);
         assert!(!result.meets_target);
         assert_eq!(result.quality_status, QualityStatus::Suboptimal);
@@ -666,13 +677,13 @@ mod tests {
             require_hdr: true,
             ..Default::default()
         };
-        
+
         // File without HDR
         let parsed = parse_quality("Show.S01E01.1080p.WEB-DL");
         let result = QualityEvaluator::evaluate_parsed(&parsed, &settings);
         assert!(!result.meets_target);
         assert!(result.reason.as_ref().unwrap().contains("HDR required"));
-        
+
         // File with HDR
         let parsed_hdr = parse_quality("Show.S01E01.2160p.HDR.WEB-DL");
         let result_hdr = QualityEvaluator::evaluate_parsed(&parsed_hdr, &settings);
@@ -690,7 +701,7 @@ mod tests {
             allowed_resolutions: vec!["720p".to_string(), "1080p".to_string()],
             ..Default::default()
         };
-        
+
         // 960p is between 720p and 1080p - should be acceptable as it exceeds 720p
         let parsed = parse_quality("Star Trek- Deep Space Nine - S01E09 960p");
         let result = QualityEvaluator::evaluate_parsed(&parsed, &settings);
@@ -706,7 +717,7 @@ mod tests {
             allowed_video_codecs: vec!["HEVC".to_string(), "H.265".to_string()],
             ..Default::default()
         };
-        
+
         let parsed = parse_quality("Fallout.2024.S01E01.1080p.HEVC.x265-MeGusta");
         assert_eq!(parsed.resolution.as_deref(), Some("1080p"));
         assert_eq!(parsed.codec.as_deref(), Some("HEVC"));
@@ -719,7 +730,7 @@ mod tests {
             require_hdr: true,
             ..Default::default()
         };
-        
+
         let parsed = parse_quality("Show.S01E01.2160p.HDR.DV.WEB-DL");
         let result = QualityEvaluator::evaluate_parsed(&parsed, &settings);
         assert!(result.meets_target);

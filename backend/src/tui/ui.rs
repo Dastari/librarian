@@ -103,24 +103,23 @@ impl UiLayout {
             Constraint::Percentage(45), // Logs
             Constraint::Percentage(28), // Torrents + System
             Constraint::Percentage(27), // Libraries + Database
-        ]).split(area);
+        ])
+        .split(area);
 
         let logs_area = vertical[0];
 
         // Middle row: Torrents (75%), System (25%)
-        let middle_row = Layout::horizontal([
-            Constraint::Percentage(75),
-            Constraint::Percentage(25),
-        ]).split(vertical[1]);
+        let middle_row =
+            Layout::horizontal([Constraint::Percentage(75), Constraint::Percentage(25)])
+                .split(vertical[1]);
 
         let torrents_area = middle_row[0];
         let system_area = middle_row[1];
 
         // Bottom row: Libraries (75%), Database (25%)
-        let bottom_row = Layout::horizontal([
-            Constraint::Percentage(75),
-            Constraint::Percentage(25),
-        ]).split(vertical[2]);
+        let bottom_row =
+            Layout::horizontal([Constraint::Percentage(75), Constraint::Percentage(25)])
+                .split(vertical[2]);
 
         let libraries_area = bottom_row[0];
         let database_area = bottom_row[1];

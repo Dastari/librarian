@@ -20,7 +20,7 @@
 //! // queries/tv_shows.rs
 //! #[derive(Default)]
 //! pub struct TvShowQueries;
-//! 
+//!
 //! #[Object]
 //! impl TvShowQueries {
 //!     async fn tv_shows(&self, ctx: &Context<'_>, library_id: String) -> Result<Vec<TvShow>> { ... }
@@ -33,11 +33,14 @@
 
 pub mod auth;
 pub mod filters;
+pub mod helpers;
+pub mod mutations;
 pub mod pagination;
+pub mod queries;
 mod schema;
 mod subscriptions;
 pub mod types;
 
 pub use auth::{AuthUser, verify_token};
 pub use schema::{LibrarianSchema, build_schema};
-pub use types::{Library, LibraryChangedEvent, LibraryChangeType, MediaFileUpdatedEvent};
+pub use types::{Library, LibraryChangeType, LibraryChangedEvent, MediaFileUpdatedEvent};

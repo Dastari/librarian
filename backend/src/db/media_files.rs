@@ -311,11 +311,13 @@ impl MediaFileRepository {
 
     /// Link a media file to an episode
     pub async fn link_to_episode(&self, file_id: Uuid, episode_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE media_files SET episode_id = $2, content_type = 'episode' WHERE id = $1")
-            .bind(file_id)
-            .bind(episode_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE media_files SET episode_id = $2, content_type = 'episode' WHERE id = $1",
+        )
+        .bind(file_id)
+        .bind(episode_id)
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -355,11 +357,13 @@ impl MediaFileRepository {
 
     /// Link a media file to an audiobook
     pub async fn link_to_audiobook(&self, file_id: Uuid, audiobook_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE media_files SET audiobook_id = $2, content_type = 'audiobook' WHERE id = $1")
-            .bind(file_id)
-            .bind(audiobook_id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE media_files SET audiobook_id = $2, content_type = 'audiobook' WHERE id = $1",
+        )
+        .bind(file_id)
+        .bind(audiobook_id)
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -439,16 +443,20 @@ impl MediaFileRepository {
                 if let Some(source) = self.get_by_id(file_id).await? {
                     // Transfer movie/episode links to the existing record if not already set
                     if source.movie_id.is_some() && existing.movie_id.is_none() {
-                        self.link_to_movie(existing.id, source.movie_id.unwrap()).await?;
+                        self.link_to_movie(existing.id, source.movie_id.unwrap())
+                            .await?;
                     }
                     if source.episode_id.is_some() && existing.episode_id.is_none() {
-                        self.link_to_episode(existing.id, source.episode_id.unwrap()).await?;
+                        self.link_to_episode(existing.id, source.episode_id.unwrap())
+                            .await?;
                     }
                     if source.album_id.is_some() && existing.album_id.is_none() {
-                        self.link_to_album(existing.id, source.album_id.unwrap()).await?;
+                        self.link_to_album(existing.id, source.album_id.unwrap())
+                            .await?;
                     }
                     if source.audiobook_id.is_some() && existing.audiobook_id.is_none() {
-                        self.link_to_audiobook(existing.id, source.audiobook_id.unwrap()).await?;
+                        self.link_to_audiobook(existing.id, source.audiobook_id.unwrap())
+                            .await?;
                     }
                 }
 

@@ -70,9 +70,7 @@ pub enum FileMatchTarget {
         chapter_number: i32,
     },
     /// No match found - this is a non-media file or couldn't be matched
-    Unmatched {
-        reason: String,
-    },
+    Unmatched { reason: String },
     /// Sample file - should not be organized
     Sample,
 }
@@ -114,7 +112,7 @@ impl TorrentFileMatcher {
     // =========================================================================
 
     /// Create an explicit match for a movie
-    /// 
+    ///
     /// Used when user adds a torrent for a specific movie, or auto-hunt finds a match.
     /// This creates a torrent_file_matches record linking the file to the movie.
     pub async fn create_match_for_movie(
@@ -126,7 +124,7 @@ impl TorrentFileMatcher {
         movie_id: Uuid,
     ) -> Result<TorrentFileMatchRecord> {
         let quality = filename_parser::parse_quality(file_path);
-        
+
         let input = CreateTorrentFileMatch {
             torrent_id,
             file_index,
@@ -146,7 +144,7 @@ impl TorrentFileMatcher {
         };
 
         let record = self.db.torrent_file_matches().create(input).await?;
-        
+
         // Update movie status to downloading
         sqlx::query("UPDATE movies SET download_status = 'downloading' WHERE id = $1")
             .bind(movie_id)
@@ -164,7 +162,7 @@ impl TorrentFileMatcher {
     }
 
     /// Create an explicit match for an episode
-    /// 
+    ///
     /// Used when user adds a torrent for a specific episode, or auto-hunt finds a match.
     pub async fn create_match_for_episode(
         &self,
@@ -175,7 +173,7 @@ impl TorrentFileMatcher {
         episode_id: Uuid,
     ) -> Result<TorrentFileMatchRecord> {
         let quality = filename_parser::parse_quality(file_path);
-        
+
         let input = CreateTorrentFileMatch {
             torrent_id,
             file_index,
@@ -195,9 +193,12 @@ impl TorrentFileMatcher {
         };
 
         let record = self.db.torrent_file_matches().create(input).await?;
-        
+
         // Update episode status to downloading
-        self.db.episodes().update_status(episode_id, "downloading").await?;
+        self.db
+            .episodes()
+            .update_status(episode_id, "downloading")
+            .await?;
 
         info!(
             torrent_id = %torrent_id,
@@ -210,7 +211,7 @@ impl TorrentFileMatcher {
     }
 
     /// Create explicit matches for all video files in a torrent, linking them to an episode
-    /// 
+    ///
     /// Used for single-episode torrents where all video files belong to the same episode.
     pub async fn create_matches_for_episode_torrent(
         &self,
@@ -219,16 +220,18 @@ impl TorrentFileMatcher {
         episode_id: Uuid,
     ) -> Result<Vec<TorrentFileMatchRecord>> {
         let mut records = Vec::new();
-        
+
         for (index, file) in files.iter().enumerate() {
             if is_video_file(&file.path) && !self.is_sample_file(&file.path) {
-                let record = self.create_match_for_episode(
-                    torrent_id,
-                    index as i32,
-                    &file.path,
-                    file.size as i64,
-                    episode_id,
-                ).await?;
+                let record = self
+                    .create_match_for_episode(
+                        torrent_id,
+                        index as i32,
+                        &file.path,
+                        file.size as i64,
+                        episode_id,
+                    )
+                    .await?;
                 records.push(record);
             }
         }
@@ -237,7 +240,7 @@ impl TorrentFileMatcher {
     }
 
     /// Create explicit matches for all video files in a torrent, linking them to a movie
-    /// 
+    ///
     /// Used for movie torrents where all video files belong to the same movie.
     pub async fn create_matches_for_movie_torrent(
         &self,
@@ -246,16 +249,18 @@ impl TorrentFileMatcher {
         movie_id: Uuid,
     ) -> Result<Vec<TorrentFileMatchRecord>> {
         let mut records = Vec::new();
-        
+
         for (index, file) in files.iter().enumerate() {
             if is_video_file(&file.path) && !self.is_sample_file(&file.path) {
-                let record = self.create_match_for_movie(
-                    torrent_id,
-                    index as i32,
-                    &file.path,
-                    file.size as i64,
-                    movie_id,
-                ).await?;
+                let record = self
+                    .create_match_for_movie(
+                        torrent_id,
+                        index as i32,
+                        &file.path,
+                        file.size as i64,
+                        movie_id,
+                    )
+                    .await?;
                 records.push(record);
             }
         }
@@ -264,7 +269,7 @@ impl TorrentFileMatcher {
     }
 
     /// Create an explicit match for a track
-    /// 
+    ///
     /// Used when linking a specific audio file to a track.
     pub async fn create_match_for_track(
         &self,
@@ -275,7 +280,7 @@ impl TorrentFileMatcher {
         track_id: Uuid,
     ) -> Result<TorrentFileMatchRecord> {
         let quality = filename_parser::parse_quality(file_path);
-        
+
         let input = CreateTorrentFileMatch {
             torrent_id,
             file_index,
@@ -295,7 +300,7 @@ impl TorrentFileMatcher {
         };
 
         let record = self.db.torrent_file_matches().create(input).await?;
-        
+
         // Update track status to downloading
         sqlx::query("UPDATE tracks SET status = 'downloading' WHERE id = $1")
             .bind(track_id)
@@ -313,7 +318,7 @@ impl TorrentFileMatcher {
     }
 
     /// Create explicit matches for all audio files in a torrent, linking to tracks in an album
-    /// 
+    ///
     /// This attempts to match audio files to tracks by track number or title similarity.
     /// Used for album torrents where files should be matched to existing tracks.
     pub async fn create_matches_for_album(
@@ -324,43 +329,47 @@ impl TorrentFileMatcher {
     ) -> Result<Vec<TorrentFileMatchRecord>> {
         let tracks = self.db.tracks().list_by_album(album_id).await?;
         let mut records = Vec::new();
-        
+
         for (index, file) in files.iter().enumerate() {
             if !is_audio_file(&file.path) {
                 continue;
             }
-            
+
             let file_name = Path::new(&file.path)
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or(&file.path);
-            
+
             // Try to match by track number first
             if let Some(track_num) = self.extract_track_number(file_name) {
                 if let Some(track) = tracks.iter().find(|t| t.track_number == track_num) {
-                    let record = self.create_match_for_track(
-                        torrent_id,
-                        index as i32,
-                        &file.path,
-                        file.size as i64,
-                        track.id,
-                    ).await?;
+                    let record = self
+                        .create_match_for_track(
+                            torrent_id,
+                            index as i32,
+                            &file.path,
+                            file.size as i64,
+                            track.id,
+                        )
+                        .await?;
                     records.push(record);
                     continue;
                 }
             }
-            
+
             // Try to match by title similarity
             for track in &tracks {
                 let similarity = self.calculate_track_title_similarity(file_name, &track.title);
                 if similarity > 0.7 {
-                    let record = self.create_match_for_track(
-                        torrent_id,
-                        index as i32,
-                        &file.path,
-                        file.size as i64,
-                        track.id,
-                    ).await?;
+                    let record = self
+                        .create_match_for_track(
+                            torrent_id,
+                            index as i32,
+                            &file.path,
+                            file.size as i64,
+                            track.id,
+                        )
+                        .await?;
                     records.push(record);
                     break;
                 }
@@ -380,7 +389,7 @@ impl TorrentFileMatcher {
         chapter_id: Uuid,
     ) -> Result<TorrentFileMatchRecord> {
         let quality = filename_parser::parse_quality(file_path);
-        
+
         let input = CreateTorrentFileMatch {
             torrent_id,
             file_index,
@@ -400,7 +409,7 @@ impl TorrentFileMatcher {
         };
 
         let record = self.db.torrent_file_matches().create(input).await?;
-        
+
         // Update chapter status to downloading
         sqlx::query("UPDATE chapters SET status = 'downloading' WHERE id = $1")
             .bind(chapter_id)
@@ -431,29 +440,33 @@ impl TorrentFileMatcher {
         .bind(audiobook_id)
         .fetch_all(self.db.pool())
         .await?;
-        
+
         let mut records = Vec::new();
-        
+
         for (index, file) in files.iter().enumerate() {
             if !is_audio_file(&file.path) {
                 continue;
             }
-            
+
             let file_name = Path::new(&file.path)
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or(&file.path);
-            
+
             // Try to match by chapter number
             if let Some(chapter_num) = self.extract_chapter_number(file_name) {
-                if let Some((chapter_id, _, _)) = chapters.iter().find(|(_, num, _)| *num == chapter_num) {
-                    let record = self.create_match_for_chapter(
-                        torrent_id,
-                        index as i32,
-                        &file.path,
-                        file.size as i64,
-                        *chapter_id,
-                    ).await?;
+                if let Some((chapter_id, _, _)) =
+                    chapters.iter().find(|(_, num, _)| *num == chapter_num)
+                {
+                    let record = self
+                        .create_match_for_chapter(
+                            torrent_id,
+                            index as i32,
+                            &file.path,
+                            file.size as i64,
+                            *chapter_id,
+                        )
+                        .await?;
                     records.push(record);
                 }
             }
@@ -491,8 +504,13 @@ impl TorrentFileMatcher {
 
         info!(
             "Matching files in torrent '{}' ({} files{})",
-            torrent.name, files.len(),
-            if is_targeted_match { ", targeted to specific library" } else { "" }
+            torrent.name,
+            files.len(),
+            if is_targeted_match {
+                ", targeted to specific library"
+            } else {
+                ""
+            }
         );
 
         // Get libraries to match against
@@ -503,18 +521,12 @@ impl TorrentFileMatcher {
                 .get_by_id(lib_id)
                 .await?
                 .context("Target library not found")?;
-            debug!(
-                "Matching against targeted library '{}'",
-                lib.name
-            );
+            debug!("Matching against targeted library '{}'", lib.name);
             vec![lib]
         } else {
             // Get all libraries for this user that allow auto-download
             let libs = self.db.libraries().list_by_user(user_id).await?;
-            debug!(
-                "Matching against {} user libraries",
-                libs.len()
-            );
+            debug!("Matching against {} user libraries", libs.len());
             libs
         };
 
@@ -527,20 +539,28 @@ impl TorrentFileMatcher {
             let result = self
                 .match_single_file(torrent, file, index as i32, &libraries, is_targeted_match)
                 .await?;
-            
+
             let file_name = Path::new(&file.path)
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or(&file.path);
-            
+
             // Log each file's match result
             match &result.match_target {
-                FileMatchTarget::Episode { show_name, season, episode, .. } => {
+                FileMatchTarget::Episode {
+                    show_name,
+                    season,
+                    episode,
+                    ..
+                } => {
                     episode_matches += 1;
                     if result.skip_download {
                         info!(
                             "Matched '{}' to {} S{:02}E{:02} (skipping: {})",
-                            file_name, show_name, season, episode,
+                            file_name,
+                            show_name,
+                            season,
+                            episode,
                             result.skip_reason.as_deref().unwrap_or("already have")
                         );
                     } else {
@@ -556,23 +576,38 @@ impl TorrentFileMatcher {
                     if result.skip_download {
                         info!(
                             "Matched '{}' to {}{} (skipping: {})",
-                            file_name, title, year_str,
+                            file_name,
+                            title,
+                            year_str,
                             result.skip_reason.as_deref().unwrap_or("already have")
                         );
                     } else {
                         info!("Matched '{}' to {}{}", file_name, title, year_str);
                     }
                 }
-                FileMatchTarget::Track { title, track_number, .. } => {
+                FileMatchTarget::Track {
+                    title,
+                    track_number,
+                    ..
+                } => {
                     track_matches += 1;
-                    info!("Matched '{}' to track {} (#{:02})", file_name, title, track_number);
+                    info!(
+                        "Matched '{}' to track {} (#{:02})",
+                        file_name, title, track_number
+                    );
                 }
                 FileMatchTarget::AudiobookChapter { chapter_number, .. } => {
                     chapter_matches += 1;
-                    info!("Matched '{}' to audiobook chapter {:02}", file_name, chapter_number);
+                    info!(
+                        "Matched '{}' to audiobook chapter {:02}",
+                        file_name, chapter_number
+                    );
                 }
                 FileMatchTarget::Sample => {
-                    debug!("Detected sample file '{}', will download but not organize", file_name);
+                    debug!(
+                        "Detected sample file '{}', will download but not organize",
+                        file_name
+                    );
                 }
                 FileMatchTarget::Unmatched { reason } => {
                     if is_video_file(&file.path) || is_audio_file(&file.path) {
@@ -580,7 +615,7 @@ impl TorrentFileMatcher {
                     }
                 }
             }
-            
+
             results.push(result);
         }
 
@@ -588,8 +623,13 @@ impl TorrentFileMatcher {
         let total_matched = episode_matches + movie_matches + track_matches + chapter_matches;
         info!(
             "File matching complete for '{}': {} of {} files matched ({} episodes, {} movies, {} tracks, {} chapters)",
-            torrent.name, total_matched, files.len(),
-            episode_matches, movie_matches, track_matches, chapter_matches
+            torrent.name,
+            total_matched,
+            files.len(),
+            episode_matches,
+            movie_matches,
+            track_matches,
+            chapter_matches
         );
 
         Ok(results)
@@ -630,11 +670,25 @@ impl TorrentFileMatcher {
 
         // Check file type
         if is_video_file(file_path) {
-            self.match_video_file(torrent, file, file_index, file_name, libraries, is_targeted_match)
-                .await
+            self.match_video_file(
+                torrent,
+                file,
+                file_index,
+                file_name,
+                libraries,
+                is_targeted_match,
+            )
+            .await
         } else if is_audio_file(file_path) {
-            self.match_audio_file(torrent, file, file_index, file_name, libraries, is_targeted_match)
-                .await
+            self.match_audio_file(
+                torrent,
+                file,
+                file_index,
+                file_name,
+                libraries,
+                is_targeted_match,
+            )
+            .await
         } else {
             // Non-media file (NFO, TXT, images, etc.)
             Ok(FileMatchResult {
@@ -673,7 +727,14 @@ impl TorrentFileMatcher {
         if parsed.season.is_some() && parsed.episode.is_some() {
             // This looks like a TV episode
             if let Some(result) = self
-                .try_match_episode(&parsed, file_index, file_path, file.size as i64, libraries, is_targeted_match)
+                .try_match_episode(
+                    &parsed,
+                    file_index,
+                    file_path,
+                    file.size as i64,
+                    libraries,
+                    is_targeted_match,
+                )
                 .await?
             {
                 return Ok(result);
@@ -683,7 +744,14 @@ impl TorrentFileMatcher {
         // Try to match as a movie
         let movie_parsed = filename_parser::parse_movie(file_name);
         if let Some(result) = self
-            .try_match_movie(&movie_parsed, file_index, file_path, file.size as i64, libraries, is_targeted_match)
+            .try_match_movie(
+                &movie_parsed,
+                file_index,
+                file_path,
+                file.size as i64,
+                libraries,
+                is_targeted_match,
+            )
             .await?
         {
             return Ok(result);
@@ -827,11 +895,7 @@ impl TorrentFileMatcher {
 
                 if similarity > 0.8 {
                     // Good match, look for the episode
-                    let episodes = self
-                        .db
-                        .episodes()
-                        .list_by_season(show.id, season)
-                        .await?;
+                    let episodes = self.db.episodes().list_by_season(show.id, season).await?;
 
                     for ep in episodes {
                         if ep.episode == episode {
@@ -1421,7 +1485,9 @@ impl TorrentFileMatcher {
 
         for m in matches {
             let (episode_id, movie_id, track_id, chapter_id) = match &m.match_target {
-                FileMatchTarget::Episode { episode_id, .. } => (Some(*episode_id), None, None, None),
+                FileMatchTarget::Episode { episode_id, .. } => {
+                    (Some(*episode_id), None, None, None)
+                }
                 FileMatchTarget::Movie { movie_id, .. } => (None, Some(*movie_id), None, None),
                 FileMatchTarget::Track { track_id, .. } => (None, None, Some(*track_id), None),
                 FileMatchTarget::AudiobookChapter { chapter_id, .. } => {
@@ -1458,7 +1524,10 @@ impl TorrentFileMatcher {
     }
 
     /// Update item statuses to "downloading" for matched files
-    pub async fn update_item_statuses_to_downloading(&self, matches: &[FileMatchResult]) -> Result<()> {
+    pub async fn update_item_statuses_to_downloading(
+        &self,
+        matches: &[FileMatchResult],
+    ) -> Result<()> {
         for m in matches {
             if m.skip_download {
                 continue;
@@ -1487,12 +1556,10 @@ impl TorrentFileMatcher {
                 }
                 FileMatchTarget::AudiobookChapter { chapter_id, .. } => {
                     // Update chapter status
-                    sqlx::query(
-                        "UPDATE chapters SET status = 'downloading' WHERE id = $1",
-                    )
-                    .bind(chapter_id)
-                    .execute(self.db.pool())
-                    .await?;
+                    sqlx::query("UPDATE chapters SET status = 'downloading' WHERE id = $1")
+                        .bind(chapter_id)
+                        .execute(self.db.pool())
+                        .await?;
                 }
                 _ => {}
             }
@@ -1610,7 +1677,9 @@ mod tests {
     #[test]
     fn test_parse_multi_episode() {
         // Multi-episode files like "S01E01-E02" or "S01E01E02"
-        let result = parse_episode("Star Trek- Deep Space Nine - S01E01-E02 - Emissary 960p-QueerWorm-Lela.mkv");
+        let result = parse_episode(
+            "Star Trek- Deep Space Nine - S01E01-E02 - Emissary 960p-QueerWorm-Lela.mkv",
+        );
         assert_eq!(result.season, Some(1));
         // At minimum should capture first episode
         assert!(result.episode.is_some());
@@ -1625,27 +1694,84 @@ mod tests {
         // Simulate the Deep Space Nine S01 torrent file list
         let files = vec![
             ("README.md", false, None, None),
-            ("Star Trek- Deep Space Nine - S01E01-E02 - Emissary 960p-QueerWorm-Lela.mkv", true, Some(1), Some(1)),
-            ("Star Trek- Deep Space Nine - S01E03 - Past Prologue 960p-QueerWorm-Lela.mkv", true, Some(1), Some(3)),
-            ("Star Trek- Deep Space Nine - S01E04 - A Man Alone 960p-QueerWorm-Lela.mkv", true, Some(1), Some(4)),
-            ("Star Trek- Deep Space Nine - S01E05 - Babel 960p-QueerWorm-Lela.mkv", true, Some(1), Some(5)),
-            ("Star Trek- Deep Space Nine - S01E06 - Captive Pursuit 960p-QueerWorm-Lela.mkv", true, Some(1), Some(6)),
-            ("Star Trek- Deep Space Nine - S01E07 - Q-Less 960p-QueerWorm-Lela.mkv", true, Some(1), Some(7)),
-            ("Star Trek- Deep Space Nine - S01E08 - Dax 960p-QueerWorm-Lela.mkv", true, Some(1), Some(8)),
-            ("Star Trek- Deep Space Nine - S01E09 - The Passenger 960p-QueerWorm-Lela.mkv", true, Some(1), Some(9)),
-            ("Star Trek- Deep Space Nine - S01E10 - Move Along Home 960p-QueerWorm-Lela.mkv", true, Some(1), Some(10)),
+            (
+                "Star Trek- Deep Space Nine - S01E01-E02 - Emissary 960p-QueerWorm-Lela.mkv",
+                true,
+                Some(1),
+                Some(1),
+            ),
+            (
+                "Star Trek- Deep Space Nine - S01E03 - Past Prologue 960p-QueerWorm-Lela.mkv",
+                true,
+                Some(1),
+                Some(3),
+            ),
+            (
+                "Star Trek- Deep Space Nine - S01E04 - A Man Alone 960p-QueerWorm-Lela.mkv",
+                true,
+                Some(1),
+                Some(4),
+            ),
+            (
+                "Star Trek- Deep Space Nine - S01E05 - Babel 960p-QueerWorm-Lela.mkv",
+                true,
+                Some(1),
+                Some(5),
+            ),
+            (
+                "Star Trek- Deep Space Nine - S01E06 - Captive Pursuit 960p-QueerWorm-Lela.mkv",
+                true,
+                Some(1),
+                Some(6),
+            ),
+            (
+                "Star Trek- Deep Space Nine - S01E07 - Q-Less 960p-QueerWorm-Lela.mkv",
+                true,
+                Some(1),
+                Some(7),
+            ),
+            (
+                "Star Trek- Deep Space Nine - S01E08 - Dax 960p-QueerWorm-Lela.mkv",
+                true,
+                Some(1),
+                Some(8),
+            ),
+            (
+                "Star Trek- Deep Space Nine - S01E09 - The Passenger 960p-QueerWorm-Lela.mkv",
+                true,
+                Some(1),
+                Some(9),
+            ),
+            (
+                "Star Trek- Deep Space Nine - S01E10 - Move Along Home 960p-QueerWorm-Lela.mkv",
+                true,
+                Some(1),
+                Some(10),
+            ),
         ];
 
         for (filename, is_media, expected_season, expected_episode) in files {
             use crate::services::file_utils::is_video_file;
 
             let is_media_result = is_video_file(filename);
-            assert_eq!(is_media_result, is_media, "Media detection failed for {}", filename);
+            assert_eq!(
+                is_media_result, is_media,
+                "Media detection failed for {}",
+                filename
+            );
 
             if is_media {
                 let parsed = parse_episode(filename);
-                assert_eq!(parsed.season, expected_season, "Season mismatch for {}", filename);
-                assert_eq!(parsed.episode, expected_episode, "Episode mismatch for {}", filename);
+                assert_eq!(
+                    parsed.season, expected_season,
+                    "Season mismatch for {}",
+                    filename
+                );
+                assert_eq!(
+                    parsed.episode, expected_episode,
+                    "Episode mismatch for {}",
+                    filename
+                );
             }
         }
     }
@@ -1654,8 +1780,16 @@ mod tests {
     fn test_fallout_single_episode_file_list() {
         // Simulate single episode torrents with extras
         let files = vec![
-            ("Fallout.2024.S01E01.1080p.HEVC.x265-MeGusta.mkv", true, true),
-            ("Fallout.2024.S01E01.1080p.HEVC.x265-MeGusta.nfo", false, false),
+            (
+                "Fallout.2024.S01E01.1080p.HEVC.x265-MeGusta.mkv",
+                true,
+                true,
+            ),
+            (
+                "Fallout.2024.S01E01.1080p.HEVC.x265-MeGusta.nfo",
+                false,
+                false,
+            ),
             ("Screens/screen0001.png", false, false),
             ("Screens/screen0002.png", false, false),
             ("Screens/screen0003.png", false, false),
@@ -1664,8 +1798,13 @@ mod tests {
         for (filename, is_video, should_process) in files {
             use crate::services::file_utils::is_video_file;
 
-            assert_eq!(is_video_file(filename), is_video, "Video detection for {}", filename);
-            
+            assert_eq!(
+                is_video_file(filename),
+                is_video,
+                "Video detection for {}",
+                filename
+            );
+
             // Only video files should be processed as media
             if should_process {
                 let parsed = parse_episode(filename);
@@ -1684,7 +1823,7 @@ mod tests {
     fn test_quality_resolution_ranking() {
         // Higher resolution should rank higher
         let resolutions = vec!["480p", "720p", "1080p", "2160p"];
-        
+
         fn resolution_to_score(res: &str) -> u32 {
             match res {
                 "2160p" | "4K" | "UHD" => 2160,
@@ -1700,7 +1839,12 @@ mod tests {
             for j in (i + 1)..resolutions.len() {
                 let lower = resolution_to_score(resolutions[i]);
                 let higher = resolution_to_score(resolutions[j]);
-                assert!(higher > lower, "{} should rank higher than {}", resolutions[j], resolutions[i]);
+                assert!(
+                    higher > lower,
+                    "{} should rank higher than {}",
+                    resolutions[j],
+                    resolutions[i]
+                );
             }
         }
     }
@@ -1710,21 +1854,33 @@ mod tests {
         // Test that a 1080p file meets a 1080p target
         let file_quality = parse_quality("Show.S01E01.1080p.WEB.h264-GROUP");
         // Resolution may be uppercase or lowercase depending on parser
-        assert!(file_quality.resolution.as_ref()
-            .map(|r| r.to_lowercase() == "1080p")
-            .unwrap_or(false));
-        
+        assert!(
+            file_quality
+                .resolution
+                .as_ref()
+                .map(|r| r.to_lowercase() == "1080p")
+                .unwrap_or(false)
+        );
+
         // A 720p file should NOT meet a 1080p target
         let file_quality_low = parse_quality("Show.S01E01.720p.WEB.h264-GROUP");
-        assert!(file_quality_low.resolution.as_ref()
-            .map(|r| r.to_lowercase() == "720p")
-            .unwrap_or(false));
-        
+        assert!(
+            file_quality_low
+                .resolution
+                .as_ref()
+                .map(|r| r.to_lowercase() == "720p")
+                .unwrap_or(false)
+        );
+
         // But a 2160p file exceeds a 1080p target (acceptable)
         let file_quality_high = parse_quality("Show.S01E01.2160p.WEB.h265-GROUP");
-        assert!(file_quality_high.resolution.as_ref()
-            .map(|r| r.to_lowercase() == "2160p")
-            .unwrap_or(false));
+        assert!(
+            file_quality_high
+                .resolution
+                .as_ref()
+                .map(|r| r.to_lowercase() == "2160p")
+                .unwrap_or(false)
+        );
     }
 
     // =========================================================================
@@ -1742,7 +1898,13 @@ mod tests {
             episode: 9,
         };
 
-        if let FileMatchTarget::Episode { show_name, season, episode, .. } = episode_target {
+        if let FileMatchTarget::Episode {
+            show_name,
+            season,
+            episode,
+            ..
+        } = episode_target
+        {
             assert_eq!(show_name, "Star Trek: Deep Space Nine");
             assert_eq!(season, 1);
             assert_eq!(episode, 9);
@@ -1757,7 +1919,7 @@ mod tests {
         assert!(matches!(FileMatchType::Auto, FileMatchType::Auto));
         assert!(matches!(FileMatchType::Manual, FileMatchType::Manual));
         assert!(matches!(FileMatchType::Forced, FileMatchType::Forced));
-        
+
         // Test Display trait
         assert_eq!(format!("{}", FileMatchType::Auto), "auto");
         assert_eq!(format!("{}", FileMatchType::Manual), "manual");
@@ -1774,20 +1936,20 @@ mod tests {
 
         // m2ts is a valid video format (Blu-ray) - supported
         assert!(is_video_file("movie.m2ts"));
-        
+
         // ts is valid (transport stream)
         assert!(is_video_file("movie.ts"));
-        
+
         // webm is valid
         assert!(is_video_file("movie.webm"));
-        
+
         // Note: ogv is NOT currently in the supported list
         // If needed, it should be added to VIDEO_EXTENSIONS
     }
 
     #[test]
     fn test_nfo_and_metadata_files_ignored() {
-        use crate::services::file_utils::{is_video_file, is_audio_file};
+        use crate::services::file_utils::{is_audio_file, is_video_file};
 
         let metadata_files = vec![
             "movie.nfo",
@@ -1807,7 +1969,7 @@ mod tests {
     fn test_subtitle_files() {
         // Subtitle files should be recognized (for future subtitle support)
         let subtitle_extensions = vec![".srt", ".sub", ".ass", ".ssa", ".vtt"];
-        
+
         for ext in subtitle_extensions {
             let filename = format!("movie{}", ext);
             let is_subtitle = filename.ends_with(".srt")
@@ -1823,7 +1985,7 @@ mod tests {
     fn test_archive_files() {
         // Archive files that need extraction
         let archive_extensions = vec![".zip", ".rar", ".7z", ".tar.gz"];
-        
+
         for ext in archive_extensions {
             let filename = format!("release{}", ext);
             let is_archive = filename.ends_with(".zip")

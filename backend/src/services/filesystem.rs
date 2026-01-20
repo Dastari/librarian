@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use tokio::fs;
 use tokio::sync::broadcast;
@@ -300,7 +300,11 @@ impl FilesystemService {
         let mut entries = Vec::new();
 
         let mut dir = fs::read_dir(&canonical_path).await.map_err(|e| {
-            anyhow!("Cannot read directory '{}': {}", canonical_path.display(), e)
+            anyhow!(
+                "Cannot read directory '{}': {}",
+                canonical_path.display(),
+                e
+            )
         })?;
 
         while let Ok(Some(entry)) = dir.next_entry().await {
@@ -389,9 +393,9 @@ impl FilesystemService {
         // (used for library folder selection, not file management)
         let path_buf = PathBuf::from(path);
 
-        fs::create_dir_all(&path_buf).await.map_err(|e| {
-            anyhow!("Failed to create directory '{}': {}", path, e)
-        })?;
+        fs::create_dir_all(&path_buf)
+            .await
+            .map_err(|e| anyhow!("Failed to create directory '{}': {}", path, e))?;
 
         // Broadcast the change
         if let Ok(canonical) = path_buf.canonicalize() {
@@ -399,7 +403,9 @@ impl FilesystemService {
                 self.broadcast_change(DirectoryChangeEvent {
                     path: parent.to_string_lossy().to_string(),
                     change_type: "created".to_string(),
-                    name: canonical.file_name().map(|n| n.to_string_lossy().to_string()),
+                    name: canonical
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string()),
                     new_name: None,
                     timestamp: Utc::now(),
                 });
@@ -429,7 +435,9 @@ impl FilesystemService {
                 messages.push(format!(
                     "Skipped '{}': {}",
                     path,
-                    validation.error.unwrap_or_else(|| "Not allowed".to_string())
+                    validation
+                        .error
+                        .unwrap_or_else(|| "Not allowed".to_string())
                 ));
                 continue;
             }
@@ -444,7 +452,9 @@ impl FilesystemService {
             };
 
             let parent_path = path_buf.parent().map(|p| p.to_string_lossy().to_string());
-            let file_name = path_buf.file_name().map(|n| n.to_string_lossy().to_string());
+            let file_name = path_buf
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string());
 
             if metadata.is_dir() {
                 if recursive {
@@ -495,7 +505,9 @@ impl FilesystemService {
         if !dest_validation.is_valid {
             return Err(anyhow!(
                 "Destination not allowed: {}",
-                dest_validation.error.unwrap_or_else(|| "Unknown".to_string())
+                dest_validation
+                    .error
+                    .unwrap_or_else(|| "Unknown".to_string())
             ));
         }
 
@@ -514,7 +526,9 @@ impl FilesystemService {
                 messages.push(format!(
                     "Skipped '{}': {}",
                     source,
-                    source_validation.error.unwrap_or_else(|| "Not allowed".to_string())
+                    source_validation
+                        .error
+                        .unwrap_or_else(|| "Not allowed".to_string())
                 ));
                 continue;
             }
@@ -596,7 +610,9 @@ impl FilesystemService {
         if !dest_validation.is_valid {
             return Err(anyhow!(
                 "Destination not allowed: {}",
-                dest_validation.error.unwrap_or_else(|| "Unknown".to_string())
+                dest_validation
+                    .error
+                    .unwrap_or_else(|| "Unknown".to_string())
             ));
         }
 
@@ -615,7 +631,9 @@ impl FilesystemService {
                 messages.push(format!(
                     "Skipped '{}': {}",
                     source,
-                    source_validation.error.unwrap_or_else(|| "Not allowed".to_string())
+                    source_validation
+                        .error
+                        .unwrap_or_else(|| "Not allowed".to_string())
                 ));
                 continue;
             }
@@ -629,7 +647,9 @@ impl FilesystemService {
                 }
             };
 
-            let source_parent = source_path.parent().map(|p| p.to_string_lossy().to_string());
+            let source_parent = source_path
+                .parent()
+                .map(|p| p.to_string_lossy().to_string());
             let target_path = dest_path.join(file_name);
 
             // Check if target exists

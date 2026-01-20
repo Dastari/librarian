@@ -211,12 +211,18 @@ impl TorrentService {
             config.max_concurrent = v;
         }
 
-        info!("Using download directory: {}", config.download_dir.display());
+        info!(
+            "Using download directory: {}",
+            config.download_dir.display()
+        );
 
         // Try to create directories, but don't fail if we can't
         let download_dir_ok = match tokio::fs::create_dir_all(&config.download_dir).await {
             Ok(_) => {
-                debug!("Download directory ready: {}", config.download_dir.display());
+                debug!(
+                    "Download directory ready: {}",
+                    config.download_dir.display()
+                );
                 true
             }
             Err(e) => {
@@ -594,7 +600,11 @@ impl TorrentService {
     }
 
     /// Add a torrent from raw bytes (for authenticated downloads)
-    pub async fn add_torrent_bytes(&self, bytes: &[u8], user_id: Option<Uuid>) -> Result<TorrentInfo> {
+    pub async fn add_torrent_bytes(
+        &self,
+        bytes: &[u8],
+        user_id: Option<Uuid>,
+    ) -> Result<TorrentInfo> {
         debug!("Adding torrent from bytes ({} bytes)", bytes.len());
 
         let add_result = self
@@ -937,7 +947,11 @@ impl TorrentService {
             info_hash: info_hash.clone(),
         });
         self.completed.write().remove(&info_hash);
-        info!("Torrent {} removed{}", id, if delete_files { " (files deleted)" } else { "" });
+        info!(
+            "Torrent {} removed{}",
+            id,
+            if delete_files { " (files deleted)" } else { "" }
+        );
         Ok(())
     }
 

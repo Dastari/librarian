@@ -96,7 +96,10 @@ async fn fetch_all_table_counts(pool: &PgPool) -> TableCounts {
             .fetch_one(pool)
             .await
             .unwrap_or(0);
-        tables.push(TableCount { name: name.to_string(), count });
+        tables.push(TableCount {
+            name: name.to_string(),
+            count,
+        });
     }
 
     // Sort by count descending
@@ -116,7 +119,11 @@ impl DatabasePanel {
     pub fn new(pool: PgPool, table_counts: SharedTableCounts) -> Self {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
-        Self { pool, table_counts, list_state }
+        Self {
+            pool,
+            table_counts,
+            list_state,
+        }
     }
 
     fn get_counts(&self) -> TableCounts {
@@ -125,11 +132,19 @@ impl DatabasePanel {
 }
 
 impl Panel for DatabasePanel {
-    fn title(&self) -> &str { "db" }
-    fn kind(&self) -> PanelKind { PanelKind::Database }
+    fn title(&self) -> &str {
+        "db"
+    }
+    fn kind(&self) -> PanelKind {
+        PanelKind::Database
+    }
 
     fn render(&self, frame: &mut Frame, area: Rect, focused: bool) {
-        let border_style = if focused { Theme::border(PanelKind::Database) } else { Theme::border_dim() };
+        let border_style = if focused {
+            Theme::border(PanelKind::Database)
+        } else {
+            Theme::border_dim()
+        };
 
         let title = Line::from(vec![
             Span::styled("┐", border_style),
@@ -147,25 +162,32 @@ impl Panel for DatabasePanel {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        if inner.height < 4 || inner.width < 25 { return; }
+        if inner.height < 4 || inner.width < 25 {
+            return;
+        }
 
         // Split vertically: pool stats at top (1 row), table list below
         let chunks = Layout::vertical([
             Constraint::Length(3), // Pool stats box
             Constraint::Min(3),    // Table list
-        ]).split(inner);
+        ])
+        .split(inner);
 
         // Render pool stats in internal box
         render_pool_stats(frame, chunks[0], &self.pool, border_style);
 
         // Render table list
         let counts = self.get_counts();
-        let items: Vec<ListItem> = counts.tables.iter().map(|t| {
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("{:<20}", t.name), Theme::dim()),
-                Span::styled(format!("{:>8}", format_number(t.count)), Theme::text()),
-            ]))
-        }).collect();
+        let items: Vec<ListItem> = counts
+            .tables
+            .iter()
+            .map(|t| {
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!("{:<20}", t.name), Theme::dim()),
+                    Span::styled(format!("{:>8}", format_number(t.count)), Theme::text()),
+                ]))
+            })
+            .collect();
 
         let list = List::new(items).highlight_style(Theme::selected());
         let mut state = self.list_state.clone();
@@ -174,12 +196,30 @@ impl Panel for DatabasePanel {
 
     fn handle_action(&mut self, action: &Action) {
         let len = self.get_counts().tables.len();
-        if len == 0 { return; }
+        if len == 0 {
+            return;
+        }
         match action {
-            Action::ScrollUp => { if let Some(s) = self.list_state.selected() { if s > 0 { self.list_state.select(Some(s - 1)); } } }
-            Action::ScrollDown => { if let Some(s) = self.list_state.selected() { if s + 1 < len { self.list_state.select(Some(s + 1)); } } }
-            Action::Home => { self.list_state.select(Some(0)); }
-            Action::End => { self.list_state.select(Some(len.saturating_sub(1))); }
+            Action::ScrollUp => {
+                if let Some(s) = self.list_state.selected() {
+                    if s > 0 {
+                        self.list_state.select(Some(s - 1));
+                    }
+                }
+            }
+            Action::ScrollDown => {
+                if let Some(s) = self.list_state.selected() {
+                    if s + 1 < len {
+                        self.list_state.select(Some(s + 1));
+                    }
+                }
+            }
+            Action::Home => {
+                self.list_state.select(Some(0));
+            }
+            Action::End => {
+                self.list_state.select(Some(len.saturating_sub(1)));
+            }
             _ => {}
         }
     }
@@ -188,12 +228,23 @@ impl Panel for DatabasePanel {
 
     fn scroll_position(&self) -> Option<(usize, usize)> {
         let counts = self.get_counts();
-        if counts.tables.is_empty() { None } else { self.list_state.selected().map(|p| (p + 1, counts.tables.len())) }
+        if counts.tables.is_empty() {
+            None
+        } else {
+            self.list_state
+                .selected()
+                .map(|p| (p + 1, counts.tables.len()))
+        }
     }
 }
 
 /// Render pool stats in a horizontal internal box
-fn render_pool_stats(frame: &mut Frame, area: Rect, pool: &PgPool, border_style: ratatui::style::Style) {
+fn render_pool_stats(
+    frame: &mut Frame,
+    area: Rect,
+    pool: &PgPool,
+    border_style: ratatui::style::Style,
+) {
     let pool_size = pool.size();
     let idle = pool.num_idle();
     let active = pool_size - idle as u32;
@@ -204,17 +255,21 @@ fn render_pool_stats(frame: &mut Frame, area: Rect, pool: &PgPool, border_style:
         .borders(Borders::ALL)
         .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(border_style);
-    
+
     let inner_area = inner_block.inner(area);
     frame.render_widget(inner_block, area);
 
-    if inner_area.width < 20 || inner_area.height < 1 { return; }
+    if inner_area.width < 20 || inner_area.height < 1 {
+        return;
+    }
 
     // Pool stats as horizontal line
     let bar_width = 6;
     let filled = if max_connections > 0 {
         ((active as usize) * bar_width / max_connections as usize).min(bar_width)
-    } else { 0 };
+    } else {
+        0
+    };
     let empty = bar_width - filled;
     let bar = format!("{}{}", "\u{28FF}".repeat(filled), "\u{2880}".repeat(empty));
 
