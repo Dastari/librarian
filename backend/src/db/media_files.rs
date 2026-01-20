@@ -205,6 +205,10 @@ impl MediaFileRepository {
     }
 
     /// Upsert a media file (insert or update if path exists)
+    ///
+    /// On conflict, updates file metadata AND links to the provided movie/episode.
+    /// This ensures that when re-processing a download, the existing record gets
+    /// properly linked to the content item.
     pub async fn upsert(&self, input: CreateMediaFile) -> Result<MediaFileRecord> {
         let record = sqlx::query_as::<_, MediaFileRecord>(
             r#"
@@ -227,6 +231,15 @@ impl MediaFileRepository {
                 resolution = EXCLUDED.resolution,
                 is_hdr = EXCLUDED.is_hdr,
                 hdr_type = EXCLUDED.hdr_type,
+                -- Only update movie_id/episode_id if the new value is not null
+                movie_id = COALESCE(EXCLUDED.movie_id, media_files.movie_id),
+                episode_id = COALESCE(EXCLUDED.episode_id, media_files.episode_id),
+                -- Update content_type based on what's being linked
+                content_type = CASE 
+                    WHEN EXCLUDED.movie_id IS NOT NULL THEN 'movie'
+                    WHEN EXCLUDED.episode_id IS NOT NULL THEN 'episode'
+                    ELSE media_files.content_type
+                END,
                 modified_at = NOW()
             RETURNING id, library_id, path, size as size_bytes, 
                       container, video_codec, audio_codec, width, height,
@@ -402,12 +415,67 @@ impl MediaFileRepository {
     }
 
     /// Mark a file as organized (moved to library structure)
+    ///
+    /// If another record already exists at the new_path, this will:
+    /// 1. Transfer the movie_id/episode_id to the existing record if needed
+    /// 2. Delete the source record (file_id)
+    /// 3. Mark the existing record as organized
+    ///
+    /// This handles the case where a library scan created a record at the destination
+    /// before the organizer could update the download record's path.
     pub async fn mark_organized(
         &self,
         file_id: Uuid,
         new_path: &str,
         original_path: &str,
     ) -> Result<()> {
+        // Check if another record already exists at the destination path
+        if let Some(existing) = self.get_by_path(new_path).await? {
+            if existing.id != file_id {
+                // Another record exists at the destination - we need to merge
+                // Get the source record to transfer its links
+                if let Some(source) = self.get_by_id(file_id).await? {
+                    // Transfer movie/episode links to the existing record if not already set
+                    if source.movie_id.is_some() && existing.movie_id.is_none() {
+                        self.link_to_movie(existing.id, source.movie_id.unwrap()).await?;
+                    }
+                    if source.episode_id.is_some() && existing.episode_id.is_none() {
+                        self.link_to_episode(existing.id, source.episode_id.unwrap()).await?;
+                    }
+                    if source.album_id.is_some() && existing.album_id.is_none() {
+                        self.link_to_album(existing.id, source.album_id.unwrap()).await?;
+                    }
+                    if source.audiobook_id.is_some() && existing.audiobook_id.is_none() {
+                        self.link_to_audiobook(existing.id, source.audiobook_id.unwrap()).await?;
+                    }
+                }
+
+                // Delete the source record (the one from downloads)
+                self.delete(file_id).await?;
+
+                // Mark the existing destination record as organized
+                sqlx::query(
+                    r#"
+                    UPDATE media_files SET 
+                        original_path = COALESCE(original_path, $2),
+                        organized = true, 
+                        organized_at = NOW(),
+                        organize_status = 'organized',
+                        organize_error = NULL,
+                        modified_at = NOW()
+                    WHERE id = $1
+                    "#,
+                )
+                .bind(existing.id)
+                .bind(original_path)
+                .execute(&self.pool)
+                .await?;
+
+                return Ok(());
+            }
+        }
+
+        // No conflict - just update the path
         sqlx::query(
             r#"
             UPDATE media_files SET 

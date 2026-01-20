@@ -677,10 +677,51 @@ impl OrganizerService {
                     error: Some(error_msg),
                 });
             } else {
-                // Same size - assume it's the same file, just update the database
+                // Same size - assume it's the same file
+                // Check if another record already has this path (to avoid duplicate key violation)
+                if let Some(existing) = self.db.media_files().get_by_path(&new_path_str).await? {
+                    if existing.id != file.id {
+                        // Another record already has this path - this file is a duplicate
+                        // Delete the source file from disk AND the database record
+                        info!(
+                            file_id = %file.id,
+                            existing_file_id = %existing.id,
+                            source_path = %original_path,
+                            target_path = %new_path_str,
+                            movie = %movie.title,
+                            "Duplicate movie file detected, deleting source file and DB record"
+                        );
+
+                        // Delete the source file from disk (if it's different from target)
+                        if original_path != new_path_str && source_path.exists() {
+                            if let Err(e) = tokio::fs::remove_file(source_path).await {
+                                warn!(
+                                    path = %original_path,
+                                    error = %e,
+                                    "Failed to delete duplicate source movie file"
+                                );
+                            } else {
+                                info!(path = %original_path, "Deleted duplicate source movie file");
+                            }
+                        }
+
+                        self.db.media_files().delete(file.id).await?;
+
+                        return Ok(OrganizeResult {
+                            file_id: file.id,
+                            original_path,
+                            new_path: new_path_str,
+                            success: true,
+                            error: None,
+                        });
+                    }
+                }
+
+                // No other record has this path, just update the database
                 info!(
                     file_id = %file.id,
                     path = %new_path_str,
+                    movie = %movie.title,
                     "Movie target file already exists with same size, marking as organized"
                 );
 
@@ -762,6 +803,9 @@ impl OrganizerService {
                 file_id = %file.id,
                 action = %effective_action,
                 error = %e,
+                movie = %movie.title,
+                source = %original_path,
+                target = %new_path_str,
                 "Failed to organize movie file"
             );
             return Ok(OrganizeResult {
@@ -773,11 +817,52 @@ impl OrganizerService {
             });
         }
 
+        // Check for duplicate path in database before updating
+        if let Some(existing) = self.db.media_files().get_by_path(&new_path_str).await? {
+            if existing.id != file.id {
+                // Another record has this path - delete this duplicate
+                info!(
+                    file_id = %file.id,
+                    existing_file_id = %existing.id,
+                    path = %new_path_str,
+                    movie = %movie.title,
+                    "Duplicate movie file detected after organize, deleting duplicate record"
+                );
+                self.db.media_files().delete(file.id).await?;
+
+                return Ok(OrganizeResult {
+                    file_id: file.id,
+                    original_path,
+                    new_path: new_path_str,
+                    success: true,
+                    error: None,
+                });
+            }
+        }
+
         // Update database
-        self.db
+        if let Err(e) = self
+            .db
             .media_files()
             .mark_organized(file.id, &new_path_str, &original_path)
-            .await?;
+            .await
+        {
+            error!(
+                file_id = %file.id,
+                movie = %movie.title,
+                error = %e,
+                source = %original_path,
+                target = %new_path_str,
+                "Failed to update database after organizing movie file"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: false,
+                error: Some(format!("Database error: {}", e)),
+            });
+        }
 
         info!(
             file_id = %file.id,
@@ -903,18 +988,77 @@ impl OrganizerService {
 
         let source_path = Path::new(&original_path);
 
-        // Skip conflict checking for simplicity - just check if target exists
+        // Check if target exists
         if new_path.exists() {
+            // Check if another record already has this path (to avoid duplicate key violation)
+            if let Some(existing) = self.db.media_files().get_by_path(&new_path_str).await? {
+                if existing.id != file.id {
+                    // Another record already has this path - this file is a duplicate
+                    info!(
+                        file_id = %file.id,
+                        existing_file_id = %existing.id,
+                        source_path = %original_path,
+                        target_path = %new_path_str,
+                        artist = %artist_name,
+                        album = %album.name,
+                        "Duplicate music file detected, deleting source file and DB record"
+                    );
+
+                    // Delete the source file from disk (if it's different from target)
+                    if original_path != new_path_str && source_path.exists() {
+                        if let Err(e) = tokio::fs::remove_file(source_path).await {
+                            warn!(
+                                path = %original_path,
+                                error = %e,
+                                "Failed to delete duplicate source music file"
+                            );
+                        } else {
+                            info!(path = %original_path, "Deleted duplicate source music file");
+                        }
+                    }
+
+                    self.db.media_files().delete(file.id).await?;
+
+                    return Ok(OrganizeResult {
+                        file_id: file.id,
+                        original_path,
+                        new_path: new_path_str,
+                        success: true,
+                        error: None,
+                    });
+                }
+            }
+
             info!(
                 file_id = %file.id,
                 path = %new_path_str,
+                artist = %artist_name,
+                album = %album.name,
                 "Music target file already exists, marking as organized"
             );
 
-            self.db
+            if let Err(e) = self.db
                 .media_files()
                 .mark_organized(file.id, &new_path_str, &original_path)
-                .await?;
+                .await
+            {
+                error!(
+                    file_id = %file.id,
+                    error = %e,
+                    artist = %artist_name,
+                    album = %album.name,
+                    source = %original_path,
+                    target = %new_path_str,
+                    "Failed to update database after organizing music file"
+                );
+                return Ok(OrganizeResult {
+                    file_id: file.id,
+                    original_path,
+                    new_path: new_path_str,
+                    success: false,
+                    error: Some(format!("Database error: {}", e)),
+                });
+            }
 
             return Ok(OrganizeResult {
                 file_id: file.id,
@@ -965,6 +1109,10 @@ impl OrganizerService {
                 file_id = %file.id,
                 action = %effective_action,
                 error = %e,
+                artist = %artist_name,
+                album = %album.name,
+                source = %original_path,
+                target = %new_path_str,
                 "Failed to organize music file"
             );
             return Ok(OrganizeResult {
@@ -976,11 +1124,53 @@ impl OrganizerService {
             });
         }
 
+        // Check for duplicate path in database before updating
+        if let Some(existing) = self.db.media_files().get_by_path(&new_path_str).await? {
+            if existing.id != file.id {
+                // Another record has this path - delete this duplicate
+                info!(
+                    file_id = %file.id,
+                    existing_file_id = %existing.id,
+                    path = %new_path_str,
+                    artist = %artist_name,
+                    album = %album.name,
+                    "Duplicate music file detected after organize, deleting duplicate record"
+                );
+                self.db.media_files().delete(file.id).await?;
+
+                return Ok(OrganizeResult {
+                    file_id: file.id,
+                    original_path,
+                    new_path: new_path_str,
+                    success: true,
+                    error: None,
+                });
+            }
+        }
+
         // Update database
-        self.db
+        if let Err(e) = self.db
             .media_files()
             .mark_organized(file.id, &new_path_str, &original_path)
-            .await?;
+            .await
+        {
+            error!(
+                file_id = %file.id,
+                error = %e,
+                artist = %artist_name,
+                album = %album.name,
+                source = %original_path,
+                target = %new_path_str,
+                "Failed to update database after organizing music file"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: false,
+                error: Some(format!("Database error: {}", e)),
+            });
+        }
 
         info!(
             file_id = %file.id,
@@ -1108,16 +1298,75 @@ impl OrganizerService {
 
         // Check if target exists
         if new_path.exists() {
+            // Check if another record already has this path (to avoid duplicate key violation)
+            if let Some(existing) = self.db.media_files().get_by_path(&new_path_str).await? {
+                if existing.id != file.id {
+                    // Another record already has this path - this file is a duplicate
+                    info!(
+                        file_id = %file.id,
+                        existing_file_id = %existing.id,
+                        source_path = %original_path,
+                        target_path = %new_path_str,
+                        author = %author_name,
+                        audiobook = %audiobook.title,
+                        "Duplicate audiobook file detected, deleting source file and DB record"
+                    );
+
+                    // Delete the source file from disk (if it's different from target)
+                    if original_path != new_path_str && source_path.exists() {
+                        if let Err(e) = tokio::fs::remove_file(source_path).await {
+                            warn!(
+                                path = %original_path,
+                                error = %e,
+                                "Failed to delete duplicate source audiobook file"
+                            );
+                        } else {
+                            info!(path = %original_path, "Deleted duplicate source audiobook file");
+                        }
+                    }
+
+                    self.db.media_files().delete(file.id).await?;
+
+                    return Ok(OrganizeResult {
+                        file_id: file.id,
+                        original_path,
+                        new_path: new_path_str,
+                        success: true,
+                        error: None,
+                    });
+                }
+            }
+
             info!(
                 file_id = %file.id,
                 path = %new_path_str,
+                author = %author_name,
+                audiobook = %audiobook.title,
                 "Audiobook target file already exists, marking as organized"
             );
 
-            self.db
+            if let Err(e) = self.db
                 .media_files()
                 .mark_organized(file.id, &new_path_str, &original_path)
-                .await?;
+                .await
+            {
+                error!(
+                    file_id = %file.id,
+                    error = %e,
+                    author = %author_name,
+                    audiobook = %audiobook.title,
+                    source = %original_path,
+                    target = %new_path_str,
+                    "Failed to update database after organizing audiobook file"
+                );
+                return Ok(OrganizeResult {
+                    file_id: file.id,
+                    original_path,
+                    new_path: new_path_str,
+                    success: false,
+                    error: Some(format!("Database error: {}", e)),
+                });
+            }
 
             return Ok(OrganizeResult {
                 file_id: file.id,
@@ -1168,6 +1417,10 @@ impl OrganizerService {
                 file_id = %file.id,
                 action = %effective_action,
                 error = %e,
+                author = %author_name,
+                audiobook = %audiobook.title,
+                source = %original_path,
+                target = %new_path_str,
                 "Failed to organize audiobook file"
             );
             return Ok(OrganizeResult {
@@ -1179,11 +1432,53 @@ impl OrganizerService {
             });
         }
 
+        // Check for duplicate path in database before updating
+        if let Some(existing) = self.db.media_files().get_by_path(&new_path_str).await? {
+            if existing.id != file.id {
+                // Another record has this path - delete this duplicate
+                info!(
+                    file_id = %file.id,
+                    existing_file_id = %existing.id,
+                    path = %new_path_str,
+                    author = %author_name,
+                    audiobook = %audiobook.title,
+                    "Duplicate audiobook file detected after organize, deleting duplicate record"
+                );
+                self.db.media_files().delete(file.id).await?;
+
+                return Ok(OrganizeResult {
+                    file_id: file.id,
+                    original_path,
+                    new_path: new_path_str,
+                    success: true,
+                    error: None,
+                });
+            }
+        }
+
         // Update database
-        self.db
+        if let Err(e) = self.db
             .media_files()
             .mark_organized(file.id, &new_path_str, &original_path)
-            .await?;
+            .await
+        {
+            error!(
+                file_id = %file.id,
+                error = %e,
+                author = %author_name,
+                audiobook = %audiobook.title,
+                source = %original_path,
+                target = %new_path_str,
+                "Failed to update database after organizing audiobook file"
+            );
+            return Ok(OrganizeResult {
+                file_id: file.id,
+                original_path,
+                new_path: new_path_str,
+                success: false,
+                error: Some(format!("Database error: {}", e)),
+            });
+        }
 
         info!(
             file_id = %file.id,

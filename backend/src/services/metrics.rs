@@ -11,8 +11,8 @@ use std::time::Instant;
 use parking_lot::RwLock;
 use sysinfo::System;
 
-/// Maximum history samples to keep for sparkline graphs
-const HISTORY_SIZE: usize = 60;
+/// Maximum history samples to keep for sparkline graphs (2 minutes at 1 sample/sec)
+const HISTORY_SIZE: usize = 120;
 
 /// Snapshot of current system metrics
 #[derive(Debug, Clone)]

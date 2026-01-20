@@ -2,11 +2,8 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
 
 use crate::tui::panels::Panel;
-use crate::tui::theme::Theme;
 
 /// Panel identifiers
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,7 +11,7 @@ pub enum PanelId {
     Logs,
     Torrents,
     System,
-    Users,
+    Libraries,
     Database,
 }
 
@@ -23,7 +20,7 @@ impl PanelId {
         PanelId::Logs,
         PanelId::Torrents,
         PanelId::System,
-        PanelId::Users,
+        PanelId::Libraries,
         PanelId::Database,
     ];
 
@@ -32,7 +29,7 @@ impl PanelId {
             PanelId::Logs => 0,
             PanelId::Torrents => 1,
             PanelId::System => 2,
-            PanelId::Users => 3,
+            PanelId::Libraries => 3,
             PanelId::Database => 4,
         }
     }
@@ -42,7 +39,7 @@ impl PanelId {
             0 => Some(PanelId::Logs),
             1 => Some(PanelId::Torrents),
             2 => Some(PanelId::System),
-            3 => Some(PanelId::Users),
+            3 => Some(PanelId::Libraries),
             4 => Some(PanelId::Database),
             _ => None,
         }
@@ -89,98 +86,52 @@ impl UiLayout {
 
     /// Calculate panel areas for the given frame size
     ///
-    /// Layout:
+    /// Layout (5 panels):
     /// ```text
-    /// ┌─ Logs ──────────────────────────────────────────────────────────────┐
-    /// │                                                                      │
-    /// │                                                                      │
-    /// └──────────────────────────────────────────────────────────────────────┘
-    /// ┌─ Torrents ─────────────────────┐┌─ System ───────────────────────────┐
-    /// │                                ││                                    │
-    /// └────────────────────────────────┘└────────────────────────────────────┘
-    /// ┌─ Users ────────────────────────┐┌─ Database ─────────────────────────┐
-    /// │                                ││                                    │
-    /// └────────────────────────────────┘└────────────────────────────────────┘
-    /// [Tab] Switch Panel  [q] Quit  [Space] Pause  [/] Search
+    /// ┌─ ¹logs ──────────────────────────────────────────────────────────────┐
+    /// │                                                                       │
+    /// └───────────────────────────────────────────────────────────────────────┘
+    /// ┌─ ²torrents ────────────────────────────────┐┌─ ³sys ─────────────────┐
+    /// │                                            ││                        │
+    /// └────────────────────────────────────────────┘└────────────────────────┘
+    /// ┌─ ⁴libs ────────────────────────────────────┐┌─ ⁵db ──────────────────┐
+    /// │                                            ││                        │
+    /// └────────────────────────────────────────────┘└────────────────────────┘
     /// ```
     pub fn calculate_areas(&self, area: Rect) -> PanelAreas {
-        // Reserve 1 line for status bar
-        let main_area = Rect {
-            x: area.x,
-            y: area.y,
-            width: area.width,
-            height: area.height.saturating_sub(1),
-        };
-
-        let status_area = Rect {
-            x: area.x,
-            y: area.y + area.height.saturating_sub(1),
-            width: area.width,
-            height: 1,
-        };
-
-        // Split vertically: logs (larger), then two rows of panels
         let vertical = Layout::vertical([
-            Constraint::Percentage(50), // Logs
-            Constraint::Percentage(25), // Torrents + System
-            Constraint::Percentage(25), // Users + Database
-        ])
-        .split(main_area);
+            Constraint::Percentage(45), // Logs
+            Constraint::Percentage(28), // Torrents + System
+            Constraint::Percentage(27), // Libraries + Database
+        ]).split(area);
 
         let logs_area = vertical[0];
 
-        // Split middle row horizontally
+        // Middle row: Torrents (75%), System (25%)
         let middle_row = Layout::horizontal([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ])
-        .split(vertical[1]);
+            Constraint::Percentage(75),
+            Constraint::Percentage(25),
+        ]).split(vertical[1]);
 
         let torrents_area = middle_row[0];
         let system_area = middle_row[1];
 
-        // Split bottom row horizontally
+        // Bottom row: Libraries (75%), Database (25%)
         let bottom_row = Layout::horizontal([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ])
-        .split(vertical[2]);
+            Constraint::Percentage(75),
+            Constraint::Percentage(25),
+        ]).split(vertical[2]);
 
-        let users_area = bottom_row[0];
+        let libraries_area = bottom_row[0];
         let database_area = bottom_row[1];
 
         PanelAreas {
             logs: logs_area,
             torrents: torrents_area,
             system: system_area,
-            users: users_area,
+            libraries: libraries_area,
             database: database_area,
-            status: status_area,
         }
-    }
-
-    /// Render the status bar
-    pub fn render_status_bar(&self, frame: &mut Frame, area: Rect) {
-        let keybinds = vec![
-            ("Tab", "Switch Panel"),
-            ("q", "Quit"),
-            ("Space", "Pause"),
-            ("↑↓", "Scroll"),
-            ("c", "Clear"),
-            ("r", "Refresh"),
-        ];
-
-        let mut spans = Vec::new();
-        for (i, (key, desc)) in keybinds.iter().enumerate() {
-            if i > 0 {
-                spans.push(Span::styled("  ", Theme::dim()));
-            }
-            spans.push(Span::styled(format!("[{}]", key), Theme::keybind_key()));
-            spans.push(Span::styled(format!(" {}", desc), Theme::keybind()));
-        }
-
-        let status = Paragraph::new(Line::from(spans));
-        frame.render_widget(status, area);
     }
 }
 
@@ -189,9 +140,8 @@ pub struct PanelAreas {
     pub logs: Rect,
     pub torrents: Rect,
     pub system: Rect,
-    pub users: Rect,
+    pub libraries: Rect,
     pub database: Rect,
-    pub status: Rect,
 }
 
 /// Render all panels
@@ -202,13 +152,12 @@ pub fn render_panels(
     logs_panel: &dyn Panel,
     torrents_panel: &dyn Panel,
     system_panel: &dyn Panel,
-    users_panel: &dyn Panel,
+    libraries_panel: &dyn Panel,
     database_panel: &dyn Panel,
 ) {
     logs_panel.render(frame, areas.logs, layout.focused == PanelId::Logs);
     torrents_panel.render(frame, areas.torrents, layout.focused == PanelId::Torrents);
     system_panel.render(frame, areas.system, layout.focused == PanelId::System);
-    users_panel.render(frame, areas.users, layout.focused == PanelId::Users);
+    libraries_panel.render(frame, areas.libraries, layout.focused == PanelId::Libraries);
     database_panel.render(frame, areas.database, layout.focused == PanelId::Database);
-    layout.render_status_bar(frame, areas.status);
 }
