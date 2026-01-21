@@ -17,6 +17,8 @@ import {
   RESUME_TORRENT_MUTATION,
   REMOVE_TORRENT_MUTATION,
   ORGANIZE_TORRENT_MUTATION,
+  PROCESS_SOURCE_MUTATION,
+  REMATCH_SOURCE_MUTATION,
   TORRENT_PROGRESS_SUBSCRIPTION,
   TORRENT_ADDED_SUBSCRIPTION,
   TORRENT_REMOVED_SUBSCRIPTION,
@@ -25,6 +27,8 @@ import {
   type AddTorrentResult,
   type TorrentActionResult,
   type OrganizeTorrentResult,
+  type ProcessSourceResult,
+  type RematchSourceResult,
 } from '../../lib/graphql'
 import { TorrentTable, AddTorrentModal, TorrentInfoModal, LinkToLibraryModal } from '../../components/downloads'
 import { sanitizeError, formatBytes } from '../../lib/format'
@@ -448,6 +452,73 @@ function DownloadsPage() {
     }
   }
 
+  // Process pending file matches (copy files to library)
+  const handleProcess = async (torrent: Torrent) => {
+    const result = await graphqlClient
+      .mutation<{ processSource: ProcessSourceResult }>(PROCESS_SOURCE_MUTATION, {
+        sourceType: 'torrent',
+        sourceId: torrent.infoHash,
+      })
+      .toPromise()
+
+    if (result.data?.processSource) {
+      const proc = result.data.processSource
+      if (proc.success) {
+        addToast({
+          title: 'Files Processed',
+          description: `Copied ${proc.filesProcessed} file(s) to library${proc.filesFailed > 0 ? `, ${proc.filesFailed} failed` : ''}`,
+          color: 'success',
+        })
+      } else {
+        addToast({
+          title: 'Processing Failed',
+          description: proc.error || proc.messages[0] || 'Failed to process files',
+          color: 'danger',
+        })
+      }
+    } else if (result.error) {
+      addToast({
+        title: 'Error',
+        description: sanitizeError(result.error),
+        color: 'danger',
+      })
+    }
+  }
+
+  // Re-match files against library items
+  const handleRematch = async (torrent: Torrent) => {
+    const result = await graphqlClient
+      .mutation<{ rematchSource: RematchSourceResult }>(REMATCH_SOURCE_MUTATION, {
+        sourceType: 'torrent',
+        sourceId: torrent.infoHash,
+        libraryId: null, // Match against all libraries
+      })
+      .toPromise()
+
+    if (result.data?.rematchSource) {
+      const match = result.data.rematchSource
+      if (match.success) {
+        addToast({
+          title: 'Files Rematched',
+          description: `Found ${match.matchCount} match(es)`,
+          color: 'success',
+        })
+      } else {
+        addToast({
+          title: 'Rematch Failed',
+          description: match.error || 'Failed to rematch files',
+          color: 'danger',
+        })
+      }
+    } else if (result.error) {
+      addToast({
+        title: 'Error',
+        description: sanitizeError(result.error),
+        color: 'danger',
+      })
+    }
+  }
+
   // Bulk actions
   const handleBulkPause = async (ids: number[]) => {
     let successCount = 0
@@ -570,6 +641,8 @@ function DownloadsPage() {
             onRemove={handleRemove}
             onInfo={handleInfo}
             onOrganize={handleOrganize}
+            onProcess={handleProcess}
+            onRematch={handleRematch}
             onLinkToLibrary={(torrent) => {
               setTorrentToLink(torrent)
               onLinkOpen()

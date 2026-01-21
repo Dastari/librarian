@@ -468,7 +468,7 @@ function AlbumDetailPage() {
               <IconDisc size={64} className="text-default-400" />
             </div>
           )}
-          {/* Play/Pause Overlay Button */}
+          {/* Play/Pause Overlay Button - z-10 ensures it appears above HeroUI Image */}
           {playableTracks.length > 0 && (
             <button
               onClick={() => {
@@ -478,7 +478,7 @@ function AlbumDetailPage() {
                   handlePlayAll()
                 }
               }}
-              className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 rounded-lg cursor-pointer"
+              className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 rounded-lg cursor-pointer"
               aria-label={isThisAlbumPlaying ? 'Pause' : 'Play All'}
             >
               <div className={`w-16 h-16 rounded-full ${isThisAlbumPlaying ? 'bg-warning' : 'bg-primary'} flex items-center justify-center shadow-lg hover:scale-110 transition-transform`}>

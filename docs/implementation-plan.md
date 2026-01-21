@@ -154,20 +154,24 @@ This document tracks the implementation status of Librarian's features and outli
 
 ### Phase 4: Advanced Features (Complete)
 
-#### File-Level Matching
-- ✅ `torrent_file_matches` table for per-file tracking
-- ✅ Match individual files to episodes/movies/tracks
+#### File-Level Matching (Source-Agnostic)
+- ✅ `pending_file_matches` table (replaces torrent_file_matches)
+- ✅ Source-agnostic design (works for torrent, usenet, scan, manual)
+- ✅ `FileMatcher` service - THE ONLY matching code
+- ✅ `FileProcessor` service - THE ONLY file copying code
+- ✅ Fuzzy matching with rapidfuzz library
 - ✅ Quality parsed from filename vs verified from FFprobe
-- ✅ Skip download for already-owned files
 - ✅ Partial downloads (8 of 12 tracks OK)
+- ✅ `active_download_id` on library items for progress display
+- ✅ GraphQL API: rematchSource, processSource, setMatch, removeMatch
 
 #### Usenet Support
 - ✅ Usenet server configuration (NNTP)
 - ✅ NZB parsing and download
 - ✅ `usenet_downloads` tracking (parallel to torrents)
-- ✅ `usenet_file_matches` for file-level matching
 - ✅ Newznab indexer type
 - ✅ Settings page for server management
+- 🟡 Integration with FileMatcher/FileProcessor (uses new source-agnostic services)
 
 #### Source Priority System
 - ✅ `source_priority_rules` table
@@ -397,6 +401,7 @@ The database schema has evolved through 34 migrations:
 | 032 | Media chapters |
 | 033 | Drop legacy torrent linking |
 | 034 | Usenet support, source priorities |
+| 035 | Source-agnostic pending_file_matches (replaces torrent_file_matches) |
 
 ---
 
@@ -432,3 +437,6 @@ The database schema has evolved through 34 migrations:
 | Event-driven auto-hunt | Immediate response, not scheduled |
 | File-level matching | Season packs, multi-file torrents |
 | Usenet support | Alternative to torrents, faster |
+| Source-agnostic matching | Same FileMatcher/FileProcessor for torrent, usenet, scan, IRC, FTP |
+| Always COPY never move | Library owns files; unlinking download doesn't affect library |
+| rapidfuzz for matching | High-performance fuzzy matching with configurable thresholds |

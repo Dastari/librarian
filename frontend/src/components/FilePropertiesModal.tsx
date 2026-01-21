@@ -21,6 +21,7 @@ import {
   IconCheck,
   IconAlertCircle,
   IconInfoCircle,
+  IconTags,
 } from '@tabler/icons-react'
 import {
   graphqlClient,
@@ -30,6 +31,7 @@ import {
   type AudioStreamInfo,
   type SubtitleInfo,
   type ChapterInfo,
+  type EmbeddedMetadata,
 } from '../lib/graphql'
 
 interface FilePropertiesModalProps {
@@ -451,6 +453,20 @@ export function FilePropertiesModal({
                   )}
                 </div>
               </Tab>
+
+              <Tab
+                key="metadata"
+                title={
+                  <div className="flex items-center gap-1.5">
+                    <IconTags size={16} />
+                    <span>Metadata</span>
+                  </div>
+                }
+              >
+                <div className="pt-4">
+                  <MetadataTab metadata={details.embeddedMetadata} />
+                </div>
+              </Tab>
             </Tabs>
           ) : null}
         </ModalBody>
@@ -572,6 +588,69 @@ function ChapterRow({ chapter }: { chapter: ChapterInfo }) {
       <span className="text-xs text-primary-400 w-16 text-right font-medium tabular-nums">
         ({formatDuration(duration)})
       </span>
+    </div>
+  )
+}
+
+/** Metadata tab showing embedded tags */
+function MetadataTab({ metadata }: { metadata: EmbeddedMetadata | null }) {
+  if (!metadata) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-default-400">
+        <IconTags size={48} className="mb-2 opacity-50" />
+        <p>No metadata available</p>
+      </div>
+    )
+  }
+
+  if (!metadata.extracted) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-default-400">
+        <IconTags size={48} className="mb-2 opacity-50" />
+        <p>Metadata not yet extracted</p>
+        <p className="text-xs mt-2 text-default-300">Run a library scan to extract embedded tags</p>
+      </div>
+    )
+  }
+
+  // Check if there's any actual metadata
+  const hasAudioMeta = metadata.artist || metadata.album || metadata.title || metadata.trackNumber
+  const hasVideoMeta = metadata.showName || metadata.season || metadata.episode
+
+  if (!hasAudioMeta && !hasVideoMeta) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-default-400">
+        <IconTags size={48} className="mb-2 opacity-50" />
+        <p>No embedded tags found in file</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Audio metadata */}
+      {hasAudioMeta && (
+        <div className="bg-default-100/30 rounded-xl p-4 border border-default-200/30">
+          <h4 className="text-sm font-semibold text-primary-400 mb-3 uppercase tracking-wide">Audio Tags</h4>
+          <PropertyRow label="Artist" value={metadata.artist} />
+          <PropertyRow label="Album" value={metadata.album} />
+          <PropertyRow label="Title" value={metadata.title} />
+          <PropertyRow label="Track" value={metadata.trackNumber?.toString()} />
+          <PropertyRow label="Disc" value={metadata.discNumber?.toString()} />
+          <PropertyRow label="Year" value={metadata.year?.toString()} />
+          <PropertyRow label="Genre" value={metadata.genre} />
+        </div>
+      )}
+
+      {/* Video metadata */}
+      {hasVideoMeta && (
+        <div className="bg-default-100/30 rounded-xl p-4 border border-default-200/30">
+          <h4 className="text-sm font-semibold text-primary-400 mb-3 uppercase tracking-wide">Video Tags</h4>
+          <PropertyRow label="Show" value={metadata.showName} />
+          <PropertyRow label="Season" value={metadata.season?.toString()} />
+          <PropertyRow label="Episode" value={metadata.episode?.toString()} />
+        </div>
+      )}
     </div>
   )
 }

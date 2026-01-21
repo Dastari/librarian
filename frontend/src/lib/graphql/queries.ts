@@ -86,13 +86,15 @@ export const TORRENT_DETAILS_QUERY = `
   }
 `;
 
-export const TORRENT_FILE_MATCHES_QUERY = `
-  query TorrentFileMatches($id: String!) {
-    torrentFileMatches(id: $id) {
+/** Query pending file matches for any source (torrent, usenet, etc.) */
+export const PENDING_FILE_MATCHES_QUERY = `
+  query PendingFileMatches($sourceType: String!, $sourceId: String!) {
+    pendingFileMatches(sourceType: $sourceType, sourceId: $sourceId) {
       id
-      torrentId
-      fileIndex
-      filePath
+      sourceType
+      sourceId
+      sourceFileIndex
+      sourcePath
       fileSize
       episodeId
       movieId
@@ -104,11 +106,9 @@ export const TORRENT_FILE_MATCHES_QUERY = `
       parsedCodec
       parsedSource
       parsedAudio
-      skipDownload
-      processed
-      processedAt
-      mediaFileId
-      errorMessage
+      copied
+      copiedAt
+      copyError
       createdAt
     }
   }
@@ -1401,6 +1401,19 @@ export const MEDIA_FILE_DETAILS_QUERY = `
         startSecs
         endSecs
         title
+      }
+      embeddedMetadata {
+        artist
+        album
+        title
+        trackNumber
+        discNumber
+        year
+        genre
+        showName
+        season
+        episode
+        extracted
       }
     }
   }

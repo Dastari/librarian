@@ -60,6 +60,54 @@ export const ORGANIZE_TORRENT_MUTATION = `
 `;
 
 // ============================================================================
+// File Match Mutations (Source-Agnostic)
+// ============================================================================
+
+/** Re-match all files from a source (torrent, usenet, etc.) */
+export const REMATCH_SOURCE_MUTATION = `
+  mutation RematchSource($sourceType: String!, $sourceId: String!, $libraryId: String) {
+    rematchSource(sourceType: $sourceType, sourceId: $sourceId, libraryId: $libraryId) {
+      success
+      matchCount
+      error
+    }
+  }
+`;
+
+/** Process all pending matches for a source (copy files to library) */
+export const PROCESS_SOURCE_MUTATION = `
+  mutation ProcessSource($sourceType: String!, $sourceId: String!) {
+    processSource(sourceType: $sourceType, sourceId: $sourceId) {
+      success
+      filesProcessed
+      filesFailed
+      messages
+      error
+    }
+  }
+`;
+
+/** Manually set a match target for a pending file match */
+export const SET_MATCH_MUTATION = `
+  mutation SetMatch($matchId: String!, $targetType: String!, $targetId: String!) {
+    setMatch(matchId: $matchId, targetType: $targetType, targetId: $targetId) {
+      success
+      error
+    }
+  }
+`;
+
+/** Remove a specific pending file match */
+export const REMOVE_MATCH_MUTATION = `
+  mutation RemoveMatch($matchId: String!) {
+    removeMatch(matchId: $matchId) {
+      success
+      error
+    }
+  }
+`;
+
+// ============================================================================
 // Settings Mutations
 // ============================================================================
 

@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, useEffect, useCallback } from 'react'
-import { Card, CardBody, CardHeader } from '@heroui/card'
+import { Card, CardBody } from '@heroui/card'
 import { Button } from '@heroui/button'
 import { Chip } from '@heroui/chip'
 import { Divider } from '@heroui/divider'
@@ -13,16 +13,12 @@ import { addToast } from '@heroui/toast'
 import {
   IconPlus,
   IconTrash,
-  IconCheck,
-  IconX,
   IconEdit,
-  IconTestPipe,
   IconServer,
   IconLock,
   IconLockOpen,
   IconArrowUp,
   IconArrowDown,
-  IconGripVertical,
 } from '@tabler/icons-react'
 import { graphqlClient } from '../../lib/graphql'
 import { sanitizeError } from '../../lib/format'

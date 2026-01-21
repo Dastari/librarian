@@ -2081,7 +2081,7 @@ impl OrganizerService {
         Ok(show_path)
     }
 
-    // Legacy organize_torrent function removed - use MediaProcessor::process_download() instead
+    // Note: Torrent processing is now handled by FileProcessor::process_source()
 
     /// Consolidate a library by:
     /// 1. Finding duplicate show folders (e.g., "Show" and "Show (2024)")

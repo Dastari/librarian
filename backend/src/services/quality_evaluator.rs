@@ -2,7 +2,7 @@
 //!
 //! Provides centralized logic for evaluating and comparing media quality.
 //! Used by:
-//! - TorrentFileMatcher to determine if a release meets quality requirements
+//! - FileMatcher to determine if a release meets quality requirements
 //! - Scanner to detect suboptimal files
 //! - Auto-hunt to filter search results
 

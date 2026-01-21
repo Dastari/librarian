@@ -192,6 +192,15 @@ async fn process_media_analysis(
         );
     }
 
+    // Extract embedded metadata (ID3/Vorbis tags for audio, container tags for video)
+    if let Err(e) = extract_and_store_embedded_metadata(&db, job.media_file_id, &job.path).await {
+        debug!(
+            media_file_id = %job.media_file_id,
+            error = %e,
+            "Failed to extract embedded metadata (may not have tags)"
+        );
+    }
+
     // Emit event for subscribers (UI updates)
     if let Some(sender) = event_sender {
         let event = MediaFileUpdatedEvent {
@@ -629,6 +638,72 @@ async fn update_quality_status(db: &Database, media_file_id: Uuid, status: &str)
         quality_status = %status,
         "Updated media file quality status"
     );
+
+    Ok(())
+}
+
+/// Extract embedded metadata (ID3/Vorbis for audio, container tags for video)
+/// and store in the media_files table
+async fn extract_and_store_embedded_metadata(
+    db: &Database,
+    media_file_id: Uuid,
+    path: &std::path::Path,
+) -> Result<()> {
+    use crate::db::EmbeddedMetadata;
+    use crate::services::file_matcher::read_audio_metadata;
+    use crate::services::file_utils::is_audio_file;
+
+    let path_str = path.to_string_lossy();
+
+    // Check if file is audio or video
+    let metadata = if is_audio_file(&path_str) {
+        // Use lofty for audio files (ID3/Vorbis/etc)
+        read_audio_metadata(&path_str)
+    } else {
+        // For video files, we don't currently extract embedded metadata
+        // TODO: Add ffprobe metadata extraction for video containers
+        None
+    };
+
+    if let Some(meta) = metadata {
+        let embedded = EmbeddedMetadata {
+            artist: meta.artist,
+            album: meta.album,
+            title: meta.title,
+            track_number: meta.track_number.map(|n| n as i32),
+            disc_number: meta.disc_number.map(|n| n as i32),
+            year: meta.year,
+            genre: None, // extend if lofty exposes genre
+            show_name: None,
+            season: meta.season,
+            episode: meta.episode,
+        };
+
+        db.media_files()
+            .update_embedded_metadata(media_file_id, &embedded)
+            .await?;
+
+        info!(
+            media_file_id = %media_file_id,
+            artist = ?embedded.artist,
+            album = ?embedded.album,
+            title = ?embedded.title,
+            "Extracted and stored embedded metadata"
+        );
+    } else {
+        // Mark as extracted even if no metadata found (to prevent re-extraction)
+        sqlx::query(
+            "UPDATE media_files SET metadata_extracted_at = NOW() WHERE id = $1"
+        )
+        .bind(media_file_id)
+        .execute(db.pool())
+        .await?;
+
+        debug!(
+            media_file_id = %media_file_id,
+            "No embedded metadata found in file"
+        );
+    }
 
     Ok(())
 }

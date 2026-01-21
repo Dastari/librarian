@@ -25,11 +25,14 @@ use crate::services::hunt::HuntService;
 use crate::services::TorrentService;
 use crate::services::text_utils::normalize_quality;
 use crate::services::torrent::TorrentInfo;
-use crate::services::torrent_file_matcher::TorrentFileMatcher;
+use crate::services::file_utils::is_audio_file;
+use crate::services::filename_parser;
 use crate::services::torrent_metadata::{
     extract_audio_files, is_single_file_album, parse_torrent_files,
 };
 use crate::services::track_matcher::{TrackMatchResult, match_tracks};
+// Use the unified FileMatcher for all matching operations
+use crate::services::file_matcher::{FileInfo, FileMatcher, KnownMatchTarget};
 
 /// Maximum concurrent searches to indexers
 const MAX_CONCURRENT_SEARCHES: usize = 2;
@@ -160,14 +163,14 @@ async fn download_release(
     ))
 }
 
-/// Create file-level matches after a torrent download starts
+/// Create file-level matches using the unified FileMatcher
 ///
-/// This replaces the legacy torrent-level linking (link_to_movie, link_to_episode, etc.)
-/// with the new file-level matching system.
-async fn create_file_matches_for_movie(
+/// This is the SINGLE entry point for creating matches in auto_hunt.
+/// Uses FileMatcher.create_matches_for_target() for all matching operations.
+async fn create_file_matches_for_target(
     db: &Database,
     torrent_info: &TorrentInfo,
-    movie_id: Uuid,
+    target: KnownMatchTarget,
 ) -> Result<()> {
     // Get the torrent database record
     let torrent_record = db
@@ -181,124 +184,66 @@ async fn create_file_matches_for_movie(
             )
         })?;
 
-    // Create file-level matches
-    let matcher = TorrentFileMatcher::new(db.clone());
-    matcher
-        .create_matches_for_movie_torrent(torrent_record.id, &torrent_info.files, movie_id)
+    // Convert torrent files to FileInfo
+    let files: Vec<FileInfo> = torrent_info
+        .files
+        .iter()
+        .enumerate()
+        .map(|(idx, f)| FileInfo {
+            path: f.path.clone(),
+            size: f.size as i64,
+            file_index: Some(idx as i32),
+            source_name: Some(torrent_info.name.clone()),
+        })
+        .collect();
+
+    // Use the unified FileMatcher
+    let matcher = FileMatcher::new(db.clone());
+    let records = matcher
+        .create_matches_for_target(
+            torrent_record.user_id,
+            "torrent",
+            torrent_record.id,
+            files,
+            target.clone(),
+        )
         .await?;
 
-    debug!(
+    info!(
         job = "auto_hunt",
         torrent_id = %torrent_record.id,
-        movie_id = %movie_id,
-        files = torrent_info.files.len(),
-        "Created file-level matches for movie"
+        torrent_name = %torrent_info.name,
+        target = ?target,
+        matches_created = records.len(),
+        "Created file-level matches via FileMatcher"
     );
 
     Ok(())
 }
 
-/// Create file-level matches for an episode torrent
+// Convenience wrappers for backwards compatibility
+async fn create_file_matches_for_movie(
+    db: &Database,
+    torrent_info: &TorrentInfo,
+    movie_id: Uuid,
+) -> Result<()> {
+    create_file_matches_for_target(db, torrent_info, KnownMatchTarget::Movie(movie_id)).await
+}
+
 async fn create_file_matches_for_episode(
     db: &Database,
     torrent_info: &TorrentInfo,
     episode_id: Uuid,
 ) -> Result<()> {
-    let torrent_record = db
-        .torrents()
-        .get_by_info_hash(&torrent_info.info_hash)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("Torrent record not found"))?;
-
-    let matcher = TorrentFileMatcher::new(db.clone());
-    matcher
-        .create_matches_for_episode_torrent(torrent_record.id, &torrent_info.files, episode_id)
-        .await?;
-
-    debug!(
-        job = "auto_hunt",
-        torrent_id = %torrent_record.id,
-        episode_id = %episode_id,
-        files = torrent_info.files.len(),
-        "Created file-level matches for episode"
-    );
-
-    Ok(())
+    create_file_matches_for_target(db, torrent_info, KnownMatchTarget::Episode(episode_id)).await
 }
 
-/// Create file-level matches for an album torrent
 async fn create_file_matches_for_album(
     db: &Database,
     torrent_info: &TorrentInfo,
     album_id: Uuid,
 ) -> Result<()> {
-    info!(
-        job = "auto_hunt",
-        info_hash = %torrent_info.info_hash,
-        album_id = %album_id,
-        file_count = torrent_info.files.len(),
-        "Looking up torrent record to create file matches"
-    );
-
-    let torrent_record = match db.torrents().get_by_info_hash(&torrent_info.info_hash).await {
-        Ok(Some(record)) => {
-            info!(
-                job = "auto_hunt",
-                torrent_id = %record.id,
-                torrent_name = %record.name,
-                "Found torrent record in database"
-            );
-            record
-        }
-        Ok(None) => {
-            warn!(
-                job = "auto_hunt",
-                info_hash = %torrent_info.info_hash,
-                "Torrent record not found in database - was it saved with user_id?"
-            );
-            return Err(anyhow::anyhow!(
-                "Torrent record not found for info_hash {}",
-                torrent_info.info_hash
-            ));
-        }
-        Err(e) => {
-            warn!(
-                job = "auto_hunt",
-                info_hash = %torrent_info.info_hash,
-                error = %e,
-                "Database error looking up torrent record"
-            );
-            return Err(e);
-        }
-    };
-
-    let matcher = TorrentFileMatcher::new(db.clone());
-    match matcher
-        .create_matches_for_album(torrent_record.id, &torrent_info.files, album_id)
-        .await
-    {
-        Ok(matches) => {
-            info!(
-                job = "auto_hunt",
-                torrent_id = %torrent_record.id,
-                album_id = %album_id,
-                files = torrent_info.files.len(),
-                matches_created = matches.len(),
-                "Successfully created file-level matches for album"
-            );
-            Ok(())
-        }
-        Err(e) => {
-            warn!(
-                job = "auto_hunt",
-                torrent_id = %torrent_record.id,
-                album_id = %album_id,
-                error = %e,
-                "Failed to create file matches via TorrentFileMatcher"
-            );
-            Err(e)
-        }
-    }
+    create_file_matches_for_target(db, torrent_info, KnownMatchTarget::Album(album_id)).await
 }
 
 /// Effective quality settings for filtering releases
@@ -1058,14 +1003,14 @@ async fn hunt_movies_impl(
     );
 
     // First, check if there are any active downloads for movies in this library
-    // Uses torrent_file_matches to find active downloads (file-level matching)
+    // Uses pending_file_matches to find active downloads (file-level matching)
     let active_movie_downloads: i64 = sqlx::query_scalar(
-        r#"SELECT COUNT(DISTINCT tfm.movie_id) FROM torrent_file_matches tfm
-           JOIN torrents t ON t.id = tfm.torrent_id
-           JOIN movies m ON m.id = tfm.movie_id
+        r#"SELECT COUNT(DISTINCT pfm.movie_id) FROM pending_file_matches pfm
+           JOIN torrents t ON t.id = pfm.source_id AND pfm.source_type = 'torrent'
+           JOIN movies m ON m.id = pfm.movie_id
            WHERE m.library_id = $1 
-           AND tfm.movie_id IS NOT NULL 
-           AND NOT tfm.processed
+           AND pfm.movie_id IS NOT NULL 
+           AND pfm.copied_at IS NULL
            AND t.state NOT IN ('removed', 'error')"#,
     )
     .bind(library.id)

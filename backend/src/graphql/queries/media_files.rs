@@ -122,6 +122,29 @@ impl MediaFileQueries {
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
+        // Build embedded metadata from the file record
+        let embedded_metadata = if file.metadata_extracted_at.is_some() {
+            Some(EmbeddedMetadataInfo {
+                artist: file.meta_artist.clone(),
+                album: file.meta_album.clone(),
+                title: file.meta_title.clone(),
+                track_number: file.meta_track_number,
+                disc_number: file.meta_disc_number,
+                year: file.meta_year,
+                genre: file.meta_genre.clone(),
+                show_name: file.meta_show_name.clone(),
+                season: file.meta_season,
+                episode: file.meta_episode,
+                extracted: true,
+            })
+        } else {
+            // Metadata not yet extracted - return empty with extracted=false
+            Some(EmbeddedMetadataInfo {
+                extracted: false,
+                ..Default::default()
+            })
+        };
+
         Ok(Some(MediaFileDetails {
             file: MediaFile::from_record(file),
             video_streams: video_streams
@@ -134,6 +157,7 @@ impl MediaFileQueries {
                 .collect(),
             subtitles: subtitles.into_iter().map(Subtitle::from_record).collect(),
             chapters: chapters.into_iter().map(ChapterInfo::from_record).collect(),
+            embedded_metadata,
         }))
     }
 

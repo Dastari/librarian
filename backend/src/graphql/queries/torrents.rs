@@ -60,39 +60,42 @@ impl TorrentQueries {
         }
     }
 
-    /// Get file matches for a torrent
+    /// Get pending file matches for a source (torrent, usenet, etc.)
     ///
-    /// Returns the list of files in the torrent and what library items they match to.
-    /// Accepts either a database UUID or an info_hash.
-    async fn torrent_file_matches(
+    /// Returns the list of files and what library items they match to.
+    /// Uses the new source-agnostic pending_file_matches system.
+    async fn pending_file_matches(
         &self,
         ctx: &Context<'_>,
-        #[graphql(desc = "Torrent ID (UUID) or info_hash")] id: String,
-    ) -> Result<Vec<TorrentFileMatch>> {
+        #[graphql(desc = "Source type: 'torrent', 'usenet', etc.")] source_type: String,
+        #[graphql(desc = "Source ID (UUID) or info_hash for torrents")] source_id: String,
+    ) -> Result<Vec<PendingFileMatch>> {
         let _user = ctx.auth_user()?;
         let db = ctx.data_unchecked::<Database>();
 
-        // Try to parse as UUID first, then fall back to info_hash lookup
-        let torrent_id = if let Ok(uuid) = uuid::Uuid::parse_str(&id) {
+        // Try to parse as UUID first, then fall back to info_hash lookup for torrents
+        let source_uuid = if let Ok(uuid) = Uuid::parse_str(&source_id) {
             uuid
-        } else {
+        } else if source_type == "torrent" {
             // Look up torrent by info_hash
             let torrent = db
                 .torrents()
-                .get_by_info_hash(&id)
+                .get_by_info_hash(&source_id)
                 .await?
                 .ok_or_else(|| async_graphql::Error::new("Torrent not found"))?;
             torrent.id
+        } else {
+            return Err(async_graphql::Error::new("Invalid source ID"));
         };
 
         let records = db
-            .torrent_file_matches()
-            .list_by_torrent(torrent_id)
+            .pending_file_matches()
+            .list_by_source(&source_type, source_uuid)
             .await?;
 
         Ok(records
             .into_iter()
-            .map(TorrentFileMatch::from_record)
+            .map(PendingFileMatch::from_record)
             .collect())
     }
 

@@ -187,7 +187,7 @@ impl Torrent {
     }
 
     /// File-level matches for this torrent (lazy loaded from database)
-    async fn matches(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<TorrentFileMatch>> {
+    async fn matches(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<PendingFileMatch>> {
         let db = ctx.data_unchecked::<crate::db::Database>();
 
         // Look up torrent record by info_hash to get the UUID
@@ -198,10 +198,10 @@ impl Torrent {
             return Ok(vec![]);
         };
 
-        let matches = db.torrent_file_matches().list_by_torrent(record.id).await?;
+        let matches = db.pending_file_matches().list_by_source("torrent", record.id).await?;
         Ok(matches
             .into_iter()
-            .map(TorrentFileMatch::from_record)
+            .map(PendingFileMatch::from_record)
             .collect())
     }
 
@@ -245,7 +245,7 @@ impl From<ServiceTorrentInfo> for Torrent {
 }
 
 /// Database record for a torrent (persistent state)
-/// Note: Media linking is now preferably done via torrent_file_matches table
+/// Note: Media linking is done via pending_file_matches table
 #[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
 pub struct TorrentRecord {
     pub id: String,
@@ -261,7 +261,7 @@ pub struct TorrentRecord {
     pub save_path: String,
     pub download_path: Option<String>,
     pub source_url: Option<String>,
-    // Note: Legacy linking fields have been removed - use torrent_file_matches instead
+    // Note: Media linking is done via pending_file_matches
     pub source_feed_id: Option<String>,
     pub source_indexer_id: Option<String>,
     pub post_process_status: Option<String>,
@@ -3692,6 +3692,33 @@ impl ChapterInfo {
     }
 }
 
+/// Embedded metadata extracted from file tags (ID3/Vorbis/container)
+#[derive(Debug, Clone, Default, SimpleObject)]
+pub struct EmbeddedMetadataInfo {
+    /// Artist name from tags
+    pub artist: Option<String>,
+    /// Album name from tags
+    pub album: Option<String>,
+    /// Track/episode title from tags
+    pub title: Option<String>,
+    /// Track number from tags
+    pub track_number: Option<i32>,
+    /// Disc number from tags
+    pub disc_number: Option<i32>,
+    /// Year from tags
+    pub year: Option<i32>,
+    /// Genre from tags
+    pub genre: Option<String>,
+    /// Show name from video container metadata
+    pub show_name: Option<String>,
+    /// Season number from video container metadata
+    pub season: Option<i32>,
+    /// Episode number from video container metadata
+    pub episode: Option<i32>,
+    /// Whether metadata has been extracted
+    pub extracted: bool,
+}
+
 /// Detailed media file info including all streams
 #[derive(Debug, Clone)]
 pub struct MediaFileDetails {
@@ -3705,6 +3732,8 @@ pub struct MediaFileDetails {
     pub subtitles: Vec<Subtitle>,
     /// Chapters
     pub chapters: Vec<ChapterInfo>,
+    /// Embedded metadata from file tags
+    pub embedded_metadata: Option<EmbeddedMetadataInfo>,
 }
 
 #[Object]
@@ -3731,6 +3760,10 @@ impl MediaFileDetails {
 
     async fn chapters(&self) -> &Vec<ChapterInfo> {
         &self.chapters
+    }
+
+    async fn embedded_metadata(&self) -> Option<&EmbeddedMetadataInfo> {
+        self.embedded_metadata.as_ref()
     }
 }
 
@@ -3795,6 +3828,23 @@ pub struct AnalyzeMediaFileResult {
     pub subtitle_stream_count: Option<i32>,
     /// Number of chapters found
     pub chapter_count: Option<i32>,
+}
+
+/// Result of rematching a media file against library items
+#[derive(Debug, SimpleObject)]
+pub struct RematchMediaFileResult {
+    /// Whether the operation completed successfully
+    pub success: bool,
+    /// Whether a match was found
+    pub matched: bool,
+    /// Type of match (episode, movie, track, audiobook)
+    pub match_type: Option<String>,
+    /// Name of the matched item
+    pub match_target_name: Option<String>,
+    /// Match confidence score
+    pub confidence: Option<String>,
+    /// Error message if failed
+    pub error: Option<String>,
 }
 
 // ============================================================================
@@ -4313,20 +4363,22 @@ pub struct AutoHuntResult {
 }
 
 // ============================================================================
-// Torrent File Match Types
+// Pending File Match Types (Source-Agnostic)
 // ============================================================================
 
-/// A match between a file in a torrent and a library item
-#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
-pub struct TorrentFileMatch {
+/// A pending file match (source-agnostic)
+#[derive(SimpleObject, Debug, Clone)]
+pub struct PendingFileMatch {
     /// Match ID
     pub id: String,
-    /// Torrent ID
-    pub torrent_id: String,
-    /// Index of file within the torrent
-    pub file_index: i32,
-    /// Path of file within the torrent
-    pub file_path: String,
+    /// Source type (torrent, usenet, scan, etc.)
+    pub source_type: String,
+    /// Source ID (torrent_id, usenet_download_id, etc.)
+    pub source_id: Option<String>,
+    /// File index within the source (for multi-file sources)
+    pub source_file_index: Option<i32>,
+    /// Path of the source file
+    pub source_path: String,
     /// Size of file in bytes
     pub file_size: i64,
     /// Episode ID if matched to an episode
@@ -4337,7 +4389,7 @@ pub struct TorrentFileMatch {
     pub track_id: Option<String>,
     /// Chapter ID if matched to an audiobook chapter
     pub chapter_id: Option<String>,
-    /// How the match was determined (auto, manual, forced)
+    /// How the match was determined (auto, manual)
     pub match_type: String,
     /// Confidence score of the match (0.0 - 1.0)
     pub match_confidence: Option<f64>,
@@ -4349,27 +4401,24 @@ pub struct TorrentFileMatch {
     pub parsed_source: Option<String>,
     /// Parsed audio info from filename
     pub parsed_audio: Option<String>,
-    /// Whether this file should be skipped during download
-    pub skip_download: bool,
-    /// Whether this file has been processed
-    pub processed: bool,
-    /// When the file was processed
-    pub processed_at: Option<String>,
-    /// Resulting media file ID after organization
-    pub media_file_id: Option<String>,
-    /// Error message if processing failed
-    pub error_message: Option<String>,
+    /// Whether this file has been copied to the library
+    pub copied: bool,
+    /// When the file was copied
+    pub copied_at: Option<String>,
+    /// Error message if copying failed
+    pub copy_error: Option<String>,
     /// When the match was created
     pub created_at: String,
 }
 
-impl TorrentFileMatch {
-    pub fn from_record(record: crate::db::TorrentFileMatchRecord) -> Self {
+impl PendingFileMatch {
+    pub fn from_record(record: crate::db::PendingFileMatchRecord) -> Self {
         Self {
             id: record.id.to_string(),
-            torrent_id: record.torrent_id.to_string(),
-            file_index: record.file_index,
-            file_path: record.file_path,
+            source_type: record.source_type,
+            source_id: record.source_id.map(|id| id.to_string()),
+            source_file_index: record.source_file_index,
+            source_path: record.source_path,
             file_size: record.file_size,
             episode_id: record.episode_id.map(|id| id.to_string()),
             movie_id: record.movie_id.map(|id| id.to_string()),
@@ -4383,11 +4432,9 @@ impl TorrentFileMatch {
             parsed_codec: record.parsed_codec,
             parsed_source: record.parsed_source,
             parsed_audio: record.parsed_audio,
-            skip_download: record.skip_download,
-            processed: record.processed,
-            processed_at: record.processed_at.map(|d| d.to_string()),
-            media_file_id: record.media_file_id.map(|id| id.to_string()),
-            error_message: record.error_message,
+            copied: record.copied_at.is_some(),
+            copied_at: record.copied_at.map(|d| d.to_string()),
+            copy_error: record.copy_error,
             created_at: record.created_at.to_string(),
         }
     }
