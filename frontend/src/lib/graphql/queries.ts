@@ -689,6 +689,9 @@ export const ALBUM_WITH_TRACKS_QUERY = `
         hasFile
         filePath
         fileSize
+        audioCodec
+        bitrate
+        audioChannels
       }
       trackCount
       tracksWithFiles

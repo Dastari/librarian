@@ -674,25 +674,63 @@ flowchart TD
     end
 ```
 
+### Source Priority Resolution
+
+When hunting, the system uses source priority rules to determine which indexers to search and in what order:
+
+```mermaid
+flowchart TD
+    A[Hunt Request] --> B{Has Library?}
+    B -->|Yes| C[Check per-library rules]
+    B -->|No| D[Use global default]
+    
+    C --> E{Rule exists?}
+    E -->|Yes| F[Use library rule]
+    E -->|No| G{Check library-type rules}
+    
+    G --> H{Rule exists?}
+    H -->|Yes| I[Use library-type rule]
+    H -->|No| D
+    
+    F --> J[Get ordered indexers]
+    I --> J
+    D --> J
+    
+    J --> K[Search in priority order]
+    K --> L{search_all_sources?}
+    
+    L -->|Yes| M[Search all, combine results]
+    L -->|No| N[Stop at first match]
+```
+
 ### Authenticated Downloads
 
-Private tracker downloads go through the IndexerManager for proper authentication:
+Both torrent and usenet downloads go through IndexerManager for proper authentication:
 
 ```mermaid
 sequenceDiagram
     participant Hunt as Auto-Hunt
     participant IM as IndexerManager
-    participant Idx as Indexer (e.g., IPTorrents)
-    participant TS as TorrentService
+    participant Idx as Indexer
+    participant DL as Download Service
     
     Hunt->>IM: download_release(release)
     IM->>IM: Find indexer by name
-    IM->>Idx: download(url)
-    Idx->>Idx: HTTP GET with cookies/auth
-    Idx-->>IM: .torrent file bytes
-    IM->>TS: add_torrent_bytes(bytes, user_id)
-    TS-->>IM: TorrentInfo
-    IM-->>Hunt: TorrentInfo
+    
+    alt Torrent Indexer
+        IM->>Idx: download(url)
+        Idx->>Idx: HTTP GET with cookies/auth
+        Idx-->>IM: .torrent file bytes
+        IM->>DL: TorrentService.add_torrent_bytes()
+    else Usenet Indexer
+        IM->>Idx: download_nzb(url)
+        Idx->>Idx: HTTP GET with API key
+        Idx-->>IM: NZB file
+        IM->>DL: UsenetService.add_nzb()
+    end
+    
+    DL-->>IM: Download info
+    IM-->>Hunt: Download result
 ```
 
 ---
@@ -703,27 +741,32 @@ sequenceDiagram
 flowchart LR
     subgraph Publishers["Event Publishers"]
         A[TorrentService]
+        A2[UsenetService]
         B[ScannerService]
         C[Jobs]
     end
     
     subgraph Channels["Broadcast Channels"]
         D[torrent_events]
+        D2[usenet_events]
         E[scan_progress]
         F[log_events]
     end
     
     subgraph Subscribers["GraphQL Subscriptions"]
         G[torrentProgress]
+        G2[usenetProgress]
         H[scanStatus]
         I[logStream]
     end
     
     A -->|TorrentEvent| D
+    A2 -->|UsenetEvent| D2
     B -->|ScanProgress| E
     C -->|LogEvent| F
     
     D --> G
+    D2 --> G2
     E --> H
     F --> I
 ```

@@ -21,7 +21,7 @@ use crate::db::Database;
 use crate::services::MetadataService;
 use crate::services::queues::MediaAnalysisQueue;
 use crate::services::torrent::{TorrentEvent, TorrentService};
-use crate::services::torrent_processor::TorrentProcessor;
+use crate::services::media_processor::MediaProcessor;
 
 /// Handler configuration
 #[derive(Debug, Clone)]
@@ -249,10 +249,10 @@ async fn process_completed_torrent(
     // Create processor with appropriate services
     let processor = match (&analysis_queue, &metadata_service) {
         (Some(queue), Some(metadata)) => {
-            TorrentProcessor::with_services(db.clone(), queue.clone(), metadata.clone())
+            MediaProcessor::with_services(db.clone(), queue.clone(), metadata.clone())
         }
-        (Some(queue), None) => TorrentProcessor::with_analysis_queue(db.clone(), queue.clone()),
-        _ => TorrentProcessor::new(db.clone()),
+        (Some(queue), None) => MediaProcessor::with_analysis_queue(db.clone(), queue.clone()),
+        _ => MediaProcessor::new(db.clone()),
     };
 
     // Process the torrent

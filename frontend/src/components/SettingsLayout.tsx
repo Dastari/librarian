@@ -4,7 +4,7 @@ import { Spinner } from '@heroui/spinner'
 import { ScrollShadow } from '@heroui/scroll-shadow'
 import type { ReactNode } from 'react'
 import type { TablerIcon } from '@tabler/icons-react'
-import { IconDownload, IconRss, IconMovie, IconClipboard, IconSearch, IconCast } from '@tabler/icons-react'
+import { IconDownload, IconRss, IconMovie, IconClipboard, IconSearch, IconCast, IconServer, IconArrowsSort } from '@tabler/icons-react'
 
 interface SettingsTab {
   key: string
@@ -33,6 +33,22 @@ const settingsTabs: SettingsTab[] = [
     description: 'Torrent search sources',
   },
   {
+    key: 'usenet',
+    path: '/settings/usenet',
+    label: 'Usenet Servers',
+    Icon: IconServer,
+    iconColor: 'text-cyan-400',
+    description: 'NNTP providers',
+  },
+  {
+    key: 'priorities',
+    path: '/settings/source-priorities',
+    label: 'Source Priorities',
+    Icon: IconArrowsSort,
+    iconColor: 'text-amber-400',
+    description: 'Search order preferences',
+  },
+  {
     key: 'rss',
     path: '/settings/rss',
     label: 'RSS Feeds',
@@ -53,7 +69,7 @@ const settingsTabs: SettingsTab[] = [
     path: '/settings/casting',
     label: 'Casting',
     Icon: IconCast,
-    iconColor: 'text-cyan-400',
+    iconColor: 'text-teal-400',
     description: 'Chromecast devices',
   },
   {

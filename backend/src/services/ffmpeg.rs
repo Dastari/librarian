@@ -390,6 +390,17 @@ impl FfmpegService {
         // Convert to our types
         let analysis = self.convert_probe_output(path, probe)?;
 
+        // Build a concise summary
+        let filename = path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let video_summary = analysis.video_streams.first().map(|v| {
+            format!("{}x{} {}", v.width, v.height, &v.codec)
+        }).unwrap_or_else(|| "no video".to_string());
+        let audio_summary = analysis.audio_streams.first().map(|a| {
+            format!("{} {}ch", &a.codec, a.channels)
+        }).unwrap_or_else(|| "no audio".to_string());
+        
         info!(
             path = %path.display(),
             video_streams = analysis.video_streams.len(),
@@ -397,7 +408,9 @@ impl FfmpegService {
             subtitle_streams = analysis.subtitle_streams.len(),
             chapters = analysis.chapters.len(),
             duration_secs = ?analysis.duration_secs,
-            "Media analysis complete"
+            "Analyzed '{}': {} | {} | {} subs | {} chapters",
+            filename, video_summary, audio_summary, 
+            analysis.subtitle_streams.len(), analysis.chapters.len()
         );
 
         Ok(analysis)

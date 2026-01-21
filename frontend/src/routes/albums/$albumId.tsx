@@ -1,5 +1,5 @@
 import { createFileRoute, Link, redirect, useNavigate } from '@tanstack/react-router'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Button } from '@heroui/button'
 import { Card, CardBody } from '@heroui/card'
 import { Chip } from '@heroui/chip'
@@ -7,7 +7,7 @@ import { Image } from '@heroui/image'
 import { Skeleton } from '@heroui/skeleton'
 import { Breadcrumbs, BreadcrumbItem } from '@heroui/breadcrumbs'
 import { Progress } from '@heroui/progress'
-import { Tooltip } from '@heroui/tooltip'
+import { useDisclosure } from '@heroui/modal'
 import { RouteError } from '../../components/RouteError'
 import { sanitizeError, formatBytes, formatDuration } from '../../lib/format'
 import {
@@ -20,7 +20,7 @@ import type {
   Library,
   TrackWithStatus,
 } from '../../lib/graphql'
-import { DataTable, type DataTableColumn } from '../../components/data-table'
+import { DataTable, type DataTableColumn, type RowAction } from '../../components/data-table'
 import {
   IconDisc,
   IconMusic,
@@ -28,7 +28,10 @@ import {
   IconX,
   IconSearch,
   IconRefresh,
+  IconPlayerPlay,
+  IconInfoCircle,
 } from '@tabler/icons-react'
+import { FilePropertiesModal } from '../../components/FilePropertiesModal'
 
 export const Route = createFileRoute('/albums/$albumId')({
   beforeLoad: ({ context, location }) => {
@@ -46,12 +49,35 @@ export const Route = createFileRoute('/albums/$albumId')({
   errorComponent: RouteError,
 })
 
+// Helper to format audio codec display name
+function formatAudioCodec(codec: string | null): string {
+  if (!codec) return ''
+  const normalized = codec.toLowerCase()
+  if (normalized.includes('flac')) return 'FLAC'
+  if (normalized.includes('alac')) return 'ALAC'
+  if (normalized.includes('aac')) return 'AAC'
+  if (normalized.includes('mp3') || normalized.includes('mpeg')) return 'MP3'
+  if (normalized.includes('opus')) return 'Opus'
+  if (normalized.includes('vorbis')) return 'Vorbis'
+  if (normalized.includes('wav') || normalized.includes('pcm')) return 'WAV'
+  return codec.toUpperCase()
+}
+
+// Helper to format bitrate
+function formatBitrate(bitrate: number | null): string {
+  if (!bitrate) return ''
+  if (bitrate >= 1000) {
+    return `${(bitrate / 1000).toFixed(0)} Mbps`
+  }
+  return `${bitrate} kbps`
+}
+
 // Track table columns
 const trackColumns: DataTableColumn<TrackWithStatus>[] = [
   {
     key: 'trackNumber',
     label: '#',
-    width: 50,
+    width: 60,
     sortable: true,
     render: (t) => (
       <span className="font-mono text-default-500">
@@ -84,9 +110,49 @@ const trackColumns: DataTableColumn<TrackWithStatus>[] = [
     ),
   },
   {
+    key: 'quality',
+    label: 'Quality',
+    width: 150,
+    render: (t) => {
+      if (!t.hasFile || !t.track.mediaFileId) {
+        return <span className="text-default-400">-</span>
+      }
+      return (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {t.audioCodec && (
+            <Chip size="sm" variant="flat" color="primary" className="h-5 text-xs">
+              {formatAudioCodec(t.audioCodec)}
+            </Chip>
+          )}
+          {t.bitrate && (
+            <Chip size="sm" variant="flat" color="secondary" className="h-5 text-xs">
+              {formatBitrate(t.bitrate)}
+            </Chip>
+          )}
+        </div>
+      )
+    },
+  },
+  {
+    key: 'size',
+    label: 'Size',
+    width: 100,
+    render: (t) => {
+      if (!t.hasFile || !t.fileSize) {
+        return <span className="text-default-400">-</span>
+      }
+      return (
+        <span className="text-default-500 text-sm text-nowrap">
+          {formatBytes(t.fileSize)}
+        </span>
+      )
+    },
+  },
+  {
     key: 'status',
     label: 'Status',
-    width: 100,
+    width: 110,
+    sortable: true,
     render: (t) => (
       <div className="flex items-center gap-1">
         {t.hasFile ? (
@@ -101,24 +167,62 @@ const trackColumns: DataTableColumn<TrackWithStatus>[] = [
       </div>
     ),
   },
-  {
-    key: 'file',
-    label: 'File',
-    width: 200,
-    render: (t) => (
-      <div className="flex flex-col text-xs text-default-400 truncate max-w-[200px]">
-        {t.filePath ? (
-          <Tooltip content={t.filePath}>
-            <span className="truncate">{t.filePath.split('/').pop()}</span>
-          </Tooltip>
-        ) : (
-          <span>-</span>
-        )}
-        {t.fileSize && <span>{formatBytes(t.fileSize)}</span>}
-      </div>
-    ),
-  },
 ]
+
+interface TrackTableProps {
+  tracks: TrackWithStatus[]
+  onPlay: (track: TrackWithStatus) => void
+  onSearch: (track: TrackWithStatus) => void
+  onShowProperties: (track: TrackWithStatus) => void
+}
+
+function TrackTable({ tracks, onPlay, onSearch, onShowProperties }: TrackTableProps) {
+  const rowActions = useMemo<RowAction<TrackWithStatus>[]>(() => [
+    {
+      key: 'play',
+      label: 'Play',
+      icon: <IconPlayerPlay size={16} />,
+      color: 'success',
+      inDropdown: false,
+      isVisible: (t) => t.hasFile && !!t.track.mediaFileId,
+      onAction: (t) => onPlay(t),
+    },
+    {
+      key: 'search',
+      label: 'Search for Track',
+      icon: <IconSearch size={16} />,
+      color: 'default',
+      inDropdown: false,
+      isVisible: (t) => !t.hasFile,
+      onAction: (t) => onSearch(t),
+    },
+    {
+      key: 'properties',
+      label: 'File Properties',
+      icon: <IconInfoCircle size={16} />,
+      color: 'default',
+      inDropdown: true,
+      isVisible: (t) => t.hasFile && !!t.track.mediaFileId,
+      onAction: (t) => onShowProperties(t),
+    },
+  ], [onPlay, onSearch, onShowProperties])
+
+  return (
+    <DataTable
+      data={tracks}
+      columns={trackColumns}
+      getRowKey={(t) => t.track.id}
+      ariaLabel="Album tracks"
+      removeWrapper
+      isCompact
+      showItemCount={false}
+      hideToolbar
+      defaultSortColumn="trackNumber"
+      defaultSortDirection="asc"
+      rowActions={rowActions}
+    />
+  )
+}
 
 function AlbumDetailPage() {
   const { albumId } = Route.useParams()
@@ -128,6 +232,8 @@ function AlbumDetailPage() {
   const [library, setLibrary] = useState<Library | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const { isOpen: isPropertiesOpen, onOpen: onPropertiesOpen, onClose: onPropertiesClose } = useDisclosure()
+  const [propertiesTrack, setPropertiesTrack] = useState<TrackWithStatus | null>(null)
 
   // Fetch album data
   const fetchAlbum = useCallback(async () => {
@@ -165,14 +271,46 @@ function AlbumDetailPage() {
   }, [fetchAlbum])
 
   // Navigate to hunt page for this album
-  const handleManualHunt = () => {
+  const handleManualHunt = useCallback(() => {
     if (!albumData) return
     const searchQuery = `${albumData.album.name}`
     navigate({
       to: '/hunt',
-      search: { q: searchQuery, type: 'music' },
+      search: { q: searchQuery, type: 'music', albumId: albumData.album.id },
     })
-  }
+  }, [albumData, navigate])
+
+  // Handle play track - for now just open the file location
+  // TODO: Implement proper audio playback when audio player is available
+  const handlePlayTrack = useCallback((track: TrackWithStatus) => {
+    if (track.filePath) {
+      // For now, we could open a file properties or just log
+      console.log('Play track:', track.track.title, track.filePath)
+      // TODO: Integrate with audio playback context when available
+    }
+  }, [])
+
+  // Navigate to hunt page for a specific track
+  const handleSearchTrack = useCallback((track: TrackWithStatus) => {
+    if (!albumData) return
+    // Build search query: "Artist - Track Title"
+    const artist = track.track.artistName || albumData.album.name
+    const searchQuery = `${artist} ${track.track.title}`
+    navigate({
+      to: '/hunt',
+      search: {
+        q: searchQuery,
+        type: 'music',
+        albumId: albumData.album.id,
+      },
+    })
+  }, [albumData, navigate])
+
+  // Show file properties modal for a track
+  const handleShowProperties = useCallback((track: TrackWithStatus) => {
+    setPropertiesTrack(track)
+    onPropertiesOpen()
+  }, [onPropertiesOpen])
 
   if (isLoading) {
     return (
@@ -269,6 +407,7 @@ function AlbumDetailPage() {
               </span>
             </div>
             <Progress
+              aria-label="Album completion"
               value={albumData.completionPercent}
               color={albumData.completionPercent === 100 ? 'success' : 'primary'}
               size="sm"
@@ -348,24 +487,26 @@ function AlbumDetailPage() {
               </Button>
             </div>
           ) : (
-            <DataTable
-              data={tracks}
-              columns={trackColumns}
-              getRowKey={(t) => t.track.id}
-              defaultSortColumn="trackNumber"
-              defaultSortDirection="asc"
-              searchPlaceholder="Search tracks..."
-              searchFn={(item, term) => {
-                const searchLower = term.toLowerCase()
-                return (
-                  item.track.title.toLowerCase().includes(searchLower) ||
-                  (item.track.artistName?.toLowerCase().includes(searchLower) ?? false)
-                )
-              }}
+            <TrackTable
+              tracks={tracks}
+              onPlay={handlePlayTrack}
+              onSearch={handleSearchTrack}
+              onShowProperties={handleShowProperties}
             />
           )}
         </CardBody>
       </Card>
+
+      {/* File Properties Modal */}
+      <FilePropertiesModal
+        isOpen={isPropertiesOpen}
+        onClose={() => {
+          onPropertiesClose()
+          setPropertiesTrack(null)
+        }}
+        mediaFileId={propertiesTrack?.track.mediaFileId ?? null}
+        title={propertiesTrack ? `${album.name} - ${propertiesTrack.track.title}` : undefined}
+      />
     </div>
   )
 }

@@ -1,774 +1,284 @@
-## Librarian — Incremental Build Plan
+# Librarian — Implementation Status & Roadmap
 
-### Guiding Principles
-
-- **Ship vertical slices** that exercise frontend → API → DB → worker paths.
-- **Keep it local-first** and private by default; remote access is an add‑on.
-- **Prefer direct play**; add transcoding only where required.
-- **Automate via jobs**: scanners, pollers, and post-download processing.
-- **Observability from day 1**: health, tracing logs, minimal metrics.
+This document tracks the implementation status of Librarian's features and outlines future work.
 
 ---
 
-## Progress Summary
+## Core Principles
 
-### ✅ Completed
-
-| Stage | Status | Notes |
-|-------|--------|-------|
-| Stage 0 | ✅ Complete | Full scaffold with all components |
-| Stage 1 | ✅ Complete | Frontend/backend auth with JWT middleware working |
-| Stage 2A | ✅ Complete | Database schema, all repositories (libraries, tv_shows, episodes, quality_profiles, rss_feeds, media_files, logs) |
-| Stage 2B | ✅ Complete | Library scanning with file discovery and filename parsing |
-| Stage 2C | 🟡 Partial | TVMaze integration complete; TMDB/TheTVDB scaffolded but not implemented |
-| Stage 2D | ✅ Complete | Show management with episode tracking and monitoring |
-| Stage 3A | ✅ Complete | RSS feed polling with episode matching |
-| Stage 3B | ✅ Complete | Auto-download from RSS (core functionality done, quality filters are future enhancement) |
-| Stage 3C | ✅ Complete | Post-download processing with auto-matching and organization |
-| Stage 3D | ✅ Complete | Auto-organization with show-level overrides, respects copy/move/hardlink |
-| Stage 4 | ✅ Complete | Native torrent client (librqbit) + GraphQL subscriptions |
-| Stage 5 | ✅ Complete | Chromecast casting with device discovery, media streaming, playback controls |
-| Stage 6 | ✅ Complete | Multi-indexer search ("Hunt") with authenticated downloads |
-| Stage 7 | ✅ Complete | Unified content acquisition: search, download, match, organize pipeline |
-| Stage 8 | ✅ Complete | Library consolidation for cleaning up duplicate folders |
-
-### Key Decisions Made
-
-1. **Frontend Framework**: Changed from Next.js to **TanStack Start** with TanStack Router
-2. **UI Library**: Changed from Shadcn/Radix to **HeroUI** (formerly NextUI)
-3. **Package Manager**: Using **pnpm** instead of npm for frontend
-4. **Project Structure**: Simplified folder names (`backend/`, `frontend/` instead of `librarian-*`)
-5. **Production Architecture**: Single domain with reverse proxy (Caddy) routing:
-   - `/` → Frontend
-   - `/graphql` → GraphQL API (single API surface)
-   - Supabase accessed directly from frontend for auth
-6. **Torrent Client**: Changed from qBittorrent to **librqbit** (native Rust, embedded)
-7. **API Architecture**: **GraphQL-first API** with subscriptions (async-graphql)
-   - Single endpoint for all operations: `/graphql`
-   - WebSocket subscriptions: `/graphql/ws`
-   - Centralized auth via JWT verification in GraphQL context
-   - REST only for: health checks, torrent file uploads (multipart), filesystem browsing
-8. **Metadata Providers**: TVMaze (primary, free) → TMDB → TheTVDB
-9. **Indexers**: RSS feeds first, Prowlarr/search engines later
-10. **Post-Download**: Copy by default (preserves seeding), Move optional
+- **Ship vertical slices** that exercise frontend → API → DB → worker paths
+- **Keep it local-first** and private by default; remote access is an add-on
+- **Prefer direct play**; add transcoding only where required
+- **Automate via jobs**: scanners, pollers, and post-download processing
+- **Observability from day 1**: health, tracing logs, minimal metrics
 
 ---
 
-## Phase 1: TV Library Foundation
+## Technology Stack
 
-### Stage 2A — Database Schema & Libraries CRUD
-**Status**: ✅ Complete
-
-#### Goals
-- Create database tables for TV library system
-- Wire up library CRUD operations (no more mock data)
-- File browser for selecting library paths
-
-#### Deliverables
-
-**Database Migration (`004_tv_library_schema.sql`)**:
-- [x] `tv_shows` table
-- [x] `episodes` table  
-- [x] `quality_profiles` table (enhanced)
-- [x] `rss_feeds` table
-- [ ] `unmatched_files` table (future enhancement)
-- [x] Update `libraries` table with new columns
-- [x] Update `downloads` table with episode/library links
-- [x] Update `media_files` table with quality metadata
-
-**Backend**:
-- [x] `db/libraries.rs` - Library repository
-- [x] `db/tv_shows.rs` - TV show repository
-- [x] `db/episodes.rs` - Episode repository
-- [x] `db/quality_profiles.rs` - Quality profile repository
-- [x] Wire GraphQL library queries/mutations to database
-- [x] Library creation with path validation
-
-**Frontend**:
-- [x] `/libraries` route - List all libraries
-- [x] Library creation wizard with file browser
-- [x] File browser component for path selection
-- [x] Library card component
-
-#### Acceptance Criteria
-- [x] User can create a TV library with a path
-- [x] Libraries persist to database
-- [x] Libraries list loads from database (not mock data)
-- [x] User can delete a library
+| Component | Technology |
+|-----------|------------|
+| Frontend | React 19, TanStack Router, TypeScript, HeroUI, Tailwind CSS v4, pnpm |
+| Backend | Rust, Axum, Tokio, async-graphql |
+| Database | PostgreSQL via Supabase, sqlx (compile-time checks) |
+| Auth | Supabase Auth (JWT) |
+| Storage | Supabase Storage (artwork) |
+| Torrent Client | librqbit (native Rust, embedded) |
+| Usenet Client | Native Rust (NNTP + yEnc) |
+| Indexers | Native system (Torznab/Newznab compatible) |
+| Metadata | TVMaze, TMDB, MusicBrainz, Audible/OpenLibrary |
+| Transcoding | FFmpeg/FFprobe |
+| Casting | Chromecast via rust_cast + mDNS |
 
 ---
 
-### Stage 2B — Library Scanning & File Discovery
-**Status**: ✅ Complete (Core), ffprobe pending
+## Feature Status Overview
 
-#### Goals
-- Walk library directories and discover media files
-- Parse filenames to extract show/season/episode info
-- Run ffprobe to get media properties
-- Group discovered files by show
-
-#### Deliverables
-
-**Backend Services**:
-- [x] `services/scanner.rs` - Directory walking and file discovery
-- [x] `services/filename_parser.rs` - Scene naming pattern parser (comprehensive regex-based)
-- [ ] `services/ffprobe.rs` - Media file analysis (not yet implemented - use for future quality detection)
-- [x] Update `jobs/scanner.rs` with real implementation
-
-**Filename Parser Patterns**:
-```rust
-// Priority order
-S01E01, s01e01           // Most common
-1x01                     // Alternative
-Season 1 Episode 1       // Verbose
-101, 102 (3 digits)      // Compact (risky, needs context)
-```
-
-**Quality Detection**:
-- [ ] Resolution: 2160p, 1080p, 720p, 480p
-- [ ] Codec: HEVC/x265, H264/x264, AV1, XviD
-- [ ] Source: WEB-DL, WEBRip, BluRay, HDTV
-- [ ] HDR: HDR10, HDR10+, Dolby Vision
-- [ ] Audio: Atmos, TrueHD, DTS, AC3, AAC
-
-**GraphQL**:
-- [ ] `scanLibrary` mutation triggers scan job
-- [ ] `libraryScanProgress` subscription for real-time updates
-- [ ] `discoveredShows` query for scan results
-
-**Frontend**:
-- [ ] Scan button on library page
-- [ ] Scan progress indicator
-- [ ] Discovered shows list after scan
-
-#### Acceptance Criteria
-- [ ] Scanning a folder discovers media files
-- [ ] Filenames are parsed to extract show/season/episode
-- [ ] Media properties (resolution, codec) are detected via ffprobe
-- [ ] Discovered shows are grouped and displayed
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Core Infrastructure** | ✅ Complete | GraphQL API, auth, database, job queue |
+| **TV Libraries** | ✅ Complete | Full scanning, metadata, episode tracking |
+| **Movie Libraries** | ✅ Complete | TMDB integration, auto-hunt |
+| **Music Libraries** | ✅ Complete | MusicBrainz integration, track matching |
+| **Audiobook Libraries** | ✅ Complete | Audible/OpenLibrary integration |
+| **Native Torrent Client** | ✅ Complete | librqbit with real-time subscriptions |
+| **File-Level Matching** | ✅ Complete | Individual files matched to items |
+| **Post-Download Processing** | ✅ Complete | Auto-organize with quality verification |
+| **RSS Feed Polling** | ✅ Complete | Automatic episode detection |
+| **Native Indexers** | ✅ Complete | IPTorrents, Cardigann, Newznab |
+| **Auto-Hunt** | ✅ Complete | Event-driven content hunting |
+| **Chromecast Casting** | ✅ Complete | Device discovery, playback controls |
+| **Usenet Downloads** | ✅ Complete | NNTP client, NZB parsing |
+| **Source Priorities** | ✅ Complete | Per-library-type source ordering |
+| **LLM Filename Parsing** | ✅ Complete | Ollama integration for difficult filenames |
+| **Media Chapters** | ✅ Complete | Chapter extraction and playback |
+| **Watch Progress** | ✅ Complete | Cross-device resume playback |
+| **Subtitle Downloads** | 🟡 Partial | OpenSubtitles integration (manual) |
+| **Archive Extraction** | 🟡 Partial | ZIP/RAR support (limited) |
+| **AirPlay Casting** | ⏳ Planned | Native Safari support only |
+| **Hardware Transcoding** | ⏳ Planned | NVENC/VAAPI/QSV |
+| **Quality Upgrading** | ⏳ Planned | Auto-upgrade to better quality |
 
 ---
 
-### Stage 2C — Metadata Providers (TVMaze/TMDB)
-**Status**: 🟡 Partial (TVMaze complete, TMDB/TheTVDB scaffolded)
+## Completed Features
 
-#### Goals
-- Integrate TVMaze API for show/episode metadata
-- Match discovered shows to TVMaze entries
-- Fetch episode lists for shows
-- Download artwork (posters, backdrops)
+### Phase 1: Foundation (Complete)
 
-#### Deliverables
+#### TV Library System
+- ✅ Library CRUD with file browser path selection
+- ✅ Library scanning with filename parsing
+- ✅ TVMaze metadata integration (primary)
+- ✅ TMDB fallback support
+- ✅ Show management with season/episode tracking
+- ✅ Episode status tracking (missing → wanted → downloading → downloaded)
+- ✅ Quality settings per library (resolution, codec, source, audio)
 
-**Backend Services**:
-- [x] `services/tvmaze.rs` - TVMaze API client (fully implemented)
-- [ ] `services/tmdb.rs` - TMDB API client (scaffolded in `media/metadata.rs`, TODO in `services/metadata.rs`)
-- [x] `services/metadata.rs` - Unified metadata interface with artwork caching
-- [x] `services/artwork.rs` - Image downloading and Supabase storage caching
+#### Movie Library System
+- ✅ Movie CRUD with TMDB metadata
+- ✅ Release date tracking and monitoring
+- ✅ File-level matching and organization
+- ✅ Cast and crew information
 
-**TVMaze Integration**:
-```rust
-// API endpoints
-GET /search/shows?q={query}           // Search shows
-GET /shows/{id}                       // Show details
-GET /shows/{id}/episodes              // All episodes
-GET /shows/{id}/seasons               // Seasons list
-```
+#### Music Library System
+- ✅ Album/Artist management with MusicBrainz
+- ✅ Track-level status tracking
+- ✅ Cover art from Cover Art Archive
+- ✅ Audio quality settings (FLAC, lossy preferences)
 
-**Show Matching**:
-- [ ] Fuzzy string matching for show names
-- [ ] Year disambiguation (for remakes)
-- [ ] Confidence scoring
-- [ ] Manual override capability
+#### Audiobook Library System
+- ✅ Audiobook management with Audible/OpenLibrary
+- ✅ Chapter-based tracking
+- ✅ Author and narrator metadata
 
-**GraphQL**:
-- [ ] `searchTvShows(query: String!)` - Search TVMaze
-- [ ] `addTvShow` mutation with TVMaze ID
-- [ ] `refreshTvShowMetadata` mutation
+### Phase 2: Automation (Complete)
 
-**Frontend**:
-- [ ] Show search dialog
-- [ ] Show details page with poster
-- [ ] Episode list by season
+#### RSS Feed System
+- ✅ Feed management (add, edit, delete, test)
+- ✅ Automatic polling on configurable schedule
+- ✅ Episode matching against wanted list
+- ✅ Quality filtering before download
+- ✅ Per-feed post-download action override
 
-#### Acceptance Criteria
-- [ ] Can search TVMaze for shows
-- [ ] Discovered files match to TVMaze shows
-- [ ] Episode metadata is fetched and stored
-- [ ] Artwork is downloaded and displayed
+#### Auto-Download Pipeline
+- ✅ Automatic download when RSS matches found
+- ✅ Episode status updates in real-time
+- ✅ Duplicate prevention
+- ✅ Library-linked downloads
 
----
+#### Post-Download Processing
+- ✅ Completion detection (every minute check)
+- ✅ File-level matching to library items
+- ✅ FFprobe quality analysis
+- ✅ Automatic file organization
+- ✅ Status updates (downloading → downloaded/suboptimal)
+- ✅ Conflict handling (move to _conflicts folder)
 
-### Stage 2D — Show Management & Episode Tracking
-**Status**: ✅ Complete
+#### File Organization
+- ✅ Configurable naming patterns with tokens
+- ✅ copy/move/hardlink actions
+- ✅ Show-level overrides for organization settings
+- ✅ Rename styles: none, clean, preserve_info
+- ✅ Library consolidation for duplicate folder cleanup
 
-#### Goals
-- Add shows to library with monitoring settings
-- Track episode status (missing/wanted/downloaded)
-- Quality profile management
-- Episode wanted list
+### Phase 3: Content Acquisition (Complete)
 
-#### Deliverables
+#### Native Indexer System
+- ✅ IndexerManager with instance caching
+- ✅ AES-256-GCM credential encryption
+- ✅ IPTorrents scraper (cookie auth)
+- ✅ Cardigann YAML definitions (generic tracker support)
+- ✅ Newznab/Torznab protocol support
+- ✅ Torznab API endpoint for external tools
+- ✅ Per-indexer post-download action
 
-**Backend**:
-- [x] `db/rss_feeds.rs` - RSS feed repository
-- [x] Show monitoring logic (all vs future vs none)
-- [x] Episode status calculation (missing → wanted → available → downloading → downloaded)
-- [x] Quality profile CRUD
+#### Hunt System (Search)
+- ✅ `/hunt` page for cross-indexer search
+- ✅ Quality filtering in search results
+- ✅ Authenticated .torrent downloads
+- ✅ Direct linking to library items
+- ✅ Global keyboard shortcut (Cmd/Ctrl+K)
 
-**GraphQL**:
-- [ ] `tvShows(libraryId)` - List shows in library
-- [ ] `episodes(showId, season)` - Episodes with status
-- [ ] `wantedEpisodes(libraryId)` - Missing episodes
-- [ ] `qualityProfiles` - List profiles
-- [ ] `createQualityProfile` / `updateQualityProfile`
+#### Auto-Hunt
+- ✅ Event-driven (triggers on add + after scans)
+- ✅ Multi-library support
+- ✅ Quality scoring and release ranking
+- ✅ Automatic download of best match
 
-**Frontend**:
-- [ ] Library detail page with shows grid
-- [ ] Show detail page with seasons/episodes
-- [ ] Episode status badges (missing, downloaded, etc.)
-- [ ] Quality profile editor
-- [ ] Monitor type selector (All / Future Only)
+### Phase 4: Advanced Features (Complete)
 
-#### Acceptance Criteria
-- [ ] User can add a show to library
-- [ ] Shows display with episode counts
-- [ ] Missing episodes are identified
-- [ ] Quality profiles can be created/edited
+#### File-Level Matching
+- ✅ `torrent_file_matches` table for per-file tracking
+- ✅ Match individual files to episodes/movies/tracks
+- ✅ Quality parsed from filename vs verified from FFprobe
+- ✅ Skip download for already-owned files
+- ✅ Partial downloads (8 of 12 tracks OK)
 
----
+#### Usenet Support
+- ✅ Usenet server configuration (NNTP)
+- ✅ NZB parsing and download
+- ✅ `usenet_downloads` tracking (parallel to torrents)
+- ✅ `usenet_file_matches` for file-level matching
+- ✅ Newznab indexer type
+- ✅ Settings page for server management
 
-## Phase 2: Automation Pipeline
+#### Source Priority System
+- ✅ `source_priority_rules` table
+- ✅ Global defaults
+- ✅ Per-library-type priorities
+- ✅ Per-library overrides
+- ✅ Settings page for priority management
 
-### Stage 3A — RSS Feed Polling
-**Status**: ✅ Complete
-**Depends on**: Stage 2D
+#### LLM Filename Parsing
+- ✅ Ollama integration for difficult filenames
+- ✅ Per-library-type model configuration
+- ✅ Fallback when regex parsing fails
+- ✅ Settings page for model selection
 
-#### Goals
-- Add and manage RSS feeds
-- Poll feeds on schedule
-- Parse RSS items to extract show/episode/quality
-- Match RSS items to wanted episodes
+#### Media Chapters
+- ✅ Chapter extraction from video files
+- ✅ `media_chapters` table
+- ✅ Chapter navigation in player
 
-#### Deliverables
+#### Chromecast Casting
+- ✅ CASTV2 protocol via rust_cast
+- ✅ mDNS device discovery
+- ✅ Manual device entry
+- ✅ Play/pause/seek/volume controls
+- ✅ Session management
+- ✅ HTTP streaming with Range headers
 
-**Backend Services**:
-- [x] `services/rss.rs` - RSS feed fetching and parsing
-- [x] RSS item parser (title → show, season, episode, quality) - uses `filename_parser.rs`
-- [x] Wanted episode matcher - matches to episodes with 'wanted' status
-- [x] Update `jobs/rss_poller.rs` with real implementation
+#### Watch Progress
+- ✅ Cross-device resume playback
+- ✅ Episode/movie progress tracking
+- ✅ Unified playback position storage
 
-**RSS Parsing** (based on IPT format):
-```xml
-<title>Chicago Fire S14E08 1080p WEB h264-ETHEL</title>
-<link>https://example.com/download.php/12345/file.torrent</link>
-<description>1.48 GB; TV/Web-DL</description>
-```
+### Phase 5: Quality of Life (Complete)
 
-**GraphQL**:
-- [x] `rssFeeds` / `rssFeed` queries
-- [x] `createRssFeed` / `updateRssFeed` / `deleteRssFeed`
-- [x] `testRssFeed` - Fetch and show items
-- [x] `pollRssFeed` - Manual poll trigger
+#### Playback Features
+- ✅ Direct play for compatible formats
+- ✅ HLS transcoding for incompatible formats
+- ✅ Subtitle track selection
+- ✅ Audio track selection
 
-**Frontend**:
-- [x] RSS feeds list in settings (`/settings/rss`)
-- [x] Add RSS feed dialog
-- [x] Feed test results view
-- [x] Feed polling status
-
-#### Acceptance Criteria
-- [x] User can add RSS feed URLs
-- [x] Feeds are polled on schedule (every 15 minutes)
-- [x] RSS items are parsed correctly
-- [x] Matches to wanted episodes are identified
-
-#### Episode Status Flow
-```
-wanted → available (RSS match found, torrent link stored) → downloading → downloaded
-```
-
-The `available` status indicates an RSS item matched the episode and the torrent link is ready for download.
-
----
-
-### Stage 3B — Auto-Download from RSS
-**Status**: ✅ Complete (core functionality)
-**Depends on**: Stage 3A
-
-#### Goals
-- Automatically download torrents for wanted episodes
-- Apply quality filters before downloading
-- Link downloads to episodes
-
-#### Deliverables
-
-**Backend**:
-- [x] Auto-download job (`jobs/auto_download.rs`) - runs every 5 minutes
-- [x] Downloads episodes with 'available' status
-- [x] Updates episode status to 'downloading'
-- [x] Links torrent to episode via `torrent_info_hash` column
-- [x] Duplicate prevention (via episode status check)
-- [ ] Quality filter matching logic (future enhancement)
-
-**Quality Matching** (Future Enhancement):
-- [ ] Resolution check (meets minimum, prefers target)
-- [ ] Codec preference matching
-- [ ] Audio format preference
-- [ ] HDR requirement checking
-- [ ] Size limits
-- [ ] Release group whitelist/blacklist
-
-**Frontend**:
-- [ ] Download activity showing linked episode
-- [ ] Auto-download toggle per show
-- [ ] Download history per episode
-
-#### Acceptance Criteria
-- [x] Matching RSS items trigger downloads automatically
-- [x] Downloads are linked to episodes (via `torrent_info_hash`)
-- [x] Duplicates are not re-downloaded (episode status prevents re-download)
-- [ ] Quality filters are applied (future enhancement)
+#### Settings Pages
+- ✅ `/settings/indexers` - Indexer management
+- ✅ `/settings/rss` - RSS feed management
+- ✅ `/settings/torrent` - Torrent client settings
+- ✅ `/settings/usenet` - Usenet server management
+- ✅ `/settings/source-priorities` - Source ordering
+- ✅ `/settings/parser` - LLM parser settings
+- ✅ `/settings/metadata` - Metadata provider settings
+- ✅ `/settings/organization` - File organization defaults
+- ✅ `/settings/casting` - Cast device management
+- ✅ `/settings/logs` - System logs viewer
 
 ---
 
-### Stage 3C — Post-Download Processing
-**Status**: ✅ Complete (integrated with scheduler)
-
-#### Goals
-- Process completed downloads automatically
-- Extract archives (zip, tar, rar)
-- Filter files (keep video + subtitles)
-- Identify content and match to episodes
-
-#### Deliverables
-
-**Backend Services**:
-- [ ] `services/extractor.rs` - Archive extraction (future enhancement)
-- [x] File filtering logic in `jobs/download_monitor.rs` (is_video_file)
-- [x] `jobs/download_monitor.rs` - Full implementation (process_completed_torrents)
-- [x] Media file creation and episode linking implemented
-- [x] **DONE**: Integrated `process_completed_torrents` into scheduler (runs every minute)
-
-**Archive Support**:
-- [ ] ZIP (native Rust)
-- [ ] TAR/GZ (native Rust)
-- [ ] RAR (shell out to `unrar` or use crate)
-- [ ] 7Z (shell out to `7z` or use crate)
-
-**File Filtering**:
-```rust
-// Keep
-.mkv, .mp4, .avi, .m4v, .mov, .wmv
-.srt, .sub, .ass, .ssa, .idx, .vtt
-
-// Discard
-*sample*, *proof*, *.txt, *.nfo, *.exe, *.jpg, *.png
-```
-
-**Frontend**:
-- [ ] Processing status in downloads view
-- [ ] Processing errors/warnings display
-
-#### Acceptance Criteria
-- [ ] Completed torrents trigger processing
-- [ ] Archives are extracted
-- [ ] Only video/subtitle files are kept
-- [ ] Content is matched to episodes
-
----
-
-### Stage 3D — Auto-Rename & Organization
-**Status**: ✅ Complete (integrated with scheduler)
-
-#### Goals
-- Rename files using configurable patterns
-- Copy/move to library folder
-- Update database with file locations
-- Mark episodes as downloaded
-
-#### Deliverables
-
-**Backend Services**:
-- [x] `services/organizer.rs` - Full implementation with RenameStyle support
-  - Supports: copy, move, hardlink actions (respects library.post_download_action)
-  - Supports: none, clean, preserve_info rename styles
-  - Creates show folders, season folders
-  - Updates media_file records with new paths
-  - **Show-level overrides**: organize_files_override, rename_style_override
-- [x] `media/organizer.rs` - Alternative simple organizer (legacy)
-- [x] Library settings for organize behavior (organize_files, rename_style, post_download_action)
-- [x] GraphQL mutation: `organizeTorrent`
-- [x] **DONE**: Auto-triggered on download completion via `download_monitor.rs`
-
-**Naming Tokens**:
-```
-{show}, {show_clean}, {season}, {season:02}
-{episode}, {episode:02}, {title}, {year}
-{air_date}, {quality}, {ext}
-```
-
-**Default Pattern**:
-```
-{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}
-```
-
-**GraphQL**:
-- [ ] Library settings for naming pattern
-- [ ] Post-download action setting (copy/move)
-
-**Frontend**:
-- [ ] Naming pattern editor with preview
-- [ ] Post-download action selector
-
-#### Acceptance Criteria
-- [ ] Files are renamed according to pattern
-- [ ] Files are copied/moved to library
-- [ ] Episode is marked as downloaded
-- [ ] Original files remain for seeding (if copy mode)
-
----
-
-## Phase 3: Advanced Features
-
-### Stage 4A — Filesystem Watching (inotify)
-**Status**: ⏳ Future
-**Depends on**: Stage 3D
-
-#### Goals
-- Real-time detection of new files via inotify
-- Fallback to periodic scan for unsupported filesystems
-- Per-library toggle for watch mode
-
-#### Deliverables
-- [ ] `services/watcher.rs` - inotify wrapper
-- [ ] Detection of network mount vs local filesystem
-- [ ] Graceful fallback logic
-- [ ] Library setting for watch mode
-
----
-
-### Stage 4B — OpenAI-Assisted Matching
-**Status**: ⏳ Future
-**Depends on**: Stage 2C
-
-#### Goals
-- Use OpenAI to identify difficult filenames
-- Fallback when pattern matching fails
-- Optional (requires API key)
-
-#### Deliverables
-- [ ] `services/ai_matcher.rs` - OpenAI integration
-- [ ] Prompt engineering for filename parsing
-- [ ] Confidence scoring
-- [ ] Cost-aware rate limiting
-
----
-
-### Stage 4C — Unmatched File Management
-**Status**: ⏳ Future
-**Depends on**: Stage 4B
-
-#### Goals
-- Queue unmatched files for manual review
-- Suggest matches with confidence scores
-- Manual link/unlink capability
-
-#### Deliverables
-- [ ] Unmatched files list in UI
-- [ ] Match suggestion display
-- [ ] Manual matching dialog
-- [ ] Ignore/dismiss capability
-
----
-
-### Stage 4D — Quality Upgrading
-**Status**: ⏳ Future
-**Depends on**: Stage 3B
-
-#### Goals
-- Detect when better quality is available
-- Automatically upgrade if configured
-- Replace files while preserving metadata
-
----
-
-## Implementation Order (Recommended)
-
-```
-Phase 1: TV Library Foundation (4-6 weeks)
-├── Stage 2A: Database & Libraries CRUD          ← START HERE
-├── Stage 2B: Library Scanning
-├── Stage 2C: Metadata Providers
-└── Stage 2D: Show Management
-
-Phase 2: Automation Pipeline (4-6 weeks)
-├── Stage 3A: RSS Feed Polling
-├── Stage 3B: Auto-Download
-├── Stage 3C: Post-Download Processing
-└── Stage 3D: Auto-Rename & Organization
-
-Phase 3: Advanced Features (ongoing)
-├── Stage 4A: Filesystem Watching
-├── Stage 4B: OpenAI Matching
-├── Stage 4C: Unmatched Files UI
-└── Stage 4D: Quality Upgrading
-
-Phase 4: Media Playback & Casting
-└── Stage 5: Chromecast/Google Cast ✅ COMPLETE
-
-Phase 5: Unified Content Acquisition
-├── Stage 6: Multi-Indexer Search ("Hunt") ✅ COMPLETE
-├── Stage 7: Unified Download Pipeline ✅ COMPLETE
-└── Stage 8: Library Consolidation ✅ COMPLETE
-```
-
----
-
-## Stage 6: Multi-Indexer Search ("Hunt") (Completed)
-
-### Goals
-- Search for content across all configured indexers simultaneously
-- Support authenticated downloads from private trackers
-- Deep linking from episode pages to pre-filled search
-
-### Deliverables
-
-**Backend (Rust)**:
-- ✅ `indexer/manager.rs` - Manages indexer instances
-- ✅ `indexer/encryption.rs` - AES-256-GCM credential encryption
-- ✅ `indexer/definitions/iptorrents.rs` - IPTorrents scraper
-- ✅ `indexer/torznab/` - Torznab protocol support
-- ✅ GraphQL query: `searchIndexers(input: IndexerSearchInput!)`
-- ✅ Authenticated `.torrent` file downloads
-
-**Frontend (React)**:
-- ✅ `/hunt` route - Search across indexers
-- ✅ `/search` route - Local library search (navbar modal)
-- ✅ `SearchModal.tsx` - Keyboard-accessible search (Cmd/Ctrl+K)
-- ✅ `AddToLibraryModal.tsx` - Download + add to library flow
-
----
-
-## Stage 7: Unified Download Pipeline (Completed)
-
-### Goals
-- Automatic matching of downloads to episodes
-- Seamless organization after download completion
-- Support for torrents without explicit library context
-
-### Deliverables
-
-**Backend (Rust)**:
-- ✅ Auto-match at add time (`add_torrent` mutation)
-- ✅ `process_no_library` - Match against all user's TV libraries
-- ✅ `process_unlinked` - Match within a specific library
-- ✅ Episode status updates (Downloading → Downloaded)
-- ✅ Startup processing for torrents completed while offline
-
-### Flow
-```
-User downloads from Hunt
-    ↓
-add_torrent mutation (with optional library_id)
-    ↓
-Auto-match: parse filename → find show → find episode
-    ↓
-Link torrent to episode, set status = "Downloading"
-    ↓
-Download completes (librqbit)
-    ↓
-download_monitor job (every minute)
-    ↓
-process_completed_torrents
-    ↓
-Create media file, run organizer, set status = "Downloaded"
-```
-
----
-
-## Stage 8: Library Consolidation (Completed)
-
-### Goals
-- Clean up duplicate folders from naming convention changes
-- Merge files from old folder structures to new
-- Update database paths to reflect actual file locations
-
-### Deliverables
-
-**Backend (Rust)**:
-- ✅ `consolidate_library` in `services/organizer.rs`
-- ✅ `move_folder_contents` - Recursive file moving
-- ✅ `remove_empty_folder` - Cleanup after consolidation
-- ✅ `organize_root_files` - Handle loose files in library root
-- ✅ `update_media_file_paths` - Sync database with filesystem
-- ✅ GraphQL mutation: `consolidateLibrary(id: String!)`
-
-**Frontend (React)**:
-- ✅ "Consolidate" button on library detail page
-- ✅ Progress feedback via toast notifications
-
-### Use Case
-```
-Before:
-/TV Shows/
-├── Girl Taken/           ← Old naming (no year)
-│   └── Season 01/
-├── Girl Taken (2026)/    ← New naming (with year)
-│   └── Season 01/
-└── Fallout/              ← Old naming
-    └── Season 01/
-
-After consolidateLibrary():
-/TV Shows/
-├── Girl Taken (2026)/    ← All files merged here
-│   └── Season 01/
-└── Fallout (2024)/       ← All files merged here
-    └── Season 01/
-```
-
----
-
-## Stage 5: Chromecast Casting (Completed)
-
-### Goals
-- Cast media to Chromecast and Google Cast devices
-- Auto-discover devices via mDNS and support manual IP entry
-- Stream media with HTTP Range support for seeking
-- Full playback control (play, pause, seek, volume)
-
-### Deliverables
-
-**Backend (Rust)**:
-- ✅ `services/cast.rs` - CastService with CASTV2 protocol (rust_cast)
-- ✅ `db/cast.rs` - Repository for devices, sessions, settings
-- ✅ `api/media.rs` - HTTP streaming endpoint with Range headers
-- ✅ Migration `014_cast_devices.sql` - Tables for devices, sessions, settings
-- ✅ GraphQL queries: `castDevices`, `castSessions`, `castSettings`
-- ✅ GraphQL mutations: `discoverCastDevices`, `addCastDevice`, `removeCastDevice`, `castMedia`, `castPlay`, `castPause`, `castStop`, `castSeek`, `castSetVolume`, `castSetMuted`, `updateCastSettings`
-- ✅ GraphQL subscriptions: `castSessionUpdated`, `castDevicesChanged`
-
-**Frontend (React)**:
-- ✅ `hooks/useCast.ts` - Hook for managing cast state
-- ✅ `components/cast/CastButton.tsx` - Device selection dropdown
-- ✅ `components/cast/CastControlBar.tsx` - Playback controls bar
-- ✅ `routes/settings/casting.tsx` - Device management page
-
-### Key Technical Decisions
-- **rust_cast** library for native CASTV2 protocol (no external dependencies)
-- **mdns-sd** for mDNS device discovery on local network
-- HTTP streaming with Range headers for efficient seeking
-- Direct play for compatible formats, transcode for incompatible
-- Settings stored in database, not config files
-
----
-
-## Current Sprint: Complete
-
-### Recently Completed Tasks (January 2026)
-
-1. ✅ **Unified Search & Hunt System**
-   - `/hunt` route for searching across all configured indexers
-   - `/search` route (navbar modal) for searching local library content
-   - Global keyboard shortcut (Cmd/Ctrl+K) opens local search modal
-   - Deep linking support with query parameters via `nuqs`
-
-2. ✅ **Auto-Matching at Download Time**
-   - When torrents are added, they're matched to episodes via filename parsing
-   - Episode status updates to "Downloading" immediately
-   - Works with both library-linked and unlinked torrents
-
-3. ✅ **Enhanced Post-Download Processing**
-   - `process_no_library`: Matches torrents against ALL user libraries
-   - `process_unlinked`: Matches files within a library
-   - Automatic organization after matching (copy/move to proper folders)
-   - Episode status updates to "Downloaded" after organization
-
-4. ✅ **Authenticated Torrent Downloads**
-   - Private tracker support (IPTorrents, etc.)
-   - Stores and uses indexer credentials for .torrent file downloads
-   - AES-256-GCM encryption for stored credentials
-
-5. ✅ **Library Consolidation Feature**
-   - `consolidateLibrary` mutation to merge duplicate folders
-   - Handles naming convention changes (e.g., "Show" → "Show (2024)")
-   - Moves files, removes empty folders, updates database paths
-   - UI button on library page
-
-6. ✅ **Quality Badge Improvements**
-   - Shows all selected resolutions (e.g., "4K/1080p" instead of just "4K")
-   - Detailed tooltips with full quality criteria
-
-7. ✅ **Startup Torrent Processing**
-   - Processes any completed torrents that weren't organized when server was down
-   - Runs 5 seconds after server startup
-
-### Previous Completed Tasks
-
-1. ✅ **Integrated download_monitor with scheduler**
-   - `process_completed_torrents` now runs every minute via scheduler
-   - Processes completed torrents and organizes files automatically
-   - Respects show-level overrides for organize_files and rename_style
-
-2. ✅ **Updated organize_file to support copy/move/hardlink**
-   - Now accepts `action` parameter from library.post_download_action
-   - Copy: Preserves original for seeding
-   - Move: Rename or copy+delete
-   - Hardlink: Creates hard link (Unix), falls back to copy on Windows
-
-### Next Priority Tasks
-
-1. **Add ffprobe service** (optional but valuable)
-   - Create `services/ffprobe.rs` for media file analysis
-   - Extract resolution, codec, duration for quality detection
-
-2. **Implement TMDB/TheTVDB clients** (Stage 2C completion)
-   - Fill in TODO stubs in `services/metadata.rs`
-   - Add fallback provider logic
-
-3. **Quality filter matching** (Stage 3B enhancement)
-   - Wire `torrent/quality.rs` profile matching to RSS episode selection
-   - Score and filter releases before download
-
-4. **Archive extraction** (Stage 3C enhancement)
-   - Create `services/extractor.rs` for rar/zip/7z extraction
-   - Wire into download_monitor for packed releases
-
-5. **Movies, Music, Audiobooks UI**
-   - Database schema ready (migrations 018-020)
-   - Need frontend routes and components
-
-### Code Quality Notes (from Code Review)
-
-✅ **Fixed in this review:**
-- Reduced clippy warnings from **115 → 3** (remaining are minor style suggestions)
-- Added `#[allow(dead_code)]` annotations to scaffolded code with clear documentation
-- Removed unused imports across all modules
-- Auto-fixed useless `.into()` conversions and collapsible if statements
-
-**Scaffolded Modules (need implementation):**
-| Module | Status | Notes |
-|--------|--------|-------|
-| `services/prowlarr.rs` | Scaffolded | Torznab search client |
-| `media/metadata.rs` | Scaffolded | Direct TMDB/TheTVDB clients |
-| `media/transcoder.rs` | Scaffolded | HLS transcoding for playback |
-| `jobs/transcode_gc.rs` | Scaffolded | Cache cleanup |
-| `torrent/quality.rs` | Scaffolded | Quality profile matching |
-
-**Dual/Legacy Modules to Consider Consolidating:**
-| Active | Legacy | Notes |
-|--------|--------|-------|
-| `services/metadata.rs` | `media/metadata.rs` | Keep services version, remove media version after TMDB impl |
-| `services/organizer.rs` | `media/organizer.rs` | Keep services version, has more features |
+## Remaining Work
+
+### High Priority
+
+#### Archive Extraction Enhancement
+- [ ] Full RAR support (multi-part archives)
+- [ ] 7z extraction
+- [ ] Automatic extraction after download
+- [ ] Cleanup of archive files after extraction
+
+#### Subtitle System
+- [ ] Automatic subtitle search on download
+- [ ] Subtitle sync with video
+- [ ] Multiple subtitle language support
+- [ ] OCR for PGS subtitles
+
+#### Quality Upgrading
+- [ ] Detect when better quality is available
+- [ ] Automatic upgrade downloads
+- [ ] Replace files while preserving metadata
+- [ ] Configurable upgrade thresholds
+
+### Medium Priority
+
+#### Filesystem Watching (inotify)
+- [ ] Real-time detection of new files
+- [ ] Fallback to periodic scan for network mounts
+- [ ] Per-library toggle for watch mode
+
+#### Hardware Transcoding
+- [ ] NVIDIA NVENC support
+- [ ] Intel QSV support
+- [ ] AMD VAAPI support
+- [ ] Auto-detection of available hardware
+
+#### AirPlay Casting
+- [ ] Native protocol implementation
+- [ ] Device discovery
+- [ ] Video streaming support
+
+### Lower Priority
+
+#### Multi-User Features
+- [ ] User roles and permissions
+- [ ] Per-user watch progress
+- [ ] Sharing capabilities
+
+#### Mobile Experience
+- [ ] PWA improvements
+- [ ] Offline poster caching
+- [ ] Push notifications for downloads
+
+#### DLNA Server
+- [ ] UPnP discovery
+- [ ] Media serving to DLNA clients
 
 ---
 
 ## Architecture Reference
 
-### Production Deployment (Single Domain)
+### Production Deployment
 
 ```
-librarian.dastari.net
+librarian.example.com
          │
     ┌────┴────┐
     │  Caddy  │  (reverse proxy, auto HTTPS)
@@ -782,43 +292,89 @@ Frontend  Backend       (auth/db)
  :3000    :3001
 ```
 
-### Tech Stack
+### Key Backend Modules
 
-| Component | Technology |
-|-----------|------------|
-| Frontend | TanStack Start, React, TypeScript, HeroUI, Tailwind, pnpm |
-| Backend | Rust, Axum, Tokio, sqlx |
-| API | GraphQL-only with subscriptions (async-graphql) |
-| Database | PostgreSQL (via Supabase) |
-| Auth | Supabase Auth (email/password) |
-| Storage | Supabase Storage (artwork) |
-| Torrents | librqbit (native Rust, embedded) |
-| Indexers | RSS feeds → Prowlarr (future) |
-| Metadata | TVMaze → TMDB → TheTVDB |
-| Transcoding | FFmpeg |
-| Proxy | Caddy (production) |
+| Module | Purpose |
+|--------|---------|
+| `services/torrent.rs` | librqbit wrapper, torrent management |
+| `services/usenet.rs` | NNTP client, NZB downloads |
+| `services/torrent_file_matcher.rs` | File-to-item matching |
+| `services/media_processor.rs` | Unified download processing |
+| `services/organizer.rs` | File organization and renaming |
+| `services/scanner.rs` | Library scanning |
+| `services/hunt.rs` | Auto-hunt service |
+| `services/metadata.rs` | Multi-provider metadata |
+| `services/ffmpeg.rs` | FFprobe analysis |
+| `services/quality_evaluator.rs` | Quality verification |
+| `services/ollama.rs` | LLM filename parsing |
+| `services/cast.rs` | Chromecast control |
+| `indexer/manager.rs` | Indexer instance management |
+| `indexer/definitions/` | Indexer implementations |
+| `jobs/download_monitor.rs` | Completion processing |
+| `jobs/auto_hunt.rs` | Event-driven hunting |
+| `jobs/rss_poller.rs` | Feed polling |
+
+### Key Frontend Routes
+
+| Route | Purpose |
+|-------|---------|
+| `/libraries` | Library list |
+| `/libraries/$id` | Library detail with content grid |
+| `/downloads` | Active downloads |
+| `/hunt` | Cross-indexer search |
+| `/settings/*` | All settings pages |
 
 ---
 
-## Risks & Mitigations
+## Database Migrations
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| FFmpeg performance on NAS | Slow transcoding | Prefer direct play; add hardware accel later |
-| RSS feed variability | Failed parsing | Robust regex patterns; manual feed testing |
-| Network mount inotify | No file events | Fall back to periodic scanning |
-| OpenAI costs | Budget overrun | Rate limiting; make optional |
-| Large libraries | Slow scans | Incremental scanning; progress updates |
-| Scene naming variations | Misidentified files | Multiple patterns; AI fallback; manual review |
+The database schema has evolved through 34 migrations:
+
+| Migration | Purpose |
+|-----------|---------|
+| 001 | Initial schema (libraries, torrents, users) |
+| 016 | Organization enhancements |
+| 017-021 | Naming patterns, movies, music, audiobooks |
+| 022 | Torrent-media links |
+| 023-025 | Watch progress, unified playback |
+| 026-027 | Quality profile removal, fixes |
+| 028 | File-level matching (torrent_file_matches) |
+| 029-031 | Audiobook renames, LLM settings |
+| 032 | Media chapters |
+| 033 | Drop legacy torrent linking |
+| 034 | Usenet support, source priorities |
 
 ---
 
-## Definition of Done (per stage)
+## Code Quality
 
-- [ ] Code merged to main branch
-- [ ] Database migrations run cleanly
-- [ ] GraphQL schema updated
-- [ ] Frontend routes functional
-- [ ] Manual testing completed
-- [ ] No console errors in browser
-- [ ] API endpoints return proper errors
+### Clippy Status
+- Minimal warnings (style suggestions only)
+- All unused code either removed or annotated with `#[allow(dead_code)]`
+
+### Testing
+- Integration tests for media pipeline
+- Unit tests for filename parsing
+
+### Documentation
+- This implementation plan
+- `design.md` - System architecture
+- `media-pipeline.md` - Pipeline architecture
+- `flows.md` - Mermaid flow diagrams
+- `style-guide.md` - Frontend conventions
+
+---
+
+## Decision Log
+
+| Decision | Rationale |
+|----------|-----------|
+| librqbit over qBittorrent | Native Rust, no external dependencies |
+| TVMaze as primary | Free, no API key, excellent data |
+| RSS feeds first | Universal tracker support |
+| Copy by default | Preserves seeding capability |
+| GraphQL-only API | Single endpoint, real-time subscriptions |
+| Embedded quality settings | Simpler than separate profiles table |
+| Event-driven auto-hunt | Immediate response, not scheduled |
+| File-level matching | Season packs, multi-file torrents |
+| Usenet support | Alternative to torrents, faster |

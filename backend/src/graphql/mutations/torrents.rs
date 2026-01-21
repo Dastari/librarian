@@ -1,4 +1,5 @@
 use super::prelude::*;
+use crate::services::torrent_file_matcher::TorrentFileMatcher;
 
 #[derive(Default)]
 pub struct TorrentMutations;
@@ -17,6 +18,24 @@ impl TorrentMutations {
 
         // Parse user_id for database persistence
         let user_id = Uuid::parse_str(&user.user_id).ok();
+
+        // Parse optional album_id for music torrents
+        let album_id = input
+            .album_id
+            .as_ref()
+            .and_then(|id| Uuid::parse_str(id).ok());
+
+        // Parse optional movie_id for movie torrents
+        let movie_id = input
+            .movie_id
+            .as_ref()
+            .and_then(|id| Uuid::parse_str(id).ok());
+
+        // Parse optional episode_id for TV torrents
+        let episode_id = input
+            .episode_id
+            .as_ref()
+            .and_then(|id| Uuid::parse_str(id).ok());
 
         let result = if let Some(magnet) = input.magnet {
             // Magnet links go through add_magnet
@@ -52,7 +71,7 @@ impl TorrentMutations {
                                     match torrent_bytes {
                                         Ok(bytes) => {
                                             // Add torrent from bytes
-                                            return match service.add_torrent_bytes(&bytes, user_id).await {
+                                            match service.add_torrent_bytes(&bytes, user_id).await {
                                                 Ok(info) => {
                                                     tracing::info!(
                                                         user_id = %user.user_id,
@@ -61,21 +80,30 @@ impl TorrentMutations {
                                                         "User added torrent from authenticated download"
                                                     );
 
-                                                    // Note: File-level matching happens automatically when torrent is processed
-                                                    // via torrent_file_matches table
+                                                    // Create file-level matches if a target item is specified
+                                                    create_file_matches_for_target(
+                                                        db,
+                                                        &info,
+                                                        album_id,
+                                                        movie_id,
+                                                        episode_id,
+                                                    )
+                                                    .await;
 
-                                                    Ok(AddTorrentResult {
+                                                    return Ok(AddTorrentResult {
                                                         success: true,
                                                         torrent: Some(info.into()),
                                                         error: None,
-                                                    })
+                                                    });
                                                 }
-                                                Err(e) => Ok(AddTorrentResult {
-                                                    success: false,
-                                                    torrent: None,
-                                                    error: Some(e.to_string()),
-                                                }),
-                                            };
+                                                Err(e) => {
+                                                    return Ok(AddTorrentResult {
+                                                        success: false,
+                                                        torrent: None,
+                                                        error: Some(e.to_string()),
+                                                    });
+                                                }
+                                            }
                                         }
                                         Err(e) => {
                                             tracing::warn!(error = %e, "Failed to download .torrent file with auth, falling back to unauthenticated");
@@ -109,17 +137,8 @@ impl TorrentMutations {
                     info.name
                 );
 
-                // Note: File-level matching happens automatically when torrent is processed
-                // via torrent_file_matches table in TorrentFileMatcher
-                let _ = &info.info_hash; // Used for tracing/debugging
-
-                // Mark episode/movie as downloading if explicitly specified
-                if let Some(ref episode_id_str) = input.episode_id {
-                    if let Ok(ep_id) = Uuid::parse_str(episode_id_str) {
-                        let _ = db.episodes().mark_downloading(ep_id).await;
-                    }
-                }
-                // Note: Movie status is derived from media_files, no need to mark downloading
+                // Create file-level matches if a target item is specified
+                create_file_matches_for_target(db, &info, album_id, movie_id, episode_id).await;
 
                 Ok(AddTorrentResult {
                     success: true,
@@ -200,7 +219,7 @@ impl TorrentMutations {
 
     /// Organize a completed torrent's files into the library structure
     ///
-    /// This uses the unified TorrentProcessor to:
+    /// This uses the unified MediaProcessor to:
     /// 1. Parse filenames to identify show/episode
     /// 2. Match to existing shows in the library
     /// 3. Copy/move/hardlink files based on library settings
@@ -237,10 +256,10 @@ impl TorrentMutations {
         // File-level matching will happen automatically in process_torrent
         let _ = (&library_id, &album_id); // Suppress unused warnings
 
-        // Use the unified TorrentProcessor with force=true to reprocess
+        // Use the unified MediaProcessor with force=true to reprocess
         // Include metadata service for auto-adding movies from TMDB
         let metadata_service = ctx.data_unchecked::<Arc<crate::services::MetadataService>>();
-        let processor = crate::services::TorrentProcessor::with_services(
+        let processor = crate::services::MediaProcessor::with_services(
             db.clone(),
             ctx.data_unchecked::<Arc<crate::services::MediaAnalysisQueue>>()
                 .clone(),
@@ -324,5 +343,127 @@ impl TorrentMutations {
             success: true,
             error: None,
         })
+    }
+}
+
+/// Create file-level matches for a torrent if a target item (album, movie, or episode) is specified
+///
+/// This is called when adding a torrent from the Hunt page or other locations where
+/// the user has explicitly selected what the torrent is for. It creates entries in
+/// `torrent_file_matches` so the torrent processor knows how to organize the files.
+async fn create_file_matches_for_target(
+    db: &Database,
+    torrent_info: &crate::services::torrent::TorrentInfo,
+    album_id: Option<Uuid>,
+    movie_id: Option<Uuid>,
+    episode_id: Option<Uuid>,
+) {
+    // Get the torrent database record
+    let torrent_record = match db
+        .torrents()
+        .get_by_info_hash(&torrent_info.info_hash)
+        .await
+    {
+        Ok(Some(record)) => record,
+        Ok(None) => {
+            tracing::warn!(
+                info_hash = %torrent_info.info_hash,
+                "Torrent record not found, cannot create file matches"
+            );
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(
+                info_hash = %torrent_info.info_hash,
+                error = %e,
+                "Failed to get torrent record for file matching"
+            );
+            return;
+        }
+    };
+
+    let matcher = TorrentFileMatcher::new(db.clone());
+
+    // Create file matches based on what type of target was specified
+    if let Some(album_id) = album_id {
+        match matcher
+            .create_matches_for_album(torrent_record.id, &torrent_info.files, album_id)
+            .await
+        {
+            Ok(matches) => {
+                tracing::info!(
+                    torrent_id = %torrent_record.id,
+                    album_id = %album_id,
+                    matched_files = matches.len(),
+                    total_files = torrent_info.files.len(),
+                    "Created file matches for album"
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    torrent_id = %torrent_record.id,
+                    album_id = %album_id,
+                    error = %e,
+                    "Failed to create file matches for album"
+                );
+            }
+        }
+    }
+
+    if let Some(movie_id) = movie_id {
+        match matcher
+            .create_matches_for_movie_torrent(torrent_record.id, &torrent_info.files, movie_id)
+            .await
+        {
+            Ok(matches) => {
+                tracing::info!(
+                    torrent_id = %torrent_record.id,
+                    movie_id = %movie_id,
+                    matched_files = matches.len(),
+                    "Created file matches for movie"
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    torrent_id = %torrent_record.id,
+                    movie_id = %movie_id,
+                    error = %e,
+                    "Failed to create file matches for movie"
+                );
+            }
+        }
+    }
+
+    if let Some(episode_id) = episode_id {
+        match matcher
+            .create_matches_for_episode_torrent(torrent_record.id, &torrent_info.files, episode_id)
+            .await
+        {
+            Ok(matches) => {
+                tracing::info!(
+                    torrent_id = %torrent_record.id,
+                    episode_id = %episode_id,
+                    matched_files = matches.len(),
+                    "Created file matches for episode"
+                );
+
+                // Mark episode as downloading
+                if let Err(e) = db.episodes().mark_downloading(episode_id).await {
+                    tracing::warn!(
+                        episode_id = %episode_id,
+                        error = %e,
+                        "Failed to mark episode as downloading"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    torrent_id = %torrent_record.id,
+                    episode_id = %episode_id,
+                    error = %e,
+                    "Failed to create file matches for episode"
+                );
+            }
+        }
     }
 }

@@ -453,7 +453,8 @@ impl ScannerService {
             removed = progress.removed_files,
             shows_added = progress.shows_added,
             episodes_linked = progress.episodes_linked,
-            "Library scan completed"
+            "Library scan completed for '{}': {} files ({} new, {} removed)",
+            library.name, progress.total_files, progress.new_files, progress.removed_files
         );
 
         // Trigger auto-hunt for this library if enabled (library-level or show-level overrides)
@@ -491,6 +492,7 @@ impl ScannerService {
                 let pool = self.db.pool().clone();
                 let torrent_svc = torrent_svc.clone();
                 let indexer_mgr = indexer_mgr.clone();
+                let library_name_clone = library.name.clone();
 
                 // Run auto-hunt in background to not block scan completion
                 tokio::spawn(async move {
@@ -508,7 +510,8 @@ impl ScannerService {
                                 searched = result.searched,
                                 matched = result.matched,
                                 downloaded = result.downloaded,
-                                "Post-scan auto-hunt completed"
+                                "Post-scan auto-hunt completed for '{}': {} searched, {} matched, {} downloaded",
+                                library_name_clone, result.searched, result.matched, result.downloaded
                             );
                         }
                         Err(e) => {
@@ -948,7 +951,8 @@ impl ScannerService {
             info!(
                 processed = processed_movies,
                 total = movie_count,
-                "Processed movie chunk"
+                "Processed movie chunk: {}/{} movies in '{}'",
+                processed_movies, movie_count, progress.library_name
             );
 
             // Small delay between chunks

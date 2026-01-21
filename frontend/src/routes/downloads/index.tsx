@@ -2,6 +2,13 @@ import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useState, useEffect, useCallback } from 'react'
 import { useDisclosure } from '@heroui/modal'
 import { addToast } from '@heroui/toast'
+import { Tabs, Tab } from '@heroui/tabs'
+import { Chip } from '@heroui/chip'
+import { Card, CardBody } from '@heroui/card'
+import { Button } from '@heroui/button'
+import { Progress } from '@heroui/progress'
+import { Spinner } from '@heroui/spinner'
+import { IconDownload, IconServer, IconPlayerPause, IconPlayerPlay, IconTrash, IconRefresh } from '@tabler/icons-react'
 import {
   graphqlClient,
   TORRENTS_QUERY,
@@ -20,8 +27,67 @@ import {
   type OrganizeTorrentResult,
 } from '../../lib/graphql'
 import { TorrentTable, AddTorrentModal, TorrentInfoModal, LinkToLibraryModal } from '../../components/downloads'
-import { sanitizeError } from '../../lib/format'
+import { sanitizeError, formatBytes } from '../../lib/format'
 import { RouteError } from '../../components/RouteError'
+
+// Usenet download type
+interface UsenetDownload {
+  id: string
+  name: string
+  state: string
+  progress: number
+  sizeBytes: number | null
+  downloadedBytes: number
+  downloadSpeed: number
+  eta: number | null
+  errorMessage: string | null
+  createdAt: string
+}
+
+// Usenet GraphQL queries
+const USENET_DOWNLOADS_QUERY = `
+  query UsenetDownloads {
+    usenetDownloads {
+      id
+      name
+      state
+      progress
+      sizeBytes
+      downloadedBytes
+      downloadSpeed
+      eta
+      errorMessage
+      createdAt
+    }
+  }
+`
+
+const PAUSE_USENET_MUTATION = `
+  mutation PauseUsenet($id: ID!) {
+    pauseUsenetDownload(id: $id) {
+      success
+      error
+    }
+  }
+`
+
+const RESUME_USENET_MUTATION = `
+  mutation ResumeUsenet($id: ID!) {
+    resumeUsenetDownload(id: $id) {
+      success
+      error
+    }
+  }
+`
+
+const REMOVE_USENET_MUTATION = `
+  mutation RemoveUsenet($id: ID!, $deleteFiles: Boolean) {
+    removeUsenetDownload(id: $id, deleteFiles: $deleteFiles) {
+      success
+      error
+    }
+  }
+`
 
 export const Route = createFileRoute('/downloads/')({
   beforeLoad: ({ context, location }) => {
@@ -40,9 +106,12 @@ export const Route = createFileRoute('/downloads/')({
 })
 
 function DownloadsPage() {
+  const [activeTab, setActiveTab] = useState<'torrents' | 'usenet'>('torrents')
   const [torrents, setTorrents] = useState<Torrent[]>([])
+  const [usenetDownloads, setUsenetDownloads] = useState<UsenetDownload[]>([])
   const [isAdding, setIsAdding] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [isUsenetLoading, setIsUsenetLoading] = useState(true)
   const { isOpen, onOpen, onClose } = useDisclosure()
   const { isOpen: isInfoOpen, onOpen: onInfoOpen, onClose: onInfoClose } = useDisclosure()
   const { isOpen: isLinkOpen, onOpen: onLinkOpen, onClose: onLinkClose } = useDisclosure()
@@ -73,9 +142,23 @@ function DownloadsPage() {
     }
   }, [])
 
-  // Fetch torrents and subscribe to updates
+  const fetchUsenetDownloads = useCallback(async () => {
+    try {
+      const result = await graphqlClient.query<{ usenetDownloads: UsenetDownload[] }>(USENET_DOWNLOADS_QUERY, {}).toPromise()
+      if (result.data?.usenetDownloads) {
+        setUsenetDownloads(result.data.usenetDownloads)
+      }
+    } catch (e) {
+      console.error('Failed to fetch usenet downloads:', e)
+    } finally {
+      setIsUsenetLoading(false)
+    }
+  }, [])
+
+  // Fetch torrents and usenet downloads, subscribe to updates
   useEffect(() => {
     fetchTorrents()
+    fetchUsenetDownloads()
 
     // Apollo subscriptions return Observables
     const progressSub = graphqlClient.subscription<{ torrentProgress: TorrentProgress }>(
@@ -123,7 +206,44 @@ function DownloadsPage() {
       addedSub.unsubscribe()
       removedSub.unsubscribe()
     }
-  }, [fetchTorrents])
+  }, [fetchTorrents, fetchUsenetDownloads])
+
+  // Usenet action handlers
+  const handlePauseUsenet = async (id: string) => {
+    const result = await graphqlClient
+      .mutation<{ pauseUsenetDownload: { success: boolean; error?: string } }>(PAUSE_USENET_MUTATION, { id })
+      .toPromise()
+    if (result.data?.pauseUsenetDownload.success) {
+      setUsenetDownloads((prev) =>
+        prev.map((d) => (d.id === id ? { ...d, state: 'paused' } : d))
+      )
+    }
+  }
+
+  const handleResumeUsenet = async (id: string) => {
+    const result = await graphqlClient
+      .mutation<{ resumeUsenetDownload: { success: boolean; error?: string } }>(RESUME_USENET_MUTATION, { id })
+      .toPromise()
+    if (result.data?.resumeUsenetDownload.success) {
+      setUsenetDownloads((prev) =>
+        prev.map((d) => (d.id === id ? { ...d, state: 'downloading' } : d))
+      )
+    }
+  }
+
+  const handleRemoveUsenet = async (id: string) => {
+    const result = await graphqlClient
+      .mutation<{ removeUsenetDownload: { success: boolean; error?: string } }>(REMOVE_USENET_MUTATION, { id, deleteFiles: false })
+      .toPromise()
+    if (result.data?.removeUsenetDownload.success) {
+      setUsenetDownloads((prev) => prev.filter((d) => d.id !== id))
+      addToast({
+        title: 'Usenet Download Removed',
+        description: 'The download has been removed.',
+        color: 'success',
+      })
+    }
+  }
 
   // Add torrent handlers
   const handleAddMagnet = async (magnet: string) => {
@@ -397,28 +517,180 @@ function DownloadsPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold">Downloads</h1>
-          <p className="text-default-500">Manage your torrent downloads</p>
+          <p className="text-default-500">Manage your torrent and usenet downloads</p>
         </div>
       </div>
 
-      {/* Torrents table - skeleton loading handled by DataTable */}
-      <TorrentTable
-        torrents={torrents}
-        isLoading={isLoading}
-        onPause={handlePause}
-        onResume={handleResume}
-        onRemove={handleRemove}
-        onInfo={handleInfo}
-        onOrganize={handleOrganize}
-        onLinkToLibrary={(torrent) => {
-          setTorrentToLink(torrent)
-          onLinkOpen()
+      {/* Tabs for Torrents and Usenet */}
+      <Tabs
+        selectedKey={activeTab}
+        onSelectionChange={(key) => setActiveTab(key as 'torrents' | 'usenet')}
+        className="mb-4"
+        classNames={{
+          tabList: 'gap-4',
         }}
-        onBulkPause={handleBulkPause}
-        onBulkResume={handleBulkResume}
-        onBulkRemove={handleBulkRemove}
-        onAddClick={onOpen}
-      />
+      >
+        <Tab
+          key="torrents"
+          title={
+            <div className="flex items-center gap-2">
+              <IconDownload size={18} />
+              <span>Torrents</span>
+              {torrents.length > 0 && (
+                <Chip size="sm" variant="flat">
+                  {torrents.length}
+                </Chip>
+              )}
+            </div>
+          }
+        />
+        <Tab
+          key="usenet"
+          title={
+            <div className="flex items-center gap-2">
+              <IconServer size={18} />
+              <span>Usenet</span>
+              {usenetDownloads.length > 0 && (
+                <Chip size="sm" variant="flat">
+                  {usenetDownloads.length}
+                </Chip>
+              )}
+            </div>
+          }
+        />
+      </Tabs>
+
+      {/* Tab Content */}
+      {activeTab === 'torrents' ? (
+        <>
+          {/* Torrents table - skeleton loading handled by DataTable */}
+          <TorrentTable
+            torrents={torrents}
+            isLoading={isLoading}
+            onPause={handlePause}
+            onResume={handleResume}
+            onRemove={handleRemove}
+            onInfo={handleInfo}
+            onOrganize={handleOrganize}
+            onLinkToLibrary={(torrent) => {
+              setTorrentToLink(torrent)
+              onLinkOpen()
+            }}
+            onBulkPause={handleBulkPause}
+            onBulkResume={handleBulkResume}
+            onBulkRemove={handleBulkRemove}
+            onAddClick={onOpen}
+          />
+        </>
+      ) : (
+        <>
+          {/* Usenet Downloads */}
+          <div className="flex justify-end mb-4">
+            <Button
+              size="sm"
+              variant="flat"
+              startContent={<IconRefresh size={16} />}
+              onPress={fetchUsenetDownloads}
+              isLoading={isUsenetLoading}
+            >
+              Refresh
+            </Button>
+          </div>
+
+          {isUsenetLoading ? (
+            <div className="flex justify-center py-12">
+              <Spinner size="lg" />
+            </div>
+          ) : usenetDownloads.length === 0 ? (
+            <Card>
+              <CardBody className="flex flex-col items-center justify-center py-12 text-center">
+                <IconServer size={48} className="text-default-300 mb-4" />
+                <p className="text-default-500">No usenet downloads</p>
+                <p className="text-default-400 text-sm mt-1">
+                  Add NZB files from the Hunt page or configure Newznab indexers
+                </p>
+              </CardBody>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {usenetDownloads.map((download) => (
+                <Card key={download.id}>
+                  <CardBody className="flex flex-row items-center gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-medium truncate">{download.name}</span>
+                        <Chip
+                          size="sm"
+                          variant="flat"
+                          color={
+                            download.state === 'completed' ? 'success' :
+                            download.state === 'downloading' ? 'primary' :
+                            download.state === 'paused' ? 'warning' :
+                            download.state === 'failed' ? 'danger' : 'default'
+                          }
+                        >
+                          {download.state}
+                        </Chip>
+                      </div>
+                      <div className="flex items-center gap-4 text-sm text-default-500">
+                        <span>{download.sizeBytes ? formatBytes(download.sizeBytes) : 'Unknown size'}</span>
+                        {download.downloadSpeed > 0 && (
+                          <span>{formatBytes(download.downloadSpeed)}/s</span>
+                        )}
+                        {download.eta && download.eta > 0 && (
+                          <span>ETA: {Math.floor(download.eta / 60)}m</span>
+                        )}
+                      </div>
+                      {download.state === 'downloading' && (
+                        <Progress
+                          value={download.progress}
+                          className="mt-2"
+                          size="sm"
+                          color="primary"
+                        />
+                      )}
+                      {download.errorMessage && (
+                        <p className="text-danger text-sm mt-1">{download.errorMessage}</p>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      {download.state === 'downloading' ? (
+                        <Button
+                          isIconOnly
+                          size="sm"
+                          variant="flat"
+                          onPress={() => handlePauseUsenet(download.id)}
+                        >
+                          <IconPlayerPause size={16} />
+                        </Button>
+                      ) : download.state === 'paused' ? (
+                        <Button
+                          isIconOnly
+                          size="sm"
+                          variant="flat"
+                          color="primary"
+                          onPress={() => handleResumeUsenet(download.id)}
+                        >
+                          <IconPlayerPlay size={16} />
+                        </Button>
+                      ) : null}
+                      <Button
+                        isIconOnly
+                        size="sm"
+                        variant="flat"
+                        color="danger"
+                        onPress={() => handleRemoveUsenet(download.id)}
+                      >
+                        <IconTrash size={16} />
+                      </Button>
+                    </div>
+                  </CardBody>
+                </Card>
+              ))}
+            </div>
+          )}
+        </>
+      )}
 
       {/* Add Torrent Modal */}
       <AddTorrentModal

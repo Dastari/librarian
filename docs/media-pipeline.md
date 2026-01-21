@@ -66,11 +66,22 @@ This document defines the unified media pipeline for Librarian - how files flow 
 
 All content enters through one of these paths:
 
-1. **Auto-Hunt** - System searches indexers for wanted items
+1. **Auto-Hunt** - System searches indexers for wanted items (torrent or usenet)
 2. **RSS Feed** - System polls feeds and matches against wanted items  
 3. **Manual Hunt** - User searches on `/hunt` page, may or may not link to library/item
-4. **Direct Add** - User adds magnet/URL directly, no library context
+4. **Direct Add** - User adds magnet/URL/NZB directly, no library context
 5. **Library Scan** - System discovers files already in library folder
+
+### Download Sources
+
+The pipeline supports two download sources with unified processing:
+
+| Source | Protocol | Tracking Table | File Matches Table |
+|--------|----------|----------------|-------------------|
+| Torrent | BitTorrent (librqbit) | `torrents` | `torrent_file_matches` |
+| Usenet | NNTP (native) | `usenet_downloads` | `usenet_file_matches` |
+
+Both sources flow through the same post-download processing pipeline.
 
 ### Pipeline Flow
 
@@ -79,7 +90,7 @@ All content enters through one of these paths:
 │                           UNIFIED MEDIA PIPELINE                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-PHASE 1: TORRENT ACQUISITION
+PHASE 1: DOWNLOAD ACQUISITION (Torrent or Usenet)
 ═══════════════════════════════════════════════════════════════════════════════
 
      Auto-Hunt         RSS Feed         Manual /hunt        Direct Add
@@ -88,14 +99,22 @@ PHASE 1: TORRENT ACQUISITION
                       │
                       ▼
          ┌────────────────────────────┐
-         │  1. ADD TORRENT TO CLIENT  │
+         │  1. ADD DOWNLOAD           │
+         │  Torrent:                  │
          │  - Create `torrents` record│
-         │  - Store source context:   │
+         │  - Add to librqbit         │
+         │  Usenet:                   │
+         │  - Create `usenet_         │
+         │    downloads` record       │
+         │  - Queue for NNTP download │
+         │                            │
+         │  Store source context:     │
          │    • library_id (optional) │
          │    • item_id (if explicit) │
          │    • indexer_id (for auth) │
-         │  - Get torrent file list   │
-         │    from metadata           │
+         │  - Get file list from      │
+         │    metadata (torrent) or   │
+         │    NZB (usenet)            │
          └─────────────┬──────────────┘
                        │
                        ▼
@@ -141,12 +160,15 @@ PHASE 1: TORRENT ACQUISITION
                        ▼
               ┌────────────────┐
               │  DOWNLOADING   │
-              │  (librqbit)    │
+              │  Torrent:      │
+              │   (librqbit)   │
+              │  Usenet:       │
+              │   (NNTP+yEnc)  │
               └───────┬────────┘
                       │
                       ▼
 
-PHASE 2: POST-DOWNLOAD PROCESSING
+PHASE 2: POST-DOWNLOAD PROCESSING (Unified for both sources)
 ═══════════════════════════════════════════════════════════════════════════════
 
          ┌────────────────────────────┐
@@ -381,86 +403,75 @@ When organizing would overwrite an existing file:
 
 ---
 
-## Database Changes Required
+## Database Schema
 
-### New Table: `torrent_file_matches`
+All tables are implemented in migrations 028-034.
+
+### `torrent_file_matches`
 
 Tracks the relationship between torrent files and library items:
 
 ```sql
-CREATE TABLE torrent_file_matches (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    torrent_id UUID NOT NULL REFERENCES torrents(id) ON DELETE CASCADE,
-    file_index INTEGER NOT NULL,  -- Index within torrent
-    file_path TEXT NOT NULL,      -- Path within torrent
+torrent_file_matches (
+    id UUID PRIMARY KEY,
+    torrent_id UUID NOT NULL,
+    file_index INTEGER NOT NULL,
+    file_path TEXT NOT NULL,
     file_size BIGINT NOT NULL,
-    
-    -- Match target (one of these will be set)
-    episode_id UUID REFERENCES episodes(id),
-    movie_id UUID REFERENCES movies(id),
-    track_id UUID REFERENCES tracks(id),
-    audiobook_chapter_id UUID REFERENCES audiobook_chapters(id),
-    
+    -- Match targets (one will be set)
+    episode_id, movie_id, track_id, audiobook_chapter_id UUID,
     -- Match metadata
-    match_type VARCHAR(20) NOT NULL, -- 'exact', 'upgrade', 'suboptimal', 'manual'
-    quality_parsed JSONB,            -- Quality parsed from filename
-    quality_verified JSONB,          -- Quality from ffprobe (after download)
-    
+    match_type VARCHAR(20) NOT NULL, -- 'auto', 'manual', 'forced'
+    match_confidence DECIMAL(3, 2),
+    parsed_resolution, parsed_codec, parsed_source VARCHAR,
     -- State
-    skip_download BOOLEAN DEFAULT false,  -- Don't download this file
+    skip_download BOOLEAN DEFAULT false,
     processed BOOLEAN DEFAULT false,
-    media_file_id UUID REFERENCES media_files(id),
-    
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    media_file_id UUID,
+    UNIQUE(torrent_id, file_index)
 );
 ```
 
-### Add to `tracks` table
+### `usenet_file_matches`
+
+Parallel table for usenet downloads:
 
 ```sql
-ALTER TABLE tracks ADD COLUMN status VARCHAR(20) 
-    DEFAULT 'missing' 
-    CHECK (status IN ('missing', 'wanted', 'suboptimal', 'downloading', 'downloaded', 'ignored'));
-```
-
-### Add to `audiobooks` table (chapters)
-
-```sql
-CREATE TABLE audiobook_chapters (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    audiobook_id UUID NOT NULL REFERENCES audiobooks(id) ON DELETE CASCADE,
-    chapter_number INTEGER NOT NULL,
-    title TEXT,
-    duration_secs INTEGER,
-    media_file_id UUID REFERENCES media_files(id),
-    status VARCHAR(20) DEFAULT 'missing' 
-        CHECK (status IN ('missing', 'wanted', 'suboptimal', 'downloading', 'downloaded', 'ignored')),
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(audiobook_id, chapter_number)
+usenet_file_matches (
+    id UUID PRIMARY KEY,
+    usenet_download_id UUID NOT NULL,
+    file_path TEXT NOT NULL,
+    file_size BIGINT,
+    -- Match targets
+    episode_id, movie_id, album_id, track_id, audiobook_id UUID,
+    processed BOOLEAN DEFAULT false,
+    media_file_id UUID
 );
 ```
 
-### Modify `indexer_configs` table
+### Status Fields
 
-```sql
-ALTER TABLE indexer_configs ADD COLUMN post_download_action VARCHAR(20) 
-    DEFAULT NULL; -- NULL means use library setting
-```
+Added to multiple tables for unified tracking:
 
-### Modify `rss_feeds` table
+| Table | Column | Values |
+|-------|--------|--------|
+| `episodes` | `status` | missing, wanted, available, downloading, downloaded, ignored, suboptimal |
+| `tracks` | `status` | missing, wanted, downloading, downloaded, ignored |
+| `audiobook_chapters` | `status` | missing, wanted, downloading, downloaded, ignored |
+| `movies` | `download_status` | missing, wanted, downloading, downloaded, ignored, suboptimal |
+| `albums` | `download_status` | missing, wanted, downloading, downloaded, ignored, suboptimal, partial |
+| `audiobooks` | `download_status` | missing, wanted, downloading, downloaded, ignored, suboptimal |
+| `media_files` | `quality_status` | unknown, optimal, suboptimal, exceeds |
 
-```sql
-ALTER TABLE rss_feeds ADD COLUMN post_download_action VARCHAR(20) 
-    DEFAULT NULL; -- NULL means use library setting
-```
+### Post-Download Action Overrides
+
+Both `indexer_configs` and `rss_feeds` have `post_download_action` column:
+- `NULL` = use library default
+- `'copy'` | `'move'` | `'hardlink'` = override library setting
 
 ---
 
-## Library Settings Clarification
-
-### Current Settings (Keep)
+## Library Settings
 
 | Setting | Purpose |
 |---------|---------|
@@ -473,22 +484,11 @@ ALTER TABLE rss_feeds ADD COLUMN post_download_action VARCHAR(20)
 | `organize_files` | Automatically organize into folders |
 | `naming_pattern` | How to name/structure files |
 | `post_download_action` | copy/move/hardlink (default, overridden by indexer/feed) |
-
-### Settings to Remove
-
-| Setting | Reason |
-|---------|--------|
-| (none currently) | |
-
-### Settings to Add
-
-| Setting | Purpose |
-|---------|---------|
 | `conflicts_folder` | Where to move conflicting files (default: `_conflicts`) |
 
 ---
 
-## Monitored Field Clarification
+## Monitored Field
 
 The `monitored` field on shows/albums/audiobooks controls **which items are wanted**:
 
@@ -502,19 +502,18 @@ This is separate from `auto_hunt` and `auto_download` which control automation.
 
 ## Implementation Modules
 
-### New Services
+All modules are implemented in `backend/src/services/`:
 
-1. **TorrentFileMatcher** - Matches files within torrents to wanted items
-2. **ArchiveExtractor** - Extracts zip/rar/7z archives
-3. **QualityVerifier** - Uses ffprobe to verify actual quality
-4. **ConflictHandler** - Manages file conflicts during organization
-
-### Modified Services
-
-1. **TorrentProcessor** - Use TorrentFileMatcher, handle file-level processing
-2. **Scanner** - Use same QualityVerifier for consistency
-3. **Organizer** - Add conflict handling, check indexer/feed for post_download_action
-4. **AutoHunt** - Link torrents properly for file-level matching
+| Module | Purpose |
+|--------|---------|
+| `torrent_file_matcher.rs` | Matches files within torrents to wanted items |
+| `media_processor.rs` | Unified download processing (torrents + usenet) |
+| `quality_evaluator.rs` | Uses ffprobe to verify actual quality |
+| `organizer.rs` | File organization with conflict handling |
+| `hunt.rs` | Auto-hunt service |
+| `scanner.rs` | Library scanning |
+| `usenet.rs` | Usenet NNTP client |
+| `extractor.rs` | Archive extraction (zip/rar) |
 
 ---
 

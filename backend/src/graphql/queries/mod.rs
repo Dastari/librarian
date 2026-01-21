@@ -9,12 +9,14 @@ pub mod media_files;
 pub mod movies;
 pub mod music;
 pub mod playback;
+pub mod priority_rules;
 pub mod rss_feeds;
 pub mod settings;
 pub mod system;
 pub mod torrents;
 pub mod tv_shows;
 pub mod upcoming;
+pub mod usenet;
 pub mod user;
 
 pub use audiobooks::AudiobookQueries;
@@ -28,12 +30,14 @@ pub use media_files::MediaFileQueries;
 pub use movies::MovieQueries;
 pub use music::MusicQueries;
 pub use playback::PlaybackQueries;
+pub use priority_rules::PriorityRuleQueries;
 pub use rss_feeds::RssFeedQueries;
 pub use settings::SettingsQueries;
 pub use system::SystemQueries;
 pub use torrents::TorrentQueries;
 pub use tv_shows::TvShowQueries;
 pub use upcoming::UpcomingQueries;
+pub use usenet::UsenetQueries;
 pub use user::UserQueries;
 
 pub(crate) mod prelude {

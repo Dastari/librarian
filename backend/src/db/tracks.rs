@@ -67,6 +67,10 @@ pub struct TrackWithStatus {
     pub has_file: bool,
     pub file_path: Option<String>,
     pub file_size: Option<i64>,
+    // Audio quality info from media file
+    pub audio_codec: Option<String>,
+    pub bitrate: Option<i32>,
+    pub audio_channels: Option<String>,
 }
 
 pub struct TrackRepository {
@@ -138,6 +142,10 @@ impl TrackRepository {
             updated_at: chrono::DateTime<chrono::Utc>,
             file_path: Option<String>,
             file_size: Option<i64>,
+            // Audio quality info
+            audio_codec: Option<String>,
+            bitrate: Option<i32>,
+            audio_channels: Option<String>,
         }
 
         let rows: Vec<TrackWithFileRow> = sqlx::query_as(
@@ -147,7 +155,10 @@ impl TrackRepository {
                 t.musicbrainz_id, t.isrc, t.duration_secs, t.explicit,
                 t.artist_name, t.artist_id, t.media_file_id, t.status, t.created_at, t.updated_at,
                 mf.path as file_path,
-                mf.size as file_size
+                mf.size as file_size,
+                mf.audio_codec,
+                mf.bitrate,
+                mf.audio_channels
             FROM tracks t
             LEFT JOIN media_files mf ON t.media_file_id = mf.id
             WHERE t.album_id = $1
@@ -164,6 +175,9 @@ impl TrackRepository {
                 has_file: row.media_file_id.is_some(),
                 file_path: row.file_path,
                 file_size: row.file_size,
+                audio_codec: row.audio_codec,
+                bitrate: row.bitrate,
+                audio_channels: row.audio_channels,
                 track: TrackRecord {
                     id: row.id,
                     album_id: row.album_id,

@@ -12,6 +12,7 @@ mod jobs;
 mod media;
 mod services;
 mod tui;
+mod usenet;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

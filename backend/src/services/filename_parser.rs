@@ -29,8 +29,8 @@ static SEASON_ONLY_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)(.+?)\s*[Ss](\d{1,2})(?:\s+\d{4}|\s+\d{3,4}p|\s+Complete|\s+Full|\s*$|\s+(?:720|1080|2160|480))").unwrap()
 });
 
-/// Pattern for 1x01 format
-static NXNN_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)(.+?)\s*(\d{1,2})x(\d{2})").unwrap());
+/// Pattern for 1x01 format (also handles 1x1, 01x01, 01x1)
+static NXNN_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)(.+?)\s*(\d{1,2})x(\d{1,2})").unwrap());
 
 /// Pattern for "Season X Episode Y" format
 static VERBOSE_SEASON_RE: Lazy<Regex> =
@@ -315,9 +315,13 @@ fn clean_show_name(name: &str) -> String {
     cleaned.trim().to_string()
 }
 
-/// Try to match a parsed episode to a show name (fuzzy matching)
-/// NOTE: Reserved for future fuzzy matching improvements
-#[allow(dead_code)]
+/// Normalize a show name for fuzzy matching
+///
+/// This handles:
+/// - Case differences: "Star Trek" vs "STAR TREK"
+/// - Punctuation: "Star Trek: Deep Space Nine" -> "star trek deep space nine"
+/// - Separators: "Doctor.Who" or "Doctor_Who" -> "doctor who"
+/// - Articles: "The Office" -> "office" (optional removal)
 pub fn normalize_show_name(name: &str) -> String {
     let mut normalized = name.to_lowercase();
 
@@ -329,13 +333,24 @@ pub fn normalize_show_name(name: &str) -> String {
         }
     }
 
-    // Remove special characters
-    normalized = SPECIAL_CHARS_RE.replace_all(&normalized, "").to_string();
+    // Replace all non-alphanumeric characters with spaces (not empty string)
+    // This ensures proper word boundaries after removing punctuation
+    let cleaned: String = normalized
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c
+            } else {
+                ' '
+            }
+        })
+        .collect();
 
-    // Remove multiple spaces
-    normalized = MULTI_SPACE_RE.replace_all(&normalized, " ").to_string();
-
-    normalized.trim().to_string()
+    // Normalize whitespace - collapse multiple spaces into one
+    cleaned
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Calculate similarity between two show names (0.0 to 1.0)
@@ -721,6 +736,100 @@ mod tests {
         assert_eq!(result.show_name.as_deref(), Some("Stephen Colbert"));
         assert_eq!(result.date.as_deref(), Some("2026-01-07"));
         assert_eq!(result.resolution.as_deref(), Some("1080p"));
+    }
+
+    // =========================================================================
+    // Alternative Episode Formats (1x01, S1E1, Season X Episode Y, etc.)
+    // =========================================================================
+
+    #[test]
+    fn test_parse_1x01_format() {
+        // Standard 1x01 format
+        let result = parse_episode("Show.Name.1x01.Episode.Title.720p.HDTV");
+        assert_eq!(result.show_name.as_deref(), Some("Show Name"));
+        assert_eq!(result.season, Some(1));
+        assert_eq!(result.episode, Some(1));
+    }
+
+    #[test]
+    fn test_parse_1x1_unpadded_format() {
+        // Unpadded 1x1 format (single digit episode)
+        let result = parse_episode("Show.Name.1x1.Episode.Title.720p.HDTV");
+        assert_eq!(result.show_name.as_deref(), Some("Show Name"));
+        assert_eq!(result.season, Some(1));
+        assert_eq!(result.episode, Some(1));
+    }
+
+    #[test]
+    fn test_parse_01x01_format() {
+        // Padded season 01x01 format
+        let result = parse_episode("Show.Name.01x01.Episode.Title.720p.HDTV");
+        assert_eq!(result.show_name.as_deref(), Some("Show Name"));
+        assert_eq!(result.season, Some(1));
+        assert_eq!(result.episode, Some(1));
+    }
+
+    #[test]
+    fn test_parse_2x15_format() {
+        // Multi-digit episode 2x15
+        let result = parse_episode("Game.of.Thrones.2x15.720p.HDTV");
+        assert_eq!(result.show_name.as_deref(), Some("Game of Thrones"));
+        assert_eq!(result.season, Some(2));
+        assert_eq!(result.episode, Some(15));
+    }
+
+    #[test]
+    fn test_parse_s1e1_unpadded() {
+        // Unpadded S1E1 format
+        let result = parse_episode("Show.Name.S1E1.720p.HDTV");
+        assert_eq!(result.show_name.as_deref(), Some("Show Name"));
+        assert_eq!(result.season, Some(1));
+        assert_eq!(result.episode, Some(1));
+    }
+
+    #[test]
+    fn test_parse_s1e01_mixed() {
+        // Mixed padding S1E01
+        let result = parse_episode("Show.Name.S1E01.720p.HDTV");
+        assert_eq!(result.show_name.as_deref(), Some("Show Name"));
+        assert_eq!(result.season, Some(1));
+        assert_eq!(result.episode, Some(1));
+    }
+
+    #[test]
+    fn test_parse_s01e1_mixed() {
+        // Mixed padding S01E1
+        let result = parse_episode("Show.Name.S01E1.720p.HDTV");
+        assert_eq!(result.show_name.as_deref(), Some("Show Name"));
+        assert_eq!(result.season, Some(1));
+        assert_eq!(result.episode, Some(1));
+    }
+
+    #[test]
+    fn test_parse_season_episode_verbose() {
+        // Verbose "Season X Episode Y" format
+        let result = parse_episode("Show Name Season 1 Episode 5 720p WEB");
+        assert_eq!(result.show_name.as_deref(), Some("Show Name"));
+        assert_eq!(result.season, Some(1));
+        assert_eq!(result.episode, Some(5));
+    }
+
+    #[test]
+    fn test_parse_season_episode_verbose_padded() {
+        // Verbose with padded numbers
+        let result = parse_episode("Show Name Season 01 Episode 05 720p WEB");
+        assert_eq!(result.show_name.as_deref(), Some("Show Name"));
+        assert_eq!(result.season, Some(1));
+        assert_eq!(result.episode, Some(5));
+    }
+
+    #[test]
+    fn test_parse_season_episode_verbose_with_title() {
+        // Verbose with episode title
+        let result = parse_episode("Breaking Bad Season 2 Episode 10 Over 1080p BluRay");
+        assert_eq!(result.show_name.as_deref(), Some("Breaking Bad"));
+        assert_eq!(result.season, Some(2));
+        assert_eq!(result.episode, Some(10));
     }
 
     // =========================================================================

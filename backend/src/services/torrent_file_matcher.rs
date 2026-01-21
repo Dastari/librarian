@@ -776,7 +776,7 @@ impl TorrentFileMatcher {
     /// Match an audio file to tracks or audiobook chapters
     async fn match_audio_file(
         &self,
-        _torrent: &TorrentRecord,
+        torrent: &TorrentRecord,
         file: &TorrentFile,
         file_index: i32,
         file_name: &str,
@@ -786,13 +786,42 @@ impl TorrentFileMatcher {
         let file_path = &file.path;
         let quality = filename_parser::parse_quality(file_name);
 
+        debug!(
+            torrent_name = %torrent.name,
+            file_name = %file_name,
+            libraries_count = libraries.len(),
+            "Attempting to match audio file"
+        );
+
+        // Count music and audiobook libraries
+        let music_libs: Vec<_> = libraries
+            .iter()
+            .filter(|l| l.library_type.to_lowercase() == "music")
+            .collect();
+        let audiobook_libs: Vec<_> = libraries
+            .iter()
+            .filter(|l| l.library_type.to_lowercase() == "audiobooks")
+            .collect();
+
+        debug!(
+            music_libraries = music_libs.len(),
+            audiobook_libraries = audiobook_libs.len(),
+            "Found libraries to match against"
+        );
+
         // Try to match against music/audiobook libraries
         for library in libraries {
             let lib_type = library.library_type.to_lowercase();
             if lib_type == "music" {
+                debug!(
+                    library_name = %library.name,
+                    library_id = %library.id,
+                    "Trying to match against music library"
+                );
                 if let Some(result) = self
                     .try_match_music_file(
                         library.id,
+                        &torrent.name,
                         file_name,
                         file_index,
                         file_path,
@@ -801,9 +830,19 @@ impl TorrentFileMatcher {
                     )
                     .await?
                 {
+                    info!(
+                        file_name = %file_name,
+                        library_name = %library.name,
+                        "Successfully matched audio file to music library"
+                    );
                     return Ok(result);
                 }
             } else if lib_type == "audiobooks" {
+                debug!(
+                    library_name = %library.name,
+                    library_id = %library.id,
+                    "Trying to match against audiobook library"
+                );
                 if let Some(result) = self
                     .try_match_audiobook_file(
                         library.id,
@@ -815,12 +854,22 @@ impl TorrentFileMatcher {
                     )
                     .await?
                 {
+                    info!(
+                        file_name = %file_name,
+                        library_name = %library.name,
+                        "Successfully matched audio file to audiobook library"
+                    );
                     return Ok(result);
                 }
             }
         }
 
         // No match found
+        debug!(
+            file_name = %file_name,
+            torrent_name = %torrent.name,
+            "Could not match audio file to any library"
+        );
         Ok(FileMatchResult {
             file_index,
             file_path: file_path.clone(),
@@ -924,12 +973,17 @@ impl TorrentFileMatcher {
                                 }));
                             }
 
+                            let display_name = std::path::Path::new(file_path)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or(file_path);
                             debug!(
                                 show = %show.name,
                                 season = season,
                                 episode = episode,
                                 similarity = similarity,
-                                "Matched file to episode"
+                                "Matched '{}' → {} S{:02}E{:02} (confidence: {:.0}%)",
+                                display_name, show.name, season, episode, similarity * 100.0
                             );
 
                             return Ok(Some(FileMatchResult {
@@ -1186,10 +1240,38 @@ impl TorrentFileMatcher {
     ) -> Result<Option<FileMatchResult>> {
         let tracks = self.db.tracks().list_by_album(album_id).await?;
 
+        debug!(
+            album_id = %album_id,
+            file_name = %file_name,
+            track_count = tracks.len(),
+            "Trying to match file to track in album"
+        );
+
+        if tracks.is_empty() {
+            warn!(
+                album_id = %album_id,
+                "Album has no tracks - cannot match file"
+            );
+            return Ok(None);
+        }
+
         // Try to match by track number from filename
-        if let Some(track_num) = self.extract_track_number(file_name) {
+        let extracted_track_num = self.extract_track_number(file_name);
+        debug!(
+            file_name = %file_name,
+            extracted_track_number = ?extracted_track_num,
+            "Extracted track number from filename"
+        );
+
+        if let Some(track_num) = extracted_track_num {
             for track in &tracks {
                 if track.track_number == track_num {
+                    info!(
+                        file_name = %file_name,
+                        track_number = track_num,
+                        track_title = %track.title,
+                        "Matched file to track by track number"
+                    );
                     return Ok(Some(FileMatchResult {
                         file_index,
                         file_path: file_path.to_string(),
@@ -1208,12 +1290,29 @@ impl TorrentFileMatcher {
                     }));
                 }
             }
+            debug!(
+                file_name = %file_name,
+                track_number = track_num,
+                "No track found with matching track number"
+            );
         }
 
         // Try to match by title similarity
         for track in tracks {
             let similarity = self.calculate_track_title_similarity(file_name, &track.title);
+            debug!(
+                file_name = %file_name,
+                track_title = %track.title,
+                similarity = format!("{:.2}", similarity),
+                "Comparing file to track by title"
+            );
             if similarity > 0.7 {
+                info!(
+                    file_name = %file_name,
+                    track_title = %track.title,
+                    similarity = format!("{:.2}", similarity),
+                    "Matched file to track by title similarity"
+                );
                 return Ok(Some(FileMatchResult {
                     file_index,
                     file_path: file_path.to_string(),
@@ -1281,17 +1380,148 @@ impl TorrentFileMatcher {
     }
 
     /// Try to match a music file to any track in a library
+    ///
+    /// This parses the torrent name to extract artist/album info, finds matching
+    /// albums in the library, then tries to match the specific file to a track
+    /// by track number or title similarity.
     async fn try_match_music_file(
         &self,
-        _library_id: Uuid,
-        _file_name: &str,
-        _file_index: i32,
-        _file_path: &str,
-        _file_size: i64,
-        _quality: &ParsedQuality,
+        library_id: Uuid,
+        torrent_name: &str,
+        file_name: &str,
+        file_index: i32,
+        file_path: &str,
+        file_size: i64,
+        quality: &ParsedQuality,
     ) -> Result<Option<FileMatchResult>> {
-        // TODO: Implement more sophisticated music file matching
-        // This would involve reading ID3 tags or parsing the filename for artist/album/track
+        // Parse artist and album from torrent name
+        // Common patterns:
+        // - "Artist-Album-Year-Format-Group" (scene)
+        // - "Artist - Album (Year) [Format]" (other)
+        let (artist_name, album_name) = match parse_music_torrent_name(torrent_name) {
+            Some((a, b)) => (a, b),
+            None => {
+                debug!(
+                    torrent_name = %torrent_name,
+                    "Could not parse artist/album from torrent name"
+                );
+                return Ok(None);
+            }
+        };
+
+        debug!(
+            torrent_name = %torrent_name,
+            parsed_artist = %artist_name,
+            parsed_album = %album_name,
+            "Parsed music torrent name"
+        );
+
+        // Get albums in this library
+        let albums = self.db.albums().list_by_library(library_id).await?;
+
+        info!(
+            library_id = %library_id,
+            album_count = albums.len(),
+            parsed_artist = %artist_name,
+            parsed_album = %album_name,
+            "Searching for matching album in library"
+        );
+
+        if albums.is_empty() {
+            warn!(
+                library_id = %library_id,
+                "No albums found in library - cannot match music file"
+            );
+            return Ok(None);
+        }
+
+        // Find matching album by name similarity
+        let mut best_album_match: Option<(crate::db::AlbumRecord, f64)> = None;
+
+        for album in albums {
+            // Check album name similarity
+            let album_similarity = filename_parser::show_name_similarity(&album_name, &album.name);
+
+            // Also check if artist matches
+            let (artist_matches, artist_similarity, artist_db_name) = if let Ok(Some(artist)) =
+                self.db.albums().get_artist_by_id(album.artist_id).await
+            {
+                let similarity = filename_parser::show_name_similarity(&artist_name, &artist.name);
+                (similarity > 0.7, similarity, artist.name)
+            } else {
+                (false, 0.0, "Unknown".to_string())
+            };
+
+            debug!(
+                library_album = %album.name,
+                library_artist = %artist_db_name,
+                parsed_album = %album_name,
+                parsed_artist = %artist_name,
+                album_similarity = format!("{:.2}", album_similarity),
+                artist_similarity = format!("{:.2}", artist_similarity),
+                artist_matches = artist_matches,
+                "Comparing album"
+            );
+
+            // Require both album match and artist match
+            if album_similarity > 0.7 && artist_matches {
+                let score = album_similarity;
+                info!(
+                    album = %album.name,
+                    artist = %artist_db_name,
+                    score = format!("{:.2}", score),
+                    "Found potential album match"
+                );
+                if best_album_match.is_none() || score > best_album_match.as_ref().unwrap().1 {
+                    best_album_match = Some((album, score));
+                }
+            }
+        }
+
+        let (matched_album, album_confidence) = match best_album_match {
+            Some((album, score)) => (album, score),
+            None => {
+                debug!(
+                    artist = %artist_name,
+                    album = %album_name,
+                    library_id = %library_id,
+                    "No matching album found in library"
+                );
+                return Ok(None);
+            }
+        };
+
+        info!(
+            torrent_name = %torrent_name,
+            matched_album = %matched_album.name,
+            album_id = %matched_album.id,
+            confidence = album_confidence,
+            "Found matching album for music torrent"
+        );
+
+        // Now try to match the specific file to a track in this album
+        if let Some(result) = self
+            .try_match_track_in_album(
+                matched_album.id,
+                file_name,
+                file_index,
+                file_path,
+                file_size,
+                quality,
+            )
+            .await?
+        {
+            return Ok(Some(result));
+        }
+
+        // If we matched the album but not a specific track, still return a result
+        // by trying to match any track we can
+        debug!(
+            file_name = %file_name,
+            album = %matched_album.name,
+            "Could not match file to specific track in album"
+        );
+
         Ok(None)
     }
 
@@ -1573,6 +1803,90 @@ impl TorrentFileMatcher {
 struct ShouldDownload {
     skip: bool,
     reason: Option<String>,
+}
+
+/// Parse artist and album name from a music torrent name
+///
+/// Handles common patterns:
+/// - Scene: "Artist-Album-Year-Format-Group" (e.g., "Guns_N_Roses-Appetite_for_Destruction-REMASTERED-24BIT-WEB-FLAC-2018-KLV")
+/// - Other: "Artist - Album (Year) [Format]"
+/// - Simple: "Artist - Album"
+fn parse_music_torrent_name(torrent_name: &str) -> Option<(String, String)> {
+    // Clean up the name - replace underscores with spaces
+    let cleaned = torrent_name.replace('_', " ");
+
+    // Try scene format first: "Artist-Album-Year-..." where parts are separated by hyphens
+    // Scene releases typically have format info after the album name
+    let scene_keywords = [
+        "FLAC", "MP3", "WEB", "VINYL", "CD", "REMASTERED", "REMASTER", "DELUXE", "320", "V0",
+        "24BIT", "16BIT", "44", "48", "96", "192", "LOSSLESS",
+    ];
+
+    // Split by " - " first (common in non-scene releases)
+    if let Some(pos) = cleaned.find(" - ") {
+        let artist = cleaned[..pos].trim().to_string();
+        let rest = &cleaned[pos + 3..];
+
+        // Try to extract album name, stopping at year or format info
+        let album = rest
+            .split(|c: char| c == '(' || c == '[')
+            .next()
+            .unwrap_or(rest)
+            .trim();
+
+        // Remove trailing year if present (e.g., "Album 2018")
+        let album = album
+            .split_whitespace()
+            .filter(|s| !s.chars().all(|c| c.is_ascii_digit()) || s.len() != 4)
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        if !artist.is_empty() && !album.is_empty() {
+            return Some((artist, album));
+        }
+    }
+
+    // Try scene format: split by single hyphen with spaces around it or just hyphen
+    let parts: Vec<&str> = cleaned.split('-').map(|s| s.trim()).collect();
+
+    if parts.len() >= 2 {
+        let artist = parts[0].to_string();
+
+        // Find where the album name ends (before year/format info)
+        let mut album_parts = Vec::new();
+        for (i, part) in parts[1..].iter().enumerate() {
+            let upper = part.to_uppercase();
+
+            // Check if this part is a year (4 digits)
+            if part.chars().all(|c| c.is_ascii_digit()) && part.len() == 4 {
+                // This is likely the year, stop here
+                break;
+            }
+
+            // Check if this looks like format/quality info
+            if scene_keywords.iter().any(|kw| upper.contains(kw)) {
+                break;
+            }
+
+            // Skip if it looks like a release group (usually short, at the end)
+            if i > 0 && part.len() <= 6 && part.chars().all(|c| c.is_alphanumeric()) {
+                // Might be release group, check if previous was format keyword
+                let prev_upper = parts[i].to_uppercase();
+                if scene_keywords.iter().any(|kw| prev_upper.contains(kw)) {
+                    break;
+                }
+            }
+
+            album_parts.push(*part);
+        }
+
+        if !artist.is_empty() && !album_parts.is_empty() {
+            let album = album_parts.join(" ").trim().to_string();
+            return Some((artist, album));
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -1881,6 +2195,52 @@ mod tests {
                 .map(|r| r.to_lowercase() == "2160p")
                 .unwrap_or(false)
         );
+    }
+
+    // =========================================================================
+    // Music Torrent Name Parsing Tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_music_torrent_name_scene_format() {
+        // Scene format: Artist-Album-Year-Format-Group
+        let result = parse_music_torrent_name(
+            "Guns_N_Roses-Appetite_for_Destruction-REMASTERED-24BIT-WEB-FLAC-2018-KLV",
+        );
+        assert!(result.is_some(), "Should parse scene format torrent name");
+        let (artist, album) = result.unwrap();
+        assert_eq!(artist, "Guns N Roses");
+        assert_eq!(album, "Appetite for Destruction");
+    }
+
+    #[test]
+    fn test_parse_music_torrent_name_standard_format() {
+        // Standard format: "Artist - Album (Year)"
+        let result = parse_music_torrent_name("Pink Floyd - The Dark Side of the Moon (1973)");
+        assert!(result.is_some(), "Should parse standard format");
+        let (artist, album) = result.unwrap();
+        assert_eq!(artist, "Pink Floyd");
+        assert_eq!(album, "The Dark Side of the Moon");
+    }
+
+    #[test]
+    fn test_parse_music_torrent_name_with_brackets() {
+        // Format with brackets: "Artist - Album [FLAC]"
+        let result = parse_music_torrent_name("Daft Punk - Random Access Memories [FLAC]");
+        assert!(result.is_some(), "Should parse format with brackets");
+        let (artist, album) = result.unwrap();
+        assert_eq!(artist, "Daft Punk");
+        assert_eq!(album, "Random Access Memories");
+    }
+
+    #[test]
+    fn test_parse_music_torrent_name_simple() {
+        // Simple format: "Artist - Album"
+        let result = parse_music_torrent_name("The Beatles - Abbey Road");
+        assert!(result.is_some(), "Should parse simple format");
+        let (artist, album) = result.unwrap();
+        assert_eq!(artist, "The Beatles");
+        assert_eq!(album, "Abbey Road");
     }
 
     // =========================================================================

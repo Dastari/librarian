@@ -91,7 +91,7 @@ impl<T: Send + 'static> WorkQueue<T> {
         let processor = Arc::new(processor);
 
         tokio::spawn(async move {
-            info!(queue = %queue_name, "Work queue started");
+            info!(queue = %queue_name, "Work queue '{}' started", queue_name);
 
             while let Some(job) = receiver.recv().await {
                 let sem = sem_clone.clone();

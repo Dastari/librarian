@@ -84,6 +84,8 @@ pub struct QueryRoot(
     queries::IndexerQueries,
     queries::FilesystemQueries,
     queries::SystemQueries,
+    queries::PriorityRuleQueries,
+    queries::UsenetQueries,
 );
 
 #[derive(MergedObject, Default)]
@@ -102,4 +104,6 @@ pub struct MutationRoot(
     mutations::LogMutations,
     mutations::IndexerMutations,
     mutations::FilesystemMutations,
+    mutations::PriorityRuleMutations,
+    mutations::UsenetMutations,
 );

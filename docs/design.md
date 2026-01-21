@@ -214,14 +214,14 @@ The RSS poller will:
 3. Match against wanted episodes in monitored shows
 4. Apply quality filters before downloading
 
-### Torrent Indexers (Native)
+### Indexer System (Native)
 
-Native Jackett-like indexer system built into the backend:
+Native Jackett-like indexer system built into the backend, supporting both torrent and usenet sources:
 
 **Architecture:**
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                          TORRENT INDEXER SYSTEM                             │
+│                           INDEXER SYSTEM                                     │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
@@ -239,33 +239,111 @@ Native Jackett-like indexer system built into the backend:
        ┌───────────────────┼───────────────────┐
        ▼                   ▼                   ▼
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│ IPTorrents  │    │ Cardigann   │    │  (Future)   │
-│  Indexer    │    │  (YAML)     │    │  Indexers   │
+│ IPTorrents  │    │ Cardigann   │    │  Newznab    │
+│  (Torrent)  │    │  (YAML)     │    │  (Usenet)   │
 └─────────────┘    └─────────────┘    └─────────────┘
        │                   │                   │
        └───────────────────┼───────────────────┘
                            ▼
               ┌──────────────────────────┐
-              │   HTTP Request + HTML    │
-              │   Parsing (scraper)      │
+              │   HTTP Request + Parse   │
               └──────────────────────────┘
 ```
 
 **Supported Indexers:**
-- **IPTorrents**: Private tracker, cookie-based authentication, HTML scraping
-- **Cardigann (planned)**: YAML-based definitions for generic tracker support
+- **IPTorrents**: Private torrent tracker, cookie-based authentication, HTML scraping
+- **Cardigann**: YAML-based definitions for generic tracker support
+- **Newznab**: Usenet indexers (NZBgeek, DrunkenSlug, etc.), API key auth
 
 **Key Features:**
 - Credentials encrypted with AES-256-GCM (key stored in database)
 - Torznab-compatible API at `/api/torznab/{indexer_id}` for external tools
 - GraphQL API for all management (no REST for config)
 - Rate limiting and request throttling
+- Per-indexer download type (torrent vs usenet)
+- Per-indexer post-download action (copy/move/hardlink)
 
 **Database Tables:**
-- `indexer_configs`: Indexer instances (name, type, enabled)
+- `indexer_configs`: Indexer instances (name, type, enabled, download_type)
 - `indexer_credentials`: Encrypted credentials (cookie, api_key, etc.)
 - `indexer_settings`: Per-indexer settings
-- `indexer_search_cache`: Cached search results (TTL-based)
+
+### Usenet Support
+
+Native usenet download support parallel to torrents:
+
+**Architecture:**
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          USENET DOWNLOAD SYSTEM                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  Newznab     │     │  NZB Parser  │     │    NNTP      │
+│  Indexer     │     │              │     │   Client     │
+└──────┬───────┘     └──────┬───────┘     └──────┬───────┘
+       │                    │                    │
+       ▼                    ▼                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          UsenetService                                       │
+│  - Download queue management                                                 │
+│  - Multi-server support with priority                                        │
+│  - yEnc decoding                                                            │
+│  - Article assembly                                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Features:**
+- NNTP client with SSL/TLS support
+- Multi-server configuration with failover
+- NZB file parsing
+- yEnc decoding
+- Download progress tracking
+- Post-download processing (same pipeline as torrents)
+
+**Database Tables:**
+- `usenet_servers`: NNTP server configurations
+- `usenet_downloads`: Download queue (parallel to `torrents`)
+- `usenet_file_matches`: File-level matching (parallel to `torrent_file_matches`)
+
+### Source Priority System
+
+Controls which sources (indexers) are used for different content types:
+
+**Scope Hierarchy:**
+1. Per-library (most specific)
+2. Per-library-type (movies, tv, music, audiobooks)
+3. Global default (fallback)
+
+**Features:**
+- Drag-and-drop priority ordering
+- Mixed torrent/usenet sources
+- Option to stop at first match or search all
+- Per-scope enable/disable
+
+**Database Table:**
+- `source_priority_rules`: Priority configurations
+
+### LLM Filename Parsing
+
+Uses Ollama for parsing difficult filenames when regex fails:
+
+**Flow:**
+```
+Filename → Regex Parser → Success? → Use result
+                          │
+                          └→ Failure → LLM Parser (Ollama) → Use LLM result
+```
+
+**Features:**
+- Per-library-type model configuration
+- Fallback when regex patterns fail
+- Extracts: show/movie name, season, episode, year, quality
+- Confidence scoring
+
+**Database Tables:**
+- `app_settings`: LLM parser toggle
+- `llm_library_type_models`: Per-type model selection
 
 ### Auto Hunt System
 
@@ -463,27 +541,106 @@ rss_feeds
 ├── created_at, updated_at
 ```
 
-### Downloads (enhanced)
+### Torrents
 
 ```sql
-downloads
+torrents
 ├── id (UUID)
 ├── user_id (UUID)
-├── library_id (UUID, FK → libraries)
-├── episode_id (UUID, FK → episodes) - what we're downloading for
 ├── info_hash (VARCHAR) - torrent hash
 ├── name (VARCHAR)
-├── state (VARCHAR) - queued|downloading|seeding|completed|processing|failed
+├── state (VARCHAR) - queued|downloading|seeding|completed|paused|error
 ├── progress (DECIMAL)
 ├── size_bytes (BIGINT)
-├── download_path (TEXT) - where files are downloading to
-├── source_url (TEXT) - RSS item link or magnet
+├── download_path (TEXT)
+├── source_url (TEXT) - magnet or .torrent URL
 ├── source_feed_id (UUID, FK → rss_feeds)
-├── post_process_status (VARCHAR) - pending|processing|completed|failed
-├── post_process_error (TEXT)
+├── source_indexer_id (UUID, FK → indexer_configs)
+├── library_id (UUID, FK → libraries)
+├── episode_id (UUID, FK → episodes)
+├── movie_id (UUID, FK → movies)
+├── album_id (UUID, FK → albums)
+├── audiobook_id (UUID, FK → audiobooks)
+├── post_process_status (VARCHAR) - pending|processing|completed|matched|unmatched|error
+├── excluded_files (INTEGER[]) - file indices to skip
 ├── added_at (TIMESTAMPTZ)
 ├── completed_at (TIMESTAMPTZ)
-├── processed_at (TIMESTAMPTZ)
+```
+
+### Torrent File Matches
+
+```sql
+torrent_file_matches
+├── id (UUID)
+├── torrent_id (UUID, FK → torrents)
+├── file_index (INTEGER)
+├── file_path (TEXT)
+├── file_size (BIGINT)
+├── episode_id (UUID, FK → episodes)
+├── movie_id (UUID, FK → movies)
+├── track_id (UUID, FK → tracks)
+├── audiobook_chapter_id (UUID, FK → audiobook_chapters)
+├── match_type (VARCHAR) - auto|manual|forced
+├── match_confidence (DECIMAL)
+├── parsed_resolution (VARCHAR)
+├── parsed_codec (VARCHAR)
+├── skip_download (BOOLEAN)
+├── processed (BOOLEAN)
+├── media_file_id (UUID, FK → media_files)
+├── UNIQUE(torrent_id, file_index)
+```
+
+### Usenet Servers
+
+```sql
+usenet_servers
+├── id (UUID)
+├── user_id (UUID)
+├── name (VARCHAR)
+├── host (VARCHAR)
+├── port (INTEGER)
+├── use_ssl (BOOLEAN)
+├── username (VARCHAR)
+├── encrypted_password (TEXT)
+├── connections (INTEGER)
+├── priority (INTEGER) - lower = higher priority
+├── enabled (BOOLEAN)
+├── retention_days (INTEGER)
+```
+
+### Usenet Downloads
+
+```sql
+usenet_downloads
+├── id (UUID)
+├── user_id (UUID)
+├── nzb_name (VARCHAR)
+├── nzb_hash (VARCHAR)
+├── state (VARCHAR) - queued|downloading|paused|completed|failed
+├── progress (DECIMAL)
+├── size_bytes (BIGINT)
+├── downloaded_bytes (BIGINT)
+├── download_path (TEXT)
+├── library_id (UUID, FK → libraries)
+├── episode_id (UUID, FK → episodes)
+├── movie_id (UUID, FK → movies)
+├── album_id (UUID, FK → albums)
+├── audiobook_id (UUID, FK → audiobooks)
+├── indexer_id (UUID, FK → indexer_configs)
+├── post_process_status (VARCHAR)
+```
+
+### Source Priority Rules
+
+```sql
+source_priority_rules
+├── id (UUID)
+├── user_id (UUID)
+├── library_type (VARCHAR) - movies|tv|music|audiobooks|NULL for default
+├── library_id (UUID, FK → libraries) - NULL for type-level
+├── priority_order (JSONB) - [{source_type, id}, ...]
+├── search_all_sources (BOOLEAN) - stop at first match if false
+├── enabled (BOOLEAN)
 ```
 
 ### Jobs (enhanced)
@@ -613,11 +770,12 @@ type Mutation {
 | **Library Scanner** | Per-library (configurable) | Walk paths, detect new/changed files |
 | **Filesystem Watcher** | Real-time (inotify) | Immediate detection of new files |
 | **RSS Poller** | Every 15 min (configurable) | Check RSS feeds for new releases |
-| **Download Monitor** | Every 1 min | Process completed torrents, organize files |
+| **Download Monitor** | Every 1 min | Process completed torrents/usenet, organize files |
 | **Auto-Hunt** | Event-driven | Search indexers for missing content (triggers on add + after scans) |
 | **Metadata Fetcher** | On demand | Fetch show/episode/movie info from APIs |
 | **Transcode GC** | Daily at 3 AM | Clean old HLS transcodes |
 | **Schedule Sync** | Hourly | Sync TV schedule from TVMaze |
+| **Artwork Job** | On demand | Fetch missing posters/backdrops |
 
 ---
 
@@ -754,34 +912,42 @@ OPENAI_API_KEY=
 
 ## MVP vs. Later
 
-### MVP (Completed)
+### Completed Features
 - ✅ Native torrent client (librqbit)
+- ✅ Native usenet client (NNTP + yEnc)
 - ✅ GraphQL subscriptions for real-time updates
 - ✅ TV library management (create, scan, browse)
+- ✅ Movie library management (TMDB integration)
+- ✅ Music library management (MusicBrainz integration)
+- ✅ Audiobook library management (Audible/OpenLibrary)
 - ✅ Show management (add, search, monitor)
-- ✅ Episode tracking (wanted list)
-- ✅ RSS feed polling
+- ✅ Episode/track/chapter tracking (wanted list)
+- ✅ RSS feed polling with auto-download
 - ✅ Post-download processing with organization
 - ✅ Auto-rename and organization with naming patterns
 - ✅ Quality filters (per-library, type-aware)
-- ✅ Native indexer system (Jackett-like)
+- ✅ Quality verification via FFprobe
+- ✅ Native indexer system (Torznab/Newznab)
 - ✅ Auto-Hunt (event-driven, immediate on add + after scans)
-- ✅ Movie library support
-- ✅ Music library support (MusicBrainz metadata)
-- ✅ Audiobook library support (OpenLibrary metadata)
-- ✅ Two-way content acquisition (Library-first and Torrent-first workflows)
+- ✅ Source priority rules (per-library-type ordering)
+- ✅ Two-way content acquisition (Library-first and Torrent-first)
 - ✅ Authenticated downloads for private trackers
 - ✅ Chromecast casting support
+- ✅ Watch progress tracking
+- ✅ Media chapter support
+- ✅ LLM filename parsing (Ollama)
+- ✅ File-level matching (season packs, multi-file torrents)
 
-### Later
-- Multi‑quality HLS ladder + dynamic ABR
-- Advanced quality upgrading
-- DLNA server
-- Subtitles management (embedded, external, OCR for PGS)
-- Hardware transcoding (NVENC/VAAPI/QSV)
-- Multi‑user sharing with roles
-- Mobile‑friendly PWA, offline posters, push notifications
-- AirPlay casting support
+### Planned Features
+- ⏳ Multi-quality HLS ladder + dynamic ABR
+- ⏳ Automatic quality upgrading
+- ⏳ DLNA server
+- ⏳ Subtitle automation (search, sync, OCR for PGS)
+- ⏳ Hardware transcoding (NVENC/VAAPI/QSV)
+- ⏳ Multi-user sharing with roles
+- ⏳ Mobile-friendly PWA, offline posters, push notifications
+- ⏳ AirPlay casting support
+- ⏳ Filesystem watching (inotify for real-time detection)
 
 ---
 

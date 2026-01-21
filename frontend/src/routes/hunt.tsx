@@ -21,6 +21,8 @@ import {
   IconMusic,
   IconHeadphones,
   IconCategory,
+  IconServer,
+  IconCloud,
 } from '@tabler/icons-react'
 import {
   graphqlClient,
@@ -93,6 +95,10 @@ function SearchPage() {
     'type',
     parseAsStringLiteral(['all', 'tv', 'movies', 'music', 'audiobooks'] as const).withDefault('all')
   )
+  // Target IDs for linking downloads to library items
+  const [albumId] = useQueryState('albumId', parseAsString)
+  const [movieId] = useQueryState('movieId', parseAsString)
+  const [episodeId] = useQueryState('episodeId', parseAsString)
   
   // Table sorting state - persisted in URL
   const [sortColumn, setSortColumn] = useQueryState('sort', parseAsString.withDefault('seeders'))
@@ -266,6 +272,10 @@ function SearchPage() {
             url: !isMagnet ? (magnetUri || torrentUrl) : undefined,
             // Pass indexer ID for authenticated .torrent downloads
             indexerId: !isMagnet && release.indexerId ? release.indexerId : undefined,
+            // Pass target IDs for file-level matching when available
+            albumId: albumId || undefined,
+            movieId: movieId || undefined,
+            episodeId: episodeId || undefined,
           },
         })
         .toPromise()
@@ -297,7 +307,7 @@ function SearchPage() {
         return next
       })
     }
-  }, [])
+  }, [albumId, movieId, episodeId])
 
   // Table columns
   const columns: DataTableColumn<TorrentRelease>[] = useMemo(
@@ -319,6 +329,18 @@ function SearchPage() {
               )}
             </div>
             <div className="flex items-center gap-2 text-xs text-default-400 mt-0.5">
+              {/* Source type indicator based on magnet/link type */}
+              {release.magnetUri || release.link ? (
+                <Chip size="sm" variant="flat" color="primary" className="h-4 text-[10px]">
+                  <IconDownload size={10} className="mr-0.5" />
+                  Torrent
+                </Chip>
+              ) : (
+                <Chip size="sm" variant="flat" color="secondary" className="h-4 text-[10px]">
+                  <IconServer size={10} className="mr-0.5" />
+                  Usenet
+                </Chip>
+              )}
               <span>{release.indexerName}</span>
               {release.details && (
                 <a

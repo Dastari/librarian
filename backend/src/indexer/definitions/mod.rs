@@ -12,6 +12,7 @@
 
 pub mod cardigann;
 pub mod iptorrents;
+pub mod newznab;
 
 use once_cell::sync::Lazy;
 
@@ -90,7 +91,25 @@ pub static AVAILABLE_INDEXERS: Lazy<Vec<IndexerTypeInfo>> = Lazy::new(|| {
             ],
             is_native: true,
         },
-        // Additional indexers will be added here
+        IndexerTypeInfo {
+            id: "newznab",
+            name: "Newznab",
+            description: "Generic Newznab-compatible Usenet indexer (NZBGeek, DrunkenSlug, etc.)",
+            tracker_type: "private",
+            language: "en-US",
+            site_link: "",  // User must provide API URL
+            required_credentials: &["api_key"],
+            optional_settings: &[
+                SettingDefinition {
+                    key: "vip_expiry_check",
+                    label: "Check VIP status expiry",
+                    setting_type: SettingType::Checkbox,
+                    default_value: Some("false"),
+                    options: None,
+                },
+            ],
+            is_native: true,
+        },
     ]
 });
 

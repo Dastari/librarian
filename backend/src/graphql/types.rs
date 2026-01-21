@@ -316,6 +316,8 @@ pub struct AddTorrentInput {
     pub episode_id: Option<String>,
     /// Optional movie ID to link the download to
     pub movie_id: Option<String>,
+    /// Optional album ID to link the download to (for music)
+    pub album_id: Option<String>,
     /// Optional indexer ID (for authenticated .torrent downloads)
     pub indexer_id: Option<String>,
 }
@@ -2041,6 +2043,12 @@ pub struct TrackWithStatus {
     pub has_file: bool,
     pub file_path: Option<String>,
     pub file_size: Option<i64>,
+    /// Audio codec (e.g., FLAC, AAC, MP3)
+    pub audio_codec: Option<String>,
+    /// Bitrate in kbps
+    pub bitrate: Option<i32>,
+    /// Audio channels (e.g., "stereo", "5.1")
+    pub audio_channels: Option<String>,
 }
 
 impl From<crate::db::TrackWithStatus> for TrackWithStatus {
@@ -2049,6 +2057,9 @@ impl From<crate::db::TrackWithStatus> for TrackWithStatus {
             has_file: r.has_file,
             file_path: r.file_path,
             file_size: r.file_size,
+            audio_codec: r.audio_codec,
+            bitrate: r.bitrate,
+            audio_channels: r.audio_channels,
             track: r.track.into(),
         }
     }
@@ -3882,6 +3893,12 @@ pub struct IndexerSearchInput {
     pub imdb_id: Option<String>,
     /// Result limit
     pub limit: Option<i32>,
+    /// Library type for priority-based search (e.g., "tv", "movies")
+    pub library_type: Option<String>,
+    /// Library ID for priority-based search
+    pub library_id: Option<String>,
+    /// Whether to use priority-based search (defaults to true if library context provided)
+    pub respect_priority: Option<bool>,
 }
 
 /// Result of an indexer mutation
@@ -3917,6 +3934,12 @@ pub struct IndexerSearchResultSet {
     pub total_releases: i32,
     /// Total time taken in milliseconds
     pub total_elapsed_ms: i64,
+    /// Whether search stopped early after finding matches (priority-based search)
+    pub stopped_early: bool,
+    /// Number of sources that were searched
+    pub sources_searched: i32,
+    /// Description of which priority rule was applied
+    pub priority_rule_used: Option<String>,
 }
 
 /// Search results from a single indexer
@@ -4331,4 +4354,229 @@ impl From<&str> for DownloadStatus {
             _ => Self::Missing,
         }
     }
+}
+
+// ============================================================================
+// Source Priority Rules Types
+// ============================================================================
+
+/// A source priority rule
+#[derive(Debug, Clone, SimpleObject)]
+pub struct SourcePriorityRule {
+    pub id: String,
+    pub library_type: Option<String>,
+    pub library_id: Option<String>,
+    pub priority_order: Vec<SourceRef>,
+    pub search_all_sources: bool,
+    pub enabled: bool,
+}
+
+impl From<crate::db::PriorityRuleRecord> for SourcePriorityRule {
+    fn from(record: crate::db::PriorityRuleRecord) -> Self {
+        Self {
+            id: record.id.to_string(),
+            library_type: record.library_type,
+            library_id: record.library_id.map(|id| id.to_string()),
+            priority_order: record
+                .priority_order
+                .0
+                .into_iter()
+                .map(SourceRef::from)
+                .collect(),
+            search_all_sources: record.search_all_sources,
+            enabled: record.enabled,
+        }
+    }
+}
+
+/// A reference to a download source
+#[derive(Debug, Clone, SimpleObject)]
+pub struct SourceRef {
+    pub source_type: String,
+    pub id: String,
+}
+
+impl From<crate::db::priority_rules::SourceRef> for SourceRef {
+    fn from(s: crate::db::priority_rules::SourceRef) -> Self {
+        Self {
+            source_type: s.source_type.to_string().to_uppercase().replace("_", "_"),
+            id: s.id,
+        }
+    }
+}
+
+/// Input for setting a priority rule
+#[derive(Debug, Clone, InputObject)]
+pub struct SetPriorityRuleInput {
+    pub library_type: Option<String>,
+    pub library_id: Option<String>,
+    pub priority_order: Vec<SourceRefInput>,
+    pub search_all_sources: Option<bool>,
+}
+
+/// Input for a source reference
+#[derive(Debug, Clone, InputObject)]
+pub struct SourceRefInput {
+    pub source_type: String,
+    pub id: String,
+}
+
+/// Result of a priority rule mutation
+#[derive(Debug, Clone, SimpleObject)]
+pub struct PriorityRuleResult {
+    pub success: bool,
+    pub error: Option<String>,
+    pub rule: Option<SourcePriorityRule>,
+}
+
+/// An available source for priority configuration
+#[derive(Debug, Clone, SimpleObject)]
+pub struct AvailableSource {
+    pub source_type: String,
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub is_healthy: bool,
+}
+
+// ============================================================================
+// Usenet Types
+// ============================================================================
+
+/// A usenet server configuration
+#[derive(Debug, Clone, SimpleObject)]
+pub struct UsenetServer {
+    pub id: String,
+    pub name: String,
+    pub host: String,
+    pub port: i32,
+    pub use_ssl: bool,
+    pub username: Option<String>,
+    pub connections: i32,
+    pub priority: i32,
+    pub enabled: bool,
+    pub retention_days: Option<i32>,
+    pub last_success_at: Option<String>,
+    pub last_error: Option<String>,
+    pub error_count: i32,
+}
+
+impl From<crate::db::UsenetServerRecord> for UsenetServer {
+    fn from(record: crate::db::UsenetServerRecord) -> Self {
+        Self {
+            id: record.id.to_string(),
+            name: record.name,
+            host: record.host,
+            port: record.port,
+            use_ssl: record.use_ssl,
+            username: record.username,
+            connections: record.connections,
+            priority: record.priority,
+            enabled: record.enabled,
+            retention_days: record.retention_days,
+            last_success_at: record.last_success_at.map(|dt| dt.to_rfc3339()),
+            last_error: record.last_error,
+            error_count: record.error_count,
+        }
+    }
+}
+
+/// Input for creating a usenet server
+#[derive(Debug, Clone, InputObject)]
+pub struct CreateUsenetServerInput {
+    pub name: String,
+    pub host: String,
+    pub port: i32,
+    pub use_ssl: Option<bool>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub connections: Option<i32>,
+    pub priority: Option<i32>,
+    pub retention_days: Option<i32>,
+}
+
+/// Input for updating a usenet server
+#[derive(Debug, Clone, InputObject)]
+pub struct UpdateUsenetServerInput {
+    pub name: Option<String>,
+    pub host: Option<String>,
+    pub port: Option<i32>,
+    pub use_ssl: Option<bool>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub connections: Option<i32>,
+    pub priority: Option<i32>,
+    pub enabled: Option<bool>,
+    pub retention_days: Option<i32>,
+}
+
+/// Result of a usenet server mutation
+#[derive(Debug, Clone, SimpleObject)]
+pub struct UsenetServerResult {
+    pub success: bool,
+    pub error: Option<String>,
+    pub server: Option<UsenetServer>,
+}
+
+/// A usenet download
+#[derive(Debug, Clone, SimpleObject)]
+pub struct UsenetDownload {
+    pub id: String,
+    pub name: String,
+    pub state: String,
+    pub progress: f64,
+    pub size: Option<i64>,
+    pub downloaded: i64,
+    pub download_speed: i64,
+    pub eta_seconds: Option<i32>,
+    pub error_message: Option<String>,
+    pub library_id: Option<String>,
+    pub episode_id: Option<String>,
+    pub movie_id: Option<String>,
+    pub album_id: Option<String>,
+    pub audiobook_id: Option<String>,
+}
+
+impl From<crate::db::UsenetDownloadRecord> for UsenetDownload {
+    fn from(record: crate::db::UsenetDownloadRecord) -> Self {
+        Self {
+            id: record.id.to_string(),
+            name: record.nzb_name,
+            state: record.state,
+            progress: record
+                .progress
+                .map(|p| p.to_string().parse::<f64>().unwrap_or(0.0))
+                .unwrap_or(0.0),
+            size: record.size_bytes,
+            downloaded: record.downloaded_bytes.unwrap_or(0),
+            download_speed: record.download_speed.unwrap_or(0),
+            eta_seconds: record.eta_seconds,
+            error_message: record.error_message,
+            library_id: record.library_id.map(|id| id.to_string()),
+            episode_id: record.episode_id.map(|id| id.to_string()),
+            movie_id: record.movie_id.map(|id| id.to_string()),
+            album_id: record.album_id.map(|id| id.to_string()),
+            audiobook_id: record.audiobook_id.map(|id| id.to_string()),
+        }
+    }
+}
+
+/// Input for adding a usenet download
+#[derive(Debug, Clone, InputObject)]
+pub struct AddUsenetDownloadInput {
+    pub nzb_url: String,
+    pub library_id: Option<String>,
+    pub episode_id: Option<String>,
+    pub movie_id: Option<String>,
+    pub album_id: Option<String>,
+    pub audiobook_id: Option<String>,
+    pub indexer_id: Option<String>,
+}
+
+/// Result of a usenet download mutation
+#[derive(Debug, Clone, SimpleObject)]
+pub struct UsenetDownloadResult {
+    pub success: bool,
+    pub error: Option<String>,
+    pub download: Option<UsenetDownload>,
 }
