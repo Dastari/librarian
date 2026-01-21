@@ -106,6 +106,16 @@ import {
 // Sub-components
 // ============================================================================
 
+/** Resolve a dynamic label (string or function) to a string */
+function resolveLabel<T>(label: string | ((item: T) => string), item: T): string {
+  return typeof label === 'function' ? label(item) : label;
+}
+
+/** Resolve a dynamic icon (ReactNode or function) to a ReactNode */
+function resolveIcon<T>(icon: React.ReactNode | ((item: T) => React.ReactNode) | undefined, item: T): React.ReactNode {
+  return typeof icon === 'function' ? icon(item) : icon;
+}
+
 interface RowActionsDropdownProps<T> {
   item: T
   actions: RowAction<T>[]
@@ -132,11 +142,11 @@ function RowActionsDropdown<T>({ item, actions }: RowActionsDropdownProps<T>) {
             key={action.key}
             color={action.isDestructive ? 'danger' : action.color}
             className={action.isDestructive ? 'text-danger' : ''}
-            startContent={action.icon}
+            startContent={resolveIcon(action.icon, item)}
             isDisabled={action.isDisabled ? action.isDisabled(item) : false}
             onPress={() => action.onAction(item)}
           >
-            {action.label}
+            {resolveLabel(action.label, item)}
           </DropdownItem>
         ))}
       </DropdownMenu>
@@ -158,7 +168,7 @@ function InlineRowActions<T>({ item, actions }: InlineRowActionsProps<T>) {
   return (
     <>
       {visibleActions.map((action) => (
-        <Tooltip key={action.key} content={action.label}>
+        <Tooltip key={action.key} content={resolveLabel(action.label, item)}>
           <Button
             isIconOnly
             size="sm"
@@ -167,7 +177,7 @@ function InlineRowActions<T>({ item, actions }: InlineRowActionsProps<T>) {
             isDisabled={action.isDisabled ? action.isDisabled(item) : false}
             onPress={() => action.onAction(item)}
           >
-            {action.icon}
+            {resolveIcon(action.icon, item)}
           </Button>
         </Tooltip>
       ))}

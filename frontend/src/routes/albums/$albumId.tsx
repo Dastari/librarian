@@ -24,14 +24,16 @@ import { DataTable, type DataTableColumn, type RowAction } from '../../component
 import {
   IconDisc,
   IconMusic,
-  IconCheck,
-  IconX,
   IconSearch,
   IconRefresh,
   IconPlayerPlay,
+  IconPlayerPause,
   IconInfoCircle,
 } from '@tabler/icons-react'
+// Note: IconPlayerPause is used for artwork overlay
 import { FilePropertiesModal } from '../../components/FilePropertiesModal'
+import { TrackStatusChip, PlayPauseIndicator } from '../../components/shared'
+import { usePlaybackContext } from '../../contexts/PlaybackContext'
 
 export const Route = createFileRoute('/albums/$albumId')({
   beforeLoad: ({ context, location }) => {
@@ -153,38 +155,51 @@ const trackColumns: DataTableColumn<TrackWithStatus>[] = [
     label: 'Status',
     width: 110,
     sortable: true,
-    render: (t) => (
-      <div className="flex items-center gap-1">
-        {t.hasFile ? (
-          <Chip size="sm" color="success" variant="flat" startContent={<IconCheck size={12} />}>
-            Downloaded
-          </Chip>
-        ) : (
-          <Chip size="sm" color="warning" variant="flat" startContent={<IconX size={12} />}>
-            Wanted
-          </Chip>
-        )}
-      </div>
-    ),
+    render: (t) => <TrackStatusChip status={t.track.status} />,
   },
 ]
 
 interface TrackTableProps {
   tracks: TrackWithStatus[]
+  albumId: string
   onPlay: (track: TrackWithStatus) => void
   onSearch: (track: TrackWithStatus) => void
   onShowProperties: (track: TrackWithStatus) => void
+  fetchAlbum: () => void
 }
 
-function TrackTable({ tracks, onPlay, onSearch, onShowProperties }: TrackTableProps) {
-  const rowActions = useMemo<RowAction<TrackWithStatus>[]>(() => [
+function TrackTable({ tracks, albumId, onPlay, onSearch, onShowProperties, fetchAlbum }: TrackTableProps) {
+  // Get session and updatePlayback directly from context for reliable updates
+  const { session, updatePlayback } = usePlaybackContext()
+  
+  // Handle pause directly using context
+  const handlePause = useCallback(() => {
+    updatePlayback({ isPlaying: false })
+  }, [updatePlayback])
+  
+  // Compute playing state from session
+  const currentlyPlayingTrackId = session?.albumId === albumId ? session?.trackId : null
+  const isPlaying = session?.isPlaying ?? false
+  // Row actions - computed fresh on each render to ensure playing state is always current
+  const rowActions: RowAction<TrackWithStatus>[] = [
+    // Playing indicator with pause on hover - shown for currently playing track
     {
-      key: 'play',
+      key: `playing-${currentlyPlayingTrackId || 'none'}`,
+      label: 'Pause',
+      icon: <PlayPauseIndicator size={16} isPlaying={isPlaying} colorClass="bg-success" />,
+      color: 'default',
+      inDropdown: false,
+      isVisible: (t) => t.track.status === 'downloaded' && !!t.track.mediaFileId && currentlyPlayingTrackId === t.track.id && isPlaying,
+      onAction: () => handlePause(),
+    },
+    // Play action - shown for all other tracks or when paused
+    {
+      key: `play-${currentlyPlayingTrackId || 'none'}-${isPlaying}`,
       label: 'Play',
       icon: <IconPlayerPlay size={16} />,
       color: 'success',
       inDropdown: false,
-      isVisible: (t) => t.hasFile && !!t.track.mediaFileId,
+      isVisible: (t) => t.track.status === 'downloaded' && !!t.track.mediaFileId && !(currentlyPlayingTrackId === t.track.id && isPlaying),
       onAction: (t) => onPlay(t),
     },
     {
@@ -193,7 +208,8 @@ function TrackTable({ tracks, onPlay, onSearch, onShowProperties }: TrackTablePr
       icon: <IconSearch size={16} />,
       color: 'default',
       inDropdown: false,
-      isVisible: (t) => !t.hasFile,
+      // Show search for missing or wanted tracks (not downloading or downloaded)
+      isVisible: (t) => t.track.status === 'missing' || t.track.status === 'wanted',
       onAction: (t) => onSearch(t),
     },
     {
@@ -202,24 +218,57 @@ function TrackTable({ tracks, onPlay, onSearch, onShowProperties }: TrackTablePr
       icon: <IconInfoCircle size={16} />,
       color: 'default',
       inDropdown: true,
-      isVisible: (t) => t.hasFile && !!t.track.mediaFileId,
+      // Only show properties for downloaded tracks with a media file
+      isVisible: (t) => t.track.status === 'downloaded' && !!t.track.mediaFileId,
       onAction: (t) => onShowProperties(t),
     },
-  ], [onPlay, onSearch, onShowProperties])
+  ]
+
+  // Create selection set for highlighting currently playing track
+  const selectedKeys = useMemo(() => {
+    if (currentlyPlayingTrackId) {
+      return new Set([currentlyPlayingTrackId])
+    }
+    return new Set<string>()
+  }, [currentlyPlayingTrackId])
+
+  // Key that changes when playback state changes to force re-render
+  const tableKey = `tracks-${currentlyPlayingTrackId || 'none'}-${isPlaying}`
 
   return (
     <DataTable
+    headerContent={
+      <div className="p-4">
+      <h2 className="text-lg font-semibold flex items-center gap-2">
+        <IconMusic size={20} className="text-green-400" />
+        Tracks
+      </h2>
+    </div>
+    }
+      key={tableKey}
       data={tracks}
       columns={trackColumns}
+      emptyContent={            <div className="p-8 text-center">
+        <IconMusic size={48} className="mx-auto mb-4 text-default-400" />
+        <h3 className="text-lg font-semibold mb-2">No Tracks</h3>
+        <p className="text-default-500 mb-4">
+          Track information hasn't been fetched yet.
+        </p>
+        <Button variant="flat" onPress={fetchAlbum}>
+          Refresh Album
+        </Button>
+      </div>
+      }
       getRowKey={(t) => t.track.id}
       ariaLabel="Album tracks"
-      removeWrapper
       isCompact
       showItemCount={false}
       hideToolbar
       defaultSortColumn="trackNumber"
       defaultSortDirection="asc"
       rowActions={rowActions}
+      selectionMode={currentlyPlayingTrackId ? 'single' : 'none'}
+      selectedKeys={selectedKeys}
     />
   )
 }
@@ -227,6 +276,10 @@ function TrackTable({ tracks, onPlay, onSearch, onShowProperties }: TrackTablePr
 function AlbumDetailPage() {
   const { albumId } = Route.useParams()
   const navigate = useNavigate()
+  const { startTrackPlayback, session, updatePlayback } = usePlaybackContext()
+  
+  // Check if this album is currently playing
+  const isThisAlbumPlaying = session?.albumId === albumId && session?.isPlaying
 
   const [albumData, setAlbumData] = useState<AlbumWithTracks | null>(null)
   const [library, setLibrary] = useState<Library | null>(null)
@@ -280,15 +333,19 @@ function AlbumDetailPage() {
     })
   }, [albumData, navigate])
 
-  // Handle play track - for now just open the file location
-  // TODO: Implement proper audio playback when audio player is available
+  // Handle play track - start playback with the audio player
   const handlePlayTrack = useCallback((track: TrackWithStatus) => {
-    if (track.filePath) {
-      // For now, we could open a file properties or just log
-      console.log('Play track:', track.track.title, track.filePath)
-      // TODO: Integrate with audio playback context when available
+    if (track.track.mediaFileId && albumData) {
+      // Get all tracks that have media files for the queue
+      const allTracks = albumData.tracks
+        .filter(t => t.track.mediaFileId)
+        .map(t => t.track)
+      
+      startTrackPlayback(track.track, albumData.album, allTracks)
     }
-  }, [])
+  }, [albumData, startTrackPlayback])
+
+  // Note: Playing state and pause handling are now inside TrackTable component directly from context
 
   // Navigate to hunt page for a specific track
   const handleSearchTrack = useCallback((track: TrackWithStatus) => {
@@ -312,6 +369,33 @@ function AlbumDetailPage() {
     onPropertiesOpen()
   }, [onPropertiesOpen])
 
+  // Calculate totals from tracks if not available on album
+  const totalDurationSecs = useMemo(() => {
+    if (!albumData) return 0
+    if (albumData.album.totalDurationSecs) return albumData.album.totalDurationSecs
+    return albumData.tracks.reduce((sum, t) => sum + (t.track.durationSecs || 0), 0)
+  }, [albumData])
+
+  const totalSizeBytes = useMemo(() => {
+    if (!albumData) return 0
+    if (albumData.album.sizeBytes) return albumData.album.sizeBytes
+    return albumData.tracks.reduce((sum, t) => sum + (t.fileSize || 0), 0)
+  }, [albumData])
+
+  // Get playable tracks for "Play All" functionality
+  const playableTracks = useMemo(() => {
+    if (!albumData) return []
+    return albumData.tracks.filter(t => t.track.status === 'downloaded' && t.track.mediaFileId)
+  }, [albumData])
+
+  // Handle "Play All" - start playback from the first track
+  const handlePlayAll = useCallback(() => {
+    if (playableTracks.length > 0 && albumData) {
+      const allTracks = playableTracks.map(t => t.track)
+      startTrackPlayback(allTracks[0], albumData.album, allTracks)
+    }
+  }, [playableTracks, albumData, startTrackPlayback])
+
   if (isLoading) {
     return (
       <div className="container mx-auto p-4 max-w-6xl">
@@ -330,7 +414,7 @@ function AlbumDetailPage() {
 
   if (error || !albumData) {
     return (
-      <div className="container mx-auto p-4 max-w-6xl">
+      <div className="container mx-auto p-4">
         <Card>
           <CardBody className="text-center py-12">
             <IconDisc size={48} className="mx-auto mb-4 text-default-400" />
@@ -345,10 +429,14 @@ function AlbumDetailPage() {
     )
   }
 
+  // Now that we know albumData is defined, destructure for convenience
   const { album, tracks } = albumData
+  
+  // Check if album is fully complete (100%)
+  const isComplete = albumData.completionPercent === 100
 
   return (
-    <div className="container mx-auto p-4 max-w-6xl">
+    <div className="container mx-auto p-4">
       {/* Breadcrumbs */}
       <Breadcrumbs className="mb-4">
         <BreadcrumbItem>
@@ -364,8 +452,8 @@ function AlbumDetailPage() {
 
       {/* Album Header */}
       <div className="flex flex-col md:flex-row gap-6 mb-6">
-        {/* Cover Art */}
-        <div className="w-64 shrink-0">
+        {/* Cover Art with Play Button */}
+        <div className="w-64 shrink-0 relative group">
           {album.coverUrl ? (
             <Image
               src={album.coverUrl}
@@ -380,11 +468,38 @@ function AlbumDetailPage() {
               <IconDisc size={64} className="text-default-400" />
             </div>
           )}
+          {/* Play/Pause Overlay Button */}
+          {playableTracks.length > 0 && (
+            <button
+              onClick={() => {
+                if (isThisAlbumPlaying) {
+                  updatePlayback({ isPlaying: false })
+                } else {
+                  handlePlayAll()
+                }
+              }}
+              className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 rounded-lg cursor-pointer"
+              aria-label={isThisAlbumPlaying ? 'Pause' : 'Play All'}
+            >
+              <div className={`w-16 h-16 rounded-full ${isThisAlbumPlaying ? 'bg-warning' : 'bg-primary'} flex items-center justify-center shadow-lg hover:scale-110 transition-transform`}>
+                {isThisAlbumPlaying ? (
+                  <IconPlayerPause size={32} className="text-white" />
+                ) : (
+                  <IconPlayerPlay size={32} className="text-white ml-1" />
+                )}
+              </div>
+            </button>
+          )}
         </div>
 
         {/* Album Info */}
         <div className="flex-1">
-          <h1 className="text-3xl font-bold mb-2">{album.name}</h1>
+          <h1 className="text-3xl font-bold mb-1">{album.name}</h1>
+
+          {/* Artist Name */}
+          {albumData.artistName && (
+            <p className="text-xl text-default-500 mb-3">{albumData.artistName}</p>
+          )}
 
           <div className="flex flex-wrap items-center gap-2 text-default-500 mb-4">
             {album.albumType && (
@@ -409,7 +524,7 @@ function AlbumDetailPage() {
             <Progress
               aria-label="Album completion"
               value={albumData.completionPercent}
-              color={albumData.completionPercent === 100 ? 'success' : 'primary'}
+              color={isComplete ? 'success' : 'primary'}
               size="sm"
             />
             {albumData.missingTracks > 0 && (
@@ -432,28 +547,30 @@ function AlbumDetailPage() {
             <div>
               <p className="text-xs text-default-400">Duration</p>
               <p className="text-lg font-semibold">
-                {album.totalDurationSecs
-                  ? formatDuration(album.totalDurationSecs)
+                {totalDurationSecs > 0
+                  ? formatDuration(totalDurationSecs)
                   : '-'}
               </p>
             </div>
             <div>
               <p className="text-xs text-default-400">Size</p>
               <p className="text-lg font-semibold">
-                {album.sizeBytes ? formatBytes(album.sizeBytes) : '-'}
+                {totalSizeBytes > 0 ? formatBytes(totalSizeBytes) : '-'}
               </p>
             </div>
           </div>
 
           {/* Actions */}
           <div className="flex flex-wrap gap-2">
-            <Button
-              color="primary"
-              startContent={<IconSearch size={16} />}
-              onPress={handleManualHunt}
-            >
-              Hunt for Album
-            </Button>
+            {!isComplete && (
+              <Button
+                color="primary"
+                startContent={<IconSearch size={16} />}
+                onPress={handleManualHunt}
+              >
+                Hunt for Album
+              </Button>
+            )}
             <Button
               variant="flat"
               startContent={<IconRefresh size={16} />}
@@ -465,37 +582,14 @@ function AlbumDetailPage() {
         </div>
       </div>
 
-      {/* Track List */}
-      <Card>
-        <CardBody className="p-0">
-          <div className="p-4 border-b border-default-200">
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <IconMusic size={20} className="text-green-400" />
-              Tracks
-            </h2>
-          </div>
-
-          {tracks.length === 0 ? (
-            <div className="p-8 text-center">
-              <IconMusic size={48} className="mx-auto mb-4 text-default-400" />
-              <h3 className="text-lg font-semibold mb-2">No Tracks</h3>
-              <p className="text-default-500 mb-4">
-                Track information hasn't been fetched yet.
-              </p>
-              <Button variant="flat" onPress={fetchAlbum}>
-                Refresh Album
-              </Button>
-            </div>
-          ) : (
-            <TrackTable
-              tracks={tracks}
-              onPlay={handlePlayTrack}
-              onSearch={handleSearchTrack}
-              onShowProperties={handleShowProperties}
-            />
-          )}
-        </CardBody>
-      </Card>
+    <TrackTable
+      fetchAlbum={fetchAlbum}
+      tracks={tracks}
+      albumId={albumData.album.id}
+      onPlay={handlePlayTrack}
+      onSearch={handleSearchTrack}
+      onShowProperties={handleShowProperties}
+    />
 
       {/* File Properties Modal */}
       <FilePropertiesModal

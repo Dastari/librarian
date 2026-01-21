@@ -36,12 +36,11 @@ interface UsenetDownload {
   name: string
   state: string
   progress: number
-  sizeBytes: number | null
-  downloadedBytes: number
+  size: number | null
+  downloaded: number
   downloadSpeed: number
-  eta: number | null
+  etaSeconds: number | null
   errorMessage: string | null
-  createdAt: string
 }
 
 // Usenet GraphQL queries
@@ -52,12 +51,11 @@ const USENET_DOWNLOADS_QUERY = `
       name
       state
       progress
-      sizeBytes
-      downloadedBytes
+      size
+      downloaded
       downloadSpeed
-      eta
+      etaSeconds
       errorMessage
-      createdAt
     }
   }
 `
@@ -633,12 +631,12 @@ function DownloadsPage() {
                         </Chip>
                       </div>
                       <div className="flex items-center gap-4 text-sm text-default-500">
-                        <span>{download.sizeBytes ? formatBytes(download.sizeBytes) : 'Unknown size'}</span>
+                        <span>{download.size ? formatBytes(download.size) : 'Unknown size'}</span>
                         {download.downloadSpeed > 0 && (
                           <span>{formatBytes(download.downloadSpeed)}/s</span>
                         )}
-                        {download.eta && download.eta > 0 && (
-                          <span>ETA: {Math.floor(download.eta / 60)}m</span>
+                        {download.etaSeconds && download.etaSeconds > 0 && (
+                          <span>ETA: {Math.floor(download.etaSeconds / 60)}m</span>
                         )}
                       </div>
                       {download.state === 'downloading' && (

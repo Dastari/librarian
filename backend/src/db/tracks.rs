@@ -46,6 +46,8 @@ pub struct CreateTrack {
     pub explicit: bool,
     pub artist_name: Option<String>,
     pub artist_id: Option<Uuid>,
+    /// Initial status - defaults to "missing", set to "wanted" if library has auto_hunt/auto_download
+    pub status: Option<String>,
 }
 
 /// Input for updating a track
@@ -226,14 +228,17 @@ impl TrackRepository {
 
     /// Create a new track
     pub async fn create(&self, input: CreateTrack) -> Result<TrackRecord> {
+        // Default to "missing" if not specified
+        let status = input.status.unwrap_or_else(|| "missing".to_string());
+
         let record = sqlx::query_as::<_, TrackRecord>(
             r#"
             INSERT INTO tracks (
                 album_id, library_id, title, track_number, disc_number,
                 musicbrainz_id, isrc, duration_secs, explicit,
-                artist_name, artist_id
+                artist_name, artist_id, status
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             RETURNING id, album_id, library_id, title, track_number, disc_number,
                       musicbrainz_id, isrc, duration_secs, explicit,
                       artist_name, artist_id, media_file_id, status, created_at, updated_at
@@ -250,6 +255,7 @@ impl TrackRepository {
         .bind(input.explicit)
         .bind(&input.artist_name)
         .bind(input.artist_id)
+        .bind(&status)
         .fetch_one(&self.pool)
         .await?;
 
@@ -473,5 +479,83 @@ impl TrackRepository {
         .await?;
 
         Ok(records)
+    }
+
+    /// List tracks in a library with pagination and filtering
+    ///
+    /// Returns (records, total_count)
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_by_library_paginated(
+        &self,
+        library_id: Uuid,
+        offset: i64,
+        limit: i64,
+        title_filter: Option<&str>,
+        has_file_filter: Option<bool>,
+        status_filter: Option<&str>,
+        sort_column: &str,
+        sort_asc: bool,
+    ) -> Result<(Vec<TrackRecord>, i64)> {
+        let mut conditions = vec!["library_id = $1".to_string()];
+        let mut param_idx = 2;
+
+        if title_filter.is_some() {
+            conditions.push(format!("LOWER(title) LIKE ${}", param_idx));
+            param_idx += 1;
+        }
+        if has_file_filter.is_some() {
+            conditions.push(format!("media_file_id IS {} NULL", if has_file_filter.unwrap() { "NOT" } else { "" }));
+            // No param needed, we use IS NULL / IS NOT NULL
+        }
+        if status_filter.is_some() {
+            conditions.push(format!("status = ${}", param_idx));
+        }
+
+        let where_clause = conditions.join(" AND ");
+
+        let valid_sort_columns = ["title", "track_number", "disc_number", "created_at", "artist_name", "duration_secs"];
+        let sort_col = if valid_sort_columns.contains(&sort_column) {
+            sort_column
+        } else {
+            "title"
+        };
+        let order_dir = if sort_asc { "ASC" } else { "DESC" };
+        let order_clause = format!("ORDER BY {} {} NULLS LAST", sort_col, order_dir);
+
+        let count_query = format!("SELECT COUNT(*) FROM tracks WHERE {}", where_clause);
+        let data_query = format!(
+            r#"
+            SELECT id, album_id, library_id, title, track_number, disc_number,
+                   musicbrainz_id, isrc, duration_secs, explicit,
+                   artist_name, artist_id, media_file_id, status, created_at, updated_at
+            FROM tracks
+            WHERE {}
+            {}
+            LIMIT {} OFFSET {}
+            "#,
+            where_clause, order_clause, limit, offset
+        );
+
+        let mut count_builder = sqlx::query_scalar::<_, i64>(&count_query).bind(library_id);
+        if let Some(title) = title_filter {
+            count_builder = count_builder.bind(format!("%{}%", title.to_lowercase()));
+        }
+        if let Some(status) = status_filter {
+            count_builder = count_builder.bind(status);
+        }
+
+        let total: i64 = count_builder.fetch_one(&self.pool).await?;
+
+        let mut data_builder = sqlx::query_as::<_, TrackRecord>(&data_query).bind(library_id);
+        if let Some(title) = title_filter {
+            data_builder = data_builder.bind(format!("%{}%", title.to_lowercase()));
+        }
+        if let Some(status) = status_filter {
+            data_builder = data_builder.bind(status);
+        }
+
+        let records: Vec<TrackRecord> = data_builder.fetch_all(&self.pool).await?;
+
+        Ok((records, total))
     }
 }

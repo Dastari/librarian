@@ -45,6 +45,20 @@ export const TORRENT_REMOVED_SUBSCRIPTION = `
   }
 `;
 
+/**
+ * Lightweight subscription for navbar badge
+ *
+ * Only emits when the count of active downloads changes.
+ * Use this instead of TORRENT_PROGRESS_SUBSCRIPTION for the navbar.
+ */
+export const ACTIVE_DOWNLOAD_COUNT_SUBSCRIPTION = `
+  subscription ActiveDownloadCount {
+    activeDownloadCount {
+      count
+    }
+  }
+`;
+
 // ============================================================================
 // Log Subscriptions
 // ============================================================================

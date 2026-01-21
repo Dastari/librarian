@@ -7,18 +7,15 @@ import { Divider } from '@heroui/divider'
 import { Switch } from '@heroui/switch'
 import { Spinner } from '@heroui/spinner'
 import { Tabs, Tab } from '@heroui/tabs'
-import { Tooltip } from '@heroui/tooltip'
 import { addToast } from '@heroui/toast'
 import {
   IconArrowUp,
   IconArrowDown,
   IconDeviceFloppy,
-  IconRefresh,
   IconTrash,
   IconCheck,
   IconX,
   IconRss,
-  IconDownload,
   IconDeviceTv,
   IconMovie,
   IconMusic,
@@ -426,7 +423,7 @@ function SourcePrioritiesPage() {
                   return (
                     <div
                       key={sourceId}
-                      className="flex items-center gap-3 p-3 bg-default-50 rounded-lg"
+                      className="flex items-center gap-3 p-3 bg-content2 rounded-lg"
                     >
                       <div className="flex flex-col gap-0.5">
                         <Button

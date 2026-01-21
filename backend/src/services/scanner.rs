@@ -1104,11 +1104,11 @@ impl ScannerService {
             hdr_type: file.parsed.hdr.clone(),
         };
 
-        match media_files_repo.create(create_input).await {
+        match media_files_repo.upsert(create_input).await {
             Ok(media_file) => {
                 new_files.fetch_add(1, Ordering::SeqCst);
                 files_linked.fetch_add(1, Ordering::SeqCst);
-                debug!(path = %file.path, movie_id = %movie_id, "Added new media file linked to movie");
+                debug!(path = %file.path, movie_id = %movie_id, "Added/updated media file linked to movie");
 
                 // Queue for FFmpeg analysis to get real metadata
                 if let Some(queue) = analysis_queue {
@@ -1907,10 +1907,10 @@ impl ScannerService {
         };
 
         let media_files_repo = db.media_files();
-        match media_files_repo.create(create_input).await {
+        match media_files_repo.upsert(create_input).await {
             Ok(media_file) => {
                 new_files.fetch_add(1, Ordering::SeqCst);
-                debug!(path = %file.path, "Added new media file");
+                debug!(path = %file.path, "Added/updated media file");
 
                 // If linked to an episode, mark it as downloaded
                 if let Some(ep_id) = episode_id {
@@ -2034,10 +2034,10 @@ impl ScannerService {
         };
 
         let media_files_repo = self.db.media_files();
-        match media_files_repo.create(create_input).await {
+        match media_files_repo.upsert(create_input).await {
             Ok(media_file) => {
                 progress.new_files += 1;
-                debug!(path = %file.path, "Added new media file");
+                debug!(path = %file.path, "Added/updated media file");
 
                 // If linked to an episode, mark it as downloaded
                 if let Some(ep_id) = episode_id {

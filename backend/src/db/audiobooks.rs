@@ -272,6 +272,44 @@ impl AudiobookRepository {
         Ok(records)
     }
 
+    /// List audiobooks that need files (for auto-hunt)
+    /// Returns audiobooks without has_files=true, excluding those with active downloads
+    pub async fn list_needing_files(
+        &self,
+        library_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<AudiobookRecord>> {
+        let records = sqlx::query_as::<_, AudiobookRecord>(
+            r#"
+            SELECT a.id, a.author_id, a.library_id, a.user_id, a.title, a.sort_title, a.subtitle,
+                   a.audible_id, a.asin, a.isbn, a.openlibrary_id, a.goodreads_id,
+                   a.description, a.publisher, a.publish_date, a.language, a.narrators,
+                   a.series_name, a.series_position, a.duration_secs,
+                   a.audible_rating, a.audible_rating_count, a.cover_url,
+                   a.has_files, a.size_bytes, a.is_finished, a.last_played_at, a.path,
+                   a.created_at, a.updated_at
+            FROM audiobooks a
+            WHERE a.library_id = $1
+              AND a.has_files = false
+              AND NOT EXISTS (
+                  SELECT 1 FROM torrent_file_matches tfm
+                  JOIN torrents t ON t.id = tfm.torrent_id
+                  WHERE tfm.chapter_id IN (SELECT id FROM chapters WHERE audiobook_id = a.id)
+                    AND NOT tfm.processed
+                    AND t.state NOT IN ('removed', 'error')
+              )
+            ORDER BY a.created_at DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(library_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(records)
+    }
+
     /// List audiobooks in a library with pagination and filtering
     #[allow(clippy::too_many_arguments)]
     pub async fn list_by_library_paginated(

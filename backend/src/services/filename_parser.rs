@@ -354,9 +354,16 @@ pub fn normalize_show_name(name: &str) -> String {
 }
 
 /// Calculate similarity between two show names (0.0 to 1.0)
-/// NOTE: Reserved for future fuzzy matching improvements
-#[allow(dead_code)]
+/// 
+/// Uses rapidfuzz for high-quality fuzzy matching with multiple strategies:
+/// - `ratio`: Full string comparison using Levenshtein distance
+/// - `partial_ratio`: Best substring match (great for "Don't Cry" in "Don't Cry (Original)")
+/// - `token_sort_ratio`: Compares sorted tokens (handles word order differences)
+/// 
+/// Returns the maximum score from all strategies.
 pub fn show_name_similarity(name1: &str, name2: &str) -> f64 {
+    use rapidfuzz::distance::levenshtein;
+    
     let n1 = normalize_show_name(name1);
     let n2 = normalize_show_name(name2);
 
@@ -364,55 +371,84 @@ pub fn show_name_similarity(name1: &str, name2: &str) -> f64 {
         return 1.0;
     }
 
-    // Simple Levenshtein-based similarity
-    let distance = levenshtein_distance(&n1, &n2);
-    let max_len = n1.len().max(n2.len());
+    if n1.is_empty() || n2.is_empty() {
+        return 0.0;
+    }
 
-    if max_len == 0 {
+    // Calculate basic ratio using normalized Levenshtein
+    let basic_ratio = levenshtein::normalized_similarity(n1.chars(), n2.chars());
+
+    // Calculate partial ratio - find best matching substring
+    // This is great for cases like "Don't Cry" matching "Don't Cry (Original)"
+    let partial_ratio = calculate_partial_ratio(&n1, &n2);
+
+    // Calculate token sort ratio - handles word order differences
+    // "Cry Don't" would still match "Don't Cry"
+    let token_sort_ratio = calculate_token_sort_ratio(&n1, &n2);
+
+    // Return the best score
+    basic_ratio.max(partial_ratio).max(token_sort_ratio)
+}
+
+/// Calculate partial ratio - finds the best matching substring
+/// 
+/// If one string is shorter, slides it along the longer string
+/// and returns the best match ratio.
+fn calculate_partial_ratio(s1: &str, s2: &str) -> f64 {
+    use rapidfuzz::distance::levenshtein;
+    
+    let (shorter, longer) = if s1.len() <= s2.len() {
+        (s1, s2)
+    } else {
+        (s2, s1)
+    };
+
+    if shorter.is_empty() {
+        return 0.0;
+    }
+
+    // If the shorter string is contained exactly, it's a perfect partial match
+    if longer.to_lowercase().contains(&shorter.to_lowercase()) {
         return 1.0;
     }
 
-    1.0 - (distance as f64 / max_len as f64)
-}
+    let shorter_len = shorter.chars().count();
+    let longer_chars: Vec<char> = longer.chars().collect();
 
-/// Calculate Levenshtein distance between two strings
-#[allow(dead_code)]
-fn levenshtein_distance(s1: &str, s2: &str) -> usize {
-    let s1_chars: Vec<char> = s1.chars().collect();
-    let s2_chars: Vec<char> = s2.chars().collect();
-    let m = s1_chars.len();
-    let n = s2_chars.len();
-
-    if m == 0 {
-        return n;
-    }
-    if n == 0 {
-        return m;
+    if shorter_len > longer_chars.len() {
+        return levenshtein::normalized_similarity(shorter.chars(), longer.chars());
     }
 
-    let mut dp = vec![vec![0; n + 1]; m + 1];
+    let mut best_ratio = 0.0;
 
-    for i in 0..=m {
-        dp[i][0] = i;
-    }
-    for j in 0..=n {
-        dp[0][j] = j;
-    }
-
-    for i in 1..=m {
-        for j in 1..=n {
-            let cost = if s1_chars[i - 1] == s2_chars[j - 1] {
-                0
-            } else {
-                1
-            };
-            dp[i][j] = (dp[i - 1][j] + 1)
-                .min(dp[i][j - 1] + 1)
-                .min(dp[i - 1][j - 1] + cost);
+    // Slide the shorter string along the longer one
+    for i in 0..=(longer_chars.len() - shorter_len) {
+        let window: String = longer_chars[i..i + shorter_len].iter().collect();
+        let ratio = levenshtein::normalized_similarity(shorter.chars(), window.chars());
+        if ratio > best_ratio {
+            best_ratio = ratio;
         }
     }
 
-    dp[m][n]
+    best_ratio
+}
+
+/// Calculate token sort ratio - compare strings with words sorted
+/// 
+/// "Don't Cry" and "Cry Don't" would have high similarity.
+fn calculate_token_sort_ratio(s1: &str, s2: &str) -> f64 {
+    use rapidfuzz::distance::levenshtein;
+    
+    let mut words1: Vec<&str> = s1.split_whitespace().collect();
+    let mut words2: Vec<&str> = s2.split_whitespace().collect();
+
+    words1.sort_unstable();
+    words2.sort_unstable();
+
+    let sorted1 = words1.join(" ");
+    let sorted2 = words2.join(" ");
+
+    levenshtein::normalized_similarity(sorted1.chars(), sorted2.chars())
 }
 
 /// Parse a filename to extract movie information

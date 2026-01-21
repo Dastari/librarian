@@ -182,6 +182,15 @@ impl MusicQueries {
             return Ok(None);
         };
 
+        // Fetch artist name
+        let artist_name = db
+            .albums()
+            .get_artist_by_id(album_record.artist_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|a| a.name);
+
         let tracks_with_status = db
             .tracks()
             .list_with_status(album_id)
@@ -199,6 +208,7 @@ impl MusicQueries {
 
         Ok(Some(AlbumWithTracks {
             album: album_record.into(),
+            artist_name,
             tracks: tracks_with_status.into_iter().map(|t| t.into()).collect(),
             track_count,
             tracks_with_files,
@@ -223,17 +233,105 @@ impl MusicQueries {
         Ok(records.into_iter().map(Track::from).collect())
     }
 
+    /// Get tracks in a library with cursor-based pagination and filtering
+    async fn tracks_connection(
+        &self,
+        ctx: &Context<'_>,
+        library_id: String,
+        #[graphql(default = 50)] first: Option<i32>,
+        after: Option<String>,
+        r#where: Option<TrackWhereInput>,
+        order_by: Option<TrackOrderByInput>,
+    ) -> Result<TrackConnection> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        let (offset, limit) =
+            parse_pagination_args(first, after).map_err(|e| async_graphql::Error::new(e))?;
+
+        let title_filter = r#where
+            .as_ref()
+            .and_then(|w| w.title.as_ref().and_then(|f| f.contains.clone()));
+        let has_file_filter = r#where
+            .as_ref()
+            .and_then(|w| w.has_file.as_ref().and_then(|f| f.eq));
+        let status_filter = r#where
+            .as_ref()
+            .and_then(|w| w.status.as_ref().and_then(|f| f.eq.clone()));
+
+        let sort_field = order_by
+            .as_ref()
+            .and_then(|o| o.field)
+            .unwrap_or(TrackSortField::Title);
+        let sort_dir = order_by
+            .as_ref()
+            .and_then(|o| o.direction)
+            .unwrap_or(OrderDirection::Asc);
+
+        let (records, total) = db
+            .tracks()
+            .list_by_library_paginated(
+                lib_id,
+                offset,
+                limit,
+                title_filter.as_deref(),
+                has_file_filter,
+                status_filter.as_deref(),
+                &track_sort_field_to_column(sort_field),
+                sort_dir == OrderDirection::Asc,
+            )
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let tracks: Vec<Track> = records.into_iter().map(Track::from).collect();
+        let connection = Connection::from_items(tracks, offset, limit, total);
+
+        Ok(TrackConnection::from_connection(connection))
+    }
+
     /// Search for albums on MusicBrainz
+    ///
+    /// By default, only searches for Albums. Use the include flags to also search for:
+    /// - include_eps: Include EPs
+    /// - include_singles: Include Singles  
+    /// - include_compilations: Include Compilations
+    /// - include_live: Include Live albums
+    /// - include_soundtracks: Include Soundtracks
     async fn search_albums(
         &self,
         ctx: &Context<'_>,
         query: String,
+        #[graphql(default = false)] include_eps: bool,
+        #[graphql(default = false)] include_singles: bool,
+        #[graphql(default = false)] include_compilations: bool,
+        #[graphql(default = false)] include_live: bool,
+        #[graphql(default = false)] include_soundtracks: bool,
     ) -> Result<Vec<AlbumSearchResult>> {
         let _user = ctx.auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
+        // Build list of types to include
+        let mut types = vec!["Album".to_string()];
+        if include_eps {
+            types.push("EP".to_string());
+        }
+        if include_singles {
+            types.push("Single".to_string());
+        }
+        if include_compilations {
+            types.push("Compilation".to_string());
+        }
+        if include_live {
+            types.push("Live".to_string());
+        }
+        if include_soundtracks {
+            types.push("Soundtrack".to_string());
+        }
+
         let results = metadata
-            .search_albums(&query)
+            .search_albums_with_types(&query, &types)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 

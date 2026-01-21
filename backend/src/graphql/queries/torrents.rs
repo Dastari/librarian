@@ -95,4 +95,28 @@ impl TorrentQueries {
             .map(TorrentFileMatch::from_record)
             .collect())
     }
+
+    /// Get the count of active downloads
+    ///
+    /// Returns the number of torrents in QUEUED, CHECKING, or DOWNLOADING state.
+    /// Use this to initialize the navbar badge before subscribing to updates.
+    async fn active_download_count(&self, ctx: &Context<'_>) -> Result<i32> {
+        let _user = ctx.auth_user()?;
+        let service = ctx.data_unchecked::<Arc<TorrentService>>();
+
+        let torrents = service.list_torrents().await;
+        let count = torrents
+            .iter()
+            .filter(|t| {
+                matches!(
+                    t.state,
+                    crate::services::TorrentState::Queued
+                        | crate::services::TorrentState::Checking
+                        | crate::services::TorrentState::Downloading
+                )
+            })
+            .count();
+
+        Ok(count as i32)
+    }
 }

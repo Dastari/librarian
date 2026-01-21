@@ -8,8 +8,9 @@ impl MusicMutations {
     /// Add an album to a library from MusicBrainz
     async fn add_album(&self, ctx: &Context<'_>, input: AddAlbumInput) -> Result<AlbumResult> {
         let user = ctx.auth_user()?;
-        let db = ctx.data_unchecked::<Database>();
+        let db = ctx.data_unchecked::<Database>().clone();
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+        let torrent_service = ctx.data_unchecked::<Arc<TorrentService>>().clone();
 
         let lib_id = Uuid::parse_str(&input.library_id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
@@ -52,6 +53,112 @@ impl MusicMutations {
                     "User added album: {}",
                     record.name
                 );
+
+                // Trigger immediate auto-hunt if the library has auto_hunt enabled
+                {
+                    let db_clone = db.clone();
+                    let album_record = record.clone();
+                    let torrent_svc = torrent_service.clone();
+
+                    tokio::spawn(async move {
+                        // Check if library has auto_hunt enabled
+                        let library = match db_clone.libraries().get_by_id(lib_id).await {
+                            Ok(Some(lib)) => lib,
+                            Ok(None) => {
+                                tracing::warn!(library_id = %lib_id, "Library not found for auto-hunt");
+                                return;
+                            }
+                            Err(e) => {
+                                tracing::warn!(library_id = %lib_id, error = %e, "Failed to get library for auto-hunt");
+                                return;
+                            }
+                        };
+
+                        if !library.auto_hunt {
+                            tracing::debug!(
+                                library_id = %lib_id,
+                                album_name = %album_record.name,
+                                "Library does not have auto_hunt enabled, skipping immediate hunt"
+                            );
+                            return;
+                        }
+
+                        tracing::info!(
+                            album_id = %album_record.id,
+                            album_name = %album_record.name,
+                            "Triggering immediate auto-hunt for newly added album"
+                        );
+
+                        // Get encryption key and create IndexerManager
+                        let encryption_key = match db_clone
+                            .settings()
+                            .get_or_create_indexer_encryption_key()
+                            .await
+                        {
+                            Ok(key) => key,
+                            Err(e) => {
+                                tracing::warn!(error = %e, "Failed to get encryption key for auto-hunt");
+                                return;
+                            }
+                        };
+
+                        let indexer_manager = match crate::indexer::manager::IndexerManager::new(
+                            db_clone.clone(),
+                            &encryption_key,
+                        )
+                        .await
+                        {
+                            Ok(mgr) => std::sync::Arc::new(mgr),
+                            Err(e) => {
+                                tracing::warn!(error = %e, "Failed to create IndexerManager for auto-hunt");
+                                return;
+                            }
+                        };
+
+                        // Load user's indexers
+                        if let Err(e) = indexer_manager.load_user_indexers(user_id).await {
+                            tracing::warn!(user_id = %user_id, error = %e, "Failed to load indexers for auto-hunt");
+                            return;
+                        }
+
+                        // Run hunt for this specific album
+                        match crate::jobs::auto_hunt::hunt_single_album(
+                            &db_clone,
+                            &album_record,
+                            &library,
+                            &torrent_svc,
+                            &indexer_manager,
+                        )
+                        .await
+                        {
+                            Ok(result) => {
+                                if result.downloaded > 0 {
+                                    tracing::info!(
+                                        album_name = %album_record.name,
+                                        "Immediate auto-hunt successful, album download started"
+                                    );
+                                } else if result.matched > 0 {
+                                    tracing::info!(
+                                        album_name = %album_record.name,
+                                        "Found matching releases but download failed"
+                                    );
+                                } else {
+                                    tracing::info!(
+                                        album_name = %album_record.name,
+                                        "No matching releases found for immediate auto-hunt"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    album_name = %album_record.name,
+                                    error = %e,
+                                    "Immediate auto-hunt failed"
+                                );
+                            }
+                        }
+                    });
+                }
 
                 Ok(AlbumResult {
                     success: true,

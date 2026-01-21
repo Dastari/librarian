@@ -960,6 +960,7 @@ impl OrganizerService {
         library_path: &str,
         artist_name: &str,
         album: &crate::db::AlbumRecord,
+        track: Option<&crate::db::TrackRecord>,
         original_filename: &str,
         naming_pattern: Option<&str>,
     ) -> PathBuf {
@@ -970,7 +971,7 @@ impl OrganizerService {
 
         let pattern = naming_pattern.unwrap_or(DEFAULT_MUSIC_NAMING_PATTERN);
         let relative_path =
-            apply_music_naming_pattern(pattern, artist_name, album, original_filename, ext);
+            apply_music_naming_pattern(pattern, artist_name, album, track, original_filename, ext);
         PathBuf::from(library_path).join(relative_path)
     }
 
@@ -980,6 +981,7 @@ impl OrganizerService {
         file: &MediaFileRecord,
         artist_name: &str,
         album: &crate::db::AlbumRecord,
+        track: Option<&crate::db::TrackRecord>,
         library_path: &str,
         naming_pattern: Option<&str>,
         action: &str,
@@ -1006,6 +1008,7 @@ impl OrganizerService {
             library_path,
             artist_name,
             album,
+            track,
             original_filename,
             Some(&effective_pattern),
         );
@@ -3015,14 +3018,15 @@ pub fn apply_movie_naming_pattern(
 /// - `{artist}` - Artist name
 /// - `{album}` - Album name
 /// - `{year}` - Release year
-/// - `{track}` - Track number
-/// - `{title}` - Track title (extracted from filename)
+/// - `{track}` - Track number (from TrackRecord or parsed from filename)
+/// - `{title}` - Track title (from TrackRecord or parsed from filename)
 /// - `{ext}` - File extension (without dot)
 /// - `{original}` - Original filename without extension
 pub fn apply_music_naming_pattern(
     pattern: &str,
     artist_name: &str,
     album: &crate::db::AlbumRecord,
+    track: Option<&crate::db::TrackRecord>,
     original_filename: &str,
     extension: &str,
 ) -> PathBuf {
@@ -3054,18 +3058,24 @@ pub fn apply_music_naming_pattern(
         .unwrap_or(original_filename);
     result = result.replace("{original}", original_stem);
 
-    // Try to extract track number and title from filename
-    // Common patterns: "01 - Track Title.mp3", "01. Track Title.mp3", "01 Track Title.mp3"
-    let track_re = Regex::new(r"^(\d+)[.\-\s]+(.+)$").unwrap();
-    let (track_num, track_title) = if let Some(caps) = track_re.captures(original_stem) {
-        let num: i32 = caps
-            .get(1)
-            .and_then(|m| m.as_str().parse().ok())
-            .unwrap_or(0);
-        let title = caps.get(2).map(|m| m.as_str()).unwrap_or(original_stem);
-        (num, sanitize_for_filename(title))
+    // Get track number and title from TrackRecord if available, otherwise parse from filename
+    let (track_num, track_title): (i32, String) = if let Some(t) = track {
+        // Use actual metadata from database (like TV shows do with EpisodeRecord)
+        (t.track_number, sanitize_for_filename(&t.title))
     } else {
-        (0, sanitize_for_filename(original_stem))
+        // Fallback: Try to extract track number and title from filename
+        // Common patterns: "01 - Track Title.mp3", "01. Track Title.mp3", "01 Track Title.mp3"
+        let track_re = Regex::new(r"^(\d+)[.\-\s]+(.+)$").unwrap();
+        if let Some(caps) = track_re.captures(original_stem) {
+            let num: i32 = caps
+                .get(1)
+                .and_then(|m| m.as_str().parse().ok())
+                .unwrap_or(0);
+            let title = caps.get(2).map(|m| m.as_str()).unwrap_or(original_stem);
+            (num, sanitize_for_filename(title))
+        } else {
+            (0, sanitize_for_filename(original_stem))
+        }
     };
 
     // Replace track with format specifier: {track:02} -> zero-padded, {track} -> raw
@@ -3081,7 +3091,7 @@ pub fn apply_music_naming_pattern(
         })
         .to_string();
 
-    // Replace {title} with extracted track title
+    // Replace {title} with track title (from database or parsed from filename)
     result = result.replace("{title}", &track_title);
 
     PathBuf::from(result)

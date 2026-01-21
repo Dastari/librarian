@@ -888,6 +888,24 @@ export const CREATE_NAMING_PATTERN_MUTATION = `
   }
 `;
 
+export const UPDATE_NAMING_PATTERN_MUTATION = `
+  mutation UpdateNamingPattern($id: String!, $input: UpdateNamingPatternInput!) {
+    updateNamingPattern(id: $id, input: $input) {
+      success
+      namingPattern {
+        id
+        name
+        pattern
+        description
+        isDefault
+        isSystem
+        libraryType
+      }
+      error
+    }
+  }
+`;
+
 export const DELETE_NAMING_PATTERN_MUTATION = `
   mutation DeleteNamingPattern($id: String!) {
     deleteNamingPattern(id: $id) {

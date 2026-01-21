@@ -11,6 +11,15 @@ use anyhow::{Context, Result};
 use librqbit::api::TorrentIdOrHash;
 use librqbit::dht::PersistentDhtConfig;
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions};
+
+/// Returns AddTorrentOptions with overwrite enabled.
+/// This allows re-adding torrents whose files already exist on disk.
+fn add_torrent_opts() -> AddTorrentOptions {
+    AddTorrentOptions {
+        overwrite: true,
+        ..Default::default()
+    }
+}
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -401,7 +410,7 @@ impl TorrentService {
                     .session
                     .add_torrent(
                         AddTorrent::from_url(magnet),
-                        Some(AddTorrentOptions::default()),
+                        Some(add_torrent_opts()),
                     )
                     .await
                 {
@@ -443,7 +452,7 @@ impl TorrentService {
             .session
             .add_torrent(
                 AddTorrent::from_url(magnet),
-                Some(AddTorrentOptions::default()),
+                Some(add_torrent_opts()),
             )
             .await
             .context("Failed to add torrent")?;
@@ -504,7 +513,7 @@ impl TorrentService {
             .session
             .add_torrent(
                 AddTorrent::from_bytes(data),
-                Some(AddTorrentOptions::default()),
+                Some(add_torrent_opts()),
             )
             .await
             .context("Failed to add torrent file")?;
@@ -554,7 +563,7 @@ impl TorrentService {
             .session
             .add_torrent(
                 AddTorrent::from_url(url),
-                Some(AddTorrentOptions::default()),
+                Some(add_torrent_opts()),
             )
             .await
             .context("Failed to add torrent from URL")?;
@@ -607,14 +616,35 @@ impl TorrentService {
     ) -> Result<TorrentInfo> {
         debug!("Adding torrent from bytes ({} bytes)", bytes.len());
 
+        // Validate bytes before attempting to add
+        if bytes.is_empty() {
+            anyhow::bail!("Cannot add torrent: received empty data");
+        }
+
+        // Check if it's a valid bencoded torrent (should start with 'd')
+        if bytes[0] != b'd' {
+            let preview = String::from_utf8_lossy(&bytes[..std::cmp::min(100, bytes.len())]);
+            if preview.contains("<!DOCTYPE") || preview.contains("<html") {
+                anyhow::bail!("Received HTML page instead of torrent file - authentication may have failed or the download link has expired");
+            }
+            anyhow::bail!("Invalid torrent data: file does not appear to be a valid bencoded torrent (first byte: 0x{:02x})", bytes[0]);
+        }
+
         let add_result = self
             .session
             .add_torrent(
                 AddTorrent::from_bytes(bytes.to_vec()),
-                Some(AddTorrentOptions::default()),
+                Some(add_torrent_opts()),
             )
             .await
-            .context("Failed to add torrent from bytes")?;
+            .with_context(|| {
+                let preview = String::from_utf8_lossy(&bytes[..std::cmp::min(200, bytes.len())]);
+                format!(
+                    "Failed to parse torrent data ({} bytes). Preview: {}...",
+                    bytes.len(),
+                    preview.chars().take(100).collect::<String>()
+                )
+            })?;
 
         match add_result {
             AddTorrentResponse::Added(id, handle) => {

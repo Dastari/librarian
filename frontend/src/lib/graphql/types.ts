@@ -84,6 +84,11 @@ export interface TorrentProgress {
   state: TorrentState;
 }
 
+/** Lightweight active download count for navbar badge */
+export interface ActiveDownloadCount {
+  count: number;
+}
+
 export interface AddTorrentResult {
   success: boolean;
   torrent: Torrent | null;
@@ -398,7 +403,6 @@ export interface Library {
   autoScan: boolean;
   scanIntervalMinutes: number;
   watchForChanges: boolean;
-  postDownloadAction: PostDownloadAction;
   organizeFiles: boolean;
   renameStyle: string;
   namingPattern: string | null;
@@ -456,7 +460,6 @@ export interface CreateLibraryInput {
   autoScan?: boolean;
   scanIntervalMinutes?: number;
   watchForChanges?: boolean;
-  postDownloadAction?: PostDownloadAction;
   organizeFiles?: boolean;
   namingPattern?: string;
   autoAddDiscovered?: boolean;
@@ -481,7 +484,6 @@ export interface UpdateLibraryInput {
   autoScan?: boolean;
   scanIntervalMinutes?: number;
   watchForChanges?: boolean;
-  postDownloadAction?: PostDownloadAction;
   organizeFiles?: boolean;
   namingPattern?: string;
   autoAddDiscovered?: boolean;
@@ -823,6 +825,9 @@ export interface AddAlbumInput {
 // Track Types
 // ============================================================================
 
+/** Track status: missing, wanted, downloading, downloaded */
+export type TrackStatus = 'missing' | 'wanted' | 'downloading' | 'downloaded';
+
 export interface Track {
   id: string;
   albumId: string;
@@ -838,6 +843,8 @@ export interface Track {
   artistId: string | null;
   mediaFileId: string | null;
   hasFile: boolean;
+  /** Track status: missing, wanted, downloading, downloaded */
+  status: TrackStatus;
 }
 
 export interface TrackWithStatus {
@@ -855,6 +862,7 @@ export interface TrackWithStatus {
 
 export interface AlbumWithTracks {
   album: Album;
+  artistName: string | null;
   tracks: TrackWithStatus[];
   trackCount: number;
   tracksWithFiles: number;
@@ -915,6 +923,35 @@ export interface AudiobookResult {
 export interface AddAudiobookInput {
   openlibraryId: string;
   libraryId: string;
+}
+
+// ============================================================================
+// Audiobook Chapter Types
+// ============================================================================
+
+/** Chapter status: missing, wanted, downloading, downloaded */
+export type ChapterStatus = 'missing' | 'wanted' | 'downloading' | 'downloaded';
+
+export interface AudiobookChapter {
+  id: string;
+  audiobookId: string;
+  chapterNumber: number;
+  title: string | null;
+  startSecs: number;
+  endSecs: number;
+  durationSecs: number | null;
+  mediaFileId: string | null;
+  status: ChapterStatus;
+}
+
+export interface AudiobookWithChapters {
+  audiobook: Audiobook;
+  chapters: AudiobookChapter[];
+  chapterCount: number;
+  chaptersWithFiles: number;
+  missingChapters: number;
+  completionPercent: number;
+  author: AudiobookAuthor | null;
 }
 
 // ============================================================================
@@ -1036,12 +1073,21 @@ export interface NamingPattern {
   isDefault: boolean;
   /** Whether this is a built-in system pattern (cannot be deleted) */
   isSystem: boolean;
+  /** Library type this pattern is for (tv, movies, music, audiobooks, other) */
+  libraryType: string | null;
 }
 
 /** Input for creating a custom naming pattern */
 export interface CreateNamingPatternInput {
   name: string;
   pattern: string;
+  description?: string;
+  libraryType?: string;
+}
+
+export interface UpdateNamingPatternInput {
+  name?: string;
+  pattern?: string;
   description?: string;
 }
 
@@ -1758,5 +1804,19 @@ export interface AudiobookWhereInput {
 /** Order by input for audiobooks */
 export interface AudiobookOrderByInput {
   field: 'title' | 'createdAt' | 'sortTitle';
+  direction?: OrderDirection;
+}
+
+/** Filter input for tracks query */
+export interface TrackWhereInput {
+  title?: StringFilter;
+  artistName?: StringFilter;
+  hasFile?: BoolFilter;
+  status?: StringFilter;
+}
+
+/** Order by input for tracks */
+export interface TrackOrderByInput {
+  field: 'TITLE' | 'TRACK_NUMBER' | 'DISC_NUMBER' | 'ARTIST_NAME' | 'DURATION' | 'CREATED_AT';
   direction?: OrderDirection;
 }

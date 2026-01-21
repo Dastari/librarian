@@ -28,7 +28,6 @@ export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibrar
       autoScan: values.autoScan,
       scanIntervalMinutes: values.scanIntervalMinutes,
       watchForChanges: values.watchForChanges,
-      postDownloadAction: values.postDownloadAction,
       organizeFiles: values.organizeFiles,
       namingPattern: values.namingPattern || undefined,
       autoAddDiscovered: values.autoAddDiscovered,

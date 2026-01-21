@@ -82,6 +82,45 @@ impl SettingsMutations {
         })
     }
 
+    /// Update a custom naming pattern (system patterns cannot be edited)
+    async fn update_naming_pattern(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+        input: UpdateNamingPatternInput,
+    ) -> Result<NamingPatternResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let pattern_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid pattern ID: {}", e)))?;
+
+        let record = db
+            .naming_patterns()
+            .update(
+                pattern_id,
+                crate::db::UpdateNamingPattern {
+                    name: input.name,
+                    pattern: input.pattern,
+                    description: input.description,
+                },
+            )
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        match record {
+            Some(r) => Ok(NamingPatternResult {
+                success: true,
+                naming_pattern: Some(NamingPattern::from_record(r)),
+                error: None,
+            }),
+            None => Ok(NamingPatternResult {
+                success: false,
+                naming_pattern: None,
+                error: Some("Pattern not found or is a system pattern".to_string()),
+            }),
+        }
+    }
+
     /// Update LLM parser settings
     async fn update_llm_parser_settings(
         &self,

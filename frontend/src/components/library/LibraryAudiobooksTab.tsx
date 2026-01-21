@@ -4,6 +4,7 @@ import { Button } from '@heroui/button'
 import { Chip } from '@heroui/chip'
 import { Image } from '@heroui/image'
 import { Card, CardBody } from '@heroui/card'
+import { Link } from '@tanstack/react-router'
 import {
   DataTable,
   AlphabetFilter,
@@ -178,7 +179,11 @@ export function LibraryAudiobooksTab({
         label: 'AUDIOBOOK',
         // sortable: true (default) - server handles actual sorting
         render: (audiobook) => (
-          <div className="flex items-center gap-3">
+          <Link
+            to="/audiobooks/$audiobookId"
+            params={{ audiobookId: audiobook.id }}
+            className="flex items-center gap-3 hover:opacity-80"
+          >
             {audiobook.coverUrl ? (
               <Image
                 src={audiobook.coverUrl}
@@ -198,7 +203,7 @@ export function LibraryAudiobooksTab({
                 </p>
               )}
             </div>
-          </div>
+          </Link>
         ),
       },
       {

@@ -22,7 +22,6 @@ import {
   IconHeadphones,
   IconCategory,
   IconServer,
-  IconCloud,
 } from '@tabler/icons-react'
 import {
   graphqlClient,
@@ -331,14 +330,18 @@ function SearchPage() {
             <div className="flex items-center gap-2 text-xs text-default-400 mt-0.5">
               {/* Source type indicator based on magnet/link type */}
               {release.magnetUri || release.link ? (
-                <Chip size="sm" variant="flat" color="primary" className="h-4 text-[10px]">
+                <Chip size="sm" variant="flat" color="primary" className="h-4 text-[10px] flex items-center">
+                  <div className="flex items-center">
                   <IconDownload size={10} className="mr-0.5" />
                   Torrent
+                  </div>
                 </Chip>
               ) : (
-                <Chip size="sm" variant="flat" color="secondary" className="h-4 text-[10px]">
+                <Chip size="sm" variant="flat" color="secondary" className="h-4 text-[10px] ">
+                  <div className="flex items-center">
                   <IconServer size={10} className="mr-0.5" />
                   Usenet
+                  </div>
                 </Chip>
               )}
               <span>{release.indexerName}</span>

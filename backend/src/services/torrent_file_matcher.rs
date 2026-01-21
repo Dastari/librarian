@@ -307,11 +307,22 @@ impl TorrentFileMatcher {
             .execute(self.db.pool())
             .await?;
 
+        // Get track details for logging
+        let track_info = self.db.tracks().get_by_id(track_id).await.ok().flatten();
+        let (track_title, track_number) = match &track_info {
+            Some(t) => (t.title.as_str(), t.track_number),
+            None => ("Unknown", 0),
+        };
+
         info!(
             torrent_id = %torrent_id,
             file_index = file_index,
+            file_path = %file_path,
             track_id = %track_id,
-            "Created explicit match for track"
+            track_number = track_number,
+            track_title = %track_title,
+            "Created file match: '{}' → Track {} '{}'",
+            file_path, track_number, track_title
         );
 
         Ok(record)
@@ -329,9 +340,41 @@ impl TorrentFileMatcher {
     ) -> Result<Vec<TorrentFileMatchRecord>> {
         let tracks = self.db.tracks().list_by_album(album_id).await?;
         let mut records = Vec::new();
+        
+        // Get album and artist names for logging
+        let album = self.db.albums().get_by_id(album_id).await?;
+        let (album_name, artist_name) = match &album {
+            Some(a) => {
+                let artist = if let Ok(Some(artist)) = self.db.albums().get_artist_by_id(a.artist_id).await {
+                    artist.name
+                } else {
+                    "Unknown Artist".to_string()
+                };
+                (a.name.clone(), artist)
+            }
+            None => ("Unknown Album".to_string(), "Unknown Artist".to_string()),
+        };
+        
+        let audio_files: Vec<_> = files.iter().filter(|f| is_audio_file(&f.path)).collect();
+        
+        info!(
+            torrent_id = %torrent_id,
+            album_id = %album_id,
+            album_name = %album_name,
+            artist_name = %artist_name,
+            total_files = files.len(),
+            audio_files = audio_files.len(),
+            tracks_in_album = tracks.len(),
+            "Starting album file matching for '{}' by '{}' ({} audio files, {} tracks)",
+            album_name, artist_name, audio_files.len(), tracks.len()
+        );
 
         for (index, file) in files.iter().enumerate() {
             if !is_audio_file(&file.path) {
+                debug!(
+                    file_path = %file.path,
+                    "Skipping non-audio file"
+                );
                 continue;
             }
 
@@ -341,8 +384,23 @@ impl TorrentFileMatcher {
                 .unwrap_or(&file.path);
 
             // Try to match by track number first
-            if let Some(track_num) = self.extract_track_number(file_name) {
+            let extracted_num = self.extract_track_number(file_name);
+            
+            info!(
+                file_name = %file_name,
+                extracted_track_number = ?extracted_num,
+                "Processing audio file for album matching"
+            );
+            
+            if let Some(track_num) = extracted_num {
                 if let Some(track) = tracks.iter().find(|t| t.track_number == track_num) {
+                    info!(
+                        file_name = %file_name,
+                        track_number = track_num,
+                        track_title = %track.title,
+                        track_id = %track.id,
+                        "Matched file to track by number"
+                    );
                     let record = self
                         .create_match_for_track(
                             torrent_id,
@@ -354,13 +412,28 @@ impl TorrentFileMatcher {
                         .await?;
                     records.push(record);
                     continue;
+                } else {
+                    info!(
+                        file_name = %file_name,
+                        track_number = track_num,
+                        available_track_numbers = ?tracks.iter().map(|t| t.track_number).collect::<Vec<_>>(),
+                        "No track found with matching number"
+                    );
                 }
             }
 
             // Try to match by title similarity
+            let mut matched = false;
             for track in &tracks {
                 let similarity = self.calculate_track_title_similarity(file_name, &track.title);
                 if similarity > 0.7 {
+                    info!(
+                        file_name = %file_name,
+                        track_title = %track.title,
+                        similarity = format!("{:.2}", similarity),
+                        track_id = %track.id,
+                        "Matched file to track by title similarity"
+                    );
                     let record = self
                         .create_match_for_track(
                             torrent_id,
@@ -371,10 +444,29 @@ impl TorrentFileMatcher {
                         )
                         .await?;
                     records.push(record);
+                    matched = true;
                     break;
                 }
             }
+            
+            if !matched {
+                info!(
+                    file_name = %file_name,
+                    "Could not match file to any track in album"
+                );
+            }
         }
+
+        info!(
+            torrent_id = %torrent_id,
+            album_id = %album_id,
+            album_name = %album_name,
+            artist_name = %artist_name,
+            matched_files = records.len(),
+            audio_files = audio_files.len(),
+            "Album file matching complete: '{}' by '{}' - matched {}/{} audio files",
+            album_name, artist_name, records.len(), audio_files.len()
+        );
 
         Ok(records)
     }
@@ -1379,11 +1471,15 @@ impl TorrentFileMatcher {
         Ok(None)
     }
 
-    /// Try to match a music file to any track in a library
+    /// Try to match a music file to any wanted track in a library
     ///
-    /// This parses the torrent name to extract artist/album info, finds matching
-    /// albums in the library, then tries to match the specific file to a track
-    /// by track number or title similarity.
+    /// This works like episode matching:
+    /// 1. Parse the file name to extract track number and artist/title info
+    /// 2. Search all albums in the library for a matching track
+    /// 3. Match by track number (primary) or title similarity (fallback)
+    /// 
+    /// The torrent name is used for additional context (artist/album hints) but
+    /// each file is matched independently based on its own filename.
     async fn try_match_music_file(
         &self,
         library_id: Uuid,
@@ -1394,10 +1490,217 @@ impl TorrentFileMatcher {
         file_size: i64,
         quality: &ParsedQuality,
     ) -> Result<Option<FileMatchResult>> {
+        // Parse info from the file name (like episode matching parses S01E05)
+        let parsed = parse_music_file_name(file_name);
+        
+        info!(
+            file_name = %file_name,
+            library_id = %library_id,
+            parsed_track_number = ?parsed.track_number,
+            parsed_artist = ?parsed.artist,
+            parsed_title = ?parsed.title,
+            "Matching music file to library tracks"
+        );
+        
+        // Also try to get context from torrent name (for artist/album hints)
+        let torrent_context = parse_music_torrent_name(torrent_name);
+        if let Some((artist, album)) = &torrent_context {
+            debug!(
+                torrent_artist = %artist,
+                torrent_album = %album,
+                "Parsed torrent name context"
+            );
+        }
+
+        // Get all albums in this library
+        let albums = self.db.albums().list_by_library(library_id).await?;
+
+        if albums.is_empty() {
+            debug!(
+                library_id = %library_id,
+                "No albums found in library"
+            );
+            return Ok(None);
+        }
+
+        // Try to match by track number first (most reliable, like episode numbers)
+        if let Some(track_num) = parsed.track_number {
+            // Search all albums for a wanted track with this number
+            for album in &albums {
+                let tracks = self.db.tracks().list_by_album(album.id).await?;
+                
+                // Get artist name for logging
+                let artist_name = if let Ok(Some(artist)) = self.db.albums().get_artist_by_id(album.artist_id).await {
+                    artist.name
+                } else {
+                    "Unknown".to_string()
+                };
+                
+                for track in tracks {
+                    if track.track_number == track_num {
+                        // Check if track is wanted (not already downloaded)
+                        // Include "downloading" status since the file link may have failed
+                        let is_wanted = track.status == "wanted" 
+                            || track.status == "missing" 
+                            || track.status == "downloading";
+                        
+                        // If we have artist context from file or torrent, verify it matches
+                        let artist_match = if let Some(file_artist) = &parsed.artist {
+                            filename_parser::show_name_similarity(file_artist, &artist_name) > 0.6
+                        } else if let Some((torrent_artist, _)) = &torrent_context {
+                            filename_parser::show_name_similarity(torrent_artist, &artist_name) > 0.6
+                        } else {
+                            // No artist context, can't verify - be conservative and require title match too
+                            false
+                        };
+                        
+                        // If artist matches, or if title also matches, consider it a match
+                        let title_match = if let Some(file_title) = &parsed.title {
+                            filename_parser::show_name_similarity(file_title, &track.title) > 0.6
+                        } else {
+                            false
+                        };
+                        
+                        if artist_match || title_match {
+                            info!(
+                                file_name = %file_name,
+                                track_number = track_num,
+                                track_title = %track.title,
+                                album_name = %album.name,
+                                artist_name = %artist_name,
+                                is_wanted = is_wanted,
+                                artist_match = artist_match,
+                                title_match = title_match,
+                                "Matched file to track by number"
+                            );
+                            
+                            if !is_wanted {
+                                return Ok(Some(FileMatchResult {
+                                    file_index,
+                                    file_path: file_path.to_string(),
+                                    file_size,
+                                    match_target: FileMatchTarget::Track {
+                                        track_id: track.id,
+                                        album_id: album.id,
+                                        title: track.title.clone(),
+                                        track_number: track.track_number,
+                                    },
+                                    match_type: FileMatchType::Auto,
+                                    confidence: 0.9,
+                                    quality: quality.clone(),
+                                    skip_download: true,
+                                    skip_reason: Some(format!("Track already {}", track.status)),
+                                }));
+                            }
+                            
+                            return Ok(Some(FileMatchResult {
+                                file_index,
+                                file_path: file_path.to_string(),
+                                file_size,
+                                match_target: FileMatchTarget::Track {
+                                    track_id: track.id,
+                                    album_id: album.id,
+                                    title: track.title.clone(),
+                                    track_number: track.track_number,
+                                },
+                                match_type: FileMatchType::Auto,
+                                confidence: 0.9,
+                                quality: quality.clone(),
+                                skip_download: false,
+                                skip_reason: None,
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+        
+        // If track number matching failed, try title similarity (like movie matching)
+        if let Some(file_title) = &parsed.title {
+            for album in &albums {
+                let tracks = self.db.tracks().list_by_album(album.id).await?;
+                
+                for track in tracks {
+                    let similarity = filename_parser::show_name_similarity(file_title, &track.title);
+                    
+                    if similarity > 0.7 {
+                        // Include "downloading" status since the file link may have failed
+                        let is_wanted = track.status == "wanted" 
+                            || track.status == "missing" 
+                            || track.status == "downloading";
+                        
+                        info!(
+                            file_name = %file_name,
+                            file_title = %file_title,
+                            track_title = %track.title,
+                            album_name = %album.name,
+                            similarity = format!("{:.2}", similarity),
+                            is_wanted = is_wanted,
+                            "Matched file to track by title similarity"
+                        );
+                        
+                        if !is_wanted {
+                            return Ok(Some(FileMatchResult {
+                                file_index,
+                                file_path: file_path.to_string(),
+                                file_size,
+                                match_target: FileMatchTarget::Track {
+                                    track_id: track.id,
+                                    album_id: album.id,
+                                    title: track.title.clone(),
+                                    track_number: track.track_number,
+                                },
+                                match_type: FileMatchType::Auto,
+                                confidence: similarity,
+                                quality: quality.clone(),
+                                skip_download: true,
+                                skip_reason: Some(format!("Track already {}", track.status)),
+                            }));
+                        }
+                        
+                        return Ok(Some(FileMatchResult {
+                            file_index,
+                            file_path: file_path.to_string(),
+                            file_size,
+                            match_target: FileMatchTarget::Track {
+                                track_id: track.id,
+                                album_id: album.id,
+                                title: track.title.clone(),
+                                track_number: track.track_number,
+                            },
+                            match_type: FileMatchType::Auto,
+                            confidence: similarity,
+                            quality: quality.clone(),
+                            skip_download: false,
+                            skip_reason: None,
+                        }));
+                    }
+                }
+            }
+        }
+        
+        debug!(
+            file_name = %file_name,
+            library_id = %library_id,
+            "Could not match music file to any track"
+        );
+        
+        Ok(None)
+    }
+    
+    /// Legacy: Try to match a specific file to a track within a known album
+    /// Used when user explicitly selects an album for matching.
+    async fn try_match_music_file_legacy(
+        &self,
+        library_id: Uuid,
+        torrent_name: &str,
+        file_name: &str,
+        file_index: i32,
+        file_path: &str,
+        file_size: i64,
+        quality: &ParsedQuality,
+    ) -> Result<Option<FileMatchResult>> {
         // Parse artist and album from torrent name
-        // Common patterns:
-        // - "Artist-Album-Year-Format-Group" (scene)
-        // - "Artist - Album (Year) [Format]" (other)
         let (artist_name, album_name) = match parse_music_torrent_name(torrent_name) {
             Some((a, b)) => (a, b),
             None => {
@@ -1409,29 +1712,10 @@ impl TorrentFileMatcher {
             }
         };
 
-        debug!(
-            torrent_name = %torrent_name,
-            parsed_artist = %artist_name,
-            parsed_album = %album_name,
-            "Parsed music torrent name"
-        );
-
         // Get albums in this library
         let albums = self.db.albums().list_by_library(library_id).await?;
 
-        info!(
-            library_id = %library_id,
-            album_count = albums.len(),
-            parsed_artist = %artist_name,
-            parsed_album = %album_name,
-            "Searching for matching album in library"
-        );
-
         if albums.is_empty() {
-            warn!(
-                library_id = %library_id,
-                "No albums found in library - cannot match music file"
-            );
             return Ok(None);
         }
 
@@ -1439,65 +1723,27 @@ impl TorrentFileMatcher {
         let mut best_album_match: Option<(crate::db::AlbumRecord, f64)> = None;
 
         for album in albums {
-            // Check album name similarity
             let album_similarity = filename_parser::show_name_similarity(&album_name, &album.name);
 
-            // Also check if artist matches
-            let (artist_matches, artist_similarity, artist_db_name) = if let Ok(Some(artist)) =
+            let artist_matches = if let Ok(Some(artist)) =
                 self.db.albums().get_artist_by_id(album.artist_id).await
             {
-                let similarity = filename_parser::show_name_similarity(&artist_name, &artist.name);
-                (similarity > 0.7, similarity, artist.name)
+                filename_parser::show_name_similarity(&artist_name, &artist.name) > 0.7
             } else {
-                (false, 0.0, "Unknown".to_string())
+                false
             };
 
-            debug!(
-                library_album = %album.name,
-                library_artist = %artist_db_name,
-                parsed_album = %album_name,
-                parsed_artist = %artist_name,
-                album_similarity = format!("{:.2}", album_similarity),
-                artist_similarity = format!("{:.2}", artist_similarity),
-                artist_matches = artist_matches,
-                "Comparing album"
-            );
-
-            // Require both album match and artist match
             if album_similarity > 0.7 && artist_matches {
-                let score = album_similarity;
-                info!(
-                    album = %album.name,
-                    artist = %artist_db_name,
-                    score = format!("{:.2}", score),
-                    "Found potential album match"
-                );
-                if best_album_match.is_none() || score > best_album_match.as_ref().unwrap().1 {
-                    best_album_match = Some((album, score));
+                if best_album_match.is_none() || album_similarity > best_album_match.as_ref().unwrap().1 {
+                    best_album_match = Some((album, album_similarity));
                 }
             }
         }
 
-        let (matched_album, album_confidence) = match best_album_match {
-            Some((album, score)) => (album, score),
-            None => {
-                debug!(
-                    artist = %artist_name,
-                    album = %album_name,
-                    library_id = %library_id,
-                    "No matching album found in library"
-                );
-                return Ok(None);
-            }
+        let matched_album = match best_album_match {
+            Some((album, _)) => album,
+            None => return Ok(None),
         };
-
-        info!(
-            torrent_name = %torrent_name,
-            matched_album = %matched_album.name,
-            album_id = %matched_album.id,
-            confidence = album_confidence,
-            "Found matching album for music torrent"
-        );
 
         // Now try to match the specific file to a track in this album
         if let Some(result) = self
@@ -1526,17 +1772,300 @@ impl TorrentFileMatcher {
     }
 
     /// Try to match an audiobook file to chapters in a library
+    ///
+    /// Audiobook matching follows a similar pattern to TV shows:
+    /// 1. Parse the filename for chapter/part number
+    /// 2. Match to audiobook by title/author similarity
+    /// 3. Match to chapter by chapter number
     async fn try_match_audiobook_file(
         &self,
-        _library_id: Uuid,
-        _file_name: &str,
-        _file_index: i32,
-        _file_path: &str,
-        _file_size: i64,
-        _quality: &ParsedQuality,
+        library_id: Uuid,
+        file_name: &str,
+        file_index: i32,
+        file_path: &str,
+        file_size: i64,
+        quality: &ParsedQuality,
     ) -> Result<Option<FileMatchResult>> {
-        // TODO: Implement audiobook file matching
+        // Parse chapter/part number from filename
+        // Common patterns: "01 - Chapter Title.mp3", "Part 01.m4b", "Chapter 1.mp3"
+        let parsed_chapter = self.parse_audiobook_file_name(file_name);
+        
+        debug!(
+            file_name = %file_name,
+            parsed_chapter_number = ?parsed_chapter.chapter_number,
+            parsed_title = ?parsed_chapter.title,
+            "Attempting audiobook file matching"
+        );
+
+        // Get all audiobooks in this library
+        let audiobooks = self.db.audiobooks().list_by_library(library_id).await?;
+
+        if audiobooks.is_empty() {
+            debug!(
+                library_id = %library_id,
+                "No audiobooks found in library"
+            );
+            return Ok(None);
+        }
+
+        // Try to match by audiobook title similarity first
+        for audiobook in &audiobooks {
+            // Get author name for better matching
+            let author_name = if let Some(author_id) = audiobook.author_id {
+                self.db
+                    .audiobooks()
+                    .get_author_by_id(author_id)
+                    .await?
+                    .map(|a| a.name)
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+
+            // Check if the file name contains the audiobook title
+            let title_lower = audiobook.title.to_lowercase();
+            let file_lower = file_name.to_lowercase();
+            let title_similarity = self.calculate_title_similarity(&title_lower, &file_lower);
+            
+            // Also check if author name is in filename
+            let author_match = !author_name.is_empty() && file_lower.contains(&author_name.to_lowercase());
+
+            if title_similarity > 0.5 || author_match {
+                // Good potential match, look for chapters
+                let chapters = self.db.chapters().list_by_audiobook(audiobook.id).await?;
+
+                // If we have a chapter number from parsing, try to match it
+                if let Some(chapter_num) = parsed_chapter.chapter_number {
+                    if let Some(chapter) = chapters.iter().find(|c| c.chapter_number == chapter_num) {
+                        // Check if chapter is wanted (include "downloading" since file link may have failed)
+                        let should_download = chapter.status == "wanted" 
+                            || chapter.status == "missing"
+                            || chapter.status == "downloading";
+                        let skip_download = !should_download;
+
+                        info!(
+                            file_name = %file_name,
+                            audiobook_title = %audiobook.title,
+                            author = %author_name,
+                            chapter_number = chapter_num,
+                            chapter_title = ?chapter.title,
+                            chapter_status = %chapter.status,
+                            skip_download = skip_download,
+                            "Matched audiobook file to chapter by number"
+                        );
+
+                        return Ok(Some(FileMatchResult {
+                            file_index,
+                            file_path: file_path.to_string(),
+                            file_size,
+                            match_target: FileMatchTarget::AudiobookChapter {
+                                chapter_id: chapter.id,
+                                audiobook_id: audiobook.id,
+                                chapter_number: chapter.chapter_number,
+                            },
+                            match_type: FileMatchType::Auto,
+                            confidence: 0.9,
+                            quality: quality.clone(),
+                            skip_download,
+                            skip_reason: if skip_download {
+                                Some(format!("Chapter already {}", chapter.status))
+                            } else {
+                                None
+                            },
+                        }));
+                    }
+                }
+
+                // If no specific chapter match and chapters exist, try to match by order
+                // (e.g., if files are ordered 01.mp3, 02.mp3, match to chapters 1, 2)
+                if !chapters.is_empty() && parsed_chapter.chapter_number.is_none() {
+                    // Try to match by title similarity within chapters
+                    if let Some(parsed_title) = &parsed_chapter.title {
+                        for chapter in &chapters {
+                            if let Some(chapter_title) = &chapter.title {
+                                let sim = self.calculate_title_similarity(
+                                    &parsed_title.to_lowercase(),
+                                    &chapter_title.to_lowercase(),
+                                );
+                                if sim > 0.6 {
+                                    // Include "downloading" since file link may have failed
+                                    let should_download = chapter.status == "wanted" 
+                                        || chapter.status == "missing"
+                                        || chapter.status == "downloading";
+                                    let skip_download = !should_download;
+
+                                    info!(
+                                        file_name = %file_name,
+                                        audiobook_title = %audiobook.title,
+                                        chapter_title = ?chapter_title,
+                                        similarity = format!("{:.2}", sim),
+                                        chapter_status = %chapter.status,
+                                        "Matched audiobook file to chapter by title"
+                                    );
+
+                                    return Ok(Some(FileMatchResult {
+                                        file_index,
+                                        file_path: file_path.to_string(),
+                                        file_size,
+                                        match_target: FileMatchTarget::AudiobookChapter {
+                                            chapter_id: chapter.id,
+                                            audiobook_id: audiobook.id,
+                                            chapter_number: chapter.chapter_number,
+                                        },
+                                        match_type: FileMatchType::Auto,
+                                        confidence: sim,
+                                        quality: quality.clone(),
+                                        skip_download,
+                                        skip_reason: if skip_download {
+                                            Some(format!("Chapter already {}", chapter.status))
+                                        } else {
+                                            None
+                                        },
+                                    }));
+                                }
+                            }
+                        }
+                    }
+
+                    // For single-file audiobooks (no chapters defined), match to the audiobook itself
+                    if chapters.is_empty() || chapters.len() == 1 {
+                        // Check if audiobook already has files
+                        if audiobook.has_files {
+                            debug!(
+                                file_name = %file_name,
+                                audiobook_title = %audiobook.title,
+                                "Audiobook already has files, skipping"
+                            );
+                            return Ok(Some(FileMatchResult {
+                                file_index,
+                                file_path: file_path.to_string(),
+                                file_size,
+                                match_target: FileMatchTarget::AudiobookChapter {
+                                    chapter_id: chapters.first().map(|c| c.id).unwrap_or(audiobook.id),
+                                    audiobook_id: audiobook.id,
+                                    chapter_number: 1,
+                                },
+                                match_type: FileMatchType::Auto,
+                                confidence: title_similarity,
+                                quality: quality.clone(),
+                                skip_download: true,
+                                skip_reason: Some("Audiobook already has files".to_string()),
+                            }));
+                        }
+
+                        // Match to the audiobook (will create chapter if needed during processing)
+                        info!(
+                            file_name = %file_name,
+                            audiobook_title = %audiobook.title,
+                            author = %author_name,
+                            "Matched audiobook file (single file or no chapters)"
+                        );
+
+                        // If there's a chapter, use it; otherwise we'll need to create one during processing
+                        if let Some(chapter) = chapters.first() {
+                            return Ok(Some(FileMatchResult {
+                                file_index,
+                                file_path: file_path.to_string(),
+                                file_size,
+                                match_target: FileMatchTarget::AudiobookChapter {
+                                    chapter_id: chapter.id,
+                                    audiobook_id: audiobook.id,
+                                    chapter_number: chapter.chapter_number,
+                                },
+                                match_type: FileMatchType::Auto,
+                                confidence: title_similarity,
+                                quality: quality.clone(),
+                                skip_download: false,
+                                skip_reason: None,
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+
+        debug!(
+            file_name = %file_name,
+            "Could not match audiobook file to any chapter"
+        );
+
         Ok(None)
+    }
+
+    /// Parse audiobook file name to extract chapter number and title
+    fn parse_audiobook_file_name(&self, file_name: &str) -> ParsedAudiobookFile {
+        let name_without_ext = Path::new(file_name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(file_name);
+
+        // Common patterns:
+        // "01 - Chapter Title"
+        // "Part 01"
+        // "Chapter 1 - Title"
+        // "01_chapter_title"
+        // "Book Title - 01"
+        
+        let patterns = [
+            // "01 - Title" or "01_title"
+            regex::Regex::new(r"^(\d{1,3})[\s_\-\.]+(.*)$").ok(),
+            // "Part 01" or "Chapter 01"
+            regex::Regex::new(r"(?i)(?:part|chapter|ch|pt)[\s_\-\.]*(\d{1,3})(?:[\s_\-\.]+(.*))?$").ok(),
+            // "Title - 01"
+            regex::Regex::new(r"^(.+?)[\s_\-\.]+(\d{1,3})$").ok(),
+        ];
+
+        for pattern in patterns.iter().flatten() {
+            if let Some(caps) = pattern.captures(name_without_ext) {
+                // Try to get chapter number from first or second capture group
+                let (chapter_num, title) = if let Some(num_match) = caps.get(1) {
+                    if let Ok(num) = num_match.as_str().parse::<i32>() {
+                        let title = caps.get(2).map(|m| m.as_str().trim().to_string());
+                        (Some(num), title)
+                    } else {
+                        // First group is title, second is number
+                        if let Some(num_match2) = caps.get(2) {
+                            if let Ok(num) = num_match2.as_str().parse::<i32>() {
+                                let title = Some(num_match.as_str().trim().to_string());
+                                (Some(num), title)
+                            } else {
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                    }
+                } else {
+                    continue;
+                };
+
+                return ParsedAudiobookFile {
+                    chapter_number: chapter_num,
+                    title,
+                };
+            }
+        }
+
+        // No pattern matched, try to extract just numbers
+        let numbers: Vec<i32> = name_without_ext
+            .split(|c: char| !c.is_ascii_digit())
+            .filter_map(|s| s.parse().ok())
+            .collect();
+
+        ParsedAudiobookFile {
+            chapter_number: numbers.first().copied(),
+            title: Some(name_without_ext.to_string()),
+        }
+    }
+
+    /// Calculate title similarity using rapidfuzz (0.0 to 1.0)
+    /// 
+    /// Uses multiple matching strategies for robust comparison:
+    /// - Normalized Levenshtein distance
+    /// - Partial ratio (substring matching)
+    /// - Token sort ratio (word order invariant)
+    fn calculate_title_similarity(&self, a: &str, b: &str) -> f64 {
+        filename_parser::show_name_similarity(a, b)
     }
 
     /// Check if a file is a sample
@@ -1566,14 +2095,75 @@ impl TorrentFileMatcher {
 
     /// Calculate similarity between track titles
     fn calculate_track_title_similarity(&self, file_name: &str, track_title: &str) -> f64 {
-        // Remove common prefixes like track numbers
-        let clean_file = file_name
-            .split(|c: char| !c.is_alphanumeric() && c != ' ')
-            .skip_while(|s| s.chars().all(|c| c.is_numeric()))
-            .collect::<Vec<_>>()
-            .join(" ");
+        // Clean the filename for comparison
+        let clean_file = self.clean_track_filename(file_name);
+        let clean_title = self.normalize_track_title(track_title);
+        
+        // Calculate similarity
+        let similarity = filename_parser::show_name_similarity(&clean_file, &clean_title);
+        
+        // Also check if the track title is contained within the filename
+        // This helps with cases like "Don't Cry (Original)" matching "Don't Cry"
+        let contains_bonus = if clean_file.to_lowercase().contains(&clean_title.to_lowercase()) {
+            0.3 // Bonus if track title is fully contained in filename
+        } else {
+            0.0
+        };
+        
+        (similarity + contains_bonus).min(1.0)
+    }
 
-        filename_parser::show_name_similarity(&clean_file, track_title)
+    /// Clean a filename for track title comparison
+    fn clean_track_filename(&self, file_name: &str) -> String {
+        // Remove file extension
+        let name = std::path::Path::new(file_name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(file_name);
+        
+        // Remove leading track number and separators (e.g., "01-", "02 - ", "03.")
+        let re_track_num = regex::Regex::new(r"^\d{1,3}[\s\-_\.]+").unwrap();
+        let name = re_track_num.replace(name, "");
+        
+        // Remove common parenthetical suffixes that indicate versions
+        // e.g., "(Original)", "(Remaster)", "(Live)", "(Demo)", "(Acoustic)", "(Radio Edit)"
+        let re_parens = regex::Regex::new(r"(?i)\s*\([^)]*(?:original|remaster|live|demo|acoustic|radio|edit|mix|version|bonus|instrumental|explicit|clean|single|album|extended|short)\s*[^)]*\)\s*$").unwrap();
+        let name = re_parens.replace_all(&name, "");
+        
+        // Remove trailing parenthetical content that's just extra info
+        // but be careful not to remove meaningful parts like "(Part 1)"
+        let re_trailing_parens = regex::Regex::new(r"\s*\([^)]*\)\s*$").unwrap();
+        let name_without_parens = re_trailing_parens.replace_all(&name, "");
+        
+        // Normalize apostrophes and quotes (curly vs straight)
+        // \u{2018} = ', \u{2019} = ', \u{201C} = ", \u{201D} = "
+        let name = name_without_parens
+            .replace('\u{2018}', "'")
+            .replace('\u{2019}', "'")
+            .replace('\u{201C}', "\"")
+            .replace('\u{201D}', "\"");
+        
+        // Remove underscores (common in filenames)
+        let name = name.replace('_', " ");
+        
+        // Collapse multiple spaces
+        let re_spaces = regex::Regex::new(r"\s+").unwrap();
+        let name = re_spaces.replace_all(&name, " ");
+        
+        name.trim().to_string()
+    }
+
+    /// Normalize a track title for comparison
+    fn normalize_track_title(&self, title: &str) -> String {
+        // Normalize apostrophes and quotes (curly vs straight)
+        // \u{2018} = ', \u{2019} = ', \u{201C} = ", \u{201D} = "
+        let title = title
+            .replace('\u{2018}', "'")
+            .replace('\u{2019}', "'")
+            .replace('\u{201C}', "\"")
+            .replace('\u{201D}', "\"");
+        
+        title.trim().to_string()
     }
 
     /// Extract track number from filename (e.g., "01 - Song Name.mp3" -> 1)
@@ -1803,6 +2393,100 @@ impl TorrentFileMatcher {
 struct ShouldDownload {
     skip: bool,
     reason: Option<String>,
+}
+
+/// Parsed info from a music file name
+#[derive(Debug, Default)]
+struct ParsedMusicFile {
+    /// Track number extracted from filename (e.g., 01 from "01-artist-title.flac")
+    track_number: Option<i32>,
+    /// Artist name if extractable
+    artist: Option<String>,
+    /// Track title if extractable
+    title: Option<String>,
+}
+
+/// Parsed info from an audiobook file name
+#[derive(Debug, Default)]
+struct ParsedAudiobookFile {
+    /// Chapter/part number extracted from filename
+    chapter_number: Option<i32>,
+    /// Chapter title if extractable
+    title: Option<String>,
+}
+
+/// Parse music file name to extract track number, artist, and title
+///
+/// Handles common patterns:
+/// - Scene: "01-artist_name-track_title.flac"
+/// - Scene: "01_artist_name-track_title.mp3"
+/// - Track: "01. Track Title.flac"
+/// - Track: "01 Track Title.mp3"
+/// - Artist-Title: "Artist - Track Title.flac"
+fn parse_music_file_name(file_name: &str) -> ParsedMusicFile {
+    let mut result = ParsedMusicFile::default();
+    
+    // Remove extension
+    let name = file_name
+        .rsplit_once('.')
+        .map(|(n, _)| n)
+        .unwrap_or(file_name);
+    
+    // Replace underscores with spaces for easier parsing
+    let cleaned = name.replace('_', " ");
+    
+    // Try to extract track number from the beginning
+    // Patterns: "01-...", "01_...", "01 ...", "01. ..."
+    let track_num_re = regex::Regex::new(r"^(\d{1,3})[\s\-_\.]").ok();
+    if let Some(re) = &track_num_re {
+        if let Some(caps) = re.captures(&cleaned) {
+            if let Some(m) = caps.get(1) {
+                result.track_number = m.as_str().parse().ok();
+            }
+        }
+    }
+    
+    // For scene format: "01-artist_name-track_title" or "01-guns_n_roses-welcome_to_the_jungle"
+    // Split by hyphen and try to extract artist and title
+    let parts: Vec<&str> = cleaned.split('-').map(|s| s.trim()).collect();
+    
+    if parts.len() >= 3 {
+        // First part is track number, second is artist, rest is title
+        let first_part = parts[0].trim();
+        if first_part.chars().all(|c| c.is_ascii_digit()) {
+            // "01" - "guns n roses" - "welcome to the jungle"
+            result.artist = Some(parts[1].trim().to_string());
+            result.title = Some(parts[2..].join(" ").trim().to_string());
+        } else {
+            // "guns n roses" - "welcome to the jungle" - "live"
+            result.artist = Some(parts[0].trim().to_string());
+            result.title = Some(parts[1..].join(" ").trim().to_string());
+        }
+    } else if parts.len() == 2 {
+        // Could be "01 - Track Title" or "Artist - Track Title"
+        let first_part = parts[0].trim();
+        if first_part.chars().all(|c| c.is_ascii_digit() || c.is_whitespace()) {
+            // "01" - "Track Title"
+            result.title = Some(parts[1].trim().to_string());
+        } else {
+            // "Artist" - "Track Title"
+            result.artist = Some(parts[0].trim().to_string());
+            result.title = Some(parts[1].trim().to_string());
+        }
+    } else if parts.len() == 1 {
+        // No hyphens - try to extract title after track number
+        // "01. Track Title" or "01 Track Title"
+        if result.track_number.is_some() {
+            let after_num = cleaned
+                .trim_start_matches(|c: char| c.is_ascii_digit())
+                .trim_start_matches(['.', ' ', '-', '_']);
+            if !after_num.is_empty() {
+                result.title = Some(after_num.to_string());
+            }
+        }
+    }
+    
+    result
 }
 
 /// Parse artist and album name from a music torrent name

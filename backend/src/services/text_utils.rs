@@ -83,57 +83,35 @@ pub fn normalize_track_title(title: &str) -> String {
 
 /// Calculate Levenshtein distance between two strings.
 /// Returns the minimum number of single-character edits needed to transform one string into another.
+/// 
+/// Uses rapidfuzz for optimized implementation.
 pub fn levenshtein_distance(s1: &str, s2: &str) -> usize {
-    let s1_chars: Vec<char> = s1.chars().collect();
-    let s2_chars: Vec<char> = s2.chars().collect();
-    let len1 = s1_chars.len();
-    let len2 = s2_chars.len();
-
-    if len1 == 0 {
-        return len2;
-    }
-    if len2 == 0 {
-        return len1;
-    }
-
-    let mut prev_row: Vec<usize> = (0..=len2).collect();
-    let mut curr_row: Vec<usize> = vec![0; len2 + 1];
-
-    for i in 1..=len1 {
-        curr_row[0] = i;
-        for j in 1..=len2 {
-            let cost = if s1_chars[i - 1] == s2_chars[j - 1] {
-                0
-            } else {
-                1
-            };
-            curr_row[j] = (prev_row[j] + 1)
-                .min(curr_row[j - 1] + 1)
-                .min(prev_row[j - 1] + cost);
-        }
-        std::mem::swap(&mut prev_row, &mut curr_row);
-    }
-
-    prev_row[len2]
+    use rapidfuzz::distance::levenshtein;
+    levenshtein::distance(s1.chars(), s2.chars())
 }
 
 /// Calculate similarity between two strings (0.0 to 1.0).
-/// Based on Levenshtein distance normalized by maximum string length.
+/// Uses rapidfuzz normalized Levenshtein similarity.
 pub fn string_similarity(s1: &str, s2: &str) -> f64 {
-    let max_len = s1.len().max(s2.len());
-    if max_len == 0 {
+    use rapidfuzz::distance::levenshtein;
+    
+    if s1.is_empty() && s2.is_empty() {
         return 1.0;
     }
-    let distance = levenshtein_distance(s1, s2);
-    1.0 - (distance as f64 / max_len as f64)
+    
+    levenshtein::normalized_similarity(s1.chars(), s2.chars())
 }
 
 /// Calculate similarity between two show names.
-/// Normalizes both names before comparison.
+/// Normalizes both names before comparison and uses multiple matching strategies.
+/// 
+/// Delegates to the filename_parser implementation which uses rapidfuzz with:
+/// - Basic Levenshtein similarity
+/// - Partial ratio (substring matching)
+/// - Token sort ratio (word order invariant)
 pub fn show_name_similarity(name1: &str, name2: &str) -> f64 {
-    let normalized1 = normalize_show_name(name1);
-    let normalized2 = normalize_show_name(name2);
-    string_similarity(&normalized1, &normalized2)
+    // Use the main implementation from filename_parser
+    super::filename_parser::show_name_similarity(name1, name2)
 }
 
 #[cfg(test)]

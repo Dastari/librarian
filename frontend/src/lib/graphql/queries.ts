@@ -114,6 +114,17 @@ export const TORRENT_FILE_MATCHES_QUERY = `
   }
 `;
 
+/**
+ * Lightweight query to get the active download count
+ * 
+ * Use this to initialize the navbar badge before subscribing to updates.
+ */
+export const ACTIVE_DOWNLOAD_COUNT_QUERY = `
+  query ActiveDownloadCount {
+    activeDownloadCount
+  }
+`;
+
 // ============================================================================
 // Settings Queries
 // ============================================================================
@@ -171,7 +182,6 @@ export const LIBRARIES_QUERY = `
       autoScan
       scanIntervalMinutes
       watchForChanges
-      postDownloadAction
       organizeFiles
       namingPattern
       autoAddDiscovered
@@ -196,7 +206,6 @@ export const LIBRARY_QUERY = `
       autoScan
       scanIntervalMinutes
       watchForChanges
-      postDownloadAction
       organizeFiles
       renameStyle
       namingPattern
@@ -669,6 +678,7 @@ export const ALBUM_WITH_TRACKS_QUERY = `
         sizeBytes
         path
       }
+      artistName
       tracks {
         track {
           id
@@ -685,6 +695,7 @@ export const ALBUM_WITH_TRACKS_QUERY = `
           artistId
           mediaFileId
           hasFile
+          status
         }
         hasFile
         filePath
@@ -722,6 +733,51 @@ export const TRACKS_QUERY = `
   }
 `;
 
+/** Tracks query with cursor-based pagination and filtering */
+export const TRACKS_CONNECTION_QUERY = `
+  query TracksConnection(
+    $libraryId: String!
+    $first: Int
+    $after: String
+    $where: TrackWhereInput
+    $orderBy: TrackOrderByInput
+  ) {
+    tracksConnection(
+      libraryId: $libraryId
+      first: $first
+      after: $after
+      where: $where
+      orderBy: $orderBy
+    ) {
+      edges {
+        node {
+          id
+          albumId
+          libraryId
+          title
+          trackNumber
+          discNumber
+          durationSecs
+          explicit
+          artistName
+          artistId
+          mediaFileId
+          hasFile
+          status
+        }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        hasPreviousPage
+        startCursor
+        endCursor
+        totalCount
+      }
+    }
+  }
+`;
+
 export const ARTISTS_QUERY = `
   query Artists($libraryId: String!) {
     artists(libraryId: $libraryId) {
@@ -735,8 +791,22 @@ export const ARTISTS_QUERY = `
 `;
 
 export const SEARCH_ALBUMS_QUERY = `
-  query SearchAlbums($query: String!) {
-    searchAlbums(query: $query) {
+  query SearchAlbums(
+    $query: String!
+    $includeEps: Boolean
+    $includeSingles: Boolean
+    $includeCompilations: Boolean
+    $includeLive: Boolean
+    $includeSoundtracks: Boolean
+  ) {
+    searchAlbums(
+      query: $query
+      includeEps: $includeEps
+      includeSingles: $includeSingles
+      includeCompilations: $includeCompilations
+      includeLive: $includeLive
+      includeSoundtracks: $includeSoundtracks
+    ) {
       provider
       providerId
       title
@@ -799,6 +869,71 @@ export const AUDIOBOOK_QUERY = `
       hasFiles
       sizeBytes
       path
+    }
+  }
+`;
+
+export const AUDIOBOOK_WITH_CHAPTERS_QUERY = `
+  query AudiobookWithChapters($id: String!) {
+    audiobookWithChapters(id: $id) {
+      audiobook {
+        id
+        authorId
+        libraryId
+        title
+        sortTitle
+        subtitle
+        openlibraryId
+        isbn
+        description
+        publisher
+        language
+        narrators
+        seriesName
+        durationSecs
+        coverUrl
+        hasFiles
+        sizeBytes
+        path
+      }
+      author {
+        id
+        libraryId
+        name
+        sortName
+        openlibraryId
+      }
+      chapters {
+        id
+        audiobookId
+        chapterNumber
+        title
+        startSecs
+        endSecs
+        durationSecs
+        mediaFileId
+        status
+      }
+      chapterCount
+      chaptersWithFiles
+      missingChapters
+      completionPercent
+    }
+  }
+`;
+
+export const AUDIOBOOK_CHAPTERS_QUERY = `
+  query AudiobookChapters($audiobookId: String!) {
+    audiobookChapters(audiobookId: $audiobookId) {
+      id
+      audiobookId
+      chapterNumber
+      title
+      startSecs
+      endSecs
+      durationSecs
+      mediaFileId
+      status
     }
   }
 `;
@@ -950,6 +1085,7 @@ export const NAMING_PATTERNS_QUERY = `
       description
       isDefault
       isSystem
+      libraryType
     }
   }
 `;

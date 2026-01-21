@@ -56,6 +56,9 @@ export function PersistentPlayer() {
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Only handle video content (EPISODE, MOVIE), not audio (TRACK, AUDIOBOOK)
+  const isVideoSession = session?.contentType === 'EPISODE' || session?.contentType === 'MOVIE';
+
   // Fetch playback settings on mount
   useEffect(() => {
     graphqlClient
@@ -96,23 +99,26 @@ export function PersistentPlayer() {
 
   // Resume from session position
   useEffect(() => {
+    if (!isVideoSession) return;
     if (session && videoRef.current && session.currentPosition > 0) {
       videoRef.current.currentTime = session.currentPosition;
       setCurrentTime(session.currentPosition);
       if (session.duration) setDuration(session.duration);
       setIsMuted(session.isMuted);
     }
-  }, [session?.id]);
+  }, [session?.id, isVideoSession]);
 
   // Auto-play when video is ready and session indicates playing
   useEffect(() => {
+    if (!isVideoSession) return;
     if (session?.isPlaying && videoReady && videoRef.current && videoRef.current.paused) {
       videoRef.current.play().catch(() => {});
     }
-  }, [session?.isPlaying, videoReady]);
+  }, [session?.isPlaying, videoReady, isVideoSession]);
 
   // Sync position periodically (using configurable interval from settings)
   useEffect(() => {
+    if (!isVideoSession) return;
     if (session && !isPaused) {
       syncIntervalRef.current = setInterval(() => {
         if (videoRef.current) {
@@ -125,11 +131,12 @@ export function PersistentPlayer() {
       }, syncInterval);
     }
     return () => { if (syncIntervalRef.current) clearInterval(syncIntervalRef.current); };
-  }, [session, isPaused, updatePlayback, syncInterval]);
+  }, [session, isPaused, updatePlayback, syncInterval, isVideoSession]);
 
   // Cleanup video stream when mediaFileId changes or component unmounts
   // This is critical to abort the HTTP connection and stop network traffic
   useEffect(() => {
+    if (!isVideoSession) return;
     const video = videoRef.current;
     // Cleanup runs when mediaFileId changes or on unmount
     return () => {
@@ -139,7 +146,7 @@ export function PersistentPlayer() {
         video.load(); // Abort any in-flight network requests
       }
     };
-  }, [session?.mediaFileId]);
+  }, [session?.mediaFileId, isVideoSession]);
 
   // Sync isPaused state with actual video state
   const syncPausedState = useCallback(() => {
@@ -251,9 +258,9 @@ export function PersistentPlayer() {
 
   useEffect(() => () => { if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current); }, []);
 
-  // Keyboard controls when expanded
+  // Keyboard controls when expanded (only for video content)
   useEffect(() => {
-    if (!isExpanded) return;
+    if (!isExpanded || !isVideoSession) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't handle if typing in an input
@@ -306,9 +313,10 @@ export function PersistentPlayer() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isExpanded, togglePlay, toggleMute, handleFullscreen, duration]);
+  }, [isExpanded, isVideoSession, togglePlay, toggleMute, handleFullscreen, duration]);
 
-  if (isLoading || !session?.mediaFileId) return null;
+  // Don't render for audio content or when no session
+  if (isLoading || !session?.mediaFileId || !isVideoSession) return null;
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
   const epTitle = currentEpisode 

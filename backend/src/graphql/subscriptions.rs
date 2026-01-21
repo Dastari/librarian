@@ -19,8 +19,8 @@ use crate::services::{
 
 use super::auth::AuthGuard;
 use super::types::{
-    CastDevice, CastPlayerState, CastSession, DirectoryChangeEvent, LibraryChangedEvent,
-    LogEventSubscription, LogLevel, MediaFileUpdatedEvent, TorrentAddedEvent,
+    ActiveDownloadCount, CastDevice, CastPlayerState, CastSession, DirectoryChangeEvent,
+    LibraryChangedEvent, LogEventSubscription, LogLevel, MediaFileUpdatedEvent, TorrentAddedEvent,
     TorrentCompletedEvent, TorrentProgress, TorrentRemovedEvent, TorrentState,
 };
 
@@ -134,6 +134,81 @@ impl SubscriptionRoot {
                     info_hash,
                 }),
                 _ => None,
+            })
+        })
+    }
+
+    /// Subscribe to active download count changes
+    ///
+    /// Lightweight subscription that only emits when the count of active downloads changes.
+    /// Active downloads are torrents in QUEUED, CHECKING, or DOWNLOADING state.
+    /// Use this for navbar badges instead of the full torrent_progress subscription.
+    #[graphql(guard = "AuthGuard")]
+    async fn active_download_count<'ctx>(
+        &self,
+        ctx: &Context<'ctx>,
+    ) -> impl Stream<Item = ActiveDownloadCount> + 'ctx {
+        use std::collections::HashMap;
+        use std::sync::Mutex;
+
+        let torrent_service = ctx.data_unchecked::<Arc<TorrentService>>();
+        let receiver = torrent_service.subscribe();
+
+        // Track states and last emitted count
+        let states: Arc<Mutex<HashMap<usize, crate::services::TorrentState>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let last_count: Arc<Mutex<Option<i32>>> = Arc::new(Mutex::new(None));
+
+        // Helper to check if a state is "active" (downloading)
+        fn is_active(state: &crate::services::TorrentState) -> bool {
+            matches!(
+                state,
+                crate::services::TorrentState::Queued
+                    | crate::services::TorrentState::Checking
+                    | crate::services::TorrentState::Downloading
+            )
+        }
+
+        BroadcastStream::new(receiver).filter_map(move |result| {
+            let states_clone = Arc::clone(&states);
+            let last_count_clone = Arc::clone(&last_count);
+
+            result.ok().and_then(move |event| {
+                let mut states_guard = states_clone.lock().unwrap();
+                let mut last_count_guard = last_count_clone.lock().unwrap();
+
+                // Update state based on event
+                match &event {
+                    TorrentEvent::Progress { id, state, .. } => {
+                        states_guard.insert(*id, state.clone());
+                    }
+                    TorrentEvent::Added { id, .. } => {
+                        // New torrents start as Queued
+                        states_guard.insert(*id, crate::services::TorrentState::Queued);
+                    }
+                    TorrentEvent::Removed { id, .. } => {
+                        states_guard.remove(id);
+                    }
+                    TorrentEvent::Completed { id, .. } => {
+                        // Completed torrents go to Seeding
+                        states_guard.insert(*id, crate::services::TorrentState::Seeding);
+                    }
+                    TorrentEvent::Error { id, .. } => {
+                        // Error state is not "active"
+                        states_guard.insert(*id, crate::services::TorrentState::Error);
+                    }
+                }
+
+                // Calculate current active count
+                let count = states_guard.values().filter(|s| is_active(s)).count() as i32;
+
+                // Only emit if count changed
+                if *last_count_guard != Some(count) {
+                    *last_count_guard = Some(count);
+                    Some(ActiveDownloadCount { count })
+                } else {
+                    None
+                }
             })
         })
     }

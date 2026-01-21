@@ -4,17 +4,23 @@
 //! Parallel to TorrentService but for NZB-based downloads.
 
 use std::collections::HashMap;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::db::{CreateUsenetDownload, Database, UsenetDownloadRecord};
+use crate::db::{CreateUsenetDownload, Database, UsenetDownloadRecord, UsenetServerRecord};
+use crate::indexer::encryption::CredentialEncryption;
+use crate::usenet::{NntpClient, NntpConfig, NzbFile, NzbFileEntry, decode_yenc};
 
 /// Usenet download event for subscriptions
 #[derive(Debug, Clone, Serialize)]
@@ -96,9 +102,12 @@ impl From<&UsenetDownloadRecord> for UsenetDownloadInfo {
 /// Active download tracking
 struct ActiveDownload {
     pub id: Uuid,
-    pub nzb_data: Vec<u8>,
     pub download_path: PathBuf,
-    pub cancel_token: tokio_util::sync::CancellationToken,
+    pub cancel_token: CancellationToken,
+    /// Track download progress
+    pub downloaded_bytes: Arc<AtomicU64>,
+    pub total_bytes: u64,
+    pub is_running: Arc<AtomicBool>,
 }
 
 /// Usenet download service configuration
@@ -127,7 +136,7 @@ pub struct UsenetService {
     db: Database,
     config: UsenetServiceConfig,
     /// Active downloads being processed
-    active_downloads: RwLock<HashMap<Uuid, ActiveDownload>>,
+    active_downloads: Arc<RwLock<HashMap<Uuid, ActiveDownload>>>,
     /// Event broadcaster
     event_tx: broadcast::Sender<UsenetEvent>,
 }
@@ -140,8 +149,61 @@ impl UsenetService {
         Self {
             db,
             config,
-            active_downloads: RwLock::new(HashMap::new()),
+            active_downloads: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
+        }
+    }
+
+    /// Get the encryption service for decrypting server passwords
+    async fn get_encryption(&self) -> Result<CredentialEncryption> {
+        let key = self
+            .db
+            .settings()
+            .get_or_create_indexer_encryption_key()
+            .await?;
+        CredentialEncryption::from_base64_key(&key)
+    }
+
+    /// Get enabled usenet servers for a user, with decrypted passwords
+    async fn get_servers_for_user(&self, user_id: Uuid) -> Result<Vec<(UsenetServerRecord, Option<String>)>> {
+        let servers = self.db.usenet_servers().list_enabled_by_user(user_id).await?;
+        
+        if servers.is_empty() {
+            return Err(anyhow!("No usenet servers configured"));
+        }
+
+        let encryption = self.get_encryption().await?;
+        let mut result = Vec::with_capacity(servers.len());
+
+        for server in servers {
+            let password = if let (Some(enc_pass), Some(nonce)) = 
+                (&server.encrypted_password, &server.password_nonce) 
+            {
+                match encryption.decrypt(enc_pass, nonce) {
+                    Ok(pass) => Some(pass),
+                    Err(e) => {
+                        warn!(server_id = %server.id, error = %e, "Failed to decrypt server password");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            result.push((server, password));
+        }
+
+        Ok(result)
+    }
+
+    /// Create an NNTP config from a server record
+    fn create_nntp_config(server: &UsenetServerRecord, password: Option<String>) -> NntpConfig {
+        NntpConfig {
+            host: server.host.clone(),
+            port: server.port as u16,
+            use_tls: server.use_ssl,
+            username: server.username.clone(),
+            password,
+            timeout: Duration::from_secs(30),
         }
     }
 
@@ -210,9 +272,8 @@ impl UsenetService {
             "Added usenet download"
         );
 
-        // TODO: Start the actual download in the background
-        // This will be implemented when the NNTP client is ready
-        // self.start_download(record.id, nzb_data.to_vec()).await?;
+        // Start the actual download in the background
+        self.start_download(record.id, user_id, nzb_data.to_vec(), download_dir).await?;
 
         Ok(info)
     }
@@ -296,7 +357,8 @@ impl UsenetService {
 
         info!(id = %id, "Resumed usenet download");
 
-        // TODO: Restart the download task
+        // Note: Resume requires storing NZB data - for now, user needs to re-add the NZB
+        // A full implementation would store the NZB in the database or on disk
         Ok(())
     }
 
@@ -393,8 +455,348 @@ impl UsenetService {
         Ok(())
     }
 
-    // TODO: Implement the actual download logic when NNTP client is ready
-    // async fn start_download(&self, id: Uuid, nzb_data: Vec<u8>) -> Result<()> { ... }
+    /// Start downloading an NZB in the background
+    async fn start_download(
+        &self,
+        download_id: Uuid,
+        user_id: Uuid,
+        nzb_data: Vec<u8>,
+        download_path: PathBuf,
+    ) -> Result<()> {
+        // Parse the NZB
+        let nzb = NzbFile::parse(&nzb_data)?;
+        let total_bytes = nzb.total_size;
+
+        info!(
+            id = %download_id,
+            files = nzb.files.len(),
+            segments = nzb.total_segments(),
+            total_bytes = total_bytes,
+            "Starting usenet download"
+        );
+
+        // Update database with size
+        self.db
+            .usenet_downloads()
+            .update_progress(download_id, 0.0, 0, 0, None)
+            .await?;
+
+        // Get servers for this user
+        let servers = self.get_servers_for_user(user_id).await?;
+
+        // Create download directory
+        std::fs::create_dir_all(&download_path)?;
+
+        // Setup cancellation and progress tracking
+        let cancel_token = CancellationToken::new();
+        let downloaded_bytes = Arc::new(AtomicU64::new(0));
+        let is_running = Arc::new(AtomicBool::new(true));
+
+        // Register active download
+        {
+            let mut downloads = self.active_downloads.write();
+            downloads.insert(download_id, ActiveDownload {
+                id: download_id,
+                download_path: download_path.clone(),
+                cancel_token: cancel_token.clone(),
+                downloaded_bytes: downloaded_bytes.clone(),
+                total_bytes,
+                is_running: is_running.clone(),
+            });
+        }
+
+        // Clone what we need for the background task
+        let db = self.db.clone();
+        let event_tx = self.event_tx.clone();
+        let active_downloads = self.active_downloads.clone();
+
+        // Spawn background download task
+        tokio::spawn(async move {
+            let result = Self::download_task(
+                download_id,
+                nzb,
+                servers,
+                download_path.clone(),
+                cancel_token.clone(),
+                downloaded_bytes.clone(),
+                db.clone(),
+                event_tx.clone(),
+            )
+            .await;
+
+            // Mark as not running
+            is_running.store(false, Ordering::SeqCst);
+
+            // Remove from active downloads
+            {
+                let mut downloads = active_downloads.write();
+                downloads.remove(&download_id);
+            }
+
+            match result {
+                Ok(()) => {
+                    info!(id = %download_id, "Usenet download completed");
+                    
+                    // Mark as completed in database
+                    if let Err(e) = db
+                        .usenet_downloads()
+                        .mark_completed(download_id, download_path.to_string_lossy().as_ref())
+                        .await
+                    {
+                        error!(id = %download_id, error = %e, "Failed to mark download complete");
+                    }
+
+                    // Broadcast completion event
+                    if let Ok(Some(record)) = db.usenet_downloads().get(download_id).await {
+                        let _ = event_tx.send(UsenetEvent::Completed(UsenetDownloadInfo::from(&record)));
+                    }
+                }
+                Err(e) => {
+                    // Check if cancelled
+                    if cancel_token.is_cancelled() {
+                        info!(id = %download_id, "Usenet download cancelled");
+                    } else {
+                        error!(id = %download_id, error = %e, "Usenet download failed");
+                        
+                        // Mark as failed in database
+                        if let Err(db_err) = db
+                            .usenet_downloads()
+                            .mark_failed(download_id, &e.to_string())
+                            .await
+                        {
+                            error!(id = %download_id, error = %db_err, "Failed to mark download as failed");
+                        }
+
+                        // Broadcast failure event
+                        let _ = event_tx.send(UsenetEvent::Failed {
+                            id: download_id,
+                            error: e.to_string(),
+                        });
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    /// The actual download task that runs in background
+    async fn download_task(
+        download_id: Uuid,
+        nzb: NzbFile,
+        servers: Vec<(UsenetServerRecord, Option<String>)>,
+        download_path: PathBuf,
+        cancel_token: CancellationToken,
+        downloaded_bytes: Arc<AtomicU64>,
+        db: Database,
+        event_tx: broadcast::Sender<UsenetEvent>,
+    ) -> Result<()> {
+        let total_bytes = nzb.total_size;
+        let mut last_progress_update = Instant::now();
+        let mut last_downloaded = 0u64;
+
+        // Process each file in the NZB
+        for file_entry in &nzb.files {
+            if cancel_token.is_cancelled() {
+                return Err(anyhow!("Download cancelled"));
+            }
+
+            // Download single file
+            Self::download_file(
+                download_id,
+                file_entry,
+                &servers,
+                &download_path,
+                &cancel_token,
+                &downloaded_bytes,
+                total_bytes,
+                &mut last_progress_update,
+                &mut last_downloaded,
+                &db,
+                &event_tx,
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Download a single file from the NZB
+    async fn download_file(
+        download_id: Uuid,
+        file_entry: &NzbFileEntry,
+        servers: &[(UsenetServerRecord, Option<String>)],
+        download_path: &PathBuf,
+        cancel_token: &CancellationToken,
+        downloaded_bytes: &Arc<AtomicU64>,
+        total_bytes: u64,
+        last_progress_update: &mut Instant,
+        last_downloaded: &mut u64,
+        db: &Database,
+        event_tx: &broadcast::Sender<UsenetEvent>,
+    ) -> Result<()> {
+        let file_path = download_path.join(&file_entry.filename);
+        
+        debug!(
+            file = %file_entry.filename,
+            segments = file_entry.segments.len(),
+            size = file_entry.size,
+            "Downloading file"
+        );
+
+        // Create the output file
+        let mut output_file = std::fs::File::create(&file_path)?;
+
+        // Sort segments by number
+        let mut segments = file_entry.segments.clone();
+        segments.sort_by_key(|s| s.number);
+
+        // Download each segment
+        for segment in &segments {
+            if cancel_token.is_cancelled() {
+                return Err(anyhow!("Download cancelled"));
+            }
+
+            // Try each server until one succeeds
+            let mut article_data = None;
+            let mut last_error = None;
+
+            for (server, password) in servers {
+                match Self::fetch_article_from_server(
+                    server,
+                    password.clone(),
+                    &file_entry.groups,
+                    &segment.message_id,
+                )
+                .await
+                {
+                    Ok(data) => {
+                        // Record success
+                        let _ = db.usenet_servers().record_success(server.id).await;
+                        article_data = Some(data);
+                        break;
+                    }
+                    Err(e) => {
+                        debug!(
+                            server = %server.name,
+                            message_id = %segment.message_id,
+                            error = %e,
+                            "Failed to fetch article, trying next server"
+                        );
+                        // Record error
+                        let _ = db.usenet_servers().record_error(server.id, &e.to_string()).await;
+                        last_error = Some(e);
+                    }
+                }
+            }
+
+            let article_data = article_data.ok_or_else(|| {
+                last_error.unwrap_or_else(|| anyhow!("No servers available"))
+            })?;
+
+            // Decode yEnc
+            let decoded = decode_yenc(&article_data)?;
+
+            // Write to file at correct position (for multi-part)
+            if let Some(begin) = decoded.begin {
+                output_file.seek(SeekFrom::Start(begin - 1))?;
+            }
+            output_file.write_all(&decoded.data)?;
+
+            // Update progress
+            let segment_bytes = segment.bytes;
+            let current = downloaded_bytes.fetch_add(segment_bytes, Ordering::SeqCst) + segment_bytes;
+
+            // Throttle progress updates to every 500ms
+            if last_progress_update.elapsed() >= Duration::from_millis(500) {
+                let elapsed = last_progress_update.elapsed().as_secs_f64();
+                let bytes_since_last = current - *last_downloaded;
+                let speed = if elapsed > 0.0 {
+                    (bytes_since_last as f64 / elapsed) as i64
+                } else {
+                    0
+                };
+
+                let progress = if total_bytes > 0 {
+                    (current as f64 / total_bytes as f64) * 100.0
+                } else {
+                    0.0
+                };
+
+                let remaining_bytes = total_bytes.saturating_sub(current);
+                let eta = if speed > 0 {
+                    Some((remaining_bytes as i64 / speed) as i32)
+                } else {
+                    None
+                };
+
+                // Update database
+                let _ = db
+                    .usenet_downloads()
+                    .update_progress(download_id, progress, current as i64, speed, eta)
+                    .await;
+
+                // Broadcast progress event
+                let _ = event_tx.send(UsenetEvent::Progress(UsenetProgressUpdate {
+                    id: download_id,
+                    progress,
+                    downloaded_bytes: current as i64,
+                    total_bytes: Some(total_bytes as i64),
+                    speed_bytes_sec: speed,
+                    eta_seconds: eta,
+                }));
+
+                *last_progress_update = Instant::now();
+                *last_downloaded = current;
+            }
+        }
+
+        output_file.sync_all()?;
+        
+        info!(
+            file = %file_entry.filename,
+            size = file_entry.size,
+            "File download complete"
+        );
+
+        Ok(())
+    }
+
+    /// Fetch an article from a specific server
+    async fn fetch_article_from_server(
+        server: &UsenetServerRecord,
+        password: Option<String>,
+        groups: &[String],
+        message_id: &str,
+    ) -> Result<Vec<u8>> {
+        // Run NNTP operations in blocking task since they use std IO
+        let config = Self::create_nntp_config(server, password);
+        let groups = groups.to_vec();
+        let message_id = message_id.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let mut client = NntpClient::new(config);
+            
+            // Connect
+            client.connect()?;
+
+            // Try to select a group (optional for most servers with article by message-id)
+            if let Some(group) = groups.first() {
+                if let Err(e) = client.group(group) {
+                    debug!(group = %group, error = %e, "Failed to select group, continuing anyway");
+                }
+            }
+
+            // Fetch article body
+            let body = client.body(&message_id)?;
+
+            // Disconnect
+            client.quit()?;
+
+            Ok(body)
+        })
+        .await?
+    }
 }
 
 impl std::fmt::Debug for UsenetService {

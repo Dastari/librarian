@@ -378,6 +378,55 @@ impl MediaProcessor {
                     deleted_count
                 );
             }
+
+            // Get existing file matches to reset item statuses before deleting
+            let existing_matches = self
+                .db
+                .torrent_file_matches()
+                .list_by_torrent(torrent.id)
+                .await
+                .unwrap_or_default();
+
+            // Reset associated item statuses from "downloading" to "wanted"
+            for fm in &existing_matches {
+                if let Some(track_id) = fm.track_id {
+                    self.db.tracks().update_status(track_id, "wanted").await.ok();
+                }
+                if let Some(chapter_id) = fm.chapter_id {
+                    sqlx::query("UPDATE chapters SET status = 'wanted' WHERE id = $1 AND status = 'downloading'")
+                        .bind(chapter_id)
+                        .execute(self.db.pool())
+                        .await
+                        .ok();
+                }
+                if let Some(episode_id) = fm.episode_id {
+                    self.db.episodes().update_status(episode_id, "wanted").await.ok();
+                }
+                if let Some(movie_id) = fm.movie_id {
+                    sqlx::query("UPDATE movies SET download_status = 'wanted' WHERE id = $1 AND download_status = 'downloading'")
+                        .bind(movie_id)
+                        .execute(self.db.pool())
+                        .await
+                        .ok();
+                }
+            }
+
+            // DELETE all existing file matches so we can re-run matching from scratch
+            // This ensures files that previously didn't match get a chance with improved matching logic
+            let deleted_count = self
+                .db
+                .torrent_file_matches()
+                .delete_by_torrent(torrent.id)
+                .await
+                .unwrap_or(0);
+
+            if deleted_count > 0 || !existing_matches.is_empty() {
+                info!(
+                    "Force reprocess: deleted {} file matches, reset {} item statuses - will re-run matching",
+                    deleted_count,
+                    existing_matches.len()
+                );
+            }
         }
 
         // Check if we have file-level matches
@@ -950,7 +999,57 @@ impl MediaProcessor {
         // Queue for analysis
         self.queue_for_analysis(&media_file).await;
 
-        // TODO: Organize music files based on library settings
+        // Organize music file if enabled
+        if library.organize_files {
+            // Get artist name for path
+            let artist_name = if let Ok(Some(artist)) = self.db.albums().get_artist_by_id(album.artist_id).await {
+                artist.name
+            } else {
+                "Unknown Artist".to_string()
+            };
+
+            match self
+                .organizer
+                .organize_music_file(
+                    &media_file,
+                    &artist_name,
+                    &album,
+                    Some(&track),
+                    &library.path,
+                    library.naming_pattern.as_deref(),
+                    &library.post_download_action,
+                    false,
+                )
+                .await
+            {
+                Ok(org_result) if org_result.success => {
+                    info!(
+                        track = %track.title,
+                        album = %album.name,
+                        artist = %artist_name,
+                        new_path = %org_result.new_path,
+                        "Organized music track → {}",
+                        org_result.new_path
+                    );
+                }
+                Ok(org_result) => {
+                    warn!(
+                        track = %track.title,
+                        album = %album.name,
+                        error = ?org_result.error,
+                        "Failed to organize music track"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        track = %track.title,
+                        album = %album.name,
+                        error = %e,
+                        "Error organizing music track"
+                    );
+                }
+            }
+        }
 
         Ok(Some(media_file.id))
     }
@@ -3101,6 +3200,36 @@ impl MediaProcessor {
             .link_to_album(media_file.id, album.id)
             .await?;
 
+        // Try to match to a specific track within the album
+        let tracks = self.db.tracks().list_by_album(album.id).await?;
+        if let Some(track_id) = match_track_to_file(
+            Path::new(file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(file_path),
+            &tracks,
+        ) {
+            // Link to the matched track
+            self.db
+                .media_files()
+                .link_to_track(media_file.id, track_id)
+                .await?;
+            self.db
+                .tracks()
+                .link_media_file(track_id, media_file.id)
+                .await?;
+            self.db.tracks().update_status(track_id, "downloaded").await?;
+            
+            if let Some(track) = tracks.iter().find(|t| t.id == track_id) {
+                info!(
+                    file_path = %file_path,
+                    track_title = %track.title,
+                    track_number = track.track_number,
+                    "Matched and linked file to track"
+                );
+            }
+        }
+
         // Update album has_files
         self.db.albums().update_has_files(album.id, true).await?;
 
@@ -3338,35 +3467,12 @@ fn clean_title_for_matching(title: &str) -> String {
     result.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Simple string similarity using longest common subsequence ratio
+/// Calculate title similarity using rapidfuzz
+/// 
+/// Uses the main show_name_similarity implementation which combines:
+/// - Normalized Levenshtein distance
+/// - Partial ratio (substring matching)  
+/// - Token sort ratio (word order invariant)
 fn title_similarity(a: &str, b: &str) -> f64 {
-    if a.is_empty() && b.is_empty() {
-        return 1.0;
-    }
-    if a.is_empty() || b.is_empty() {
-        return 0.0;
-    }
-
-    let a_chars: Vec<char> = a.chars().collect();
-    let b_chars: Vec<char> = b.chars().collect();
-    let m = a_chars.len();
-    let n = b_chars.len();
-
-    // LCS DP table
-    let mut dp = vec![vec![0usize; n + 1]; m + 1];
-
-    for i in 1..=m {
-        for j in 1..=n {
-            if a_chars[i - 1] == b_chars[j - 1] {
-                dp[i][j] = dp[i - 1][j - 1] + 1;
-            } else {
-                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
-            }
-        }
-    }
-
-    let lcs_len = dp[m][n] as f64;
-    let max_len = m.max(n) as f64;
-
-    lcs_len / max_len
+    crate::services::filename_parser::show_name_similarity(a, b)
 }

@@ -19,7 +19,6 @@ export function LibrarySettingsTab({ library, onSave, isLoading }: LibrarySettin
     autoScan: lib.autoScan,
     scanIntervalMinutes: lib.scanIntervalMinutes,
     watchForChanges: lib.watchForChanges,
-    postDownloadAction: lib.postDownloadAction,
     organizeFiles: lib.organizeFiles,
     namingPattern: lib.namingPattern,
     autoAddDiscovered: lib.autoAddDiscovered,
@@ -57,7 +56,6 @@ export function LibrarySettingsTab({ library, onSave, isLoading }: LibrarySettin
       values.autoScan !== originalValues.autoScan ||
       values.scanIntervalMinutes !== originalValues.scanIntervalMinutes ||
       values.watchForChanges !== originalValues.watchForChanges ||
-      values.postDownloadAction !== originalValues.postDownloadAction ||
       values.organizeFiles !== originalValues.organizeFiles ||
       values.namingPattern !== originalValues.namingPattern ||
       values.autoAddDiscovered !== originalValues.autoAddDiscovered ||
@@ -95,7 +93,6 @@ export function LibrarySettingsTab({ library, onSave, isLoading }: LibrarySettin
       autoScan: values.autoScan,
       scanIntervalMinutes: values.scanIntervalMinutes,
       watchForChanges: values.watchForChanges,
-      postDownloadAction: values.postDownloadAction,
       organizeFiles: values.organizeFiles,
       namingPattern: values.namingPattern || undefined,
       autoAddDiscovered: values.autoAddDiscovered,

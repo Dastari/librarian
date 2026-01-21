@@ -8,20 +8,16 @@ import { Chip } from '@heroui/chip'
 import { Tooltip } from '@heroui/tooltip'
 import { Kbd } from '@heroui/kbd'
 import { useDisclosure } from '@heroui/modal'
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
 import { IconAlertTriangle, IconDownload, IconSearch, IconSun, IconMoon } from '@tabler/icons-react'
 import { SearchModal } from './SearchModal'
 import {
   graphqlClient,
-  TORRENTS_QUERY,
-  TORRENT_PROGRESS_SUBSCRIPTION,
-  TORRENT_ADDED_SUBSCRIPTION,
-  TORRENT_REMOVED_SUBSCRIPTION,
-  type Torrent,
-  type TorrentProgress,
-  type TorrentState,
+  ACTIVE_DOWNLOAD_COUNT_QUERY,
+  ACTIVE_DOWNLOAD_COUNT_SUBSCRIPTION,
+  type ActiveDownloadCount,
 } from '../lib/graphql'
 
 const navItems = [
@@ -32,16 +28,12 @@ const navItems = [
   { to: '/settings', label: 'Settings' },
 ]
 
-/** States considered as actively downloading (not complete) */
-const ACTIVE_DOWNLOAD_STATES: TorrentState[] = ['QUEUED', 'CHECKING', 'DOWNLOADING']
-
 export function Navbar() {
   const { user, signOut, loading, error, isConfigured } = useAuth()
   const { isDark, toggleTheme } = useTheme()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [activeDownloadCount, setActiveDownloadCount] = useState(0)
   const { isOpen: isSearchOpen, onOpen: onSearchOpen, onClose: onSearchClose } = useDisclosure()
-  const torrentStatesRef = useRef<Map<number, TorrentState>>(new Map())
   const location = useLocation()
   const navigate = useNavigate()
 
@@ -57,83 +49,39 @@ export function Navbar() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onSearchOpen])
 
-  // Recalculate active count from states map
-  const recalculateActiveCount = useCallback(() => {
-    let count = 0
-    torrentStatesRef.current.forEach((state) => {
-      if (ACTIVE_DOWNLOAD_STATES.includes(state)) {
-        count++
-      }
-    })
-    setActiveDownloadCount(count)
-  }, [])
-
-  // Fetch torrents
-  const fetchTorrents = useCallback(() => {
-    graphqlClient
-      .query<{ torrents: Torrent[] }>(TORRENTS_QUERY, {})
-      .toPromise()
-      .then((result) => {
-        if (result.data?.torrents) {
-          const newStates = new Map<number, TorrentState>()
-          result.data.torrents.forEach((t) => {
-            newStates.set(t.id, t.state)
-          })
-          torrentStatesRef.current = newStates
-          recalculateActiveCount()
-        }
-      })
-  }, [recalculateActiveCount])
-
-  // Fetch initial torrent list and subscribe to updates
+  // Fetch initial count and subscribe to lightweight updates
   useEffect(() => {
     if (!user) {
       setActiveDownloadCount(0)
-      torrentStatesRef.current = new Map()
       return
     }
 
-    // Fetch initial list
-    fetchTorrents()
-
-    // Subscribe to progress updates (includes state changes)
-    const progressSub = graphqlClient
-      .subscription<{ torrentProgress: TorrentProgress }>(TORRENT_PROGRESS_SUBSCRIPTION, {})
-      .subscribe({
-        next: (result) => {
-          if (result.data?.torrentProgress) {
-            const p = result.data.torrentProgress
-            torrentStatesRef.current.set(p.id, p.state)
-            recalculateActiveCount()
-          }
-        },
+    // Fetch initial count
+    graphqlClient
+      .query<{ activeDownloadCount: number }>(ACTIVE_DOWNLOAD_COUNT_QUERY, {})
+      .toPromise()
+      .then((result) => {
+        if (result.data?.activeDownloadCount !== undefined) {
+          setActiveDownloadCount(result.data.activeDownloadCount)
+        }
       })
 
-    // Subscribe to new torrents (refetch to get accurate state)
-    const addedSub = graphqlClient
-      .subscription(TORRENT_ADDED_SUBSCRIPTION, {})
-      .subscribe({
-        next: () => fetchTorrents(),
-      })
-
-    // Subscribe to removed torrents
-    const removedSub = graphqlClient
-      .subscription<{ torrentRemoved: { id: number } }>(TORRENT_REMOVED_SUBSCRIPTION, {})
+    // Subscribe to active download count changes
+    // This only fires when the count changes, not on every progress update
+    const countSub = graphqlClient
+      .subscription<{ activeDownloadCount: ActiveDownloadCount }>(ACTIVE_DOWNLOAD_COUNT_SUBSCRIPTION, {})
       .subscribe({
         next: (result) => {
-          if (result.data?.torrentRemoved) {
-            torrentStatesRef.current.delete(result.data.torrentRemoved.id)
-            recalculateActiveCount()
+          if (result.data?.activeDownloadCount) {
+            setActiveDownloadCount(result.data.activeDownloadCount.count)
           }
         },
       })
 
     return () => {
-      progressSub.unsubscribe()
-      addedSub.unsubscribe()
-      removedSub.unsubscribe()
+      countSub.unsubscribe()
     }
-  }, [user, fetchTorrents, recalculateActiveCount])
+  }, [user])
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/'

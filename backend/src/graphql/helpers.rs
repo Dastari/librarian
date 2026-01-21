@@ -167,26 +167,62 @@ pub(crate) async fn download_torrent_file_authenticated(
 
     let response = request.send().await.context("Failed to send request")?;
 
-    if !response.status().is_success() {
+    let status = response.status();
+    if !status.is_success() {
+        // Try to get more details from the response body
+        let body = response.bytes().await.unwrap_or_default();
+        let preview = String::from_utf8_lossy(&body[..std::cmp::min(200, body.len())]);
         anyhow::bail!(
-            "Failed to download .torrent file: HTTP {}",
-            response.status()
+            "Failed to download .torrent file: HTTP {} - {}",
+            status,
+            preview.chars().take(100).collect::<String>()
         );
     }
+
+    // Check content-type header for clues (must be done before consuming response)
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
 
     let bytes = response
         .bytes()
         .await
         .context("Failed to read response body")?;
 
+    tracing::debug!(
+        url = %url,
+        content_type = %content_type,
+        size = bytes.len(),
+        "Downloaded torrent file"
+    );
+
     // Verify it's actually a torrent file (starts with "d" for bencoded dict)
-    if bytes.is_empty() || bytes[0] != b'd' {
+    if bytes.is_empty() {
+        anyhow::bail!("Downloaded empty file from tracker");
+    }
+
+    if bytes[0] != b'd' {
         // Check if it might be an HTML error page
-        let preview = String::from_utf8_lossy(&bytes[..std::cmp::min(200, bytes.len())]);
+        let preview = String::from_utf8_lossy(&bytes[..std::cmp::min(500, bytes.len())]);
         if preview.contains("<!DOCTYPE") || preview.contains("<html") {
-            anyhow::bail!("Received HTML instead of torrent file - authentication may have failed");
+            // Try to extract a meaningful error from the HTML
+            if preview.to_lowercase().contains("login") || preview.to_lowercase().contains("sign in") {
+                anyhow::bail!("Tracker returned login page - session cookie may have expired. Please update your indexer credentials.");
+            }
+            if preview.to_lowercase().contains("error") {
+                anyhow::bail!("Tracker returned an error page. The download link may have expired or be invalid.");
+            }
+            anyhow::bail!("Received HTML instead of torrent file (content-type: {}) - authentication may have failed", content_type);
         }
-        anyhow::bail!("Downloaded file does not appear to be a valid torrent");
+        anyhow::bail!(
+            "Downloaded file does not appear to be a valid torrent (first byte: 0x{:02x}, content-type: {}, size: {} bytes)",
+            bytes[0],
+            content_type,
+            bytes.len()
+        );
     }
 
     Ok(bytes.to_vec())

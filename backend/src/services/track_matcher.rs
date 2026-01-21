@@ -338,35 +338,16 @@ fn extract_disc_number(filename: &str) -> Option<i32> {
     None
 }
 
-/// Calculate string similarity using token-based comparison
+/// Calculate string similarity using rapidfuzz
 ///
 /// Returns a value between 0.0 (no similarity) and 1.0 (identical)
+/// 
+/// Uses the main show_name_similarity which combines multiple strategies:
+/// - Normalized Levenshtein distance
+/// - Partial ratio (substring matching)
+/// - Token sort ratio (word order invariant)
 fn calculate_similarity(a: &str, b: &str) -> f64 {
-    if a == b {
-        return 1.0;
-    }
-
-    if a.is_empty() || b.is_empty() {
-        return 0.0;
-    }
-
-    // Token-based comparison (word overlap)
-    let tokens_a: HashSet<&str> = a.split_whitespace().collect();
-    let tokens_b: HashSet<&str> = b.split_whitespace().collect();
-
-    if tokens_a.is_empty() || tokens_b.is_empty() {
-        return 0.0;
-    }
-
-    let intersection = tokens_a.intersection(&tokens_b).count();
-    let union = tokens_a.union(&tokens_b).count();
-
-    if union == 0 {
-        return 0.0;
-    }
-
-    // Jaccard similarity
-    intersection as f64 / union as f64
+    crate::services::filename_parser::show_name_similarity(a, b)
 }
 
 #[cfg(test)]

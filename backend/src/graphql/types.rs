@@ -1109,6 +1109,15 @@ pub struct TorrentProgress {
     pub state: TorrentState,
 }
 
+/// Lightweight subscription event for active download count
+///
+/// Used by the navbar to show a badge without subscribing to full torrent data.
+#[derive(Debug, Clone, SimpleObject)]
+pub struct ActiveDownloadCount {
+    /// Number of torrents in QUEUED, CHECKING, or DOWNLOADING state
+    pub count: i32,
+}
+
 /// Event when a torrent is added
 #[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
 pub struct TorrentAddedEvent {
@@ -2013,6 +2022,8 @@ pub struct Track {
     pub media_file_id: Option<String>,
     /// Whether this track has a linked media file
     pub has_file: bool,
+    /// Track status: missing, wanted, downloading, downloaded
+    pub status: String,
 }
 
 impl From<crate::db::TrackRecord> for Track {
@@ -2032,6 +2043,7 @@ impl From<crate::db::TrackRecord> for Track {
             artist_id: r.artist_id.map(|id| id.to_string()),
             media_file_id: r.media_file_id.map(|id| id.to_string()),
             has_file: r.media_file_id.is_some(),
+            status: r.status,
         }
     }
 }
@@ -2065,10 +2077,70 @@ impl From<crate::db::TrackWithStatus> for TrackWithStatus {
     }
 }
 
+// ============================================================================
+// Track Filter & Pagination Types
+// ============================================================================
+
+/// Filter input for tracks query
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct TrackWhereInput {
+    /// Filter by title (contains, case-insensitive)
+    pub title: Option<crate::graphql::filters::StringFilter>,
+    /// Filter by artist name
+    pub artist_name: Option<crate::graphql::filters::StringFilter>,
+    /// Filter by whether the track has a file
+    pub has_file: Option<crate::graphql::filters::BoolFilter>,
+    /// Filter by status (missing, wanted, downloading, downloaded)
+    pub status: Option<crate::graphql::filters::StringFilter>,
+}
+
+/// Sortable fields for tracks
+#[derive(async_graphql::Enum, Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum TrackSortField {
+    /// Sort by title
+    #[default]
+    Title,
+    /// Sort by track number
+    TrackNumber,
+    /// Sort by disc number
+    DiscNumber,
+    /// Sort by artist name
+    ArtistName,
+    /// Sort by duration
+    Duration,
+    /// Sort by creation date
+    CreatedAt,
+}
+
+/// Order by input for tracks
+#[derive(Debug, Clone, Default, InputObject)]
+pub struct TrackOrderByInput {
+    /// Field to sort by
+    pub field: Option<TrackSortField>,
+    /// Sort direction
+    pub direction: Option<crate::graphql::filters::OrderDirection>,
+}
+
+/// Convert TrackSortField to database column name
+pub fn track_sort_field_to_column(field: TrackSortField) -> &'static str {
+    match field {
+        TrackSortField::Title => "title",
+        TrackSortField::TrackNumber => "track_number",
+        TrackSortField::DiscNumber => "disc_number",
+        TrackSortField::ArtistName => "artist_name",
+        TrackSortField::Duration => "duration_secs",
+        TrackSortField::CreatedAt => "created_at",
+    }
+}
+
+// Define the TrackConnection and TrackEdge types
+crate::define_connection!(TrackConnection, TrackEdge, Track);
+
 /// Album with tracks
 #[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
 pub struct AlbumWithTracks {
     pub album: Album,
+    pub artist_name: Option<String>,
     pub tracks: Vec<TrackWithStatus>,
     pub track_count: i32,
     pub tracks_with_files: i32,
@@ -2319,6 +2391,19 @@ crate::define_connection!(
     AudiobookChapter
 );
 
+/// Audiobook with all its chapters and status info
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct AudiobookWithChapters {
+    pub audiobook: Audiobook,
+    pub chapters: Vec<AudiobookChapter>,
+    pub chapter_count: i32,
+    pub chapters_with_files: i32,
+    pub missing_chapters: i32,
+    pub completion_percent: f64,
+    /// Author information if available
+    pub author: Option<AudiobookAuthor>,
+}
+
 // ============================================================================
 // Episode Types
 // ============================================================================
@@ -2555,6 +2640,17 @@ pub struct CreateNamingPatternInput {
     pub description: Option<String>,
     /// Library type this pattern is for (tv, movies, music, audiobooks, other)
     pub library_type: Option<String>,
+}
+
+/// Input for updating a custom naming pattern
+#[derive(Debug, InputObject)]
+pub struct UpdateNamingPatternInput {
+    /// Display name for the pattern
+    pub name: Option<String>,
+    /// The pattern string
+    pub pattern: Option<String>,
+    /// Human-readable description
+    pub description: Option<String>,
 }
 
 /// Result of naming pattern mutation
