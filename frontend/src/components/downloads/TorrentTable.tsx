@@ -15,7 +15,7 @@ import {
 } from '../data-table'
 import type { Torrent } from '../../lib/graphql'
 import { formatBytes, formatSpeed, formatEta, formatRelativeTime } from '../../lib/format'
-import { IconPlayerPlay, IconPlayerPause, IconTrash, IconPlus, IconInfoCircle, IconFolder, IconArrowDown, IconArrowUp, IconLibrary } from '@tabler/icons-react'
+import { IconPlayerPlay, IconPlayerPause, IconTrash, IconPlus, IconInfoCircle, IconFolder, IconArrowDown, IconArrowUp, IconLibrary, IconCopy, IconRefresh } from '@tabler/icons-react'
 import { TorrentCard, TORRENT_STATE_INFO } from './TorrentCard'
 
 // ============================================================================
@@ -30,6 +30,8 @@ export interface TorrentTableProps {
   onRemove: (id: number) => void
   onInfo: (id: number) => void
   onOrganize: (id: number) => void
+  onProcess: (torrent: Torrent) => void
+  onRematch: (torrent: Torrent) => void
   onLinkToLibrary: (torrent: Torrent) => void
   onBulkPause: (ids: number[]) => void
   onBulkResume: (ids: number[]) => void
@@ -65,6 +67,8 @@ export function TorrentTable({
   onRemove,
   onInfo,
   onOrganize,
+  onProcess,
+  onRematch,
   onLinkToLibrary,
   onBulkPause,
   onBulkResume,
@@ -348,8 +352,24 @@ export function TorrentTable({
         onAction: (torrent) => onInfo(torrent.id),
       },
       {
+        key: 'process',
+        label: 'Process',
+        icon: <IconCopy size={16} className="text-green-400" />,
+        inDropdown: true,
+        isVisible: (torrent) => torrent.state === 'SEEDING' || torrent.progress >= 1,
+        onAction: (torrent) => onProcess(torrent),
+      },
+      {
+        key: 'rematch',
+        label: 'Rematch',
+        icon: <IconRefresh size={16} className="text-blue-400" />,
+        inDropdown: true,
+        isVisible: (torrent) => torrent.state === 'SEEDING' || torrent.progress >= 1,
+        onAction: (torrent) => onRematch(torrent),
+      },
+      {
         key: 'organize',
-        label: 'Organize',
+        label: 'Organize (Legacy)',
         icon: <IconFolder size={16} className="text-amber-400" />,
         inDropdown: true,
         isVisible: (torrent) => torrent.state === 'SEEDING' || torrent.progress >= 1,
@@ -375,7 +395,7 @@ export function TorrentTable({
         },
       },
     ],
-    [onPause, onResume, onInfo, onOrganize, onLinkToLibrary, onConfirmOpen]
+    [onPause, onResume, onInfo, onOrganize, onProcess, onRematch, onLinkToLibrary, onConfirmOpen]
   )
 
   // Custom search function

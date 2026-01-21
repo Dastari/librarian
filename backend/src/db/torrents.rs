@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 /// A torrent record in the database
 ///
-/// Media linking is done via the `torrent_file_matches` table which links
+/// Media linking is done via the `pending_file_matches` table which links
 /// individual files to episodes/movies/tracks/chapters.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TorrentRecord {
@@ -27,7 +27,7 @@ pub struct TorrentRecord {
     pub download_path: Option<String>,
     pub source_url: Option<String>,
     // Note: Legacy linking fields (library_id, episode_id, movie_id, etc.) have been removed
-    // Use torrent_file_matches table for file-level matching instead
+    // Use pending_file_matches table for file-level matching instead
     pub source_feed_id: Option<Uuid>,
     /// Which indexer this torrent was downloaded from (for post_download_action resolution)
     pub source_indexer_id: Option<Uuid>,
@@ -222,7 +222,7 @@ impl TorrentRepository {
         Ok(())
     }
 
-    // Legacy link_to_* methods removed - use torrent_file_matches table instead
+    // Legacy link_to_* methods removed - use pending_file_matches table instead
 
     /// Get a default user ID from the database (for session sync when no user context)
     pub async fn get_default_user_id(&self) -> Result<Option<Uuid>> {
@@ -344,7 +344,7 @@ impl TorrentRepository {
 
     /// List torrents that completed but weren't matched to items
     /// These can be retried when a show is added to the library
-    /// Uses the torrent_file_matches table to find torrents with no successful matches
+    /// Uses the pending_file_matches table to find torrents with no successful matches
     pub async fn list_unmatched(&self) -> Result<Vec<TorrentRecord>> {
         let records = sqlx::query_as::<_, TorrentRecord>(
             r#"
@@ -353,12 +353,9 @@ impl TorrentRepository {
               AND t.completed_at IS NOT NULL
               AND (t.post_process_status = 'unmatched' OR t.post_process_status IS NULL)
               AND NOT EXISTS (
-                  SELECT 1 FROM torrent_file_matches tfm 
-                  WHERE tfm.torrent_id = t.id 
-                    AND (tfm.episode_id IS NOT NULL 
-                         OR tfm.movie_id IS NOT NULL 
-                         OR tfm.track_id IS NOT NULL 
-                         OR tfm.chapter_id IS NOT NULL)
+                  SELECT 1 FROM pending_file_matches pfm 
+                  WHERE pfm.source_type = 'torrent' 
+                    AND pfm.source_id = t.id
               )
             ORDER BY t.completed_at ASC
             "#,

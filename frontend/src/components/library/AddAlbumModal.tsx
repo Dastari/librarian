@@ -13,7 +13,6 @@ import {
   IconUser,
   IconCalendar,
   IconPlus,
-  IconFilter,
 } from '@tabler/icons-react'
 import {
   graphqlClient,
@@ -122,7 +121,7 @@ export function AddAlbumModal({
   const [searchResults, setSearchResults] = useState<AlbumSearchResult[]>([])
   const [addingId, setAddingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [showFilters, setShowFilters] = useState(false)
+  const [_showFilters, _setShowFilters] = useState(false) // TODO: implement filter UI
   const [filters, setFilters] = useState<AlbumTypeFilters>({
     includeEps: false,
     includeSingles: false,

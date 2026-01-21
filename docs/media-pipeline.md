@@ -1,15 +1,63 @@
 # Media Pipeline Architecture
 
-This document defines the unified media pipeline for Librarian - how files flow from torrents into organized libraries.
+This document defines the unified media pipeline for Librarian - how files flow from any download source into organized libraries.
 
 ## Core Principles
 
-1. **File-level matching** - Each file in a torrent is matched independently to individual items (episodes, tracks, chapters, movies)
-2. **Quality is verified, not assumed** - Every file is analyzed with ffprobe to determine true quality, never rely solely on filename
-3. **No auto-delete files** - Move conflicts to a designated folder, never auto-delete user files
-4. **Trust explicit user choices** - When user manually links a torrent to an item, trust their selection
-5. **Partial fulfillment is OK** - Downloading 8 of 12 album tracks is valid; remaining 4 stay "wanted"
-6. **Status reflects reality** - "downloading" means in download queue, "downloaded" means file in library folder
+1. **Source-agnostic matching** - The same matching logic handles files from torrents, usenet, IRC, FTP, or library scans
+2. **Always COPY, never move** - Files are always copied from download folders to library folders
+3. **Library owns files** - Unlinking a download source never affects library files
+4. **Quality is verified, not assumed** - Every file is analyzed with FFprobe to determine true quality
+5. **No auto-delete files** - Move conflicts to a designated folder, never auto-delete user files
+6. **Partial fulfillment is OK** - Downloading 8 of 12 album tracks is valid; remaining 4 stay "wanted"
+7. **Status reflects reality** - "downloading" means in download queue, "downloaded" means file in library folder
+
+---
+
+## Architecture Overview
+
+The matching and processing logic is **source-agnostic** - implemented in two central services:
+
+```mermaid
+flowchart TD
+    subgraph sources [File Sources]
+        TORRENT[Torrent]
+        USENET[Usenet]
+        IRC[IRC/FTP]
+        SCAN[Library Scan]
+    end
+    
+    subgraph core [Core Services - Source Agnostic]
+        FM[FileMatcher]
+        FP[FileProcessor]
+    end
+    
+    subgraph library [Library Domain]
+        LI[Library Items]
+        MF[Media Files]
+        LO[Library Organize]
+    end
+    
+    TORRENT -->|"file path"| FM
+    USENET -->|"file path"| FM
+    IRC -->|"file path"| FM
+    SCAN -->|"file path"| FM
+    
+    FM -->|"returns matches"| PFM[(pending_file_matches)]
+    FP -->|"copies file"| MF
+    MF --> LI
+    LO -->|"renames within library"| MF
+    
+    PFM -.->|"links to"| LI
+```
+
+**Key Services:**
+
+| Service | Location | Responsibility |
+|---------|----------|----------------|
+| `FileMatcher` | `backend/src/services/file_matcher.rs` | THE ONLY place matching logic exists |
+| `FileProcessor` | `backend/src/services/file_processor.rs` | THE ONLY place file copying happens |
+| `LibraryOrganizer` | `backend/src/services/organizer.rs` | Renames files within library folder only |
 
 ---
 
@@ -21,9 +69,9 @@ This document defines the unified media pipeline for Librarian - how files flow 
 |--------|---------|----------|
 | `missing` | No file exists, hasn't aired yet (for episodes) | Default for future content |
 | `wanted` | Aired/released, no file, actively looking | Air date passed, monitored=true |
-| `suboptimal` | Has file but below quality target | ffprobe detects quality below library/item setting |
-| `downloading` | In torrent download queue | Torrent added with matched file |
-| `downloaded` | File exists in library folder | File organized to library path |
+| `downloading` | Matched to a pending download | File matched via FileMatcher |
+| `downloaded` | File exists in library folder | File copied via FileProcessor |
+| `suboptimal` | Has file but below quality target | FFprobe detects quality below target |
 | `ignored` | User explicitly skipped | Manual action |
 
 ### Status Transitions
@@ -52,9 +100,9 @@ This document defines the unified media pipeline for Librarian - how files flow 
 ### Key Rules
 
 - **missing → wanted**: When air_date passes (for episodes) or immediately (for movies/albums added)
-- **wanted → downloading**: When file in torrent matches this item
-- **downloading → downloaded**: When file is organized to library folder
-- **downloaded → suboptimal**: When ffprobe reveals quality below target
+- **wanted → downloading**: When FileMatcher creates a match for this item
+- **downloading → downloaded**: When FileProcessor copies the file to library
+- **downloaded → suboptimal**: When FFprobe reveals quality below target
 - **suboptimal → wanted**: Only via explicit user action (or auto-upgrade if implemented)
 - **Any → ignored**: Explicit user action only
 
@@ -72,228 +120,174 @@ All content enters through one of these paths:
 4. **Direct Add** - User adds magnet/URL/NZB directly, no library context
 5. **Library Scan** - System discovers files already in library folder
 
-### Download Sources
-
-The pipeline supports two download sources with unified processing:
-
-| Source | Protocol | Tracking Table | File Matches Table |
-|--------|----------|----------------|-------------------|
-| Torrent | BitTorrent (librqbit) | `torrents` | `torrent_file_matches` |
-| Usenet | NNTP (native) | `usenet_downloads` | `usenet_file_matches` |
-
-Both sources flow through the same post-download processing pipeline.
-
 ### Pipeline Flow
 
+```mermaid
+sequenceDiagram
+    participant User
+    participant AutoHunt
+    participant DownloadService as Torrent/Usenet
+    participant FileMatcher
+    participant FileProcessor
+    participant Library
+
+    User->>AutoHunt: Add album to library
+    AutoHunt->>DownloadService: add_torrent(magnet, library_id)
+    DownloadService->>FileMatcher: match_files(files, library_id)
+    FileMatcher->>Library: Find wanted tracks
+    FileMatcher-->>DownloadService: save matches to pending_file_matches
+    Note over DownloadService: Download in progress...
+    DownloadService->>FileProcessor: process_source("torrent", torrent_id)
+    FileProcessor->>Library: Copy files to library folder
+    FileProcessor->>Library: Create media_files records
+    FileProcessor->>Library: Link items to media_files
+    FileProcessor->>Library: Update status="downloaded"
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           UNIFIED MEDIA PIPELINE                             │
-└─────────────────────────────────────────────────────────────────────────────┘
 
-PHASE 1: DOWNLOAD ACQUISITION (Torrent or Usenet)
-═══════════════════════════════════════════════════════════════════════════════
+### Phase 1: Download Acquisition
 
-     Auto-Hunt         RSS Feed         Manual /hunt        Direct Add
-         │                 │                  │                  │
-         └────────────┬────┴──────────────────┴──────────────────┘
-                      │
-                      ▼
-         ┌────────────────────────────┐
-         │  1. ADD DOWNLOAD           │
-         │  Torrent:                  │
-         │  - Create `torrents` record│
-         │  - Add to librqbit         │
-         │  Usenet:                   │
-         │  - Create `usenet_         │
-         │    downloads` record       │
-         │  - Queue for NNTP download │
-         │                            │
-         │  Store source context:     │
-         │    • library_id (optional) │
-         │    • item_id (if explicit) │
-         │    • indexer_id (for auth) │
-         │  - Get file list from      │
-         │    metadata (torrent) or   │
-         │    NZB (usenet)            │
-         └─────────────┬──────────────┘
-                       │
-                       ▼
-         ┌────────────────────────────┐
-         │  2. ANALYZE TORRENT FILES  │
-         │  For each file in torrent: │
-         │  - Is it a media file?     │
-         │  - Is it an archive?       │
-         │  - Is it a sample?         │
-         │  - Is it artwork/subs?     │
-         │  - Parse filename for info │
-         └─────────────┬──────────────┘
-                       │
-                       ▼
-         ┌────────────────────────────┐
-         │  3. MATCH FILES TO ITEMS   │
-         │  For each media file:      │
-         │  - Find matching wanted    │
-         │    item across libraries   │
-         │    with auto_download=true │
-         │  - Check quality threshold │
-         │    (based on filename)     │
-         │  - Create torrent_file_    │
-         │    match record            │
-         │  - Update item status      │
-         │    to 'downloading'        │
-         │                            │
-         │  If file already exists:   │
-         │  - Skip file in torrent    │
-         │    (don't download)        │
-         │  - OR accept if upgrade    │
-         └─────────────┬──────────────┘
-                       │
-                       ▼
-         ┌────────────────────────────┐
-         │  4. CONFIGURE DOWNLOAD     │
-         │  - Exclude sample files    │
-         │  - Exclude already-have    │
-         │    files (if possible)     │
-         │  - Start download          │
-         └─────────────┬──────────────┘
-                       │
-                       ▼
-              ┌────────────────┐
-              │  DOWNLOADING   │
-              │  Torrent:      │
-              │   (librqbit)   │
-              │  Usenet:       │
-              │   (NNTP+yEnc)  │
-              └───────┬────────┘
-                      │
-                      ▼
+When a download is added:
 
-PHASE 2: POST-DOWNLOAD PROCESSING (Unified for both sources)
-═══════════════════════════════════════════════════════════════════════════════
+1. **Create download record** - `torrents` or `usenet_downloads` table
+2. **Get file list** - From torrent metadata or NZB
+3. **Match files** - `FileMatcher.match_files()` finds matching wanted items
+4. **Save matches** - Creates `pending_file_matches` records
+5. **Update item status** - Sets matched items to "downloading"
+6. **Set active_download_id** - Links item to the pending match for progress display
 
-         ┌────────────────────────────┐
-         │  5. TORRENT COMPLETES      │
-         │  Download Monitor Job      │
-         │  (runs every minute)       │
-         └─────────────┬──────────────┘
-                       │
-           ┌───────────┴───────────┐
-           │                       │
-           ▼                       ▼
-    ┌──────────────┐       ┌──────────────┐
-    │ Has Archives │       │ No Archives  │
-    │              │       │              │
-    │ Extract to:  │       │ Process      │
-    │ {torrent}/   │       │ directly     │
-    │ _extracted/  │       │              │
-    └──────┬───────┘       └──────┬───────┘
-           │                       │
-           └───────────┬───────────┘
-                       │
-                       ▼
-         ┌────────────────────────────┐
-         │  6. PROCESS EACH FILE      │
-         │  For each media file:      │
-         │                            │
-         │  a) Run ffprobe analysis   │
-         │     - True resolution      │
-         │     - Codec, bitrate       │
-         │     - HDR type             │
-         │     - Audio tracks         │
-         │     - Embedded subtitles   │
-         │                            │
-         │  b) Verify/update match    │
-         │     - Use ffprobe data     │
-         │     - Flag if suboptimal   │
-         │                            │
-         │  c) Create media_file      │
-         │     record with real data  │
-         │                            │
-         │  d) Handle related files   │
-         │     - External subtitles   │
-         │     - Album artwork        │
-         └─────────────┬──────────────┘
-                       │
-                       ▼
-         ┌────────────────────────────┐
-         │  7. ORGANIZE FILES         │
-         │  (If library.organize)     │
-         │                            │
-         │  Get post_download_action: │
-         │  - From indexer/feed       │
-         │    (if seeding required)   │
-         │  - Fall back to library    │
-         │                            │
-         │  For each matched file:    │
-         │  - Generate target path    │
-         │    using naming_pattern    │
-         │  - copy/move/hardlink      │
-         │  - Update media_file.path  │
-         │                            │
-         │  Handle conflicts:         │
-         │  - Move to _conflicts/     │
-         │    folder, don't delete    │
-         └─────────────┬──────────────┘
-                       │
-                       ▼
-         ┌────────────────────────────┐
-         │  8. FINALIZE               │
-         │  - Update item status      │
-         │    to 'downloaded'         │
-         │    OR 'suboptimal'         │
-         │  - Update stats            │
-         │  - Mark torrent complete   │
-         └────────────────────────────┘
+### Phase 2: Post-Download Processing
 
+When download completes (triggered by Download Monitor Job):
 
-PHASE 3: LIBRARY SCANNING (ALTERNATE ENTRY)
-═══════════════════════════════════════════════════════════════════════════════
+1. **Process pending matches** - `FileProcessor.process_source()` processes all uncopied matches
+2. **For each match:**
+   - Determine destination path using library naming pattern
+   - Copy file from download folder to library folder
+   - Create `media_file` record with new path
+   - Link item to media_file
+   - Update item status to "downloaded"
+   - Clear `active_download_id`
+   - Queue file for FFprobe analysis
 
-         ┌────────────────────────────┐
-         │  SCAN LIBRARY FOLDER       │
-         │  - Walk directory tree     │
-         │  - For each media file:    │
-         └─────────────┬──────────────┘
-                       │
-                       ▼
-         ┌────────────────────────────┐
-         │  1. ANALYZE FILE           │
-         │  - Run ffprobe             │
-         │  - Parse filename          │
-         │  - Extract real metadata   │
-         └─────────────┬──────────────┘
-                       │
-                       ▼
-         ┌────────────────────────────┐
-         │  2. MATCH TO WANTED        │
-         │  Does file match a         │
-         │  wanted item in library?   │
-         └─────────────┬──────────────┘
-                       │
-           ┌───────────┴───────────┐
-           │                       │
-           ▼                       ▼
-    ┌──────────────┐       ┌──────────────┐
-    │   MATCH      │       │   NO MATCH   │
-    │              │       │              │
-    │ Link file    │       │ auto_add?    │
-    │ to item      │       │              │
-    │ Check quality│       └──────┬───────┘
-    │ Set status   │              │
-    └──────────────┘      ┌───────┴───────┐
-                          │               │
-                          ▼               ▼
-                   ┌──────────┐    ┌──────────┐
-                   │   YES    │    │    NO    │
-                   │          │    │          │
-                   │ Search   │    │ Add to   │
-                   │ metadata │    │ unmatched│
-                   │ provider │    │ files    │
-                   │ Create   │    │          │
-                   │ show +   │    │          │
-                   │ episodes │    │          │
-                   │ Link file│    │          │
-                   └──────────┘    └──────────┘
+### Phase 3: Library Scanning (Alternate Entry)
+
+When scanning existing library files:
+
+1. **Walk directory tree** - Find all media files
+2. **For new files** - Use `FileMatcher.match_file()` to find matching wanted item
+3. **If matched** - Use `FileProcessor.link_existing_file()` to create media_file and link
+4. **If not matched + auto_add_discovered** - Create new item from file metadata
+
+---
+
+## Database Schema
+
+### `pending_file_matches` (Source-Agnostic)
+
+Replaces the old `torrent_file_matches` table with a unified, source-agnostic design:
+
+```sql
+pending_file_matches (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL,
+    
+    -- Source file info (works for any source)
+    source_path TEXT NOT NULL,           -- Full path to source file
+    source_type VARCHAR(20) NOT NULL,    -- 'torrent', 'usenet', 'scan', 'manual'
+    source_id UUID,                      -- torrent_id, usenet_download_id, etc.
+    source_file_index INTEGER,           -- For multi-file sources (torrents)
+    file_size BIGINT NOT NULL,
+    
+    -- Match target (only one set per row)
+    episode_id UUID REFERENCES episodes(id) ON DELETE CASCADE,
+    movie_id UUID REFERENCES movies(id) ON DELETE CASCADE,
+    track_id UUID REFERENCES tracks(id) ON DELETE CASCADE,
+    chapter_id UUID REFERENCES chapters(id) ON DELETE CASCADE,
+    
+    -- Match metadata
+    match_type VARCHAR(20) DEFAULT 'auto',  -- 'auto', 'manual'
+    match_confidence DECIMAL(3,2),
+    
+    -- Parsed quality info (from filename)
+    parsed_resolution VARCHAR(20),
+    parsed_codec VARCHAR(50),
+    parsed_source VARCHAR(50),
+    parsed_audio VARCHAR(100),
+    
+    -- Processing status
+    copied_at TIMESTAMPTZ,               -- null = not yet copied
+    copy_error TEXT,                     -- error if copy failed
+    
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Index for finding matches by source
+CREATE INDEX idx_pending_file_matches_source ON pending_file_matches(source_type, source_id);
+```
+
+### `active_download_id` on Library Items
+
+For showing download progress:
+
+```sql
+-- Links to pending_file_matches - works for torrent, usenet, etc.
+ALTER TABLE tracks ADD COLUMN active_download_id UUID REFERENCES pending_file_matches(id) ON DELETE SET NULL;
+ALTER TABLE episodes ADD COLUMN active_download_id UUID REFERENCES pending_file_matches(id) ON DELETE SET NULL;
+ALTER TABLE movies ADD COLUMN active_download_id UUID REFERENCES pending_file_matches(id) ON DELETE SET NULL;
+ALTER TABLE chapters ADD COLUMN active_download_id UUID REFERENCES pending_file_matches(id) ON DELETE SET NULL;
+```
+
+---
+
+## GraphQL API
+
+### Queries
+
+```graphql
+# Get pending matches for any source
+query PendingFileMatches($sourceType: String!, $sourceId: String!) {
+  pendingFileMatches(sourceType: $sourceType, sourceId: $sourceId) {
+    id
+    sourcePath
+    sourceType
+    episodeId movieId trackId chapterId
+    matchConfidence
+    copied copiedAt copyError
+  }
+}
+```
+
+### Mutations
+
+```graphql
+# Re-match all files from a source
+mutation RematchSource($sourceType: String!, $sourceId: ID!, $libraryId: ID) {
+  rematchSource(sourceType: $sourceType, sourceId: $sourceId, libraryId: $libraryId) {
+    success matchCount error
+  }
+}
+
+# Process pending matches (copy files to library)
+mutation ProcessSource($sourceType: String!, $sourceId: ID!) {
+  processSource(sourceType: $sourceType, sourceId: $sourceId) {
+    success filesProcessed filesFailed error
+  }
+}
+
+# Manually set a match target
+mutation SetMatch($matchId: ID!, $targetType: String!, $targetId: ID!) {
+  setMatch(matchId: $matchId, targetType: $targetType, targetId: $targetId) {
+    success error
+  }
+}
+
+# Remove a specific match
+mutation RemoveMatch($matchId: ID!) {
+  removeMatch(matchId: $matchId) {
+    success error
+  }
+}
 ```
 
 ---
@@ -313,333 +307,101 @@ When matching a file to wanted items:
 For a file to match an item:
 
 ```rust
-fn can_match(file: &ParsedFile, item: &WantedItem, settings: &QualitySettings) -> MatchResult {
-    // 1. Content match (show/season/episode, artist/album/track, title/year, etc.)
-    if !content_matches(file, item) {
-        return MatchResult::NoMatch;
+fn match_file(&self, file: &FileInfo, libraries: &[Library]) -> Option<FileMatchResult> {
+    // 1. Determine file type (video vs audio)
+    let is_video = is_video_file(&file.path);
+    let is_audio = is_audio_file(&file.path);
+    
+    // 2. Skip samples
+    if is_sample_file(&file.path, file.size) {
+        return Some(FileMatchResult::Sample);
     }
     
-    // 2. Quality check (based on filename - real check after ffprobe)
-    let parsed_quality = parse_quality_from_filename(&file.name);
+    // 3. Parse filename for metadata
+    let parsed = filename_parser::parse(&file.path);
     
-    if quality_meets_target(&parsed_quality, settings) {
-        return MatchResult::Match;
-    }
-    
-    if quality_is_upgrade(&parsed_quality, item.current_quality) {
-        return MatchResult::Upgrade;
-    }
-    
-    // Quality below target but still usable
-    return MatchResult::Suboptimal;
-}
-```
-
-### Quality Verification
-
-After ffprobe analysis, quality is re-evaluated:
-
-```rust
-fn verify_quality(media_file: &MediaFile, settings: &QualitySettings) -> QualityStatus {
-    // Use ACTUAL values from ffprobe, not filename parsing
-    let actual = ActualQuality {
-        resolution: media_file.height, // e.g., 1080
-        codec: &media_file.video_codec,
-        hdr: media_file.is_hdr,
-        // etc.
-    };
-    
-    if meets_target(&actual, settings) {
-        QualityStatus::Optimal
-    } else if above_minimum(&actual, settings) {
-        QualityStatus::Suboptimal
-    } else {
-        QualityStatus::BelowMinimum
+    // 4. Find matching item based on file type
+    if is_video {
+        try_match_episode(parsed) || try_match_movie(parsed)
+    } else if is_audio {
+        try_match_track(parsed) || try_match_chapter(parsed)
     }
 }
 ```
 
----
+### Fuzzy Matching
 
-## Handling Special Cases
+Uses `rapidfuzz` for intelligent title matching:
 
-### Sample Files
-
-- **Detection**: Filename contains "sample" (case-insensitive) or size < 100MB for videos
-- **Action**: Skip during organization, leave in torrent for seeding
-- **Database**: Don't create media_file record
-
-### Archive Files (zip, rar, 7z) — ✅ Fully Implemented
-
-- **Detection**: Extension is .zip, .rar, .7z, .tar.gz
-- **Extraction**: Extract to `{downloads}/{torrent_name}/_extracted/`
-- **Multi-part RAR**: Automatically handled (skips .r00, .r01 volumes, extracts from main .rar)
-- **Processing**: Run normal file matching on extracted contents
-- **Cleanup**: Leave archive in torrent for seeding
-
-### Artwork Files
-
-- **Detection**: Extension is .jpg, .jpeg, .png, .gif
-- **For Albums**: Copy to album folder if no artwork exists
-- **For Movies/Shows**: Ignore (use metadata provider artwork)
-
-### Subtitle Files
-
-- **Detection**: Extension is .srt, .sub, .ass, .ssa, .vtt, .idx
-- **Action**: Copy alongside video file during organization
-- **Future**: Link to subtitle system when implemented
-
-### Conflicts
-
-When organizing would overwrite an existing file:
-
-1. **Same quality**: Skip organization, leave in downloads
-2. **Better quality**: 
-   - Move existing to `{library}/_conflicts/`
-   - Organize new file to proper location
-   - Log conflict for user review
-3. **Worse quality**:
-   - Leave new file in downloads
-   - Mark as "suboptimal" if no other match
-
----
-
-## Database Schema
-
-All tables are implemented in migrations 028-034.
-
-### `torrent_file_matches`
-
-Tracks the relationship between torrent files and library items:
-
-```sql
-torrent_file_matches (
-    id UUID PRIMARY KEY,
-    torrent_id UUID NOT NULL,
-    file_index INTEGER NOT NULL,
-    file_path TEXT NOT NULL,
-    file_size BIGINT NOT NULL,
-    -- Match targets (one will be set)
-    episode_id, movie_id, track_id, audiobook_chapter_id UUID,
-    -- Match metadata
-    match_type VARCHAR(20) NOT NULL, -- 'auto', 'manual', 'forced'
-    match_confidence DECIMAL(3, 2),
-    parsed_resolution, parsed_codec, parsed_source VARCHAR,
-    -- State
-    skip_download BOOLEAN DEFAULT false,
-    processed BOOLEAN DEFAULT false,
-    media_file_id UUID,
-    UNIQUE(torrent_id, file_index)
-);
-```
-
-### `usenet_file_matches`
-
-Parallel table for usenet downloads:
-
-```sql
-usenet_file_matches (
-    id UUID PRIMARY KEY,
-    usenet_download_id UUID NOT NULL,
-    file_path TEXT NOT NULL,
-    file_size BIGINT,
-    -- Match targets
-    episode_id, movie_id, album_id, track_id, audiobook_id UUID,
-    processed BOOLEAN DEFAULT false,
-    media_file_id UUID
-);
-```
-
-### Status Fields
-
-Added to multiple tables for unified tracking:
-
-| Table | Column | Values |
-|-------|--------|--------|
-| `episodes` | `status` | missing, wanted, available, downloading, downloaded, ignored, suboptimal |
-| `tracks` | `status` | missing, wanted, downloading, downloaded, ignored |
-| `audiobook_chapters` | `status` | missing, wanted, downloading, downloaded, ignored |
-| `movies` | `download_status` | missing, wanted, downloading, downloaded, ignored, suboptimal |
-| `albums` | `download_status` | missing, wanted, downloading, downloaded, ignored, suboptimal, partial |
-| `audiobooks` | `download_status` | missing, wanted, downloading, downloaded, ignored, suboptimal |
-| `media_files` | `quality_status` | unknown, optimal, suboptimal, exceeds |
-
-### Post-Download Action Overrides
-
-Both `indexer_configs` and `rss_feeds` have `post_download_action` column:
-- `NULL` = use library default
-- `'copy'` | `'move'` | `'hardlink'` = override library setting
-
----
-
-## Library Settings
-
-| Setting | Purpose | Status |
-|---------|---------|--------|
-| `auto_scan` | Run scan on schedule | ✅ Implemented |
-| `scan_interval_minutes` | How often to scan | ✅ Implemented |
-| `watch_for_changes` | Use inotify for real-time detection | ⏳ DB field exists, not used |
-| `auto_add_discovered` | Create entries from unmatched files | ✅ Implemented |
-| `auto_download` | Auto-grab from RSS when match found | ✅ Implemented |
-| `auto_hunt` | Search indexers for missing content | ✅ Implemented |
-| `organize_files` | Automatically organize into folders | ✅ Implemented |
-| `naming_pattern` | How to name/structure files | ✅ Implemented |
-| `post_download_action` | copy/move/hardlink | ✅ Implemented |
-| `conflicts_folder` | Where to move conflicting files | ✅ Implemented (default: `_conflicts`) |
-
----
-
-## Monitored Field
-
-The `monitored` field on shows/albums/audiobooks controls **which items are wanted**:
-
-- `monitor_type = 'all'`: All existing episodes are wanted
-- `monitor_type = 'future'`: Only unaired/unreleased items are wanted
-- `monitor_type = 'none'`: No items are automatically wanted
-
-This is separate from `auto_hunt` and `auto_download` which control automation.
+- Show name similarity threshold: 80%
+- Track title similarity threshold: 60%
+- Handles common variations (punctuation, "The" prefix, etc.)
 
 ---
 
 ## Implementation Modules
 
-All modules are implemented in `backend/src/services/`:
-
 | Module | Purpose | Status |
 |--------|---------|--------|
-| `torrent_file_matcher.rs` | Matches files within torrents to wanted items | ✅ Complete |
-| `media_processor.rs` | Unified download processing (torrents + usenet) | ✅ Complete |
-| `quality_evaluator.rs` | Uses ffprobe to verify actual quality | ✅ Complete |
-| `organizer.rs` | File organization with conflict handling | ✅ Complete |
-| `hunt.rs` | Auto-hunt service | ✅ Complete |
-| `scanner.rs` | Library scanning | ✅ Complete |
-| `usenet.rs` | Usenet NNTP client | ✅ Complete |
-| `extractor.rs` | Archive extraction (zip, rar, 7z) | ✅ Complete |
-| `track_matcher.rs` | Fuzzy track matching for music | ✅ Complete |
+| `file_matcher.rs` | Source-agnostic file matching (THE ONLY matching code) | ✅ Complete |
+| `file_processor.rs` | Source-agnostic file copying (THE ONLY copy code) | ✅ Complete |
+| `pending_file_matches.rs` | Database repository for pending matches | ✅ Complete |
+| `organizer.rs` | Library-only file organization | ✅ Complete |
+| `quality_evaluator.rs` | FFprobe quality verification | ✅ Complete |
+| `scanner.rs` | Library scanning | 🟡 Needs FileMatcher integration |
+| `torrent_completion_handler.rs` | Torrent add/complete handling | ✅ Complete |
+| `download_monitor.rs` | Scheduled processing job | ✅ Complete |
+| `auto_hunt.rs` | Auto-hunt service | ✅ Complete |
 
 ---
 
-## Implementation Status by Media Type
+## Implementation Status
 
-The backend pipeline is **fully implemented** for all media types. Frontend varies by type.
+### Completed
 
-### TV Shows — Reference Implementation (100%)
+- ✅ `pending_file_matches` database table (source-agnostic)
+- ✅ `active_download_id` on library items
+- ✅ `FileMatcher` service with fuzzy matching
+- ✅ `FileProcessor` service with copy and link
+- ✅ GraphQL mutations: rematchSource, processSource, setMatch, removeMatch
+- ✅ GraphQL query: pendingFileMatches
+- ✅ Torrent integration (match on add, process on complete)
+- ✅ Download monitor job updated
+- ✅ Frontend: TorrentTable with Process/Rematch actions
+- ✅ Frontend: TorrentInfoModal with copy status and remove match
 
-**Backend:**
-- ✅ File matching (show/season/episode parsing, 80% similarity threshold)
-- ✅ File organization (Show Name (Year)/Season XX/ structure)
-- ✅ Library scanning (auto-add discovered shows, TVMaze/TMDB metadata)
-- ✅ Auto-hunt (event-driven, triggers on add + after scans)
-- ✅ RSS processing (episode matching, quality filtering)
-- ✅ Torrent processing (file-level matching, status updates)
-- ✅ Usenet processing (filename parsing, organization)
+### Pending
 
-**Frontend:**
-- ✅ `/shows/$showId` detail page with metadata, seasons, episodes
-- ✅ Episode table with quality chips, progress, status
-- ✅ Playback integration with resume support
-- ✅ Hunt/download actions per episode
-- ✅ Status filters (downloaded, wanted, missing, etc.)
-- ✅ Show-level quality settings overrides
+- 🟡 Scanner integration (use FileMatcher for new files)
+- 🟡 Frontend: Library item progress bar when active_download_id is set
+- 🟡 Frontend: Pre-existing TypeScript warnings in unrelated files
 
-### Movies — Complete (95%)
+### Future Enhancements
 
-**Backend:**
-- ✅ File matching (title/year parsing)
-- ✅ File organization (Movie Title (Year)/ structure)
-- ✅ Library scanning (TMDB metadata, cast/crew)
-- ✅ Auto-hunt (triggers on add + after scans)
-- ✅ Torrent processing (file-level matching)
-- ✅ Usenet processing (organization)
-
-**Frontend:**
-- ✅ `/movies/$movieId` detail page with metadata
-- ✅ Playback integration
-- ✅ Hunt navigation
-- 🟡 Watch progress resume (backend ready, frontend fetch TODO)
-
-### Music/Albums — Backend Complete, Frontend Partial (85%)
-
-**Backend:**
-- ✅ File matching (artist/album/track parsing, 80% fuzzy threshold)
-- ✅ File organization (Artist/Album/TrackNumber - Title structure)
-- ✅ Library scanning (ID3 tags, MusicBrainz metadata)
-- ✅ Auto-hunt (validates tracks before downloading)
-- ✅ Torrent processing (track-level matching)
-- ✅ Usenet processing (organization)
-
-**Frontend:**
-- ✅ `/albums/$albumId` detail page with cover, tracks, progress bar
-- ✅ Track list with status indicators
-- ✅ Hunt navigation (navigates to /hunt page)
-- ❌ Audio playback (placeholder only, no player)
-- ❌ `huntAlbum` GraphQL mutation (uses navigation workaround)
-
-### Audiobooks — Backend Complete, Frontend Incomplete (70%)
-
-**Backend:**
-- ✅ File matching (author/title/chapter parsing)
-- ✅ File organization (Author/Book Title/ structure)
-- ✅ Library scanning (OpenLibrary/Audible metadata)
-- ✅ Auto-hunt (triggers on add + after scans)
-- ✅ Torrent processing (chapter-level matching)
-- ✅ Usenet processing (organization)
-
-**Frontend:**
-- ✅ Library list page with search/filter
-- ❌ Detail page (`/audiobooks/$audiobookId` does not exist)
-- ❌ Chapter list UI
-- ❌ Chapter playback
-- ❌ Hunt/download actions
+- ⏳ Use FFprobe metadata (ID3 tags) to improve matching accuracy for audio
+- ⏳ Usenet integration with new services
+- ⏳ IRC/FTP download source support
 
 ---
 
-## Pipeline Trigger Points
-
-All download sources correctly trigger the unified processing pipeline:
-
-| Entry Point | TV | Movies | Music | Audiobooks |
-|-------------|-------|--------|-------|------------|
-| RSS Feed → Auto-download | ✅ | ✅ | ✅ | ✅ |
-| Auto-Hunt → Download | ✅ | ✅ | ✅ | ✅ |
-| Manual /hunt → Download | ✅ | ✅ | ✅ | ✅ |
-| Direct magnet/URL add | ✅ | ✅ | ✅ | ✅ |
-| Usenet NZB download | ✅ | ✅ | ✅ | ✅ |
-| Library scan (existing files) | ✅ | ✅ | ✅ | ✅ |
-
-**Post-download processing** (triggered by Download Monitor Job):
-1. Torrent/Usenet completes → Archive extraction (if needed)
-2. Files analyzed with FFprobe
-3. Files matched to library items
-4. Files organized to library folder
-5. Item status updated to downloaded/suboptimal
-6. Stats updated
-
----
-
-## UI Improvements Needed
+## UI Features
 
 ### Downloads Page
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| File matches per torrent | 🟡 Partial | Available in Info modal, not inline |
-| File status display | 🟡 Partial | Progress shown, not explicit states |
-| "Fix Match" button | ❌ Missing | Manual correction not implemented |
+| Feature | Status |
+|---------|--------|
+| File matches per torrent | ✅ In Info modal |
+| Copy status display (Copied/Pending/Error) | ✅ Complete |
+| "Process" action (copy files to library) | ✅ Complete |
+| "Rematch" action (re-run matching) | ✅ Complete |
+| "Remove Match" per file | ✅ Complete |
 
-### Library Detail Page
+### Library Items
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| "Suboptimal" filter | ❌ Missing | Type exists, no filter UI |
-| Conflicts section | ❌ Missing | No `_conflicts` folder display |
-
-### Settings
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Per-indexer `post_download_action` | ❌ Missing | DB column exists, no UI |
-| Per-feed `post_download_action` | ❌ Missing | DB column exists, no UI |
+| Feature | Status |
+|---------|--------|
+| Progress bar when downloading | 🟡 Needs active_download_id integration |
+| Suboptimal quality indicator | ✅ Complete |
 
 ---
 
@@ -655,7 +417,7 @@ Fully implemented with support for:
 | 7z | ✅ | `7z` command |
 
 Extraction is triggered automatically:
-- After torrent completion (in `media_processor.rs`)
+- After torrent completion
 - After usenet download completion
 - Archives extracted to `{download_path}/_extracted/`
 - Original archives preserved for seeding

@@ -1,5 +1,4 @@
 use super::prelude::*;
-use crate::services::torrent_file_matcher::TorrentFileMatcher;
 
 #[derive(Default)]
 pub struct TorrentMutations;
@@ -239,9 +238,10 @@ impl TorrentMutations {
         }
     }
 
-    /// Organize a completed torrent's files into the library structure
+    /// Organize a completed torrent's files into the library structure (LEGACY)
     ///
-    /// This uses the unified MediaProcessor to:
+    /// Note: Use processSource mutation for new source-agnostic processing.
+    /// This legacy mutation:
     /// 1. Parse filenames to identify show/episode
     /// 2. Match to existing shows in the library
     /// 3. Copy/move/hardlink files based on library settings
@@ -250,21 +250,24 @@ impl TorrentMutations {
     ///
     /// If library_id is provided, the torrent will be linked to that library first.
     /// If album_id is provided for music, files will be matched to that album's tracks.
+    /// Process pending file matches for a torrent (copy files to library)
     async fn organize_torrent(
         &self,
         ctx: &Context<'_>,
         id: i32,
-        #[graphql(desc = "Optional library ID to organize into (links torrent to library first)")]
+        #[graphql(desc = "Optional library ID to limit matching scope")]
         library_id: Option<String>,
         #[graphql(desc = "Optional album ID for music torrents")] album_id: Option<String>,
     ) -> Result<OrganizeTorrentResult> {
+        use crate::services::file_processor::FileProcessor;
         use tracing::info;
         
-        let _user = ctx.auth_user()?;
+        let user = ctx.auth_user()?;
         let db = ctx.data_unchecked::<Database>();
         let torrent_service = ctx.data_unchecked::<Arc<TorrentService>>();
+        let analysis_queue = ctx.data_opt::<Arc<crate::services::queues::MediaAnalysisQueue>>();
 
-        // Get torrent info to get info_hash and files
+        // Get torrent info to get info_hash
         let torrent_info = match torrent_service.get_torrent_info(id as usize).await {
             Ok(info) => info,
             Err(e) => {
@@ -277,74 +280,84 @@ impl TorrentMutations {
             }
         };
 
+        // Get torrent DB record
+        let torrent_record = match db.torrents().get_by_info_hash(&torrent_info.info_hash).await {
+            Ok(Some(t)) => t,
+            Ok(None) => {
+                return Ok(OrganizeTorrentResult {
+                    success: false,
+                    organized_count: 0,
+                    failed_count: 0,
+                    messages: vec!["Torrent not found in database".to_string()],
+                });
+            }
+            Err(e) => {
+                return Ok(OrganizeTorrentResult {
+                    success: false,
+                    organized_count: 0,
+                    failed_count: 0,
+                    messages: vec![format!("Database error: {}", e)],
+                });
+            }
+        };
+
         info!(
             torrent_id = id,
             torrent_name = %torrent_info.name,
             file_count = torrent_info.files.len(),
             library_id = ?library_id,
             album_id = ?album_id,
-            "Organizing torrent"
-        );
-        
-        // Log library_id if provided (torrent-library linking is handled by file matches)
-        if let Some(ref lib_id_str) = library_id {
-            info!(
-                library_id = %lib_id_str,
-                "Library specified for organization"
-            );
-        }
-
-        // If explicit targets are provided (album_id, movie_id, episode_id), create file matches
-        // This ensures that when users explicitly select an album in the UI, files get matched
-        let album_uuid = album_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
-        
-        if album_uuid.is_some() {
-            info!(
-                album_id = ?album_id,
-                torrent_name = %torrent_info.name,
-                "Creating explicit file matches for target"
-            );
-            
-            // Use the helper function to create file matches
-            create_file_matches_for_target(db, &torrent_info, album_uuid, None, None).await;
-        }
-
-        // Use the unified MediaProcessor with force=true to reprocess
-        // Include metadata service for auto-adding movies from TMDB
-        let metadata_service = ctx.data_unchecked::<Arc<crate::services::MetadataService>>();
-        let processor = crate::services::MediaProcessor::with_services(
-            db.clone(),
-            ctx.data_unchecked::<Arc<crate::services::MediaAnalysisQueue>>()
-                .clone(),
-            metadata_service.clone(),
+            "Processing torrent"
         );
 
-        match processor
-            .process_torrent(torrent_service, &torrent_info.info_hash, true)
-            .await
-        {
-            Ok(result) => {
+        // If album_id is provided, create explicit matches for the album's tracks
+        if let Some(ref album_id_str) = album_id {
+            if let Ok(album_uuid) = Uuid::parse_str(album_id_str) {
+                info!(
+                    album_id = %album_id_str,
+                    torrent_name = %torrent_info.name,
+                    "Creating explicit file matches for album"
+                );
+                
+                // Delete any existing matches for this torrent and rematch
+                db.pending_file_matches()
+                    .delete_by_source("torrent", torrent_record.id)
+                    .await
+                    .ok();
+
+                // Create matches for album tracks
+                create_file_matches_for_target(db, &torrent_info, Some(album_uuid), None, None).await;
+            }
+        }
+
+        // Use FileProcessor to copy files to library
+        let processor = match analysis_queue {
+            Some(queue) => FileProcessor::with_analysis_queue(db.clone(), queue.clone()),
+            None => FileProcessor::new(db.clone()),
+        };
+
+        let result = processor.process_source("torrent", torrent_record.id).await;
+
+        match result {
+            Ok(proc_result) => {
                 info!(
                     torrent_name = %torrent_info.name,
-                    success = result.success,
-                    files_processed = result.files_processed,
-                    files_failed = result.files_failed,
-                    organized = result.organized,
-                    "Torrent organization complete: '{}' - {} files processed, {} failed (success: {})",
-                    torrent_info.name, result.files_processed, result.files_failed, result.success
+                    files_processed = proc_result.files_processed,
+                    files_failed = proc_result.files_failed,
+                    "Torrent processing complete"
                 );
                 Ok(OrganizeTorrentResult {
-                    success: result.success,
-                    organized_count: result.files_processed,
-                    failed_count: result.files_failed,
-                    messages: result.messages,
+                    success: proc_result.files_failed == 0,
+                    organized_count: proc_result.files_processed as i32,
+                    failed_count: proc_result.files_failed as i32,
+                    messages: proc_result.messages,
                 })
             }
             Err(e) => Ok(OrganizeTorrentResult {
                 success: false,
                 organized_count: 0,
                 failed_count: 0,
-                messages: vec![format!("Organization failed: {}", e)],
+                messages: vec![format!("Processing failed: {}", e)],
             }),
         }
     }
@@ -408,13 +421,259 @@ impl TorrentMutations {
             error: None,
         })
     }
+
+    // =========================================================================
+    // Source-Agnostic File Matching/Processing Mutations
+    // =========================================================================
+
+    /// Re-match all files from a source (torrent, usenet, etc.)
+    ///
+    /// Deletes existing matches and re-runs matching against libraries.
+    ///
+    /// The source_id can be either:
+    /// - A UUID (database ID)
+    /// - An info_hash (for torrents) - will be looked up to get the database ID
+    async fn rematch_source(
+        &self,
+        ctx: &Context<'_>,
+        source_type: String,
+        source_id: String,
+        #[graphql(desc = "Optional library ID to limit matching scope")]
+        library_id: Option<String>,
+    ) -> Result<RematchSourceResult> {
+        use crate::services::file_matcher::{FileInfo, FileMatcher};
+
+        let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let torrent_service = ctx.data_unchecked::<Arc<TorrentService>>();
+
+        let user_id = Uuid::parse_str(&user.user_id)
+            .map_err(|_| async_graphql::Error::new("Invalid user ID"))?;
+        
+        // Try to parse as UUID first, otherwise look up by info_hash for torrents
+        let source_uuid = match Uuid::parse_str(&source_id) {
+            Ok(uuid) => uuid,
+            Err(_) if source_type == "torrent" => {
+                // Try to look up by info_hash
+                db.torrents()
+                    .get_by_info_hash(&source_id)
+                    .await
+                    .map_err(|e| async_graphql::Error::new(format!("Database error: {}", e)))?
+                    .ok_or_else(|| async_graphql::Error::new("Torrent not found by info_hash"))?
+                    .id
+            }
+            Err(_) => {
+                return Err(async_graphql::Error::new("Invalid source ID"));
+            }
+        };
+        
+        let target_library_id = library_id
+            .as_ref()
+            .and_then(|s| Uuid::parse_str(s).ok());
+
+        // Delete existing matches for this source
+        db.pending_file_matches()
+            .delete_by_source(&source_type, source_uuid)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        // Get files based on source type
+        let files: Vec<FileInfo> = if source_type == "torrent" {
+            // Get torrent record by ID
+            let torrent: Option<crate::db::TorrentRecord> = sqlx::query_as(
+                "SELECT * FROM torrents WHERE id = $1"
+            )
+            .bind(source_uuid)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+            let torrent = torrent.ok_or_else(|| async_graphql::Error::new("Torrent not found"))?;
+
+            // Get files from torrent service
+            let torrent_files = torrent_service.get_files_for_torrent(&torrent.info_hash).await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+            torrent_files
+                .iter()
+                .enumerate()
+                .map(|(idx, f)| FileInfo {
+                    path: f.path.clone(),
+                    size: f.size as i64,
+                    file_index: Some(idx as i32),
+                    source_name: Some(torrent.name.clone()),
+                })
+                .collect()
+        } else {
+            return Err(async_graphql::Error::new(format!(
+                "Unsupported source type: {}",
+                source_type
+            )));
+        };
+
+        // Create matcher and match files
+        let matcher = FileMatcher::new(db.clone());
+        let matches = matcher.match_files(user_id, files, target_library_id).await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        // Save matches
+        let saved = matcher.save_matches(user_id, &source_type, Some(source_uuid), &matches).await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let summary = FileMatcher::summarize_matches(&matches);
+
+        Ok(RematchSourceResult {
+            success: true,
+            match_count: saved.len() as i32,
+            error: None,
+        })
+    }
+
+    /// Process all pending matches for a source (copy files to library)
+    ///
+    /// The source_id can be either:
+    /// - A UUID (database ID)
+    /// - An info_hash (for torrents) - will be looked up to get the database ID
+    async fn process_source(
+        &self,
+        ctx: &Context<'_>,
+        source_type: String,
+        source_id: String,
+    ) -> Result<ProcessSourceResult> {
+        use crate::services::file_processor::FileProcessor;
+
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let analysis_queue = ctx.data_opt::<Arc<crate::services::queues::MediaAnalysisQueue>>();
+
+        // Try to parse as UUID first, otherwise look up by info_hash for torrents
+        let source_uuid = match Uuid::parse_str(&source_id) {
+            Ok(uuid) => uuid,
+            Err(_) if source_type == "torrent" => {
+                // Try to look up by info_hash
+                db.torrents()
+                    .get_by_info_hash(&source_id)
+                    .await
+                    .map_err(|e| async_graphql::Error::new(format!("Database error: {}", e)))?
+                    .ok_or_else(|| async_graphql::Error::new("Torrent not found by info_hash"))?
+                    .id
+            }
+            Err(_) => {
+                return Err(async_graphql::Error::new("Invalid source ID"));
+            }
+        };
+
+        // Create processor
+        let processor = match analysis_queue {
+            Some(queue) => FileProcessor::with_analysis_queue(db.clone(), queue.clone()),
+            None => FileProcessor::new(db.clone()),
+        };
+
+        // Process the source
+        let result = processor.process_source(&source_type, source_uuid).await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(ProcessSourceResult {
+            success: result.files_failed == 0,
+            files_processed: result.files_processed as i32,
+            files_failed: result.files_failed as i32,
+            messages: result.messages,
+            error: None,
+        })
+    }
+
+    /// Manually set a match target for a pending file match
+    async fn set_match(
+        &self,
+        ctx: &Context<'_>,
+        match_id: String,
+        target_type: String,
+        target_id: String,
+    ) -> Result<SetMatchResult> {
+        use crate::db::MatchTarget;
+
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let match_uuid = Uuid::parse_str(&match_id)
+            .map_err(|_| async_graphql::Error::new("Invalid match ID"))?;
+        let target_uuid = Uuid::parse_str(&target_id)
+            .map_err(|_| async_graphql::Error::new("Invalid target ID"))?;
+
+        let target = match target_type.to_lowercase().as_str() {
+            "episode" => MatchTarget::Episode(target_uuid),
+            "movie" => MatchTarget::Movie(target_uuid),
+            "track" => MatchTarget::Track(target_uuid),
+            "chapter" => MatchTarget::Chapter(target_uuid),
+            _ => return Err(async_graphql::Error::new("Invalid target type")),
+        };
+
+        db.pending_file_matches()
+            .update_target(match_uuid, target)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(SetMatchResult {
+            success: true,
+            error: None,
+        })
+    }
+
+    /// Remove a pending file match
+    async fn remove_match(
+        &self,
+        ctx: &Context<'_>,
+        match_id: String,
+    ) -> Result<SetMatchResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let match_uuid = Uuid::parse_str(&match_id)
+            .map_err(|_| async_graphql::Error::new("Invalid match ID"))?;
+
+        db.pending_file_matches()
+            .delete(match_uuid)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(SetMatchResult {
+            success: true,
+            error: None,
+        })
+    }
+}
+
+/// Result of rematch operation
+#[derive(async_graphql::SimpleObject)]
+pub struct RematchSourceResult {
+    pub success: bool,
+    pub match_count: i32,
+    pub error: Option<String>,
+}
+
+/// Result of process operation
+#[derive(async_graphql::SimpleObject)]
+pub struct ProcessSourceResult {
+    pub success: bool,
+    pub files_processed: i32,
+    pub files_failed: i32,
+    pub messages: Vec<String>,
+    pub error: Option<String>,
+}
+
+/// Result of set/remove match operations
+#[derive(async_graphql::SimpleObject)]
+pub struct SetMatchResult {
+    pub success: bool,
+    pub error: Option<String>,
 }
 
 /// Create file-level matches for a torrent if a target item (album, movie, or episode) is specified
+/// Create file-level matches for explicit target selection (album, movie, episode)
 ///
 /// This is called when adding a torrent from the Hunt page or other locations where
 /// the user has explicitly selected what the torrent is for. It creates entries in
-/// `torrent_file_matches` so the torrent processor knows how to organize the files.
+/// `pending_file_matches` so the file processor knows how to copy the files.
 async fn create_file_matches_for_target(
     db: &Database,
     torrent_info: &crate::services::torrent::TorrentInfo,
@@ -422,6 +681,10 @@ async fn create_file_matches_for_target(
     movie_id: Option<Uuid>,
     episode_id: Option<Uuid>,
 ) {
+    use crate::db::{CreatePendingFileMatch, MatchTarget};
+    use crate::services::file_utils::{is_audio_file, is_video_file};
+    use crate::services::filename_parser;
+
     // Get the torrent database record
     let torrent_record = match db
         .torrents()
@@ -446,96 +709,160 @@ async fn create_file_matches_for_target(
         }
     };
 
-    let matcher = TorrentFileMatcher::new(db.clone());
+    let user_id = torrent_record.user_id;
 
     // Create file matches based on what type of target was specified
     if let Some(album_id) = album_id {
-        // Get album info for logging
+        // Get album info and tracks for matching
         let album_info = db.albums().get_by_id(album_id).await.ok().flatten();
         let album_name = album_info.as_ref().map(|a| a.name.as_str()).unwrap_or("Unknown");
-        
-        match matcher
-            .create_matches_for_album(torrent_record.id, &torrent_info.files, album_id)
-            .await
-        {
-            Ok(matches) => {
-                tracing::info!(
-                    torrent_name = %torrent_info.name,
-                    torrent_id = %torrent_record.id,
-                    album_id = %album_id,
-                    album_name = %album_name,
-                    matched_files = matches.len(),
-                    total_files = torrent_info.files.len(),
-                    "Created {} file matches for album '{}' from torrent '{}'",
-                    matches.len(), album_name, torrent_info.name
-                );
+        let tracks = db.tracks().list_by_album(album_id).await.unwrap_or_default();
+
+        let mut matches_created = 0;
+
+        // Get audio files from torrent
+        let audio_files: Vec<_> = torrent_info
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| is_audio_file(&f.path))
+            .collect();
+
+        // Try to match each audio file to a track
+        for (idx, file) in &audio_files {
+            let file_name = std::path::Path::new(&file.path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&file.path);
+
+            // Find best matching track
+            let mut best_match: Option<(Uuid, f64)> = None;
+            for track in &tracks {
+                if track.status != "wanted" && track.status != "missing" {
+                    continue;
+                }
+                let similarity = filename_parser::show_name_similarity(file_name, &track.title);
+                if similarity >= 0.5 {
+                    if best_match.is_none() || similarity > best_match.unwrap().1 {
+                        best_match = Some((track.id, similarity));
+                    }
+                }
             }
-            Err(e) => {
-                tracing::error!(
-                    torrent_name = %torrent_info.name,
-                    torrent_id = %torrent_record.id,
-                    album_id = %album_id,
-                    album_name = %album_name,
-                    error = %e,
-                    "Failed to create file matches for album '{}': {}",
-                    album_name, e
-                );
+
+            if let Some((track_id, _confidence)) = best_match {
+                let quality = filename_parser::parse_quality(&file.path);
+
+                let input = CreatePendingFileMatch {
+                    user_id,
+                    source_path: file.path.clone(),
+                    source_type: "torrent".to_string(),
+                    source_id: Some(torrent_record.id),
+                    source_file_index: Some(*idx as i32),
+                    file_size: file.size as i64,
+                    target: MatchTarget::Track(track_id),
+                    match_type: "manual".to_string(),
+                    match_confidence: Some(rust_decimal::Decimal::from(1)),
+                    parsed_resolution: quality.resolution,
+                    parsed_codec: quality.codec,
+                    parsed_source: quality.source,
+                    parsed_audio: quality.audio,
+                };
+
+                if db.pending_file_matches().create(input).await.is_ok() {
+                    db.tracks().update_status(track_id, "downloading").await.ok();
+                    matches_created += 1;
+                }
             }
         }
+
+        tracing::info!(
+            torrent_name = %torrent_info.name,
+            album_id = %album_id,
+            album_name = %album_name,
+            matches_created = matches_created,
+            "Created file matches for album"
+        );
     }
 
     if let Some(movie_id) = movie_id {
-        match matcher
-            .create_matches_for_movie_torrent(torrent_record.id, &torrent_info.files, movie_id)
-            .await
-        {
-            Ok(matches) => {
+        // Find largest video file
+        let video_files: Vec<_> = torrent_info
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| is_video_file(&f.path))
+            .collect();
+
+        if let Some((idx, file)) = video_files.iter().max_by_key(|(_, f)| f.size) {
+            let quality = filename_parser::parse_quality(&file.path);
+
+            let input = CreatePendingFileMatch {
+                user_id,
+                source_path: file.path.clone(),
+                source_type: "torrent".to_string(),
+                source_id: Some(torrent_record.id),
+                source_file_index: Some(*idx as i32),
+                file_size: file.size as i64,
+                target: MatchTarget::Movie(movie_id),
+                match_type: "manual".to_string(),
+                match_confidence: Some(rust_decimal::Decimal::from(1)),
+                parsed_resolution: quality.resolution,
+                parsed_codec: quality.codec,
+                parsed_source: quality.source,
+                parsed_audio: quality.audio,
+            };
+
+            if db.pending_file_matches().create(input).await.is_ok() {
+                sqlx::query("UPDATE movies SET download_status = 'downloading' WHERE id = $1")
+                    .bind(movie_id)
+                    .execute(db.pool())
+                    .await
+                    .ok();
+
                 tracing::info!(
                     torrent_id = %torrent_record.id,
                     movie_id = %movie_id,
-                    matched_files = matches.len(),
-                    "Created file matches for movie"
-                );
-            }
-            Err(e) => {
-                tracing::error!(
-                    torrent_id = %torrent_record.id,
-                    movie_id = %movie_id,
-                    error = %e,
-                    "Failed to create file matches for movie"
+                    "Created file match for movie"
                 );
             }
         }
     }
 
     if let Some(episode_id) = episode_id {
-        match matcher
-            .create_matches_for_episode_torrent(torrent_record.id, &torrent_info.files, episode_id)
-            .await
-        {
-            Ok(matches) => {
+        // Find largest video file
+        let video_files: Vec<_> = torrent_info
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| is_video_file(&f.path))
+            .collect();
+
+        if let Some((idx, file)) = video_files.iter().max_by_key(|(_, f)| f.size) {
+            let quality = filename_parser::parse_quality(&file.path);
+
+            let input = CreatePendingFileMatch {
+                user_id,
+                source_path: file.path.clone(),
+                source_type: "torrent".to_string(),
+                source_id: Some(torrent_record.id),
+                source_file_index: Some(*idx as i32),
+                file_size: file.size as i64,
+                target: MatchTarget::Episode(episode_id),
+                match_type: "manual".to_string(),
+                match_confidence: Some(rust_decimal::Decimal::from(1)),
+                parsed_resolution: quality.resolution,
+                parsed_codec: quality.codec,
+                parsed_source: quality.source,
+                parsed_audio: quality.audio,
+            };
+
+            if db.pending_file_matches().create(input).await.is_ok() {
+                db.episodes().update_status(episode_id, "downloading").await.ok();
+
                 tracing::info!(
                     torrent_id = %torrent_record.id,
                     episode_id = %episode_id,
-                    matched_files = matches.len(),
-                    "Created file matches for episode"
-                );
-
-                // Mark episode as downloading
-                if let Err(e) = db.episodes().mark_downloading(episode_id).await {
-                    tracing::warn!(
-                        episode_id = %episode_id,
-                        error = %e,
-                        "Failed to mark episode as downloading"
-                    );
-                }
-            }
-            Err(e) => {
-                tracing::error!(
-                    torrent_id = %torrent_record.id,
-                    episode_id = %episode_id,
-                    error = %e,
-                    "Failed to create file matches for episode"
+                    "Created file match for episode"
                 );
             }
         }

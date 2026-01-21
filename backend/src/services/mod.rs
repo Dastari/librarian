@@ -11,6 +11,8 @@ pub mod cast;
 pub mod download_source;
 pub mod extractor;
 pub mod ffmpeg;
+pub mod file_matcher;
+pub mod file_processor;
 pub mod file_utils;
 pub mod filename_parser;
 pub mod filesystem;
@@ -33,9 +35,7 @@ pub mod text_utils;
 pub mod tmdb;
 pub mod torrent;
 pub mod torrent_completion_handler;
-pub mod torrent_file_matcher;
 pub mod torrent_metadata;
-pub mod media_processor;
 pub mod track_matcher;
 pub mod tvmaze;
 pub mod usenet;
@@ -47,6 +47,11 @@ pub use cast::{
 pub use ffmpeg::{
     AudioStream, Chapter, FfmpegService, HdrType, MediaAnalysis, SubtitleStream, VideoStream,
 };
+pub use file_matcher::{
+    FileInfo, FileMatcher, KnownMatchTarget, MatchSummary, MediaMetadata, VerificationResult,
+    read_audio_metadata, read_video_metadata,
+};
+pub use file_processor::{FileProcessor, ProcessResult, ProcessTarget};
 pub use file_utils::{
     ARCHIVE_EXTENSIONS, AUDIO_EXTENSIONS, SUBTITLE_EXTENSIONS, VIDEO_EXTENSIONS, format_bytes,
     format_bytes_i64, get_container, is_archive_file, is_audio_file, is_subtitle_file,
@@ -102,15 +107,9 @@ pub use torrent::{
 pub use torrent_completion_handler::{
     CompletionHandlerConfig, CompletionHandlerHandle, TorrentCompletionHandler,
 };
-pub use torrent_file_matcher::{
-    FileMatchResult, FileMatchTarget, FileMatchType, TorrentFileMatcher,
-};
 pub use torrent_metadata::{
     TorrentFileInfo, audio_summary, extract_audio_files, is_single_file_album, parse_torrent_files,
 };
-pub use media_processor::{MediaProcessor, ProcessDownloadResult, ProcessTorrentResult};
-/// Legacy alias for backwards compatibility
-pub type TorrentProcessor = MediaProcessor;
 pub use track_matcher::{MatchType, TrackMatch, TrackMatchResult, match_tracks};
 pub use hunt::{HuntConfig, HuntSearchResult, HuntService};
 pub use download_source::{DownloadSource, DownloadSourceType, LinkedItem};

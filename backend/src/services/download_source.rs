@@ -160,13 +160,13 @@ impl DownloadSource for TorrentRecord {
 
     fn library_id(&self) -> Option<Uuid> {
         // Note: Legacy linking removed from TorrentRecord
-        // Use torrent_file_matches for actual file-level linking
+        // Use pending_file_matches for actual file-level linking
         None
     }
 
     fn linked_item(&self) -> Option<LinkedItem> {
         // Note: Legacy linking removed from TorrentRecord
-        // Use torrent_file_matches for actual file-level linking
+        // Use pending_file_matches for actual file-level linking
         None
     }
 

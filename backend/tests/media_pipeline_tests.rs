@@ -592,6 +592,213 @@ mod quality_matching {
 // Episode Matching Tests
 // ============================================================================
 
+// ============================================================================
+// File Matching (FileMatcher Service) Tests
+// ============================================================================
+
+mod file_matching {
+    /// Test data structures matching the new system
+    #[derive(Debug, Clone)]
+    struct FileInfo {
+        path: String,
+        size: i64,
+        file_index: Option<i32>,
+    }
+
+    /// Match target types
+    #[derive(Debug, Clone, PartialEq)]
+    enum MatchTarget {
+        Episode { episode_id: String, season: i32, episode: i32 },
+        Movie { movie_id: String, title: String },
+        Track { track_id: String, title: String },
+        Chapter { chapter_id: String, chapter_number: i32 },
+        Unmatched { reason: String },
+        Sample,
+    }
+
+    /// Simplified matching logic for testing
+    fn match_file(file: &FileInfo) -> MatchTarget {
+        let lower = file.path.to_lowercase();
+        
+        // Check for sample
+        if lower.contains("sample") {
+            return MatchTarget::Sample;
+        }
+        
+        // Small video files are samples
+        let ext = std::path::Path::new(&file.path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        let is_video = matches!(ext.to_lowercase().as_str(), "mkv" | "mp4" | "avi" | "mov" | "m4v");
+        if is_video && file.size < 100_000_000 {
+            return MatchTarget::Sample;
+        }
+        
+        // Non-media files
+        let is_audio = matches!(ext.to_lowercase().as_str(), "flac" | "mp3" | "m4a" | "aac" | "wav");
+        if !is_video && !is_audio {
+            return MatchTarget::Unmatched { reason: "Not a media file".to_string() };
+        }
+        
+        // For testing, return unmatched - real matching uses database lookups
+        MatchTarget::Unmatched { reason: "No library match found".to_string() }
+    }
+
+    #[test]
+    fn test_sample_detection() {
+        // Explicit sample
+        let file = FileInfo {
+            path: "Sample/sample.mkv".to_string(),
+            size: 500_000_000,
+            file_index: Some(0),
+        };
+        assert_eq!(match_file(&file), MatchTarget::Sample);
+        
+        // Small video is sample
+        let small_video = FileInfo {
+            path: "movie-preview.mkv".to_string(),
+            size: 50_000_000, // 50MB
+            file_index: Some(1),
+        };
+        assert_eq!(match_file(&small_video), MatchTarget::Sample);
+        
+        // Large video is not sample
+        let large_video = FileInfo {
+            path: "Movie.2024.1080p.mkv".to_string(),
+            size: 5_000_000_000, // 5GB
+            file_index: Some(2),
+        };
+        assert!(match_file(&large_video) != MatchTarget::Sample);
+    }
+
+    #[test]
+    fn test_non_media_files() {
+        let files = vec![
+            FileInfo { path: "readme.txt".to_string(), size: 1000, file_index: Some(0) },
+            FileInfo { path: "cover.jpg".to_string(), size: 500_000, file_index: Some(1) },
+            FileInfo { path: "movie.nfo".to_string(), size: 3000, file_index: Some(2) },
+        ];
+        
+        for file in files {
+            let result = match_file(&file);
+            assert!(
+                matches!(result, MatchTarget::Unmatched { .. }),
+                "Non-media file should be unmatched: {}",
+                file.path
+            );
+        }
+    }
+}
+
+// ============================================================================
+// File Naming Pattern Tests
+// ============================================================================
+
+mod naming_patterns {
+    /// Apply a naming pattern for TV shows
+    fn apply_tv_pattern(
+        pattern: &str,
+        show_name: &str,
+        season: i32,
+        episode: i32,
+        episode_title: &str,
+        ext: &str,
+    ) -> String {
+        pattern
+            .replace("{show}", &sanitize_for_path(show_name))
+            .replace("{season:02}", &format!("{:02}", season))
+            .replace("{season}", &season.to_string())
+            .replace("{episode:02}", &format!("{:02}", episode))
+            .replace("{episode}", &episode.to_string())
+            .replace("{title}", &sanitize_for_path(episode_title))
+            .replace("{ext}", ext)
+    }
+
+    /// Apply a naming pattern for movies
+    fn apply_movie_pattern(
+        pattern: &str,
+        title: &str,
+        year: Option<i32>,
+        ext: &str,
+    ) -> String {
+        let year_str = year.map(|y| y.to_string()).unwrap_or_default();
+        pattern
+            .replace("{title}", &sanitize_for_path(title))
+            .replace("{year}", &year_str)
+            .replace("{ext}", ext)
+    }
+
+    /// Apply a naming pattern for music
+    fn apply_music_pattern(
+        pattern: &str,
+        artist: &str,
+        album: &str,
+        track_num: i32,
+        track_title: &str,
+        ext: &str,
+    ) -> String {
+        pattern
+            .replace("{artist}", &sanitize_for_path(artist))
+            .replace("{album}", &sanitize_for_path(album))
+            .replace("{track:02}", &format!("{:02}", track_num))
+            .replace("{track}", &track_num.to_string())
+            .replace("{title}", &sanitize_for_path(track_title))
+            .replace("{ext}", ext)
+    }
+
+    /// Sanitize a string for use in file paths
+    fn sanitize_for_path(s: &str) -> String {
+        s.chars()
+            .map(|c| match c {
+                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+                _ => c,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_tv_pattern() {
+        let pattern = "{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}";
+        
+        let result = apply_tv_pattern(pattern, "Breaking Bad", 1, 5, "Gray Matter", "mkv");
+        assert_eq!(result, "Breaking Bad/Season 01/Breaking Bad - S01E05 - Gray Matter.mkv");
+    }
+
+    #[test]
+    fn test_movie_pattern() {
+        let pattern = "{title} ({year})/{title}.{ext}";
+        
+        let result = apply_movie_pattern(pattern, "Inception", Some(2010), "mkv");
+        assert_eq!(result, "Inception (2010)/Inception.mkv");
+    }
+
+    #[test]
+    fn test_music_pattern() {
+        let pattern = "{artist}/{album}/{track:02} - {title}.{ext}";
+        
+        let result = apply_music_pattern(pattern, "Pink Floyd", "Dark Side of the Moon", 3, "Time", "flac");
+        assert_eq!(result, "Pink Floyd/Dark Side of the Moon/03 - Time.flac");
+    }
+
+    #[test]
+    fn test_sanitization() {
+        let pattern = "{show}/Season {season:02}/{show}.{ext}";
+        
+        // Colons in show name should be replaced
+        let result = apply_tv_pattern(pattern, "Star Trek: Deep Space Nine", 1, 1, "Emissary", "mkv");
+        assert!(
+            !result.contains(':'),
+            "Colons should be sanitized: {}",
+            result
+        );
+    }
+}
+
+// ============================================================================
+// Episode Matching Tests
+// ============================================================================
+
 mod episode_matching {
     /// Parse season and episode from filename
     fn parse_season_episode(filename: &str) -> Option<(u32, u32)> {

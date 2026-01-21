@@ -14,13 +14,13 @@ pub mod logs;
 pub mod media_files;
 pub mod movies;
 pub mod naming_patterns;
+pub mod pending_file_matches;
 pub mod playback;
 pub mod priority_rules;
 pub mod rss_feeds;
 pub mod schedule;
 pub mod settings;
 pub mod subtitles;
-pub mod torrent_file_matches;
 pub mod torrents;
 pub mod tracks;
 pub mod tv_shows;
@@ -45,7 +45,7 @@ pub use episodes::{CreateEpisode, EpisodeRecord, EpisodeRepository};
 pub use indexers::{CreateIndexerConfig, IndexerRepository, UpdateIndexerConfig, UpsertCredential};
 pub use libraries::{CreateLibrary, LibraryRecord, LibraryRepository, LibraryStats, UpdateLibrary};
 pub use logs::{CreateLog, LogFilter, LogsRepository};
-pub use media_files::{CreateMediaFile, MediaFileRecord, MediaFileRepository};
+pub use media_files::{CreateMediaFile, EmbeddedMetadata, MediaFileRecord, MediaFileRepository};
 pub use movies::{CreateMovie, MovieCollectionRecord, MovieRecord, MovieRepository, UpdateMovie};
 pub use naming_patterns::{CreateNamingPattern, NamingPatternRecord, NamingPatternRepository, UpdateNamingPattern};
 pub use playback::{
@@ -63,8 +63,8 @@ pub use subtitles::{
     CreateExternalSubtitle, StreamRepository, SubtitleRecord, SubtitleRepository,
     SubtitleSourceType, VideoStreamRecord,
 };
-pub use torrent_file_matches::{
-    CreateTorrentFileMatch, MarkProcessed, TorrentFileMatchRecord, TorrentFileMatchRepository,
+pub use pending_file_matches::{
+    CreatePendingFileMatch, MatchTarget, PendingFileMatchRecord, PendingFileMatchRepository,
 };
 pub use torrents::{CreateTorrent, TorrentRecord, TorrentRepository};
 pub use tracks::{CreateTrack, TrackRecord, TrackRepository, TrackWithStatus, UpdateTrack};
@@ -249,9 +249,9 @@ impl Database {
         TrackRepository::new(self.pool.clone())
     }
 
-    /// Get a torrent file matches repository
-    pub fn torrent_file_matches(&self) -> TorrentFileMatchRepository {
-        TorrentFileMatchRepository::new(self.pool.clone())
+    /// Get a pending file matches repository (source-agnostic)
+    pub fn pending_file_matches(&self) -> PendingFileMatchRepository {
+        PendingFileMatchRepository::new(self.pool.clone())
     }
 
     /// Get a priority rules repository

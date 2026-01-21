@@ -292,11 +292,9 @@ impl AudiobookRepository {
             WHERE a.library_id = $1
               AND a.has_files = false
               AND NOT EXISTS (
-                  SELECT 1 FROM torrent_file_matches tfm
-                  JOIN torrents t ON t.id = tfm.torrent_id
-                  WHERE tfm.chapter_id IN (SELECT id FROM chapters WHERE audiobook_id = a.id)
-                    AND NOT tfm.processed
-                    AND t.state NOT IN ('removed', 'error')
+                  SELECT 1 FROM pending_file_matches pfm
+                  WHERE pfm.chapter_id IN (SELECT id FROM chapters WHERE audiobook_id = a.id)
+                    AND pfm.copied_at IS NULL
               )
             ORDER BY a.created_at DESC
             LIMIT $2
@@ -500,7 +498,7 @@ impl AudiobookRepository {
         // Start a transaction to ensure all deletions are atomic
         let mut tx = self.pool.begin().await?;
 
-        // Delete media files for this audiobook (torrent_file_matches handles cleanup via ON DELETE SET NULL)
+        // Delete media files for this audiobook (pending_file_matches handles cleanup via ON DELETE CASCADE)
         sqlx::query("DELETE FROM media_files WHERE audiobook_id = $1")
             .bind(id)
             .execute(&mut *tx)

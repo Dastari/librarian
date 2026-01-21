@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
 import { Button } from '@heroui/button'
 import { Spinner } from '@heroui/spinner'
@@ -6,19 +6,22 @@ import { Progress } from '@heroui/progress'
 import { Chip } from '@heroui/chip'
 import { Card, CardBody } from '@heroui/card'
 import { Tooltip } from '@heroui/tooltip'
+import { addToast } from '@heroui/toast'
 import {
   graphqlClient,
   TORRENT_DETAILS_QUERY,
-  TORRENT_FILE_MATCHES_QUERY,
+  PENDING_FILE_MATCHES_QUERY,
+  REMOVE_MATCH_MUTATION,
   type TorrentDetails,
   type TorrentFileInfo,
-  type TorrentFileMatch,
+  type PendingFileMatch,
+  type RemoveMatchResult,
 } from '../../lib/graphql'
 import { formatBytes, sanitizeError } from '../../lib/format'
 import { TORRENT_STATE_INFO } from './TorrentCard'
 import { DataTable, type DataTableColumn } from '../data-table'
 import { ErrorState } from '../shared'
-import { IconCheck, IconArrowDown, IconArrowUp, IconFolder, IconLink, IconX, IconPlayerSkipForward } from '@tabler/icons-react'
+import { IconCheck, IconArrowDown, IconArrowUp, IconFolder, IconLink, IconX, IconTrash, IconCopy } from '@tabler/icons-react'
 
 interface TorrentInfoModalProps {
   torrentId: number | null
@@ -27,45 +30,78 @@ interface TorrentInfoModalProps {
 }
 
 // Helper to create file columns with match info
-function createFileColumns(matchesByIndex: Map<number, TorrentFileMatch>): DataTableColumn<TorrentFileInfo>[] {
+function createFileColumns(
+  matchesByIndex: Map<number, PendingFileMatch>,
+  onRemoveMatch?: (matchId: string) => void
+): DataTableColumn<TorrentFileInfo>[] {
   return [
     {
       key: 'match',
       label: 'Match',
-      width: 80,
+      width: 100,
       align: 'center',
       render: (file) => {
         const match = matchesByIndex.get(file.index)
         if (!match) {
           return (
-            <Tooltip content="No match data">
-              <span className="text-default-400">-</span>
-            </Tooltip>
-          )
-        }
-        if (match.skipDownload) {
-          return (
-            <Tooltip content="Skipped (already have or duplicate)">
-              <Chip size="sm" color="default" variant="flat" startContent={<IconPlayerSkipForward size={12} />}>
-                Skip
+            <Tooltip content="No match - file not linked to library">
+              <Chip size="sm" color="default" variant="flat">
+                Unmatched
               </Chip>
             </Tooltip>
           )
         }
-        if (match.episodeId || match.movieId || match.trackId || match.chapterId) {
-          const matchType = match.episodeId ? 'Episode' : match.movieId ? 'Movie' : match.trackId ? 'Track' : 'Chapter'
+        const matchType = match.episodeId ? 'Episode' : match.movieId ? 'Movie' : match.trackId ? 'Track' : match.chapterId ? 'Chapter' : 'None'
+        if (matchType === 'None') {
           return (
-            <Tooltip content={`Matched to ${matchType}`}>
-              <Chip size="sm" color="success" variant="flat" startContent={<IconLink size={12} />}>
-                {matchType}
+            <Tooltip content="No library item matched">
+              <Chip size="sm" color="warning" variant="flat" startContent={<IconX size={12} />}>
+                None
               </Chip>
             </Tooltip>
           )
         }
         return (
-          <Tooltip content="No library item matched">
-            <Chip size="sm" color="warning" variant="flat" startContent={<IconX size={12} />}>
-              None
+          <Tooltip content={`Matched to ${matchType}`}>
+            <Chip size="sm" color="success" variant="flat" startContent={<IconLink size={12} />}>
+              {matchType}
+            </Chip>
+          </Tooltip>
+        )
+      },
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      width: 90,
+      align: 'center',
+      render: (file) => {
+        const match = matchesByIndex.get(file.index)
+        if (!match) {
+          return <span className="text-default-400">-</span>
+        }
+        if (match.copied) {
+          return (
+            <Tooltip content={`Copied ${match.copiedAt ? new Date(match.copiedAt).toLocaleString() : ''}`}>
+              <Chip size="sm" color="success" variant="flat" startContent={<IconCopy size={12} />}>
+                Copied
+              </Chip>
+            </Tooltip>
+          )
+        }
+        if (match.copyError) {
+          return (
+            <Tooltip content={match.copyError}>
+              <Chip size="sm" color="danger" variant="flat" startContent={<IconX size={12} />}>
+                Error
+              </Chip>
+            </Tooltip>
+          )
+        }
+        return (
+          <Tooltip content="File will be copied when download completes">
+            <Chip size="sm" color="warning" variant="flat">
+              Pending
             </Chip>
           </Tooltip>
         )
@@ -116,7 +152,7 @@ function createFileColumns(matchesByIndex: Map<number, TorrentFileMatch>): DataT
     {
       key: 'progress',
       label: 'Progress',
-      width: 160,
+      width: 140,
       align: 'center',
       render: (file) => (
         <div className="flex items-center gap-2">
@@ -134,17 +170,68 @@ function createFileColumns(matchesByIndex: Map<number, TorrentFileMatch>): DataT
       ),
       sortFn: (a, b) => a.progress - b.progress,
     },
+    {
+      key: 'actions',
+      label: '',
+      width: 50,
+      align: 'center',
+      render: (file) => {
+        const match = matchesByIndex.get(file.index)
+        if (!match || !onRemoveMatch) {
+          return null
+        }
+        return (
+          <Tooltip content="Remove match">
+            <Button
+              isIconOnly
+              size="sm"
+              variant="light"
+              color="danger"
+              onPress={() => onRemoveMatch(match.id)}
+            >
+              <IconTrash size={14} />
+            </Button>
+          </Tooltip>
+        )
+      },
+    },
   ]
 }
 
 export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModalProps) {
   const [details, setDetails] = useState<TorrentDetails | null>(null)
-  const [fileMatches, setFileMatches] = useState<TorrentFileMatch[]>([])
+  const [fileMatches, setFileMatches] = useState<PendingFileMatch[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Handle removing a match
+  const handleRemoveMatch = useCallback(async (matchId: string) => {
+    const result = await graphqlClient
+      .mutation<{ removeMatch: RemoveMatchResult }>(REMOVE_MATCH_MUTATION, { matchId })
+      .toPromise()
+
+    if (result.data?.removeMatch.success) {
+      setFileMatches((prev) => prev.filter((m) => m.id !== matchId))
+      addToast({
+        title: 'Match Removed',
+        description: 'The file match has been removed',
+        color: 'success',
+      })
+    } else {
+      addToast({
+        title: 'Error',
+        description: result.data?.removeMatch.error || 'Failed to remove match',
+        color: 'danger',
+      })
+    }
+  }, [])
+
   // Create a map of file index to match for quick lookup
-  const matchesByIndex = new Map(fileMatches.map(m => [m.fileIndex, m]))
+  const matchesByIndex = new Map(
+    fileMatches
+      .filter((m) => m.sourceFileIndex !== null)
+      .map((m) => [m.sourceFileIndex as number, m])
+  )
 
   useEffect(() => {
     if (isOpen && torrentId !== null) {
@@ -164,14 +251,14 @@ export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModa
             // Fetch file matches using the info_hash
             try {
               const matchResult = await graphqlClient
-                .query<{ torrentFileMatches: TorrentFileMatch[] }>(
-                  TORRENT_FILE_MATCHES_QUERY, 
-                  { id: det.infoHash }
+                .query<{ pendingFileMatches: PendingFileMatch[] }>(
+                  PENDING_FILE_MATCHES_QUERY, 
+                  { sourceType: 'torrent', sourceId: det.infoHash }
                 )
                 .toPromise()
               
-              if (matchResult.data?.torrentFileMatches) {
-                setFileMatches(matchResult.data.torrentFileMatches)
+              if (matchResult.data?.pendingFileMatches) {
+                setFileMatches(matchResult.data.pendingFileMatches)
               }
             } catch {
               // File matches are optional, don't fail the whole modal
@@ -347,7 +434,7 @@ export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModa
                   </div>
                   <DataTable
                     data={details.files}
-                    columns={createFileColumns(matchesByIndex)}
+                    columns={createFileColumns(matchesByIndex, handleRemoveMatch)}
                     getRowKey={(file) => file.index}
                     isCompact
                     isStriped

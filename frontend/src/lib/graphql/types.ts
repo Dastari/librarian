@@ -153,29 +153,56 @@ export interface TorrentFileInfo {
   progress: number;
 }
 
-/** A match between a file in a torrent and a library item */
-export interface TorrentFileMatch {
+/** A pending file match (source-agnostic - works for torrents, usenet, etc.) */
+export interface PendingFileMatch {
   id: string;
-  torrentId: string;
-  fileIndex: number;
-  filePath: string;
+  sourceType: string;
+  sourceId: string | null;
+  sourceFileIndex: number | null;
+  sourcePath: string;
   fileSize: number;
   episodeId: string | null;
   movieId: string | null;
   trackId: string | null;
   chapterId: string | null;
-  matchType: 'auto' | 'manual' | 'forced';
+  matchType: 'auto' | 'manual';
   matchConfidence: number | null;
   parsedResolution: string | null;
   parsedCodec: string | null;
   parsedSource: string | null;
   parsedAudio: string | null;
-  skipDownload: boolean;
-  processed: boolean;
-  processedAt: string | null;
-  mediaFileId: string | null;
-  errorMessage: string | null;
+  copied: boolean;
+  copiedAt: string | null;
+  copyError: string | null;
   createdAt: string;
+}
+
+/** Result of rematchSource mutation */
+export interface RematchSourceResult {
+  success: boolean;
+  matchCount: number;
+  error: string | null;
+}
+
+/** Result of processSource mutation */
+export interface ProcessSourceResult {
+  success: boolean;
+  filesProcessed: number;
+  filesFailed: number;
+  messages: string[];
+  error: string | null;
+}
+
+/** Result of setMatch mutation */
+export interface SetMatchResult {
+  success: boolean;
+  error: string | null;
+}
+
+/** Result of removeMatch mutation */
+export interface RemoveMatchResult {
+  success: boolean;
+  error: string | null;
 }
 
 /** Quality status of a media file */
@@ -1046,6 +1073,22 @@ export interface ChapterInfo {
 }
 
 /** Detailed media file info including all streams */
+/** Embedded metadata extracted from file tags (ID3/Vorbis/container) */
+export interface EmbeddedMetadata {
+  artist: string | null;
+  album: string | null;
+  title: string | null;
+  trackNumber: number | null;
+  discNumber: number | null;
+  year: number | null;
+  genre: string | null;
+  showName: string | null;
+  season: number | null;
+  episode: number | null;
+  /** Whether metadata has been extracted from this file */
+  extracted: boolean;
+}
+
 export interface MediaFileDetails {
   id: string;
   file: MediaFile;
@@ -1053,6 +1096,7 @@ export interface MediaFileDetails {
   audioStreams: AudioStreamInfo[];
   subtitles: SubtitleInfo[];
   chapters: ChapterInfo[];
+  embeddedMetadata: EmbeddedMetadata | null;
 }
 
 // ============================================================================

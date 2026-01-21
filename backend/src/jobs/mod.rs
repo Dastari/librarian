@@ -232,14 +232,13 @@ pub async fn start_scheduler(
         let p = monitor_pool.clone();
         let retry_cfg = monitor_retry.clone();
         let queue = monitor_analysis_queue.clone();
-        let metadata = monitor_metadata_service.clone();
+        let _metadata = monitor_metadata_service.clone(); // Kept for future use
         Box::pin(async move {
             let _ = run_with_retry("download_monitor", &retry_cfg, || {
                 let svc = svc.clone();
                 let p = p.clone();
                 let q = queue.clone();
-                let m = metadata.clone();
-                async move { download_monitor::process_completed_torrents(p, svc, q, m).await }
+                async move { download_monitor::process_completed_torrents(p, svc, q).await }
             })
             .await;
         })

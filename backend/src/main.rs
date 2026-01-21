@@ -359,7 +359,6 @@ async fn main() -> anyhow::Result<()> {
             startup_pool2.clone(),
             startup_torrent_service.clone(),
             Some(startup_analysis_queue.clone()),
-            Some(startup_metadata_service.clone()),
         )
         .await
         {
@@ -378,7 +377,6 @@ async fn main() -> anyhow::Result<()> {
             startup_pool2,
             startup_torrent_service,
             Some(startup_analysis_queue),
-            Some(startup_metadata_service),
         )
         .await
         {

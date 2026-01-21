@@ -20,9 +20,11 @@ use uuid::Uuid;
 use crate::db::Database;
 use crate::services::TorrentService;
 use crate::services::torrent::TorrentInfo;
-use crate::services::torrent_file_matcher::TorrentFileMatcher;
+// Use the unified FileMatcher for all matching operations
+use crate::services::file_matcher::{FileInfo, FileMatcher, KnownMatchTarget};
 
 /// Create file-level matches for an episode after torrent download starts
+/// Uses the unified FileMatcher for all matching operations
 async fn create_file_matches_for_episode(
     db: &Database,
     torrent_info: &TorrentInfo,
@@ -34,9 +36,29 @@ async fn create_file_matches_for_episode(
         .await?
         .ok_or_else(|| anyhow::anyhow!("Torrent record not found"))?;
 
-    let matcher = TorrentFileMatcher::new(db.clone());
-    matcher
-        .create_matches_for_episode_torrent(torrent_record.id, &torrent_info.files, episode_id)
+    // Convert torrent files to FileInfo
+    let files: Vec<FileInfo> = torrent_info
+        .files
+        .iter()
+        .enumerate()
+        .map(|(idx, f)| FileInfo {
+            path: f.path.clone(),
+            size: f.size as i64,
+            file_index: Some(idx as i32),
+            source_name: Some(torrent_info.name.clone()),
+        })
+        .collect();
+
+    // Use the unified FileMatcher
+    let matcher = FileMatcher::new(db.clone());
+    let records = matcher
+        .create_matches_for_target(
+            torrent_record.user_id,
+            "torrent",
+            torrent_record.id,
+            files,
+            KnownMatchTarget::Episode(episode_id),
+        )
         .await?;
 
     debug!(
@@ -44,7 +66,8 @@ async fn create_file_matches_for_episode(
         torrent_id = %torrent_record.id,
         episode_id = %episode_id,
         files = torrent_info.files.len(),
-        "Created file-level matches for episode"
+        matches_created = records.len(),
+        "Created file-level matches for episode via FileMatcher"
     );
 
     Ok(())

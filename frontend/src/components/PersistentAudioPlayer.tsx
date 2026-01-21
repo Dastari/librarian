@@ -129,7 +129,26 @@ export function PersistentAudioPlayer() {
     };
   }, [session, isPaused, updatePlayback, syncInterval, isAudioSession]);
 
-  // Cleanup audio when mediaFileId changes or component unmounts
+  // Reset ready state when track changes to prevent race conditions with sync effect
+  // Also set auto-play flag if we were actively playing (not just if session says playing)
+  const prevMediaFileIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const currentMediaFileId = session?.mediaFileId ?? null;
+    const previousMediaFileId = prevMediaFileIdRef.current;
+    
+    if (previousMediaFileId && currentMediaFileId && previousMediaFileId !== currentMediaFileId) {
+      // Track changed - reset ready state so sync effect waits for new track
+      setIsReady(false);
+      // If we were playing (audio was not paused), continue playing the new track
+      if (audioRef.current && !audioRef.current.paused) {
+        shouldAutoPlayRef.current = true;
+      }
+    }
+    
+    prevMediaFileIdRef.current = currentMediaFileId;
+  }, [session?.mediaFileId]);
+
+  // Cleanup audio when component unmounts
   useEffect(() => {
     const audio = audioRef.current;
     return () => {
@@ -139,7 +158,7 @@ export function PersistentAudioPlayer() {
         audio.load();
       }
     };
-  }, [session?.mediaFileId]);
+  }, []);
 
   // Keyboard shortcuts
   useEffect(() => {

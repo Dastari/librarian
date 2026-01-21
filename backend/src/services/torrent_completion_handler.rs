@@ -21,7 +21,6 @@ use crate::db::Database;
 use crate::services::MetadataService;
 use crate::services::queues::MediaAnalysisQueue;
 use crate::services::torrent::{TorrentEvent, TorrentService};
-use crate::services::media_processor::MediaProcessor;
 
 /// Handler configuration
 #[derive(Debug, Clone)]
@@ -224,66 +223,105 @@ impl Drop for CompletionHandlerHandle {
     }
 }
 
-/// Process a completed torrent
+/// Process a completed torrent (using new source-agnostic FileProcessor)
 async fn process_completed_torrent(
     db: Database,
-    torrent_service: Arc<TorrentService>,
+    _torrent_service: Arc<TorrentService>,
     info_hash: &str,
     analysis_queue: Option<Arc<MediaAnalysisQueue>>,
-    metadata_service: Option<Arc<MetadataService>>,
+    _metadata_service: Option<Arc<MetadataService>>,
     trigger_reason: &str,
 ) -> Result<()> {
-    // Get torrent name for logging
-    let torrent_name = db
-        .torrents()
-        .get_by_info_hash(info_hash)
-        .await?
-        .map(|t| t.name.clone())
-        .unwrap_or_else(|| "Unknown".to_string());
+    use crate::services::file_matcher::FileMatcher;
+    use crate::services::file_processor::FileProcessor;
+
+    // Get torrent record
+    let torrent = match db.torrents().get_by_info_hash(info_hash).await? {
+        Some(t) => t,
+        None => {
+            warn!("Torrent {} not found in database", info_hash);
+            return Ok(());
+        }
+    };
 
     info!(
         "Processing '{}' (triggered by {})",
-        torrent_name, trigger_reason
+        torrent.name, trigger_reason
     );
 
-    // Create processor with appropriate services
-    let processor = match (&analysis_queue, &metadata_service) {
-        (Some(queue), Some(metadata)) => {
-            MediaProcessor::with_services(db.clone(), queue.clone(), metadata.clone())
+    // NEW: Verify existing matches using embedded metadata before processing
+    // This corrects any mismatches from pre-download filename matching
+    let matcher = FileMatcher::new(db.clone());
+    match matcher.verify_matches_with_metadata("torrent", torrent.id).await {
+        Ok(verification) => {
+            if verification.corrected > 0 || verification.flagged > 0 {
+                info!(
+                    "Verification for '{}': {} verified, {} corrected, {} flagged",
+                    torrent.name,
+                    verification.verified,
+                    verification.corrected,
+                    verification.flagged
+                );
+            }
         }
-        (Some(queue), None) => MediaProcessor::with_analysis_queue(db.clone(), queue.clone()),
-        _ => MediaProcessor::new(db.clone()),
+        Err(e) => {
+            warn!(
+                "Failed to verify matches for '{}': {}",
+                torrent.name, e
+            );
+            // Continue with processing even if verification fails
+        }
+    }
+
+    // Create file processor (source-agnostic)
+    let processor = match analysis_queue {
+        Some(queue) => FileProcessor::with_analysis_queue(db.clone(), queue),
+        None => FileProcessor::new(db.clone()),
     };
 
-    // Process the torrent
-    let result = processor
-        .process_torrent(&torrent_service, info_hash, false)
-        .await?;
+    // Process all pending matches for this torrent
+    let result = processor.process_source("torrent", torrent.id).await?;
 
-    if result.success {
-        if result.files_processed > 0 {
-            info!(
-                "Finished processing '{}': {} files organized",
-                torrent_name, result.files_processed
-            );
-        }
-    } else {
+    if result.files_processed > 0 {
+        info!(
+            "Finished processing '{}': {} files copied to library, {} failed",
+            torrent.name, result.files_processed, result.files_failed
+        );
+    } else if result.files_failed > 0 {
         warn!(
-            "Processing '{}' completed with issues: {:?}",
-            torrent_name, result.messages
+            "Processing '{}' failed: {} files failed",
+            torrent.name, result.files_failed
+        );
+    } else {
+        debug!(
+            "No pending matches to process for '{}'",
+            torrent.name
         );
     }
+
+    // Update torrent status
+    let status = if result.files_failed == 0 && result.files_processed > 0 {
+        "completed"
+    } else if result.files_processed > 0 {
+        "partial"
+    } else {
+        "unmatched"
+    };
+    
+    db.torrents()
+        .update_post_process_status(info_hash, status)
+        .await?;
 
     Ok(())
 }
 
-/// Match torrent files when a torrent is added
+/// Match torrent files when a torrent is added (using new source-agnostic FileMatcher)
 async fn match_torrent_files_on_add(
     db: Database,
     torrent_service: Arc<TorrentService>,
     info_hash: &str,
 ) -> Result<()> {
-    use crate::services::torrent_file_matcher::TorrentFileMatcher;
+    use crate::services::file_matcher::{FileInfo, FileMatcher};
 
     // Get the torrent record
     let torrent = match db.torrents().get_by_info_hash(info_hash).await? {
@@ -293,6 +331,22 @@ async fn match_torrent_files_on_add(
             return Ok(());
         }
     };
+
+    // Check if matches already exist for this torrent (e.g., created by auto_hunt)
+    // If so, skip re-matching to avoid duplicate key errors
+    let existing_matches = db
+        .pending_file_matches()
+        .count_by_source("torrent", torrent.id)
+        .await
+        .unwrap_or(0);
+
+    if existing_matches > 0 {
+        info!(
+            "Torrent '{}' already has {} pending matches (created by auto_hunt), skipping re-match",
+            torrent.name, existing_matches
+        );
+        return Ok(());
+    }
 
     // Get files from the torrent
     let files = match torrent_service.get_files_for_torrent(info_hash).await {
@@ -322,38 +376,45 @@ async fn match_torrent_files_on_add(
         total_size_mb
     );
 
-    // Create file matcher
-    let matcher = TorrentFileMatcher::new(db.clone());
+    // Convert torrent files to FileInfo
+    let file_infos: Vec<FileInfo> = files
+        .iter()
+        .enumerate()
+        .map(|(idx, f)| FileInfo {
+            path: f.path.clone(),
+            size: f.size as i64,
+            file_index: Some(idx as i32),
+            source_name: Some(torrent.name.clone()),
+        })
+        .collect();
 
-    // Match files (no target library - will match against all user libraries)
+    // Create file matcher (source-agnostic)
+    let matcher = FileMatcher::new(db.clone());
+
+    // Match files (no target library - will match against all user libraries with auto_download)
     let matches = matcher
-        .match_torrent_files(&torrent, &files, None, torrent.user_id)
+        .match_files(torrent.user_id, file_infos, None)
         .await?;
 
-    // Save matches to database
-    let _saved = matcher.save_matches(torrent.id, &matches).await?;
+    // Get summary for logging
+    let summary = FileMatcher::summarize_matches(&matches);
 
-    // Update item statuses to 'downloading'
-    let status_updates = matches
-        .iter()
-        .filter(|m| {
-            !m.skip_download
-                && !matches!(
-                    m.match_target,
-                    crate::services::torrent_file_matcher::FileMatchTarget::Unmatched { .. }
-                )
-        })
-        .count();
+    // Save matches to database (this also updates item statuses to 'downloading')
+    let saved = matcher
+        .save_matches(torrent.user_id, "torrent", Some(torrent.id), &matches)
+        .await?;
 
-    if status_updates > 0 {
-        matcher
-            .update_item_statuses_to_downloading(&matches)
-            .await?;
-        info!(
-            "Updated {} items to 'downloading' status for '{}'",
-            status_updates, torrent.name
-        );
-    }
+    info!(
+        "File matching complete for '{}': {} files, {} matched ({} episodes, {} movies, {} tracks, {} chapters), {} saved",
+        torrent.name,
+        summary.total_files,
+        summary.matched,
+        summary.episodes,
+        summary.movies,
+        summary.tracks,
+        summary.chapters,
+        saved.len()
+    );
 
     Ok(())
 }

@@ -1297,20 +1297,74 @@ impl ScannerService {
                             });
                         }
 
-                        // Create media file record (linked to album if we have one)
-                        if let Err(e) = Self::create_media_file_static(
-                            &db,
-                            library_id,
-                            file,
-                            None, // No episode ID for music
-                            &new_files,
-                            analysis_queue.as_ref(),
-                        )
-                        .await
-                        {
-                            warn!(path = %file.path, error = %e, "Failed to create media file");
+                        // Check if file already exists in database
+                        let media_files_repo = db.media_files();
+                        if let Ok(Some(existing_file)) = media_files_repo.get_by_path(&file.path).await {
+                            // File exists - verify its album link using embedded metadata
+                            let file_name = std::path::Path::new(&file.path)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or(&file.path);
+
+                            // Get linked album/track names for better logging
+                            let linked_to = if let Some(album_id) = existing_file.album_id {
+                                if let Ok(Some(album)) = db.albums().get_by_id(album_id).await {
+                                    if let Some(track_id) = existing_file.track_id {
+                                        if let Ok(Some(track)) = db.tracks().get_by_id(track_id).await {
+                                            format!("\"{}\" - \"{}\"", album.name, track.title)
+                                        } else {
+                                            format!("\"{}\"", album.name)
+                                        }
+                                    } else {
+                                        format!("\"{}\"", album.name)
+                                    }
+                                } else {
+                                    "unknown album".to_string()
+                                }
+                            } else {
+                                "unlinked".to_string()
+                            };
+
+                            info!("Verifying: {} (linked to: {})", file_name, linked_to);
+
+                            match Self::verify_music_file_link(&db, &file.path, &existing_file).await {
+                                Ok(true) => {
+                                    debug!("Verified OK: {}", file_name);
+                                }
+                                Ok(false) => {
+                                    // Mismatch detected - try to fix
+                                    match Self::try_fix_music_file_link(&db, library_id, &file.path, &existing_file).await {
+                                        Ok(true) => {
+                                            info!("Auto-corrected: {} -> new album link", file_name);
+                                        }
+                                        Ok(false) => {
+                                            warn!("Could not auto-correct: {} - manual review needed", file_name);
+                                        }
+                                        Err(e) => {
+                                            warn!("Error fixing {}: {}", file_name, e);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("Error verifying {}: {}", file_name, e);
+                                }
+                            }
                         } else {
-                            files_linked.fetch_add(1, Ordering::SeqCst);
+                            // Create new media file record (linked to album if we have one)
+                            if let Err(e) = Self::create_media_file_static(
+                                &db,
+                                library_id,
+                                file,
+                                None, // No episode ID for music
+                                &new_files,
+                                analysis_queue.as_ref(),
+                            )
+                            .await
+                            {
+                                warn!(path = %file.path, error = %e, "Failed to create media file");
+                            } else {
+                                files_linked.fetch_add(1, Ordering::SeqCst);
+                            }
                         }
                     }
 
@@ -1633,17 +1687,40 @@ impl ScannerService {
         Ok(Some((audiobook.id, true)))
     }
 
-    /// Read audio metadata (ID3 tags) from a file
+    /// Read audio metadata (ID3 tags) from a file with verbose logging
     fn read_audio_metadata(path: &str) -> Option<AudioMetadata> {
         use lofty::prelude::*;
         use lofty::probe::Probe;
+        use std::path::Path;
 
-        let tagged_file = Probe::open(path).ok()?.read().ok()?;
-        let tag = tagged_file
-            .primary_tag()
-            .or_else(|| tagged_file.first_tag())?;
+        let file_name = Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path);
 
-        Some(AudioMetadata {
+        let tagged_file = match Probe::open(path) {
+            Ok(probe) => match probe.read() {
+                Ok(tf) => tf,
+                Err(e) => {
+                    debug!("Failed to read tags from {}: {}", file_name, e);
+                    return None;
+                }
+            },
+            Err(e) => {
+                debug!("Failed to open {} for tag reading: {}", file_name, e);
+                return None;
+            }
+        };
+
+        let tag = match tagged_file.primary_tag().or_else(|| tagged_file.first_tag()) {
+            Some(t) => t,
+            None => {
+                info!("No embedded tags: {}", file_name);
+                return None;
+            }
+        };
+
+        let metadata = AudioMetadata {
             artist: tag.artist().map(|s| s.to_string()),
             album: tag.album().map(|s| s.to_string()),
             title: tag.title().map(|s| s.to_string()),
@@ -1651,7 +1728,211 @@ impl ScannerService {
             disc_number: tag.disk(),
             year: tag.year(),
             genre: tag.genre().map(|s| s.to_string()),
-        })
+        };
+
+        // Verbose logging of found metadata - inline readable format
+        info!(
+            "Read tags: {} | Artist: {} | Album: {} | Title: {} | Track: {}",
+            file_name,
+            metadata.artist.as_deref().unwrap_or("-"),
+            metadata.album.as_deref().unwrap_or("-"),
+            metadata.title.as_deref().unwrap_or("-"),
+            metadata.track_number.map(|n| n.to_string()).unwrap_or_else(|| "-".to_string())
+        );
+
+        Some(metadata)
+    }
+
+    /// Verify an existing music file's album link against its embedded metadata
+    /// Returns true if the file is correctly linked, false if there's a mismatch
+    async fn verify_music_file_link(
+        db: &Database,
+        file_path: &str,
+        existing_file: &crate::db::MediaFileRecord,
+    ) -> Result<bool> {
+        use super::filename_parser;
+
+        let file_name = std::path::Path::new(file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(file_path);
+
+        // Read embedded metadata
+        let metadata = match Self::read_audio_metadata(file_path) {
+            Some(m) => m,
+            None => {
+                debug!("No metadata to verify: {}", file_name);
+                return Ok(true); // Can't verify without metadata
+            }
+        };
+
+        // Get the linked album if any
+        let album_id = match existing_file.album_id {
+            Some(id) => id,
+            None => {
+                let meta_album = metadata.album.as_deref().unwrap_or("unknown");
+                info!("Unlinked file has metadata: {} (album: \"{}\")", file_name, meta_album);
+                return Ok(false); // Mismatch - has metadata but no link
+            }
+        };
+
+        // Get the album record
+        let album = match db.albums().get_by_id(album_id).await? {
+            Some(a) => a,
+            None => {
+                warn!("Linked album not found: {} -> album_id {}", file_name, album_id);
+                return Ok(false);
+            }
+        };
+
+        // Compare metadata album with linked album
+        let meta_album = metadata.album.as_deref().unwrap_or("");
+        let album_similarity = filename_parser::show_name_similarity(&album.name, meta_album);
+
+        if album_similarity < 0.6 {
+            warn!(
+                "MISMATCH: {} linked to \"{}\" but tags say \"{}\" (similarity: {:.0}%)",
+                file_name, album.name, meta_album, album_similarity * 100.0
+            );
+            return Ok(false);
+        }
+
+        // Optional: Also check track title if linked to a track
+        if let Some(track_id) = existing_file.track_id {
+            if let Some(track) = db.tracks().get_by_id(track_id).await? {
+                let meta_title = metadata.title.as_deref().unwrap_or("");
+                let title_similarity = filename_parser::show_name_similarity(&track.title, meta_title);
+                
+                if title_similarity < 0.5 {
+                    warn!(
+                        "MISMATCH: {} linked to track \"{}\" but tags say \"{}\" (similarity: {:.0}%)",
+                        file_name, track.title, meta_title, title_similarity * 100.0
+                    );
+                    return Ok(false);
+                }
+            }
+        }
+
+        info!(
+            "Verified: {} -> \"{}\" (meta: \"{}\", match: {:.0}%)",
+            file_name, album.name, meta_album, album_similarity * 100.0
+        );
+
+        Ok(true)
+    }
+
+    /// Try to find and fix a mismatched music file by re-matching based on metadata
+    async fn try_fix_music_file_link(
+        db: &Database,
+        library_id: Uuid,
+        file_path: &str,
+        existing_file: &crate::db::MediaFileRecord,
+    ) -> Result<bool> {
+        use super::file_matcher::{FileMatcher, FileMatchTarget};
+        use crate::db::EmbeddedMetadata;
+
+        let file_name = std::path::Path::new(file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(file_path);
+
+        // Read embedded metadata
+        let metadata = match Self::read_audio_metadata(file_path) {
+            Some(m) if m.album.is_some() => m,
+            _ => return Ok(false),
+        };
+
+        let meta_album = metadata.album.as_deref().unwrap_or("");
+        let meta_artist = metadata.artist.as_deref().unwrap_or("");
+
+        // Store the extracted metadata in the database first
+        let embedded = EmbeddedMetadata {
+            artist: metadata.artist.clone(),
+            album: metadata.album.clone(),
+            title: metadata.title.clone(),
+            track_number: metadata.track_number.map(|n| n as i32),
+            disc_number: None,
+            year: metadata.year.map(|y| y as i32),
+            genre: metadata.genre.clone(),
+            show_name: None,
+            season: None,
+            episode: None,
+        };
+
+        db.media_files()
+            .update_embedded_metadata(existing_file.id, &embedded)
+            .await?;
+
+        // Get library for FileMatcher
+        let library = match db.libraries().get_by_id(library_id).await? {
+            Some(lib) => lib,
+            None => return Ok(false),
+        };
+
+        // Use FileMatcher to find the correct match
+        let matcher = FileMatcher::new(db.clone());
+        
+        // Re-fetch the media file with updated metadata
+        let updated_file = match db.media_files().get_by_id(existing_file.id).await? {
+            Some(f) => f,
+            None => return Ok(false),
+        };
+
+        match matcher.match_media_file(&updated_file, &library).await {
+            Ok(result) => {
+                if result.match_target.is_matched() {
+                    // Extract the new album/track IDs from the match
+                    if let FileMatchTarget::Track { track_id, album_id, title, .. } = &result.match_target {
+                        // Check if this is different from current link
+                        let different_album = existing_file.album_id.map(|id| id != *album_id).unwrap_or(true);
+                        let different_track = existing_file.track_id.map(|id| id != *track_id).unwrap_or(true);
+
+                        if different_album || different_track {
+                            info!(
+                                file = %file_name,
+                                meta_album = %meta_album,
+                                meta_artist = %meta_artist,
+                                new_album_id = %album_id,
+                                new_track_id = %track_id,
+                                new_track_title = %title,
+                                confidence = result.confidence,
+                                "[FIX] Auto-correcting via FileMatcher"
+                            );
+
+                            // Update the media file link
+                            db.media_files()
+                                .update_match(
+                                    existing_file.id,
+                                    None, // episode_id
+                                    None, // movie_id
+                                    Some(*track_id),
+                                    Some(*album_id),
+                                    None, // audiobook_id
+                                    Some("track"),
+                                )
+                                .await?;
+
+                            return Ok(true);
+                        }
+                    }
+                }
+                
+                warn!(
+                    file = %file_name,
+                    meta_album = %meta_album,
+                    "[FIX] FileMatcher could not find matching album in library"
+                );
+                Ok(false)
+            }
+            Err(e) => {
+                warn!(
+                    file = %file_name,
+                    error = %e,
+                    "[FIX] FileMatcher error"
+                );
+                Ok(false)
+            }
+        }
     }
 
     /// Static version of find_or_create_album for use in spawned tasks
@@ -1992,13 +2273,43 @@ impl ScannerService {
         progress.current_file = Some(file.path.clone());
 
         let media_files_repo = self.db.media_files();
-        if media_files_repo.get_by_path(&file.path).await?.is_some() {
-            debug!(path = %file.path, "File already in database, skipping");
+        if let Some(existing) = media_files_repo.get_by_path(&file.path).await? {
+            // File exists - check if it needs analysis
+            if existing.ffprobe_analyzed_at.is_some() {
+                debug!(path = %file.path, "File already analyzed, skipping");
+            } else {
+                // Needs analysis - queue it
+                self.queue_analysis_for_existing(&existing).await;
+            }
             return Ok(());
         }
 
         self.create_media_file(library_id, file, None, progress)
             .await
+    }
+
+    /// Queue analysis for an existing file that hasn't been analyzed yet
+    async fn queue_analysis_for_existing(&self, media_file: &crate::db::MediaFileRecord) {
+        if let Some(ref queue) = self.analysis_queue {
+            let job = MediaAnalysisJob {
+                media_file_id: media_file.id,
+                path: std::path::PathBuf::from(&media_file.path),
+                check_subtitles: true,
+            };
+            if let Err(e) = queue.submit(job).await {
+                warn!(
+                    media_file_id = %media_file.id,
+                    error = %e,
+                    "Failed to queue existing file for analysis"
+                );
+            } else {
+                debug!(
+                    media_file_id = %media_file.id,
+                    path = %media_file.path,
+                    "Queued existing file for analysis"
+                );
+            }
+        }
     }
 
     /// Create a media file record
