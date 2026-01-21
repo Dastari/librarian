@@ -379,11 +379,20 @@ impl TvShowRepository {
     }
 
     /// Find a TV show by name in a library (case-insensitive fuzzy match)
+    ///
+    /// Handles common naming variations:
+    /// - Case differences: "Star Trek" vs "STAR TREK"
+    /// - Punctuation differences: "Star Trek: Deep Space Nine" vs "Star Trek Deep Space Nine"
+    /// - Separator differences: "Doctor.Who" vs "Doctor Who" vs "Doctor_Who"
+    /// - Article prefix: "The Office" vs "Office"
     pub async fn find_by_name_in_library(
         &self,
         library_id: Uuid,
         name: &str,
     ) -> Result<Option<TvShowRecord>> {
+        // Normalize search name: remove punctuation, normalize spaces
+        let normalized_search = Self::normalize_show_name(name);
+
         // First try exact match (case-insensitive)
         let record = sqlx::query_as::<_, TvShowRecord>(
             r#"
@@ -412,13 +421,40 @@ impl TvShowRepository {
             return Ok(record);
         }
 
-        // Try fuzzy match using LIKE with common variations
-        // Remove "The " prefix and try again, also try with dots replaced by spaces
-        let normalized = name
-            .trim()
-            .trim_start_matches("The ")
+        // Try normalized match - compare normalized versions of both names
+        // This handles "Star Trek: Deep Space Nine" vs "Star Trek Deep Space Nine"
+        let record = sqlx::query_as::<_, TvShowRecord>(
+            r#"
+            SELECT id, library_id, user_id, name, sort_name, year, status,
+                   tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network,
+                   runtime, genres, poster_url, backdrop_url, monitored,
+                   monitor_type, path,
+                   auto_download_override, backfill_existing,
+                   organize_files_override, rename_style_override, auto_hunt_override,
+                   episode_count, episode_file_count, size_bytes, created_at, updated_at,
+                   allowed_resolutions_override, allowed_video_codecs_override,
+                   allowed_audio_formats_override, require_hdr_override,
+                   allowed_hdr_types_override, allowed_sources_override,
+                   release_group_blacklist_override, release_group_whitelist_override
+            FROM tv_shows
+            WHERE library_id = $1 
+              AND LOWER(REGEXP_REPLACE(REGEXP_REPLACE(name, '[^a-zA-Z0-9\s]', '', 'g'), '\s+', ' ', 'g')) = LOWER($2)
+            LIMIT 1
+            "#,
+        )
+        .bind(library_id)
+        .bind(&normalized_search)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if record.is_some() {
+            return Ok(record);
+        }
+
+        // Try without "The " prefix on both sides
+        let normalized_no_the = normalized_search
             .trim_start_matches("the ")
-            .replace(['.', '_'], " ");
+            .trim();
 
         let record = sqlx::query_as::<_, TvShowRecord>(
             r#"
@@ -435,19 +471,41 @@ impl TvShowRepository {
                    release_group_blacklist_override, release_group_whitelist_override
             FROM tv_shows
             WHERE library_id = $1 
-              AND (
-                LOWER(name) LIKE LOWER($2) 
-                OR LOWER(REPLACE(REPLACE(name, '.', ' '), '_', ' ')) = LOWER($2)
-              )
+              AND LOWER(REGEXP_REPLACE(REGEXP_REPLACE(
+                  REGEXP_REPLACE(name, '^[Tt]he\s+', '', 'g'),
+                  '[^a-zA-Z0-9\s]', '', 'g'), '\s+', ' ', 'g')) = LOWER($2)
             LIMIT 1
             "#,
         )
         .bind(library_id)
-        .bind(&normalized)
+        .bind(normalized_no_the)
         .fetch_optional(&self.pool)
         .await?;
 
         Ok(record)
+    }
+
+    /// Normalize a show name for matching
+    /// Removes punctuation, normalizes whitespace, and lowercases
+    fn normalize_show_name(name: &str) -> String {
+        // Remove non-alphanumeric characters except spaces
+        let cleaned: String = name
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c.is_whitespace() {
+                    c
+                } else {
+                    ' '
+                }
+            })
+            .collect();
+
+        // Normalize whitespace and lowercase
+        cleaned
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
     }
 
     /// Create a new TV show

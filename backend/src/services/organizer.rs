@@ -117,6 +117,11 @@ impl OrganizerService {
     ///
     /// If `naming_pattern` is provided, it will be used to generate the path.
     /// Otherwise, falls back to the legacy `rename_style` behavior.
+    ///
+    /// IMPORTANT: If `show.path` is set (i.e., the show was added via the UI with a specific
+    /// folder structure), we use that path as the base. This ensures files are organized
+    /// into the existing folder structure (e.g., "Star Trek Deep Space Nine (1993)/Season 1/")
+    /// rather than generating a new folder name from the show name.
     pub fn generate_organized_path(
         &self,
         library_path: &str,
@@ -139,11 +144,29 @@ impl OrganizerService {
             }
         }
 
-        // Legacy behavior: use rename_style
-        // Create show folder name: "Show Name (Year)" or just "Show Name"
-        let show_folder = match show.year {
-            Some(year) => format!("{} ({})", sanitize_for_filename(&show.name), year),
-            None => sanitize_for_filename(&show.name),
+        // Determine the show folder path:
+        // 1. If show.path is set, use it (respects existing folder structure)
+        // 2. Otherwise, generate from show name and year
+        let show_path = if let Some(ref path) = show.path {
+            // Use the existing show path that was set when the show was added
+            debug!(
+                show = %show.name,
+                existing_path = %path,
+                "Using existing show path for organization"
+            );
+            PathBuf::from(path)
+        } else {
+            // Legacy behavior: generate show folder name
+            let show_folder = match show.year {
+                Some(year) => format!("{} ({})", sanitize_for_filename(&show.name), year),
+                None => sanitize_for_filename(&show.name),
+            };
+            debug!(
+                show = %show.name,
+                generated_folder = %show_folder,
+                "No show.path set, generating folder from name/year"
+            );
+            PathBuf::from(library_path).join(&show_folder)
         };
 
         // Create season folder name: "Season 01"
@@ -199,8 +222,7 @@ impl OrganizerService {
             }
         };
 
-        PathBuf::from(library_path)
-            .join(&show_folder)
+        show_path
             .join(&season_folder)
             .join(&filename)
     }
@@ -537,12 +559,17 @@ impl OrganizerService {
             .mark_organized(file.id, &new_path_str, &original_path)
             .await?;
 
+        let original_name = std::path::Path::new(&original_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&original_path);
         info!(
             file_id = %file.id,
             action = %effective_action,
             original = %original_path,
             new = %new_path_str,
-            "Successfully organized file"
+            "Organized '{}' ({}) → {}",
+            original_name, effective_action, new_path_str
         );
 
         Ok(OrganizeResult {
@@ -914,7 +941,8 @@ impl OrganizerService {
             action = %effective_action,
             original = %original_path,
             new = %new_path_str,
-            "Successfully organized movie file"
+            "Organized movie '{}' ({}) → {}",
+            movie.title, effective_action, new_path_str
         );
 
         Ok(OrganizeResult {
@@ -1228,7 +1256,8 @@ impl OrganizerService {
             album = %album.name,
             action = %effective_action,
             new = %new_path_str,
-            "Successfully organized music file"
+            "Organized music: {} - {} ({}) → {}",
+            artist_name, album.name, effective_action, new_path_str
         );
 
         Ok(OrganizeResult {
@@ -1542,7 +1571,8 @@ impl OrganizerService {
             audiobook = %audiobook.title,
             action = %effective_action,
             new = %new_path_str,
-            "Successfully organized audiobook file"
+            "Organized audiobook: {} by {} ({}) → {}",
+            audiobook.title, author_name, effective_action, new_path_str
         );
 
         Ok(OrganizeResult {
@@ -2048,7 +2078,7 @@ impl OrganizerService {
         Ok(show_path)
     }
 
-    // Legacy organize_torrent function removed - use TorrentProcessor::process_torrent() instead
+    // Legacy organize_torrent function removed - use MediaProcessor::process_download() instead
 
     /// Consolidate a library by:
     /// 1. Finding duplicate show folders (e.g., "Show" and "Show (2024)")

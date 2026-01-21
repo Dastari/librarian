@@ -15,6 +15,7 @@ pub mod media_files;
 pub mod movies;
 pub mod naming_patterns;
 pub mod playback;
+pub mod priority_rules;
 pub mod rss_feeds;
 pub mod schedule;
 pub mod settings;
@@ -23,6 +24,8 @@ pub mod torrent_file_matches;
 pub mod torrents;
 pub mod tracks;
 pub mod tv_shows;
+pub mod usenet_downloads;
+pub mod usenet_servers;
 pub mod watch_progress;
 
 use anyhow::Result;
@@ -67,6 +70,17 @@ pub use torrents::{CreateTorrent, TorrentRecord, TorrentRepository};
 pub use tracks::{CreateTrack, TrackRecord, TrackRepository, TrackWithStatus, UpdateTrack};
 pub use tv_shows::{CreateTvShow, TvShowRecord, TvShowRepository, UpdateTvShow};
 pub use watch_progress::{UpsertWatchProgress, WatchProgressRecord, WatchProgressRepository};
+pub use priority_rules::{
+    CreatePriorityRule, PriorityRuleRecord, PriorityRulesRepository, SourceRef, SourceType,
+    UpdatePriorityRule,
+};
+pub use usenet_servers::{
+    CreateUsenetServer, UpdateUsenetServer, UsenetServerRecord, UsenetServersRepository,
+};
+pub use usenet_downloads::{
+    CreateUsenetDownload, UpdateUsenetDownload, UsenetDownloadRecord, UsenetDownloadsRepository,
+    UsenetFileMatchRecord,
+};
 
 /// Database wrapper providing connection pool access
 #[derive(Clone)]
@@ -238,6 +252,21 @@ impl Database {
     /// Get a torrent file matches repository
     pub fn torrent_file_matches(&self) -> TorrentFileMatchRepository {
         TorrentFileMatchRepository::new(self.pool.clone())
+    }
+
+    /// Get a priority rules repository
+    pub fn priority_rules(&self) -> PriorityRulesRepository {
+        PriorityRulesRepository::new(self.pool.clone())
+    }
+
+    /// Get a usenet servers repository
+    pub fn usenet_servers(&self) -> UsenetServersRepository {
+        UsenetServersRepository::new(self.pool.clone())
+    }
+
+    /// Get a usenet downloads repository
+    pub fn usenet_downloads(&self) -> UsenetDownloadsRepository {
+        UsenetDownloadsRepository::new(self.pool.clone())
     }
 
     /// Run database migrations

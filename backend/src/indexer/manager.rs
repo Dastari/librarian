@@ -16,6 +16,7 @@ use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 use super::definitions::iptorrents::IPTorrentsIndexer;
+use super::definitions::newznab::NewznabIndexer;
 use super::encryption::CredentialEncryption;
 use super::{Indexer, IndexerSearchResult, ReleaseInfo, TorznabQuery};
 use crate::db::Database;
@@ -121,6 +122,19 @@ impl IndexerManager {
                     settings_map,
                 )?)
             }
+            "newznab" => {
+                let api_key = decrypted_creds
+                    .get("api_key")
+                    .ok_or_else(|| anyhow!("API key is required for Newznab indexer"))?;
+
+                Arc::new(NewznabIndexer::new(
+                    config_id.to_string(),
+                    config.name.clone(),
+                    config.site_url.clone(),
+                    api_key,
+                    settings_map,
+                )?)
+            }
             // Add more indexer types here
             _ => {
                 return Err(anyhow!("Unknown indexer type: {}", config.indexer_type));
@@ -139,7 +153,8 @@ impl IndexerManager {
             indexer_id = %config_id,
             indexer_name = %config.name,
             indexer_type = %config.indexer_type,
-            "Loaded indexer"
+            "Loaded indexer '{}' ({})",
+            config.name, config.indexer_type
         );
 
         Ok(())

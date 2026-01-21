@@ -7,10 +7,12 @@ pub mod media_files;
 pub mod movies;
 pub mod music;
 pub mod playback;
+pub mod priority_rules;
 pub mod rss_feeds;
 pub mod settings;
 pub mod torrents;
 pub mod tv_shows;
+pub mod usenet;
 pub mod user;
 
 pub use audiobooks::AudiobookMutations;
@@ -22,10 +24,12 @@ pub use media_files::MediaFileMutations;
 pub use movies::MovieMutations;
 pub use music::MusicMutations;
 pub use playback::PlaybackMutations;
+pub use priority_rules::PriorityRuleMutations;
 pub use rss_feeds::RssFeedMutations;
 pub use settings::SettingsMutations;
 pub use torrents::TorrentMutations;
 pub use tv_shows::TvShowMutations;
+pub use usenet::UsenetMutations;
 pub use user::UserMutations;
 
 pub(crate) mod prelude {

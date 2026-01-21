@@ -1,4 +1,6 @@
 use super::prelude::*;
+use crate::indexer::manager::IndexerManager;
+use crate::services::hunt::HuntService;
 
 #[derive(Default)]
 pub struct IndexerQueries;
@@ -373,10 +375,20 @@ impl IndexerQueries {
             }
         }
 
+        let sources_searched = results.len() as i32;
+        let priority_rule_used = if input.library_type.is_some() || input.library_id.is_some() {
+            Some("default (priority search not yet active)".to_string())
+        } else {
+            None
+        };
+
         Ok(IndexerSearchResultSet {
             indexers: results,
             total_releases,
             total_elapsed_ms: start.elapsed().as_millis() as i64,
+            stopped_early: false,
+            sources_searched,
+            priority_rule_used,
         })
     }
 }

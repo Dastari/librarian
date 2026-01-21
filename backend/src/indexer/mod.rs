@@ -146,7 +146,7 @@ impl std::str::FromStr for TrackerType {
 }
 
 /// Result from an indexer search operation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct IndexerSearchResult {
     /// The indexer that produced these results
     pub indexer_id: String,

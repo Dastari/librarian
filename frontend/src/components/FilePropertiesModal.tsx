@@ -8,7 +8,6 @@ import {
 } from '@heroui/modal'
 import { Button } from '@heroui/button'
 import { Chip } from '@heroui/chip'
-import { Divider } from '@heroui/divider'
 import { Spinner } from '@heroui/spinner'
 import { Tabs, Tab } from '@heroui/tabs'
 import { Tooltip } from '@heroui/tooltip'
@@ -118,10 +117,10 @@ function formatAudioCodec(codec: string): string {
 /** Property row component */
 function PropertyRow({ label, value, mono = false }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
-    <div className="flex justify-between py-1.5 border-b border-default-100 last:border-0">
-      <span className="text-default-500 text-sm">{label}</span>
-      <span className={`text-sm text-right max-w-[60%] truncate ${mono ? 'font-mono text-xs' : ''}`}>
-        {value || <span className="text-default-400">-</span>}
+    <div className="flex justify-between items-center py-2 border-b border-default-100/50 last:border-0">
+      <span className="text-default-400 text-sm">{label}</span>
+      <span className={`text-sm text-right max-w-[60%] truncate text-default-foreground ${mono ? 'font-mono text-xs' : ''}`}>
+        {value || <span className="text-default-300 italic">—</span>}
       </span>
     </div>
   )
@@ -142,18 +141,18 @@ function StreamCard({
   children: React.ReactNode 
 }) {
   return (
-    <div className="bg-default-50 rounded-lg p-3 mb-2 last:mb-0">
-      <div className="flex items-start gap-2 mb-2">
-        <div className="text-default-400 mt-0.5">{icon}</div>
+    <div className="bg-default-100/50 rounded-xl p-4 mb-3 last:mb-0 border border-default-200/30">
+      <div className="flex items-start gap-3 mb-3">
+        <div className="text-primary-400 mt-0.5">{icon}</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-sm">{title}</span>
+            <span className="font-semibold text-sm text-default-foreground">{title}</span>
             {badges}
           </div>
-          {subtitle && <span className="text-xs text-default-400">{subtitle}</span>}
+          {subtitle && <span className="text-xs text-default-400 block mt-0.5">{subtitle}</span>}
         </div>
       </div>
-      <div className="pl-6">{children}</div>
+      <div className="pl-7">{children}</div>
     </div>
   )
 }
@@ -215,18 +214,28 @@ export function FilePropertiesModal({
       onClose={onClose} 
       size="2xl"
       scrollBehavior="inside"
+      classNames={{
+        base: 'bg-content1',
+        header: 'border-b border-default-200/50',
+        body: 'py-4',
+        footer: 'border-t border-default-200/50',
+      }}
     >
       <ModalContent>
         <ModalHeader className="flex flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <IconFile size={20} className="text-default-400" />
-            <span className="truncate">{overrideTitle || filename}</span>
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-primary-500/10 rounded-lg">
+              <IconFile size={20} className="text-primary-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <span className="truncate block font-semibold">{overrideTitle || filename}</span>
+              {overrideTitle && file && (
+                <span className="text-xs text-default-400 font-normal truncate block mt-0.5">
+                  {filename}
+                </span>
+              )}
+            </div>
           </div>
-          {overrideTitle && file && (
-            <span className="text-xs text-default-400 font-normal truncate">
-              {filename}
-            </span>
-          )}
         </ModalHeader>
 
         <ModalBody>
@@ -247,8 +256,12 @@ export function FilePropertiesModal({
               selectedKey={selectedTab} 
               onSelectionChange={(key) => setSelectedTab(key as string)}
               variant="underlined"
+              color="primary"
               classNames={{
-                tabList: 'gap-4',
+                tabList: 'gap-6 w-full relative rounded-none p-0 border-b border-default-200/50',
+                cursor: 'w-full bg-primary-500',
+                tab: 'max-w-fit px-0 h-10',
+                tabContent: 'group-data-[selected=true]:text-primary-500',
               }}
             >
               <Tab
@@ -260,72 +273,80 @@ export function FilePropertiesModal({
                   </div>
                 }
               >
-                <div className="pt-3">
-                  {/* File Info */}
-                  <h4 className="text-sm font-semibold text-default-600 mb-2">File Information</h4>
-                  <PropertyRow label="File Name" value={file?.originalName || filename} />
-                  <PropertyRow label="Size" value={file?.sizeFormatted} />
-                  <PropertyRow label="Container" value={file?.container?.toUpperCase()} />
-                  <PropertyRow label="Duration" value={formatDuration(file?.duration ?? null)} />
-                  <PropertyRow label="Overall Bitrate" value={formatBitrate(file?.bitrate ?? null)} />
-                  <PropertyRow label="Added" value={file?.addedAt ? new Date(file.addedAt).toLocaleString() : '-'} />
-                  
-                  <div className="flex items-center gap-2 mt-2">
-                    <span className="text-default-500 text-sm">Path</span>
-                    <Tooltip content={copied ? 'Copied!' : 'Copy path'}>
-                      <Button
-                        size="sm"
-                        variant="light"
-                        isIconOnly
-                        onPress={handleCopyPath}
-                      >
-                        {copied ? <IconCheck size={14} className="text-success" /> : <IconCopy size={14} />}
-                      </Button>
-                    </Tooltip>
-                  </div>
-                  <code className="text-xs text-default-400 break-all block mt-1 bg-default-100 p-2 rounded">
-                    {file?.path}
-                  </code>
-
-                  <Divider className="my-4" />
-
-                  {/* Quick Summary */}
-                  <h4 className="text-sm font-semibold text-default-600 mb-2">Media Summary</h4>
-                  <div className="flex flex-wrap gap-2 mb-3">
+                <div className="pt-4 space-y-6">
+                  {/* Media Summary Badges - show first as visual highlight */}
+                  <div className="flex flex-wrap gap-2">
                     {file?.resolution && (
-                      <Chip size="sm" variant="flat" color="primary">{file.resolution}</Chip>
+                      <Chip size="md" variant="flat" color="primary" classNames={{ content: 'font-semibold' }}>
+                        {file.resolution}
+                      </Chip>
                     )}
                     {file?.videoCodec && (
-                      <Chip size="sm" variant="flat" color="secondary">
+                      <Chip size="md" variant="flat" color="secondary" classNames={{ content: 'font-semibold' }}>
                         {formatVideoCodec(file.videoCodec)}
                       </Chip>
                     )}
                     {file?.hdrType && (
-                      <Chip size="sm" variant="flat" color="warning">{file.hdrType}</Chip>
+                      <Chip size="md" variant="flat" color="warning" classNames={{ content: 'font-semibold' }}>
+                        {file.hdrType}
+                      </Chip>
                     )}
                     {file?.audioCodec && (
-                      <Chip size="sm" variant="flat" color="default">
+                      <Chip size="md" variant="flat" color="default" classNames={{ content: 'font-medium' }}>
                         {formatAudioCodec(file.audioCodec)}
                       </Chip>
                     )}
                   </div>
+
+                  {/* File Info Section */}
+                  <div className="bg-default-100/30 rounded-xl p-4 border border-default-200/30">
+                    <h4 className="text-sm font-semibold text-primary-400 mb-3 uppercase tracking-wide">File Information</h4>
+                    <PropertyRow label="File Name" value={file?.originalName || filename} />
+                    <PropertyRow label="Size" value={file?.sizeFormatted} />
+                    <PropertyRow label="Container" value={file?.container?.toUpperCase()} />
+                    <PropertyRow label="Duration" value={formatDuration(file?.duration ?? null)} />
+                    <PropertyRow label="Overall Bitrate" value={formatBitrate(file?.bitrate ?? null)} />
+                    <PropertyRow label="Added" value={file?.addedAt ? new Date(file.addedAt).toLocaleString() : null} />
+                  </div>
                   
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-default-500">Video Streams:</span>{' '}
-                      <span className="font-medium">{details.videoStreams.length}</span>
+                  {/* Path Section */}
+                  <div className="bg-default-100/30 rounded-xl p-4 border border-default-200/30">
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-sm font-semibold text-primary-400 uppercase tracking-wide">File Path</h4>
+                      <Tooltip content={copied ? 'Copied!' : 'Copy path'}>
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          color={copied ? 'success' : 'default'}
+                          isIconOnly
+                          onPress={handleCopyPath}
+                        >
+                          {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                        </Button>
+                      </Tooltip>
                     </div>
-                    <div>
-                      <span className="text-default-500">Audio Streams:</span>{' '}
-                      <span className="font-medium">{details.audioStreams.length}</span>
+                    <code className="text-xs text-default-400 break-all block bg-default-50 p-3 rounded-lg font-mono">
+                      {file?.path}
+                    </code>
+                  </div>
+
+                  {/* Stream Counts */}
+                  <div className="grid grid-cols-4 gap-3">
+                    <div className="bg-default-100/30 rounded-lg p-3 text-center border border-default-200/30">
+                      <div className="text-2xl font-bold text-default-foreground">{details.videoStreams.length}</div>
+                      <div className="text-xs text-default-400 mt-1">Video</div>
                     </div>
-                    <div>
-                      <span className="text-default-500">Subtitles:</span>{' '}
-                      <span className="font-medium">{details.subtitles.length}</span>
+                    <div className="bg-default-100/30 rounded-lg p-3 text-center border border-default-200/30">
+                      <div className="text-2xl font-bold text-default-foreground">{details.audioStreams.length}</div>
+                      <div className="text-xs text-default-400 mt-1">Audio</div>
                     </div>
-                    <div>
-                      <span className="text-default-500">Chapters:</span>{' '}
-                      <span className="font-medium">{details.chapters.length}</span>
+                    <div className="bg-default-100/30 rounded-lg p-3 text-center border border-default-200/30">
+                      <div className="text-2xl font-bold text-default-foreground">{details.subtitles.length}</div>
+                      <div className="text-xs text-default-400 mt-1">Subtitles</div>
+                    </div>
+                    <div className="bg-default-100/30 rounded-lg p-3 text-center border border-default-200/30">
+                      <div className="text-2xl font-bold text-default-foreground">{details.chapters.length}</div>
+                      <div className="text-xs text-default-400 mt-1">Chapters</div>
                     </div>
                   </div>
                 </div>
@@ -340,13 +361,18 @@ export function FilePropertiesModal({
                   </div>
                 }
               >
-                <div className="pt-3">
+                <div className="pt-4">
                   {details.videoStreams.length === 0 ? (
-                    <p className="text-default-400 text-center py-8">No video streams found</p>
+                    <div className="flex flex-col items-center justify-center py-12 text-default-400">
+                      <IconVideo size={48} className="mb-2 opacity-50" />
+                      <p>No video streams found</p>
+                    </div>
                   ) : (
-                    details.videoStreams.map((stream) => (
-                      <VideoStreamCard key={stream.id} stream={stream} />
-                    ))
+                    <div className="space-y-3">
+                      {details.videoStreams.map((stream) => (
+                        <VideoStreamCard key={stream.id} stream={stream} />
+                      ))}
+                    </div>
                   )}
                 </div>
               </Tab>
@@ -360,13 +386,18 @@ export function FilePropertiesModal({
                   </div>
                 }
               >
-                <div className="pt-3">
+                <div className="pt-4">
                   {details.audioStreams.length === 0 ? (
-                    <p className="text-default-400 text-center py-8">No audio streams found</p>
+                    <div className="flex flex-col items-center justify-center py-12 text-default-400">
+                      <IconVolume size={48} className="mb-2 opacity-50" />
+                      <p>No audio streams found</p>
+                    </div>
                   ) : (
-                    details.audioStreams.map((stream) => (
-                      <AudioStreamCard key={stream.id} stream={stream} />
-                    ))
+                    <div className="space-y-3">
+                      {details.audioStreams.map((stream) => (
+                        <AudioStreamCard key={stream.id} stream={stream} />
+                      ))}
+                    </div>
                   )}
                 </div>
               </Tab>
@@ -380,13 +411,18 @@ export function FilePropertiesModal({
                   </div>
                 }
               >
-                <div className="pt-3">
+                <div className="pt-4">
                   {details.subtitles.length === 0 ? (
-                    <p className="text-default-400 text-center py-8">No subtitles found</p>
+                    <div className="flex flex-col items-center justify-center py-12 text-default-400">
+                      <IconFileText size={48} className="mb-2 opacity-50" />
+                      <p>No subtitles found</p>
+                    </div>
                   ) : (
-                    details.subtitles.map((sub) => (
-                      <SubtitleCard key={sub.id} subtitle={sub} />
-                    ))
+                    <div className="space-y-3">
+                      {details.subtitles.map((sub) => (
+                        <SubtitleCard key={sub.id} subtitle={sub} />
+                      ))}
+                    </div>
                   )}
                 </div>
               </Tab>
@@ -400,11 +436,14 @@ export function FilePropertiesModal({
                   </div>
                 }
               >
-                <div className="pt-3">
+                <div className="pt-4">
                   {details.chapters.length === 0 ? (
-                    <p className="text-default-400 text-center py-8">No chapters found</p>
+                    <div className="flex flex-col items-center justify-center py-12 text-default-400">
+                      <IconList size={48} className="mb-2 opacity-50" />
+                      <p>No chapters found</p>
+                    </div>
                   ) : (
-                    <div className="space-y-1">
+                    <div className="space-y-2">
                       {details.chapters.map((chapter) => (
                         <ChapterRow key={chapter.id} chapter={chapter} />
                       ))}
@@ -518,19 +557,19 @@ function SubtitleCard({ subtitle }: { subtitle: SubtitleInfo }) {
 function ChapterRow({ chapter }: { chapter: ChapterInfo }) {
   const duration = chapter.endSecs - chapter.startSecs
   return (
-    <div className="flex items-center gap-3 py-2 px-3 bg-default-50 rounded hover:bg-default-100 transition-colors">
-      <span className="text-default-400 text-xs w-6">{chapter.chapterIndex + 1}</span>
-      <span className="flex-1 text-sm truncate">
+    <div className="flex items-center gap-3 py-2.5 px-4 bg-default-100/30 rounded-lg hover:bg-default-100/50 transition-colors border border-default-200/20">
+      <span className="text-default-400 text-xs w-6 font-medium">{chapter.chapterIndex + 1}</span>
+      <span className="flex-1 text-sm truncate text-default-foreground">
         {chapter.title || `Chapter ${chapter.chapterIndex + 1}`}
       </span>
-      <span className="text-xs text-default-400 font-mono">
+      <span className="text-xs text-default-400 font-mono tabular-nums">
         {formatDuration(chapter.startSecs)}
       </span>
       <span className="text-xs text-default-300">→</span>
-      <span className="text-xs text-default-400 font-mono">
+      <span className="text-xs text-default-400 font-mono tabular-nums">
         {formatDuration(chapter.endSecs)}
       </span>
-      <span className="text-xs text-default-300 w-16 text-right">
+      <span className="text-xs text-primary-400 w-16 text-right font-medium tabular-nums">
         ({formatDuration(duration)})
       </span>
     </div>

@@ -50,6 +50,7 @@ pub struct MediaFileRecord {
 
 /// Input for creating a media file
 #[derive(Debug)]
+#[derive(Default)]
 pub struct CreateMediaFile {
     pub library_id: Uuid,
     pub path: String,

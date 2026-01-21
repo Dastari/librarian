@@ -845,6 +845,12 @@ export interface TrackWithStatus {
   hasFile: boolean;
   filePath: string | null;
   fileSize: number | null;
+  /** Audio codec (e.g., FLAC, AAC, MP3) */
+  audioCodec: string | null;
+  /** Bitrate in kbps */
+  bitrate: number | null;
+  /** Audio channels (e.g., "stereo", "5.1") */
+  audioChannels: string | null;
 }
 
 export interface AlbumWithTracks {

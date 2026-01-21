@@ -21,6 +21,7 @@ use crate::db::movies::MovieRecord;
 use crate::db::tv_shows::TvShowRecord;
 use crate::indexer::manager::IndexerManager;
 use crate::indexer::{ReleaseInfo, TorznabQuery};
+use crate::services::hunt::HuntService;
 use crate::services::TorrentService;
 use crate::services::text_utils::normalize_quality;
 use crate::services::torrent::TorrentInfo;
@@ -1004,7 +1005,8 @@ async fn hunt_movies_impl(
         job = "auto_hunt",
         library_id = %library.id,
         library_name = %library.name,
-        "Hunting for missing movies"
+        "Hunting for missing movies in '{}'",
+        library.name
     );
 
     // First, check if there are any active downloads for movies in this library
@@ -1320,7 +1322,8 @@ async fn hunt_tv_episodes_impl(
             job = "auto_hunt",
             show_name = %show.name,
             episode_count = episodes.len(),
-            "Found missing/suboptimal episodes to hunt"
+            "Found {} missing/suboptimal episodes to hunt for '{}'",
+            episodes.len(), show.name
         );
 
         let quality_settings = EffectiveQualitySettings::from_library_and_show(library, &show);
@@ -1351,7 +1354,8 @@ async fn hunt_tv_episodes_impl(
                 job = "auto_hunt",
                 show_name = %show.name,
                 search_term = %search_term,
-                "Searching for episode"
+                "Searching for episode '{}'",
+                search_term
             );
 
             let search_results = indexer_manager.search_all(&query).await;
@@ -1513,7 +1517,8 @@ async fn hunt_music(
                 job = "auto_hunt",
                 indexer_name = %indexer_result.indexer_name,
                 release_count = indexer_result.releases.len(),
-                "Indexer search returned results"
+                "Indexer '{}' returned {} results",
+                indexer_result.indexer_name, indexer_result.releases.len()
             );
             all_releases.extend(indexer_result.releases);
         }
@@ -1915,7 +1920,8 @@ pub async fn run_auto_hunt_for_library(
                 downloaded = r.downloaded,
                 skipped = r.skipped,
                 failed = r.failed,
-                "Auto-hunt for library complete"
+                "Auto-hunt complete for '{}': {} searched, {} matched, {} downloaded",
+                library.name, r.searched, r.matched, r.downloaded
             );
         }
         Err(e) => {

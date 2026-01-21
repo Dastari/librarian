@@ -1,7 +1,8 @@
-//! Unified torrent processing service
+//! Unified media processing service
 //!
-//! This module provides a single point of logic for processing completed torrents:
-//! - Processing file-level matches (via `torrent_file_matches` table)
+//! This module provides a single point of logic for processing completed downloads
+//! from any source (torrents, usenet, IRC, FTP, manual imports, etc.):
+//! - Processing file-level matches (via file match tables)
 //! - Creating media file records
 //! - Organizing files into library folder structure
 //! - Updating item status from 'downloading' to 'downloaded'
@@ -9,18 +10,18 @@
 //!
 //! ## File-Level Matching Flow
 //!
-//! When a torrent is added, the `TorrentFileMatcher` service analyzes each file
-//! and creates entries in the `torrent_file_matches` table. These entries:
+//! When a download is added, the file matcher service analyzes each file
+//! and creates entries in the appropriate file matches table. These entries:
 //! - Link individual files to specific episodes/movies/tracks/chapters
 //! - Mark files that should be skipped (duplicates, samples, wrong quality)
 //! - Update item status to 'downloading'
 //!
 //! When processing completes:
-//! 1. `process_torrent` checks for file matches in `torrent_file_matches`
+//! 1. `process_download` checks for file matches
 //! 2. If matches exist, uses `process_with_file_matches` to process each file
 //! 3. If no matches, uses `process_without_library` to auto-match against all libraries
 //!
-//! All torrent processing should go through this service to ensure consistent behavior.
+//! All download processing should go through this service to ensure consistent behavior.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -40,9 +41,9 @@ use crate::services::organizer::OrganizerService;
 use crate::services::TorrentService;
 use crate::services::queues::{MediaAnalysisJob, MediaAnalysisQueue};
 
-/// Result of processing a single torrent
+/// Result of processing a single download (torrent, usenet, or any source)
 #[derive(Debug, Clone)]
-pub struct ProcessTorrentResult {
+pub struct ProcessDownloadResult {
     pub success: bool,
     pub matched: bool,
     pub organized: bool,
@@ -51,7 +52,7 @@ pub struct ProcessTorrentResult {
     pub messages: Vec<String>,
 }
 
-impl Default for ProcessTorrentResult {
+impl Default for ProcessDownloadResult {
     fn default() -> Self {
         Self {
             success: false,
@@ -64,9 +65,12 @@ impl Default for ProcessTorrentResult {
     }
 }
 
-/// Unified torrent processor service
+/// Legacy alias for backwards compatibility
+pub type ProcessTorrentResult = ProcessDownloadResult;
+
+/// Unified media processor service
 ///
-/// Handles all torrent processing logic including:
+/// Handles all download processing logic regardless of source:
 /// - Matching files to library items
 /// - Creating media file records  
 /// - Organizing files
@@ -75,7 +79,9 @@ impl Default for ProcessTorrentResult {
 /// - Queueing files for FFmpeg analysis to get real metadata
 /// - Quality verification and suboptimal detection
 /// - Auto-adding movies from TMDB when `auto_add_discovered` is enabled
-pub struct TorrentProcessor {
+///
+/// Works with torrents, usenet downloads, and any future download sources.
+pub struct MediaProcessor {
     db: Database,
     organizer: OrganizerService,
     /// Optional archive extractor for rar/zip/7z files
@@ -86,7 +92,7 @@ pub struct TorrentProcessor {
     metadata_service: Option<Arc<crate::services::MetadataService>>,
 }
 
-impl TorrentProcessor {
+impl MediaProcessor {
     pub fn new(db: Database) -> Self {
         let organizer = OrganizerService::new(db.clone());
         // Create extractor with temp directory from env or default
@@ -201,9 +207,9 @@ impl TorrentProcessor {
         library.post_download_action.clone()
     }
 
-    /// Process a completed torrent
+    /// Process a completed torrent download
     ///
-    /// This is the main entry point for processing. It handles:
+    /// This is the main entry point for processing torrent downloads. It handles:
     /// 1. Getting torrent files
     /// 2. Extracting archives (rar, zip, 7z)
     /// 3. Matching to library items based on torrent linkage or filename parsing
@@ -212,6 +218,9 @@ impl TorrentProcessor {
     /// 6. Updating item status
     ///
     /// The `force` parameter allows reprocessing even if already marked as completed.
+    ///
+    /// Note: For usenet downloads, use `process_usenet_download()` which follows
+    /// the same pipeline but works with usenet-specific data structures.
     pub async fn process_torrent(
         &self,
         torrent_service: &Arc<TorrentService>,
@@ -750,7 +759,8 @@ impl TorrentProcessor {
                     info!(
                         episode = %format!("{} S{:02}E{:02}", show.name, episode.season, episode.episode),
                         new_path = %org_result.new_path,
-                        "Episode file organized"
+                        "Organized {} S{:02}E{:02} → {}",
+                        show.name, episode.season, episode.episode, org_result.new_path
                     );
                 }
                 Ok(org_result) => {
@@ -846,7 +856,8 @@ impl TorrentProcessor {
                     info!(
                         movie = %movie.title,
                         new_path = %org_result.new_path,
-                        "Movie file organized"
+                        "Organized movie '{}' → {}",
+                        movie.title, org_result.new_path
                     );
                 }
                 Ok(org_result) => {
@@ -1326,7 +1337,8 @@ impl TorrentProcessor {
             season = season,
             episode = episode,
             filename = %filename,
-            "Matched file to episode"
+            "Matched '{}' → {} S{:02}E{:02}",
+            filename, show.name, season, episode
         );
 
         Ok(Some((show, ep)))
@@ -1342,6 +1354,19 @@ impl TorrentProcessor {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or(file_path);
+
+        // First, check if this looks like a TV show (has S01E01 notation)
+        // If so, don't try to match as a movie - TV matching should handle it
+        let episode_parsed = filename_parser::parse_episode(filename);
+        if episode_parsed.season.is_some() && episode_parsed.episode.is_some() {
+            debug!(
+                filename = %filename,
+                season = ?episode_parsed.season,
+                episode = ?episode_parsed.episode,
+                "File looks like TV episode, skipping movie matching"
+            );
+            return Ok(None);
+        }
 
         // Parse the movie filename
         let parsed = filename_parser::parse_movie(filename);
@@ -1778,11 +1803,16 @@ impl TorrentProcessor {
             })
             .await?;
 
+        let file_name = std::path::Path::new(file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(file_path);
         info!(
             file_id = %media_file.id,
             movie_id = %movie.id,
             path = %file_path,
-            "Upserted media file record for movie"
+            "Created media file record: '{}' for movie '{}'",
+            file_name, movie.title
         );
 
         // Queue for FFmpeg analysis to get real metadata
@@ -1806,7 +1836,8 @@ impl TorrentProcessor {
                     info!(
                         movie = %movie.title,
                         new_path = %org_result.new_path,
-                        "Movie file organized successfully"
+                        "Organized movie '{}' → {}",
+                        movie.title, org_result.new_path
                     );
                 }
                 Ok(org_result) => {
@@ -1882,11 +1913,21 @@ impl TorrentProcessor {
             })
             .await?;
 
+        let episode_desc = if let (Some(s), Some(ep)) = (&show, &episode) {
+            format!(" for {} S{:02}E{:02}", s.name, ep.season, ep.episode)
+        } else {
+            String::new()
+        };
+        let file_name = std::path::Path::new(file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(file_path);
         info!(
             file_id = %media_file.id,
             path = %file_path,
             episode = ?episode.map(|e| e.id),
-            "Upserted media file record"
+            "Created media file record: '{}'{}",
+            file_name, episode_desc
         );
 
         // Queue for FFmpeg analysis to get real metadata (resolution, codec, HDR, etc.)
@@ -1927,7 +1968,8 @@ impl TorrentProcessor {
                     Ok(org_result) if org_result.success => {
                         info!(
                             new_path = %org_result.new_path,
-                            "File organized successfully"
+                            "Organized file → {}",
+                            org_result.new_path
                         );
                         organized = true;
                     }
@@ -2194,6 +2236,731 @@ impl TorrentProcessor {
         }
 
         Ok(processed)
+    }
+
+    /// Process a completed usenet download using the unified pipeline
+    ///
+    /// Process a completed usenet download using the unified pipeline
+    ///
+    /// This method provides the same functionality as process_torrent but for
+    /// usenet downloads. It:
+    /// 1. Gets the download path and scans for media files
+    /// 2. Extracts archives if present (rar, zip, 7z)
+    /// 3. Matches files to library items (using linked item or auto-matching)
+    /// 4. Creates media file records
+    /// 5. Organizes files (if enabled for the library)
+    /// 6. Updates status
+    /// 7. Queues for FFmpeg analysis
+    pub async fn process_usenet_download(
+        &self,
+        download: &crate::db::usenet_downloads::UsenetDownloadRecord,
+        _usenet_service: &std::sync::Arc<crate::services::UsenetService>,
+        trigger_reason: &str,
+    ) -> Result<ProcessDownloadResult> {
+        info!(
+            "Processing usenet download '{}' (triggered by {})",
+            download.nzb_name, trigger_reason
+        );
+        
+        let mut result = ProcessDownloadResult::default();
+        
+        // Get download path
+        let download_path_str = match &download.download_path {
+            Some(path) => path.clone(),
+            None => {
+                result.messages.push("No download path available".to_string());
+                return Ok(result);
+            }
+        };
+        let download_path = PathBuf::from(&download_path_str);
+        
+        // Check if path exists
+        if !tokio::fs::try_exists(&download_path).await.unwrap_or(false) {
+            result.messages.push(format!("Download path not found: {}", download_path.display()));
+            return Ok(result);
+        }
+        
+        // Scan for media files (recursively)
+        let mut media_files = Vec::new();
+        self.scan_directory_for_media(&download_path, &mut media_files).await?;
+        
+        // Check for and extract archives first
+        if let Some(ref extractor) = self.extractor {
+            let has_archives = media_files.iter().any(|f| {
+                let ext = Path::new(f)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase());
+                matches!(ext.as_deref(), Some("rar") | Some("zip") | Some("7z"))
+            });
+            
+            if has_archives {
+                info!("Found archives in usenet download, extracting...");
+                match extractor.extract_archives(&download_path).await {
+                    Ok(extracted_path) => {
+                        info!("Extracted archives to: {}", extracted_path.display());
+                        // Re-scan to pick up extracted files
+                        media_files.clear();
+                        self.scan_directory_for_media(&download_path, &mut media_files).await?;
+                        // Also scan the extraction directory
+                        self.scan_directory_for_media(&extracted_path, &mut media_files).await?;
+                    }
+                    Err(e) => {
+                        warn!("Archive extraction failed: {}", e);
+                    }
+                }
+            }
+        }
+        
+        // Filter to only actual media files (not archives)
+        let media_files: Vec<String> = media_files
+            .into_iter()
+            .filter(|f| is_video_file(f) || is_audio_file(f))
+            .collect();
+        
+        if media_files.is_empty() {
+            result.messages.push("No media files found in download".to_string());
+            result.success = true;
+            return Ok(result);
+        }
+        
+        info!("Found {} media files to process", media_files.len());
+        
+        // Get user's libraries for matching
+        let libraries = self.db.libraries().list_by_user(download.user_id).await?;
+        if libraries.is_empty() {
+            result.messages.push("No libraries found for user".to_string());
+            return Ok(result);
+        }
+        
+        // If download is linked to a specific library/item, use that
+        // Otherwise, auto-match to any library
+        let target_library = if let Some(lib_id) = download.library_id {
+            libraries.iter().find(|l| l.id == lib_id).cloned()
+        } else {
+            None
+        };
+        
+        // Process each file
+        for file_path in &media_files {
+            match self.process_usenet_file(
+                file_path,
+                download,
+                target_library.as_ref(),
+                &libraries,
+            ).await {
+                Ok(processed) => {
+                    if processed {
+                        result.files_processed += 1;
+                        result.organized = true;
+                    } else {
+                        result.files_failed += 1;
+                    }
+                }
+                Err(e) => {
+                    warn!(file = %file_path, error = %e, "Failed to process usenet file");
+                    result.files_failed += 1;
+                    result.messages.push(format!("Failed to process {}: {}", file_path, e));
+                }
+            }
+        }
+        
+        result.matched = result.files_processed > 0;
+        result.success = result.files_processed > 0 || result.files_failed == 0;
+        
+        if result.files_processed > 0 {
+            result.messages.push(format!(
+                "Processed {} files from usenet download '{}'",
+                result.files_processed, download.nzb_name
+            ));
+        }
+        
+        Ok(result)
+    }
+    
+    /// Recursively scan a directory for media files
+    async fn scan_directory_for_media(&self, dir: &Path, files: &mut Vec<String>) -> Result<()> {
+        let mut entries = tokio::fs::read_dir(dir).await?;
+        
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.is_dir() {
+                // Recursively scan subdirectories
+                Box::pin(self.scan_directory_for_media(&path, files)).await?;
+            } else if path.is_file() {
+                if let Some(path_str) = path.to_str() {
+                    // Include video, audio, and archive files
+                    if is_video_file(path_str) || is_audio_file(path_str) 
+                       || path_str.ends_with(".rar") || path_str.ends_with(".zip") || path_str.ends_with(".7z") {
+                        files.push(path_str.to_string());
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Process a single file from a usenet download
+    async fn process_usenet_file(
+        &self,
+        file_path: &str,
+        download: &crate::db::usenet_downloads::UsenetDownloadRecord,
+        target_library: Option<&LibraryRecord>,
+        all_libraries: &[LibraryRecord],
+    ) -> Result<bool> {
+        // Skip if file already exists in media_files
+        if self.db.media_files().exists_by_path(file_path).await? {
+            debug!(path = %file_path, "Media file already exists, skipping");
+            return Ok(true);
+        }
+        
+        let file_name = Path::new(file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(file_path);
+        
+        // Determine file type
+        let is_video = is_video_file(file_path);
+        let is_audio = is_audio_file(file_path);
+        
+        // Try to match the file to a library item
+        if is_video {
+            // Try to match to TV episode or movie
+            if let Some(library) = target_library {
+                // Use the linked library
+                if library.library_type == "tv" {
+                    return self.process_usenet_tv_file(file_path, file_name, library, download).await;
+                } else if library.library_type == "movies" {
+                    return self.process_usenet_movie_file(file_path, file_name, library, download).await;
+                }
+            }
+            
+            // Auto-match: try TV libraries first, then movies
+            let tv_libraries: Vec<_> = all_libraries.iter().filter(|l| l.library_type == "tv").collect();
+            for library in tv_libraries {
+                if let Ok(true) = self.process_usenet_tv_file(file_path, file_name, library, download).await {
+                    return Ok(true);
+                }
+            }
+            
+            let movie_libraries: Vec<_> = all_libraries.iter().filter(|l| l.library_type == "movies").collect();
+            for library in movie_libraries {
+                if let Ok(true) = self.process_usenet_movie_file(file_path, file_name, library, download).await {
+                    return Ok(true);
+                }
+            }
+        } else if is_audio {
+            // Try to match to music or audiobooks
+            if let Some(library) = target_library {
+                if library.library_type == "music" {
+                    return self.process_usenet_music_file(file_path, library, download).await;
+                } else if library.library_type == "audiobooks" {
+                    return self.process_usenet_audiobook_file(file_path, library, download).await;
+                }
+            }
+            
+            // Auto-match: try music libraries first, then audiobooks
+            let music_libraries: Vec<_> = all_libraries.iter().filter(|l| l.library_type == "music").collect();
+            for library in music_libraries {
+                if let Ok(true) = self.process_usenet_music_file(file_path, library, download).await {
+                    return Ok(true);
+                }
+            }
+            
+            let audiobook_libraries: Vec<_> = all_libraries.iter().filter(|l| l.library_type == "audiobooks").collect();
+            for library in audiobook_libraries {
+                if let Ok(true) = self.process_usenet_audiobook_file(file_path, library, download).await {
+                    return Ok(true);
+                }
+            }
+        }
+        
+        debug!(path = %file_path, "Could not match file to any library item");
+        Ok(false)
+    }
+    
+    /// Process a TV file from usenet download
+    async fn process_usenet_tv_file(
+        &self,
+        file_path: &str,
+        file_name: &str,
+        library: &LibraryRecord,
+        download: &crate::db::usenet_downloads::UsenetDownloadRecord,
+    ) -> Result<bool> {
+        // Parse filename to get show/season/episode info
+        let parsed = filename_parser::parse_episode(file_name);
+        
+        let show_name = match &parsed.show_name {
+            Some(t) if !t.is_empty() => t.clone(),
+            _ => return Ok(false),
+        };
+        
+        let (season, episode) = match (parsed.season, parsed.episode) {
+            (Some(s), Some(e)) => (s, e),
+            _ => return Ok(false),
+        };
+        
+        // Find matching show in library
+        let shows = self.db.tv_shows().list_by_library(library.id).await?;
+        let matched_show = shows.iter().find(|s| {
+            crate::services::text_utils::show_name_similarity(&s.name, &show_name) > 0.7
+        });
+        
+        let show = match matched_show {
+            Some(s) => s.clone(),
+            None => {
+                debug!(show = %show_name, "No matching show found in library");
+                return Ok(false);
+            }
+        };
+        
+        // Find matching episode
+        let episodes = self.db.episodes().list_by_show(show.id).await?;
+        let matched_episode = episodes.iter().find(|ep| {
+            ep.season == season as i32 && ep.episode == episode as i32
+        });
+        
+        let episode_record = match matched_episode {
+            Some(ep) => ep.clone(),
+            None => {
+                debug!(show = %show_name, season = season, episode = episode, "Episode not found");
+                return Ok(false);
+            }
+        };
+        
+        info!(
+            show = %show.name,
+            season = season,
+            episode = episode,
+            "Matched usenet file to episode"
+        );
+        
+        // Organize the file if organization is enabled
+        // For TV, we build the target path: library_path/Show Name/Season XX/filename
+        let final_path = if library.organize_files {
+            match self.organize_tv_file_simple(file_path, &show, &episode_record, library).await {
+                Ok(new_path) => {
+                    info!(from = %file_path, to = %new_path, "Organized episode file");
+                    new_path
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to organize episode file, using original path");
+                    file_path.to_string()
+                }
+            }
+        } else {
+            file_path.to_string()
+        };
+        
+        // Create media file record
+        let media_file = self.create_media_file_record(
+            &final_path,
+            library.id,
+            Some(episode_record.id),
+            None, // movie_id
+            None, // album_id  
+            None, // audiobook_id
+            Some(&download.nzb_name),
+        ).await?;
+        
+        // Queue for FFmpeg analysis
+        if let Some(ref queue) = self.analysis_queue {
+            let job = MediaAnalysisJob {
+                media_file_id: media_file.id,
+                path: PathBuf::from(&final_path),
+                check_subtitles: true,
+            };
+            let _ = queue.submit(job).await;
+        }
+        
+        // Update episode status
+        self.db.episodes().update_status(episode_record.id, "downloaded").await.ok();
+        
+        Ok(true)
+    }
+    
+    /// Process a movie file from usenet download
+    async fn process_usenet_movie_file(
+        &self,
+        file_path: &str,
+        file_name: &str,
+        library: &LibraryRecord,
+        download: &crate::db::usenet_downloads::UsenetDownloadRecord,
+    ) -> Result<bool> {
+        // Parse filename
+        let parsed = filename_parser::parse_movie(file_name);
+        
+        let movie_name = match &parsed.show_name {
+            Some(t) if !t.is_empty() => t.clone(),
+            _ => return Ok(false),
+        };
+        
+        // Find matching movie in library
+        let movies = self.db.movies().list_by_library(library.id).await?;
+        let matched_movie = movies.iter().find(|m| {
+            crate::services::text_utils::show_name_similarity(&m.title, &movie_name) > 0.7
+        });
+        
+        let movie = match matched_movie {
+            Some(m) => m.clone(),
+            None => {
+                debug!(title = %movie_name, "No matching movie found in library");
+                return Ok(false);
+            }
+        };
+        
+        info!(title = %movie.title, "Matched usenet file to movie");
+        
+        // Organize the file if enabled
+        let final_path = if library.organize_files {
+            match self.organize_movie_file_simple(file_path, &movie, library).await {
+                Ok(new_path) => {
+                    info!(from = %file_path, to = %new_path, "Organized movie file");
+                    new_path
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to organize movie file, using original path");
+                    file_path.to_string()
+                }
+            }
+        } else {
+            file_path.to_string()
+        };
+        
+        // Create media file record
+        let media_file = self.create_media_file_record(
+            &final_path,
+            library.id,
+            None, // episode_id
+            Some(movie.id),
+            None, // album_id
+            None, // audiobook_id
+            Some(&download.nzb_name),
+        ).await?;
+        
+        // Queue for FFmpeg analysis
+        if let Some(ref queue) = self.analysis_queue {
+            let job = MediaAnalysisJob {
+                media_file_id: media_file.id,
+                path: PathBuf::from(&final_path),
+                check_subtitles: true,
+            };
+            let _ = queue.submit(job).await;
+        }
+        
+        // Update movie file status
+        self.db.movies().update_file_status(movie.id, true, None).await.ok();
+        
+        Ok(true)
+    }
+    
+    /// Process a music file from usenet download
+    async fn process_usenet_music_file(
+        &self,
+        file_path: &str,
+        library: &LibraryRecord,
+        download: &crate::db::usenet_downloads::UsenetDownloadRecord,
+    ) -> Result<bool> {
+        // Try to match using existing music matching logic
+        if let Ok(Some((album, _artist_name))) = self.try_match_music_file(file_path, library).await {
+            info!(album = %album.name, "Matched usenet file to album");
+            
+            // Organize if enabled
+            let final_path = if library.organize_files {
+                match self.organize_music_file_simple(file_path, &album, library).await {
+                    Ok(new_path) => new_path,
+                    Err(_) => file_path.to_string(),
+                }
+            } else {
+                file_path.to_string()
+            };
+            
+            // Create media file record
+            let media_file = self.create_media_file_record(
+                &final_path,
+                library.id,
+                None,
+                None,
+                Some(album.id),
+                None,
+                Some(&download.nzb_name),
+            ).await?;
+            
+            // Queue for analysis
+            if let Some(ref queue) = self.analysis_queue {
+                let job = MediaAnalysisJob {
+                    media_file_id: media_file.id,
+                    path: PathBuf::from(&final_path),
+                    check_subtitles: true,
+                };
+                let _ = queue.submit(job).await;
+            }
+            
+            return Ok(true);
+        }
+        
+        Ok(false)
+    }
+    
+    /// Process an audiobook file from usenet download
+    async fn process_usenet_audiobook_file(
+        &self,
+        file_path: &str,
+        library: &LibraryRecord,
+        download: &crate::db::usenet_downloads::UsenetDownloadRecord,
+    ) -> Result<bool> {
+        // Try to match using existing audiobook matching logic
+        if let Ok(Some((audiobook, _author_name))) = self.try_match_audiobook_file(file_path, library).await {
+            info!(title = %audiobook.title, "Matched usenet file to audiobook");
+            
+            // Organize if enabled
+            let final_path = if library.organize_files {
+                match self.organize_audiobook_file_simple(file_path, &audiobook, library).await {
+                    Ok(new_path) => new_path,
+                    Err(_) => file_path.to_string(),
+                }
+            } else {
+                file_path.to_string()
+            };
+            
+            // Create media file record
+            let media_file = self.create_media_file_record(
+                &final_path,
+                library.id,
+                None,
+                None,
+                None,
+                Some(audiobook.id),
+                Some(&download.nzb_name),
+            ).await?;
+            
+            // Queue for analysis
+            if let Some(ref queue) = self.analysis_queue {
+                let job = MediaAnalysisJob {
+                    media_file_id: media_file.id,
+                    path: PathBuf::from(&final_path),
+                    check_subtitles: true,
+                };
+                let _ = queue.submit(job).await;
+            }
+            
+            return Ok(true);
+        }
+        
+        Ok(false)
+    }
+    
+    /// Create a media file record in the database
+    async fn create_media_file_record(
+        &self,
+        file_path: &str,
+        library_id: uuid::Uuid,
+        episode_id: Option<uuid::Uuid>,
+        movie_id: Option<uuid::Uuid>,
+        _album_id: Option<uuid::Uuid>,
+        _audiobook_id: Option<uuid::Uuid>,
+        source_name: Option<&str>,
+    ) -> Result<MediaFileRecord> {
+        let path_obj = Path::new(file_path);
+        let file_name = path_obj.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+        let container = get_container(file_path);
+        
+        // Get file size
+        let size_bytes = tokio::fs::metadata(file_path)
+            .await
+            .map(|m| m.len() as i64)
+            .unwrap_or(0);
+        
+        let record = self.db.media_files().create(crate::db::media_files::CreateMediaFile {
+            library_id,
+            episode_id,
+            movie_id,
+            path: file_path.to_string(),
+            size_bytes,
+            container,
+            original_name: Some(format!("{} ({})", file_name, source_name.unwrap_or("unknown"))),
+            ..Default::default()
+        }).await?;
+        
+        Ok(record)
+    }
+    
+    /// Simple file organization for TV episodes
+    /// Moves file to: library_path/Show Name/Season XX/filename
+    async fn organize_tv_file_simple(
+        &self,
+        source_path: &str,
+        show: &TvShowRecord,
+        episode: &EpisodeRecord,
+        library: &LibraryRecord,
+    ) -> Result<String> {
+        use crate::services::file_utils::sanitize_for_filename;
+        
+        let library_path = &library.path;
+        if library_path.is_empty() {
+            return Ok(source_path.to_string());
+        }
+        
+        let show_folder = sanitize_for_filename(&show.name);
+        let season_folder = format!("Season {:02}", episode.season);
+        
+        // Build new filename: Show Name - S01E01 - Episode Title.ext
+        let source = Path::new(source_path);
+        let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("mkv");
+        let episode_title = episode.title.as_deref().unwrap_or("Episode");
+        let new_filename = format!(
+            "{} - S{:02}E{:02} - {}.{}",
+            sanitize_for_filename(&show.name),
+            episode.season,
+            episode.episode,
+            sanitize_for_filename(episode_title),
+            ext
+        );
+        
+        let target_dir = PathBuf::from(library_path).join(&show_folder).join(&season_folder);
+        let target_path = target_dir.join(&new_filename);
+        
+        // Create directories
+        tokio::fs::create_dir_all(&target_dir).await?;
+        
+        // Move the file (try rename first, fallback to copy+delete for cross-device)
+        if tokio::fs::rename(source_path, &target_path).await.is_err() {
+            // Cross-device move: copy then delete
+            tokio::fs::copy(source_path, &target_path).await?;
+            tokio::fs::remove_file(source_path).await?;
+        }
+        
+        Ok(target_path.to_string_lossy().to_string())
+    }
+    
+    /// Simple file organization for movies
+    /// Moves file to: library_path/Movie Name (Year)/filename
+    async fn organize_movie_file_simple(
+        &self,
+        source_path: &str,
+        movie: &MovieRecord,
+        library: &LibraryRecord,
+    ) -> Result<String> {
+        use crate::services::file_utils::sanitize_for_filename;
+        
+        let library_path = &library.path;
+        if library_path.is_empty() {
+            return Ok(source_path.to_string());
+        }
+        
+        // Build folder name: Movie Title (Year)
+        let year = movie.year.map(|y| format!(" ({})", y)).unwrap_or_default();
+        let movie_folder = format!("{}{}", sanitize_for_filename(&movie.title), year);
+        
+        // Build new filename
+        let source = Path::new(source_path);
+        let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("mkv");
+        let new_filename = format!("{}{}.{}", sanitize_for_filename(&movie.title), year, ext);
+        
+        let target_dir = PathBuf::from(library_path).join(&movie_folder);
+        let target_path = target_dir.join(&new_filename);
+        
+        // Create directories
+        tokio::fs::create_dir_all(&target_dir).await?;
+        
+        // Move the file (try rename first, fallback to copy+delete for cross-device)
+        if tokio::fs::rename(source_path, &target_path).await.is_err() {
+            tokio::fs::copy(source_path, &target_path).await?;
+            tokio::fs::remove_file(source_path).await?;
+        }
+        
+        Ok(target_path.to_string_lossy().to_string())
+    }
+    
+    /// Simple file organization for music
+    /// Moves file to: library_path/Artist/Album/filename
+    async fn organize_music_file_simple(
+        &self,
+        source_path: &str,
+        album: &crate::db::AlbumRecord,
+        library: &LibraryRecord,
+    ) -> Result<String> {
+        use crate::services::file_utils::sanitize_for_filename;
+        
+        let library_path = &library.path;
+        if library_path.is_empty() {
+            return Ok(source_path.to_string());
+        }
+        
+        // Get artist name
+        let artist_name = if let Some(artist) = self.db.albums().get_artist_by_id(album.artist_id).await? {
+            artist.name
+        } else {
+            "Unknown Artist".to_string()
+        };
+        
+        let artist_folder = sanitize_for_filename(&artist_name);
+        let album_folder = sanitize_for_filename(&album.name);
+        
+        let source = Path::new(source_path);
+        let filename = source.file_name().and_then(|n| n.to_str()).unwrap_or("track.mp3");
+        
+        let target_dir = PathBuf::from(library_path).join(&artist_folder).join(&album_folder);
+        let target_path = target_dir.join(filename);
+        
+        // Create directories
+        tokio::fs::create_dir_all(&target_dir).await?;
+        
+        // Move the file (try rename first, fallback to copy+delete for cross-device)
+        if tokio::fs::rename(source_path, &target_path).await.is_err() {
+            tokio::fs::copy(source_path, &target_path).await?;
+            tokio::fs::remove_file(source_path).await?;
+        }
+        
+        Ok(target_path.to_string_lossy().to_string())
+    }
+    
+    /// Simple file organization for audiobooks
+    /// Moves file to: library_path/Author/Book Title/filename
+    async fn organize_audiobook_file_simple(
+        &self,
+        source_path: &str,
+        audiobook: &crate::db::AudiobookRecord,
+        library: &LibraryRecord,
+    ) -> Result<String> {
+        use crate::services::file_utils::sanitize_for_filename;
+        
+        let library_path = &library.path;
+        if library_path.is_empty() {
+            return Ok(source_path.to_string());
+        }
+        
+        // Get author name
+        let author_name = if let Some(author_id) = audiobook.author_id {
+            if let Ok(Some(author)) = self.db.audiobooks().get_author_by_id(author_id).await {
+                author.name
+            } else {
+                "Unknown Author".to_string()
+            }
+        } else {
+            "Unknown Author".to_string()
+        };
+        
+        let author_folder = sanitize_for_filename(&author_name);
+        let book_folder = sanitize_for_filename(&audiobook.title);
+        
+        let source = Path::new(source_path);
+        let filename = source.file_name().and_then(|n| n.to_str()).unwrap_or("chapter.mp3");
+        
+        let target_dir = PathBuf::from(library_path).join(&author_folder).join(&book_folder);
+        let target_path = target_dir.join(filename);
+        
+        // Create directories
+        tokio::fs::create_dir_all(&target_dir).await?;
+        
+        // Move the file (try rename first, fallback to copy+delete for cross-device)
+        if tokio::fs::rename(source_path, &target_path).await.is_err() {
+            tokio::fs::copy(source_path, &target_path).await?;
+            tokio::fs::remove_file(source_path).await?;
+        }
+        
+        Ok(target_path.to_string_lossy().to_string())
     }
 
     /// Try to match an audio file to a music album by reading ID3 tags

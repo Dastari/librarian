@@ -123,10 +123,14 @@ async fn process_media_analysis(
         return Ok(());
     }
 
+    let filename = job.path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
     info!(
         media_file_id = %job.media_file_id,
         path = %job.path.display(),
-        "Processing media analysis job"
+        "Analyzing media file: '{}'",
+        filename
     );
 
     // Run FFmpeg analysis
@@ -137,7 +141,8 @@ async fn process_media_analysis(
                 media_file_id = %job.media_file_id,
                 path = %job.path.display(),
                 error = %e,
-                "Failed to analyze media file"
+                "Failed to analyze '{}': {}",
+                filename, e
             );
             return Err(e);
         }
@@ -161,12 +166,19 @@ async fn process_media_analysis(
         }
     };
 
+    // Build summary of analysis
+    let video_summary = analysis.video_streams.first().map(|v| {
+        let res = format!("{}x{}", v.width, v.height);
+        format!("{} {}", res, &v.codec)
+    }).unwrap_or_else(|| "no video".to_string());
+    
     info!(
         media_file_id = %job.media_file_id,
         video_streams = analysis.video_streams.len(),
         audio_streams = analysis.audio_streams.len(),
         subtitle_streams = analysis.subtitle_streams.len(),
-        "Media analysis stored"
+        "Analysis stored for '{}': {} | {} audio | {} subs",
+        filename, video_summary, analysis.audio_streams.len(), analysis.subtitle_streams.len()
     );
 
     // Verify quality and update quality_status

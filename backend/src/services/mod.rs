@@ -8,11 +8,13 @@ pub mod artwork;
 pub mod audible;
 pub mod cache;
 pub mod cast;
+pub mod download_source;
 pub mod extractor;
 pub mod ffmpeg;
 pub mod file_utils;
 pub mod filename_parser;
 pub mod filesystem;
+pub mod hunt;
 pub mod job_queue;
 pub mod logging;
 pub mod metadata;
@@ -33,9 +35,10 @@ pub mod torrent;
 pub mod torrent_completion_handler;
 pub mod torrent_file_matcher;
 pub mod torrent_metadata;
-pub mod torrent_processor;
+pub mod media_processor;
 pub mod track_matcher;
 pub mod tvmaze;
+pub mod usenet;
 
 pub use artwork::ArtworkService;
 pub use cast::{
@@ -105,5 +108,10 @@ pub use torrent_file_matcher::{
 pub use torrent_metadata::{
     TorrentFileInfo, audio_summary, extract_audio_files, is_single_file_album, parse_torrent_files,
 };
-pub use torrent_processor::{ProcessTorrentResult, TorrentProcessor};
+pub use media_processor::{MediaProcessor, ProcessDownloadResult, ProcessTorrentResult};
+/// Legacy alias for backwards compatibility
+pub type TorrentProcessor = MediaProcessor;
 pub use track_matcher::{MatchType, TrackMatch, TrackMatchResult, match_tracks};
+pub use hunt::{HuntConfig, HuntSearchResult, HuntService};
+pub use download_source::{DownloadSource, DownloadSourceType, LinkedItem};
+pub use usenet::{UsenetDownloadInfo, UsenetEvent, UsenetService};

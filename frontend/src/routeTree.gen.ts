@@ -17,7 +17,9 @@ import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as LibrariesIndexRouteImport } from './routes/libraries/index'
 import { Route as DownloadsIndexRouteImport } from './routes/downloads/index'
 import { Route as ShowsShowIdRouteImport } from './routes/shows/$showId'
+import { Route as SettingsUsenetRouteImport } from './routes/settings/usenet'
 import { Route as SettingsTorrentRouteImport } from './routes/settings/torrent'
+import { Route as SettingsSourcePrioritiesRouteImport } from './routes/settings/source-priorities'
 import { Route as SettingsRssRouteImport } from './routes/settings/rss'
 import { Route as SettingsParserRouteImport } from './routes/settings/parser'
 import { Route as SettingsOrganizationRouteImport } from './routes/settings/organization'
@@ -82,11 +84,22 @@ const ShowsShowIdRoute = ShowsShowIdRouteImport.update({
   path: '/shows/$showId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsUsenetRoute = SettingsUsenetRouteImport.update({
+  id: '/usenet',
+  path: '/usenet',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsTorrentRoute = SettingsTorrentRouteImport.update({
   id: '/torrent',
   path: '/torrent',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsSourcePrioritiesRoute =
+  SettingsSourcePrioritiesRouteImport.update({
+    id: '/source-priorities',
+    path: '/source-priorities',
+    getParentRoute: () => SettingsRoute,
+  } as any)
 const SettingsRssRoute = SettingsRssRouteImport.update({
   id: '/rss',
   path: '/rss',
@@ -228,7 +241,9 @@ export interface FileRoutesByFullPath {
   '/settings/organization': typeof SettingsOrganizationRoute
   '/settings/parser': typeof SettingsParserRoute
   '/settings/rss': typeof SettingsRssRoute
+  '/settings/source-priorities': typeof SettingsSourcePrioritiesRoute
   '/settings/torrent': typeof SettingsTorrentRoute
+  '/settings/usenet': typeof SettingsUsenetRoute
   '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads/': typeof DownloadsIndexRoute
   '/libraries/': typeof LibrariesIndexRoute
@@ -260,7 +275,9 @@ export interface FileRoutesByTo {
   '/settings/organization': typeof SettingsOrganizationRoute
   '/settings/parser': typeof SettingsParserRoute
   '/settings/rss': typeof SettingsRssRoute
+  '/settings/source-priorities': typeof SettingsSourcePrioritiesRoute
   '/settings/torrent': typeof SettingsTorrentRoute
+  '/settings/usenet': typeof SettingsUsenetRoute
   '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads': typeof DownloadsIndexRoute
   '/libraries': typeof LibrariesIndexRoute
@@ -295,7 +312,9 @@ export interface FileRoutesById {
   '/settings/organization': typeof SettingsOrganizationRoute
   '/settings/parser': typeof SettingsParserRoute
   '/settings/rss': typeof SettingsRssRoute
+  '/settings/source-priorities': typeof SettingsSourcePrioritiesRoute
   '/settings/torrent': typeof SettingsTorrentRoute
+  '/settings/usenet': typeof SettingsUsenetRoute
   '/shows/$showId': typeof ShowsShowIdRoute
   '/downloads/': typeof DownloadsIndexRoute
   '/libraries/': typeof LibrariesIndexRoute
@@ -331,7 +350,9 @@ export interface FileRouteTypes {
     | '/settings/organization'
     | '/settings/parser'
     | '/settings/rss'
+    | '/settings/source-priorities'
     | '/settings/torrent'
+    | '/settings/usenet'
     | '/shows/$showId'
     | '/downloads/'
     | '/libraries/'
@@ -363,7 +384,9 @@ export interface FileRouteTypes {
     | '/settings/organization'
     | '/settings/parser'
     | '/settings/rss'
+    | '/settings/source-priorities'
     | '/settings/torrent'
+    | '/settings/usenet'
     | '/shows/$showId'
     | '/downloads'
     | '/libraries'
@@ -397,7 +420,9 @@ export interface FileRouteTypes {
     | '/settings/organization'
     | '/settings/parser'
     | '/settings/rss'
+    | '/settings/source-priorities'
     | '/settings/torrent'
+    | '/settings/usenet'
     | '/shows/$showId'
     | '/downloads/'
     | '/libraries/'
@@ -488,11 +513,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShowsShowIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/usenet': {
+      id: '/settings/usenet'
+      path: '/usenet'
+      fullPath: '/settings/usenet'
+      preLoaderRoute: typeof SettingsUsenetRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/torrent': {
       id: '/settings/torrent'
       path: '/torrent'
       fullPath: '/settings/torrent'
       preLoaderRoute: typeof SettingsTorrentRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/source-priorities': {
+      id: '/settings/source-priorities'
+      path: '/source-priorities'
+      fullPath: '/settings/source-priorities'
+      preLoaderRoute: typeof SettingsSourcePrioritiesRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/rss': {
@@ -667,7 +706,9 @@ interface SettingsRouteChildren {
   SettingsOrganizationRoute: typeof SettingsOrganizationRoute
   SettingsParserRoute: typeof SettingsParserRoute
   SettingsRssRoute: typeof SettingsRssRoute
+  SettingsSourcePrioritiesRoute: typeof SettingsSourcePrioritiesRoute
   SettingsTorrentRoute: typeof SettingsTorrentRoute
+  SettingsUsenetRoute: typeof SettingsUsenetRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
 }
 
@@ -679,7 +720,9 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsOrganizationRoute: SettingsOrganizationRoute,
   SettingsParserRoute: SettingsParserRoute,
   SettingsRssRoute: SettingsRssRoute,
+  SettingsSourcePrioritiesRoute: SettingsSourcePrioritiesRoute,
   SettingsTorrentRoute: SettingsTorrentRoute,
+  SettingsUsenetRoute: SettingsUsenetRoute,
   SettingsIndexRoute: SettingsIndexRoute,
 }
 
