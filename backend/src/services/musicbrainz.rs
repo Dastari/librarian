@@ -174,7 +174,7 @@ pub struct CoverArtArchiveResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoverArtImage {
-    pub id: String,
+    pub id: u64,
     pub image: String,
     pub thumbnails: CoverArtThumbnails,
     pub front: bool,
@@ -281,14 +281,55 @@ impl MusicBrainzClient {
     }
 
     /// Search for albums (release groups)
+    ///
+    /// Uses MusicBrainz Lucene query syntax for better results:
+    /// - Quotes the search term for phrase matching
+    /// - Filters to Album type by default (excludes singles, EPs, etc.)
+    /// - Optionally accepts "artist: Name" prefix to filter by artist
+    ///
+    /// Examples:
+    /// - "Appetite for Destruction" -> searches for album phrase
+    /// - "artist: Guns N' Roses Appetite" -> filters to artist + album
     pub async fn search_albums(&self, query: &str) -> Result<Vec<MusicBrainzReleaseGroup>> {
         debug!("Searching MusicBrainz for album '{}'", query);
 
         let url = format!("{}/release-group", self.base_url);
         let client = self.client.clone();
         let user_agent = self.user_agent.clone();
-        let query_owned = query.to_string();
         let retry_config = self.retry_config.clone();
+
+        // Build a Lucene query for better results
+        // Check if user specified an artist filter with "artist: Name" prefix
+        let lucene_query = if let Some(rest) = query.strip_prefix("artist:").map(|s| s.trim()) {
+            // Format: "artist: Artist Name Album Name"
+            // Try to split on common patterns
+            if let Some((artist, album)) = Self::parse_artist_album_query(rest) {
+                // Use artist filter + album title
+                format!(
+                    "artist:\"{}\" AND releasegroup:\"{}\" AND primarytype:album",
+                    Self::escape_lucene(&artist),
+                    Self::escape_lucene(&album)
+                )
+            } else {
+                // Just use the whole thing as a search term
+                format!(
+                    "\"{}\" AND primarytype:album",
+                    Self::escape_lucene(rest)
+                )
+            }
+        } else {
+            // Standard search - quote for phrase matching, filter to albums
+            // But also do a fallback search without quotes for partial matches
+            format!(
+                "(releasegroup:\"{}\" OR releasegroup:({})) AND primarytype:album",
+                Self::escape_lucene(query),
+                Self::escape_lucene(query)
+            )
+        };
+
+        debug!(lucene_query = %lucene_query, "Built MusicBrainz Lucene query");
+
+        let query_owned = lucene_query;
 
         let result = retry_async(
             || {
@@ -331,11 +372,162 @@ impl MusicBrainzClient {
         )
         .await?;
 
+        // Sort by score descending (MusicBrainz provides relevance scores)
+        let mut sorted_results = result;
+        sorted_results.sort_by(|a, b| b.score.unwrap_or(0).cmp(&a.score.unwrap_or(0)));
+
         debug!(
-            count = result.len(),
+            count = sorted_results.len(),
             "MusicBrainz album search returned results"
         );
-        Ok(result)
+        Ok(sorted_results)
+    }
+
+    /// Escape special Lucene characters in search terms
+    fn escape_lucene(s: &str) -> String {
+        // Lucene special characters: + - && || ! ( ) { } [ ] ^ " ~ * ? : \ /
+        let mut result = String::with_capacity(s.len());
+        for c in s.chars() {
+            match c {
+                '+' | '-' | '!' | '(' | ')' | '{' | '}' | '[' | ']' | '^' | '"' | '~' | '*'
+                | '?' | ':' | '\\' | '/' => {
+                    result.push('\\');
+                    result.push(c);
+                }
+                '&' | '|' => {
+                    // Only escape if doubled
+                    result.push(c);
+                }
+                _ => result.push(c),
+            }
+        }
+        result
+    }
+
+    /// Try to parse "Artist Name - Album Name" or similar patterns
+    fn parse_artist_album_query(query: &str) -> Option<(String, String)> {
+        // Try common separators: " - ", " – ", ": "
+        for separator in [" - ", " – ", ": "] {
+            if let Some(idx) = query.find(separator) {
+                let artist = query[..idx].trim();
+                let album = query[idx + separator.len()..].trim();
+                if !artist.is_empty() && !album.is_empty() {
+                    return Some((artist.to_string(), album.to_string()));
+                }
+            }
+        }
+        None
+    }
+
+    /// Search for albums (release groups) with specific type filtering
+    ///
+    /// Types can include: "Album", "EP", "Single", "Compilation", "Live", "Soundtrack"
+    pub async fn search_albums_with_types(
+        &self,
+        query: &str,
+        types: &[String],
+    ) -> Result<Vec<MusicBrainzReleaseGroup>> {
+        debug!(
+            "Searching MusicBrainz for album '{}' with types {:?}",
+            query, types
+        );
+
+        let url = format!("{}/release-group", self.base_url);
+        let client = self.client.clone();
+        let user_agent = self.user_agent.clone();
+        let retry_config = self.retry_config.clone();
+
+        // Build type filter for Lucene query
+        // MusicBrainz uses "primarytype" field with values like "Album", "EP", "Single", etc.
+        let type_filter = if types.is_empty() {
+            "primarytype:album".to_string()
+        } else {
+            let type_conditions: Vec<String> = types
+                .iter()
+                .map(|t| format!("primarytype:{}", t.to_lowercase()))
+                .collect();
+            format!("({})", type_conditions.join(" OR "))
+        };
+
+        // Build Lucene query similar to search_albums but with custom type filter
+        let lucene_query = if let Some(rest) = query.strip_prefix("artist:").map(|s| s.trim()) {
+            if let Some((artist, album)) = Self::parse_artist_album_query(rest) {
+                format!(
+                    "artist:\"{}\" AND releasegroup:\"{}\" AND {}",
+                    Self::escape_lucene(&artist),
+                    Self::escape_lucene(&album),
+                    type_filter
+                )
+            } else {
+                format!(
+                    "\"{}\" AND {}",
+                    Self::escape_lucene(rest),
+                    type_filter
+                )
+            }
+        } else {
+            format!(
+                "(releasegroup:\"{}\" OR releasegroup:({})) AND {}",
+                Self::escape_lucene(query),
+                Self::escape_lucene(query),
+                type_filter
+            )
+        };
+
+        debug!(lucene_query = %lucene_query, "Built MusicBrainz Lucene query with types");
+
+        let query_owned = lucene_query;
+
+        let result = retry_async(
+            || {
+                let url = url.clone();
+                let client = client.clone();
+                let q = query_owned.clone();
+                let ua = user_agent.clone();
+                async move {
+                    let query_params = [
+                        ("query", q),
+                        ("fmt", "json".to_string()),
+                        ("limit", "25".to_string()),
+                    ];
+
+                    let response = client
+                        .get_with_headers_and_query(&url, &[("User-Agent", &ua)], &query_params)
+                        .await?;
+
+                    if response.status().as_u16() == 503 {
+                        anyhow::bail!("Rate limited (503)");
+                    }
+
+                    if !response.status().is_success() {
+                        anyhow::bail!(
+                            "MusicBrainz album search failed with status: {}",
+                            response.status()
+                        );
+                    }
+
+                    let results: MusicBrainzReleaseGroupSearch = response
+                        .json()
+                        .await
+                        .context("Failed to parse MusicBrainz release group search results")?;
+
+                    Ok(results.release_groups)
+                }
+            },
+            &retry_config,
+            "musicbrainz_search_albums_with_types",
+        )
+        .await?;
+
+        // Sort by score descending
+        let mut sorted_results = result;
+        sorted_results.sort_by(|a, b| b.score.unwrap_or(0).cmp(&a.score.unwrap_or(0)));
+
+        debug!(
+            count = sorted_results.len(),
+            "MusicBrainz album search with types returned results"
+        );
+        Ok(sorted_results)
     }
 
     /// Get artist details by MBID
@@ -446,29 +638,96 @@ impl MusicBrainzClient {
             release_group_id
         );
 
-        // Cover Art Archive doesn't require strict rate limiting
-        let response = reqwest::Client::new()
+        info!(
+            release_group_id = %release_group_id,
+            url = %url,
+            "Fetching cover art from Cover Art Archive"
+        );
+
+        // Cover Art Archive returns 307 redirect to archive.org
+        // Use a client that follows redirects
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::limited(5))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .context("Failed to build HTTP client")?;
+
+        let response = match client
             .get(&url)
             .header("User-Agent", &self.user_agent)
             .send()
-            .await?;
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                warn!(
+                    release_group_id = %release_group_id,
+                    url = %url,
+                    error = %e,
+                    "HTTP request to Cover Art Archive failed"
+                );
+                return Err(e.into());
+            }
+        };
 
-        if response.status().as_u16() == 404 {
+        let status = response.status();
+        info!(
+            release_group_id = %release_group_id,
+            status = %status,
+            "Cover Art Archive response"
+        );
+
+        if status.as_u16() == 404 {
+            info!(
+                release_group_id = %release_group_id,
+                "No cover art available for this release group (404)"
+            );
             return Ok(None);
         }
 
-        if !response.status().is_success() {
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            warn!(
+                release_group_id = %release_group_id,
+                status = %status,
+                body = %body,
+                "Cover Art Archive request failed with non-success status"
+            );
             return Ok(None);
         }
 
-        let result: CoverArtArchiveResult = response.json().await?;
+        let body = response.text().await.context("Failed to read response body")?;
+        debug!("Cover Art Archive response length: {} bytes", body.len());
+
+        let result: CoverArtArchiveResult = match serde_json::from_str(&body) {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(
+                    release_group_id = %release_group_id,
+                    error = %e,
+                    body_preview = %body.chars().take(500).collect::<String>(),
+                    "Failed to parse Cover Art Archive JSON response"
+                );
+                return Err(e.into());
+            }
+        };
 
         // Get the front cover image
-        let front_cover = result
-            .images
-            .into_iter()
-            .find(|img| img.front)
-            .or_else(|| None);
+        let front_cover = result.images.into_iter().find(|img| img.front);
+
+        if let Some(ref cover) = front_cover {
+            let image_url = cover.thumbnails.large.as_deref().unwrap_or(&cover.image);
+            info!(
+                release_group_id = %release_group_id,
+                image_url = %image_url,
+                "Found front cover image"
+            );
+        } else {
+            info!(
+                release_group_id = %release_group_id,
+                "No front cover found in release group images"
+            );
+        }
 
         Ok(front_cover.and_then(|img| img.thumbnails.large.or(Some(img.image))))
     }

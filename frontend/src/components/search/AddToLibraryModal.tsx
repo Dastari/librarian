@@ -173,7 +173,8 @@ export function AddToLibraryModal({
 }: AddToLibraryModalProps) {
   // Parsed info from torrent name
   const [parsedInfo, setParsedInfo] = useState<ParsedInfo | null>(null)
-  const [selectedType, setSelectedType] = useState<DetectedType>('unknown')
+  // Default to 'movies' since 'unknown' has no SelectItem - will be overwritten by useEffect
+  const [selectedType, setSelectedType] = useState<DetectedType>('movies')
   
   // Libraries
   const [libraries, setLibraries] = useState<Library[]>([])
@@ -392,7 +393,7 @@ export function AddToLibraryModal({
     }
   }
   
-  const TypeIcon = TYPE_ICONS[selectedType]
+  const TypeIcon = TYPE_ICONS[selectedType] || IconCategory
   
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="2xl" scrollBehavior="inside">
@@ -424,6 +425,7 @@ export function AddToLibraryModal({
             <label className="text-sm font-medium">Detected Type</label>
             <div className="flex items-center gap-2">
               <Select
+                aria-label="Media type"
                 selectedKeys={[selectedType]}
                 onChange={(e) => setSelectedType(e.target.value as DetectedType)}
                 className="flex-1"
@@ -477,6 +479,7 @@ export function AddToLibraryModal({
               </p>
             ) : (
               <Select
+                aria-label="Target library"
                 selectedKeys={selectedLibraryId ? [selectedLibraryId] : []}
                 onChange={(e) => setSelectedLibraryId(e.target.value)}
                 placeholder="Select a library"

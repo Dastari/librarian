@@ -252,6 +252,30 @@ impl TorrentFileMatchRepository {
         Ok(())
     }
 
+    /// Reset all file matches for a torrent to allow reprocessing
+    /// 
+    /// This is used when force=true in process_torrent to allow re-organization
+    /// of files that were previously processed.
+    pub async fn reset_for_reprocess(&self, torrent_id: Uuid) -> Result<u64> {
+        let result = sqlx::query(
+            r#"
+            UPDATE torrent_file_matches
+            SET processed = false,
+                processed_at = NULL,
+                media_file_id = NULL,
+                error_message = NULL,
+                skip_download = false,
+                updated_at = NOW()
+            WHERE torrent_id = $1
+            "#,
+        )
+        .bind(torrent_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
     /// Delete all file matches for a torrent
     pub async fn delete_by_torrent(&self, torrent_id: Uuid) -> Result<u64> {
         let result = sqlx::query("DELETE FROM torrent_file_matches WHERE torrent_id = $1")

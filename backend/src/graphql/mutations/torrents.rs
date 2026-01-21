@@ -62,6 +62,12 @@ impl TorrentMutations {
                                     }
 
                                     // Download .torrent file with authentication
+                                    tracing::debug!(
+                                        url = %url,
+                                        indexer_type = %config.indexer_type,
+                                        "Attempting authenticated torrent download"
+                                    );
+
                                     let torrent_bytes = download_torrent_file_authenticated(
                                         &url,
                                         &config.indexer_type,
@@ -70,6 +76,11 @@ impl TorrentMutations {
 
                                     match torrent_bytes {
                                         Ok(bytes) => {
+                                            tracing::debug!(
+                                                size = bytes.len(),
+                                                "Downloaded torrent file, adding to client"
+                                            );
+
                                             // Add torrent from bytes
                                             match service.add_torrent_bytes(&bytes, user_id).await {
                                                 Ok(info) => {
@@ -97,6 +108,12 @@ impl TorrentMutations {
                                                     });
                                                 }
                                                 Err(e) => {
+                                                    tracing::error!(
+                                                        error = %e,
+                                                        url = %url,
+                                                        bytes_len = bytes.len(),
+                                                        "Failed to add torrent from downloaded bytes"
+                                                    );
                                                     return Ok(AddTorrentResult {
                                                         success: false,
                                                         torrent: None,
@@ -106,7 +123,12 @@ impl TorrentMutations {
                                             }
                                         }
                                         Err(e) => {
-                                            tracing::warn!(error = %e, "Failed to download .torrent file with auth, falling back to unauthenticated");
+                                            tracing::warn!(
+                                                error = %e,
+                                                url = %url,
+                                                indexer_type = %config.indexer_type,
+                                                "Failed to download .torrent file with auth, falling back to unauthenticated"
+                                            );
                                         }
                                     }
                                 }
@@ -227,6 +249,7 @@ impl TorrentMutations {
     /// 5. Update episode status to downloaded
     ///
     /// If library_id is provided, the torrent will be linked to that library first.
+    /// If album_id is provided for music, files will be matched to that album's tracks.
     async fn organize_torrent(
         &self,
         ctx: &Context<'_>,
@@ -235,11 +258,13 @@ impl TorrentMutations {
         library_id: Option<String>,
         #[graphql(desc = "Optional album ID for music torrents")] album_id: Option<String>,
     ) -> Result<OrganizeTorrentResult> {
+        use tracing::info;
+        
         let _user = ctx.auth_user()?;
         let db = ctx.data_unchecked::<Database>();
         let torrent_service = ctx.data_unchecked::<Arc<TorrentService>>();
 
-        // Get torrent info to get info_hash
+        // Get torrent info to get info_hash and files
         let torrent_info = match torrent_service.get_torrent_info(id as usize).await {
             Ok(info) => info,
             Err(e) => {
@@ -252,9 +277,37 @@ impl TorrentMutations {
             }
         };
 
-        // Note: library_id and album_id hints are no longer used for torrent-level linking
-        // File-level matching will happen automatically in process_torrent
-        let _ = (&library_id, &album_id); // Suppress unused warnings
+        info!(
+            torrent_id = id,
+            torrent_name = %torrent_info.name,
+            file_count = torrent_info.files.len(),
+            library_id = ?library_id,
+            album_id = ?album_id,
+            "Organizing torrent"
+        );
+        
+        // Log library_id if provided (torrent-library linking is handled by file matches)
+        if let Some(ref lib_id_str) = library_id {
+            info!(
+                library_id = %lib_id_str,
+                "Library specified for organization"
+            );
+        }
+
+        // If explicit targets are provided (album_id, movie_id, episode_id), create file matches
+        // This ensures that when users explicitly select an album in the UI, files get matched
+        let album_uuid = album_id.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
+        
+        if album_uuid.is_some() {
+            info!(
+                album_id = ?album_id,
+                torrent_name = %torrent_info.name,
+                "Creating explicit file matches for target"
+            );
+            
+            // Use the helper function to create file matches
+            create_file_matches_for_target(db, &torrent_info, album_uuid, None, None).await;
+        }
 
         // Use the unified MediaProcessor with force=true to reprocess
         // Include metadata service for auto-adding movies from TMDB
@@ -270,12 +323,23 @@ impl TorrentMutations {
             .process_torrent(torrent_service, &torrent_info.info_hash, true)
             .await
         {
-            Ok(result) => Ok(OrganizeTorrentResult {
-                success: result.success,
-                organized_count: result.files_processed,
-                failed_count: result.files_failed,
-                messages: result.messages,
-            }),
+            Ok(result) => {
+                info!(
+                    torrent_name = %torrent_info.name,
+                    success = result.success,
+                    files_processed = result.files_processed,
+                    files_failed = result.files_failed,
+                    organized = result.organized,
+                    "Torrent organization complete: '{}' - {} files processed, {} failed (success: {})",
+                    torrent_info.name, result.files_processed, result.files_failed, result.success
+                );
+                Ok(OrganizeTorrentResult {
+                    success: result.success,
+                    organized_count: result.files_processed,
+                    failed_count: result.files_failed,
+                    messages: result.messages,
+                })
+            }
             Err(e) => Ok(OrganizeTorrentResult {
                 success: false,
                 organized_count: 0,
@@ -386,25 +450,35 @@ async fn create_file_matches_for_target(
 
     // Create file matches based on what type of target was specified
     if let Some(album_id) = album_id {
+        // Get album info for logging
+        let album_info = db.albums().get_by_id(album_id).await.ok().flatten();
+        let album_name = album_info.as_ref().map(|a| a.name.as_str()).unwrap_or("Unknown");
+        
         match matcher
             .create_matches_for_album(torrent_record.id, &torrent_info.files, album_id)
             .await
         {
             Ok(matches) => {
                 tracing::info!(
+                    torrent_name = %torrent_info.name,
                     torrent_id = %torrent_record.id,
                     album_id = %album_id,
+                    album_name = %album_name,
                     matched_files = matches.len(),
                     total_files = torrent_info.files.len(),
-                    "Created file matches for album"
+                    "Created {} file matches for album '{}' from torrent '{}'",
+                    matches.len(), album_name, torrent_info.name
                 );
             }
             Err(e) => {
                 tracing::error!(
+                    torrent_name = %torrent_info.name,
                     torrent_id = %torrent_record.id,
                     album_id = %album_id,
+                    album_name = %album_name,
                     error = %e,
-                    "Failed to create file matches for album"
+                    "Failed to create file matches for album '{}': {}",
+                    album_name, e
                 );
             }
         }

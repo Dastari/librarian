@@ -3,7 +3,7 @@ import { Link, useLocation } from '@tanstack/react-router'
 import { Card, CardBody } from '@heroui/card'
 import { RouteError } from '../components/RouteError'
 import type { TablerIcon } from '@tabler/icons-react'
-import { IconSettings, IconDownload, IconRss, IconMovie, IconClipboard, IconSearch, IconCast, IconFolderCog, IconBrain } from '@tabler/icons-react'
+import { IconSettings, IconDownload, IconRss, IconMovie, IconClipboard, IconSearch, IconCast, IconFolderCog, IconCloud, IconSortDescending } from '@tabler/icons-react'
 
 // This is the parent route for /settings/* that provides the shared layout
 export const Route = createFileRoute('/settings')({
@@ -49,6 +49,14 @@ const settingsTabs: SettingsTab[] = [
     description: 'Download settings',
   },
   {
+    key: 'usenet',
+    path: '/settings/usenet',
+    label: 'Usenet Servers',
+    Icon: IconCloud,
+    iconColor: 'text-cyan-400',
+    description: 'News server providers',
+  },
+  {
     key: 'indexers',
     path: '/settings/indexers',
     label: 'Indexers',
@@ -65,20 +73,20 @@ const settingsTabs: SettingsTab[] = [
     description: 'Torrent feed sources',
   },
   {
+    key: 'source-priorities',
+    path: '/settings/source-priorities',
+    label: 'Source Priorities',
+    Icon: IconSortDescending,
+    iconColor: 'text-indigo-400',
+    description: 'Indexer & feed ordering',
+  },
+  {
     key: 'metadata',
     path: '/settings/metadata',
     label: 'Metadata',
     Icon: IconMovie,
     iconColor: 'text-purple-400',
     description: 'Media identification',
-  },
-  {
-    key: 'parser',
-    path: '/settings/parser',
-    label: 'Filename Parser',
-    Icon: IconBrain,
-    iconColor: 'text-cyan-400',
-    description: 'Regex & LLM parsing',
   },
   {
     key: 'organization',

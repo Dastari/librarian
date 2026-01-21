@@ -7,7 +7,7 @@ import { Accordion, AccordionItem } from '@heroui/accordion'
 import { FolderBrowserInput } from '../FolderBrowserInput'
 import { NamingPatternSelector } from './NamingPatternSelector'
 import { QualitySettingsCard, QUALITY_PRESETS, type QualitySettings } from '../settings'
-import { LIBRARY_TYPES, type LibraryType, type PostDownloadAction } from '../../lib/graphql'
+import { LIBRARY_TYPES, type LibraryType } from '../../lib/graphql'
 import { IconFolder, IconRefresh, IconDownload, IconSettings, IconFilter } from '@tabler/icons-react'
 
 // ============================================================================
@@ -21,7 +21,6 @@ export interface LibrarySettingsValues {
   autoScan: boolean
   scanIntervalMinutes: number
   watchForChanges: boolean
-  postDownloadAction: PostDownloadAction
   organizeFiles: boolean
   namingPattern: string | null
   autoAddDiscovered: boolean
@@ -45,7 +44,6 @@ export const DEFAULT_LIBRARY_SETTINGS: LibrarySettingsValues = {
   autoScan: true,
   scanIntervalMinutes: 60,
   watchForChanges: false,
-  postDownloadAction: 'COPY',
   organizeFiles: true,
   namingPattern: null,
   autoAddDiscovered: true,
@@ -348,7 +346,7 @@ export function LibrarySettingsForm({
     )
   }
 
-  const renderPostDownloadSection = () => {
+  const renderOrganizationSection = () => {
     const libraryType = values.libraryType
     const organizeDescription = {
       TV: 'Organize downloaded files into show/season folders',
@@ -360,25 +358,6 @@ export function LibrarySettingsForm({
 
     return (
       <>
-        <Select
-          label="Post-download action"
-          selectedKeys={[values.postDownloadAction]}
-          onChange={(e) => updateValue('postDownloadAction', e.target.value as PostDownloadAction)}
-          description="What to do with files after downloading"
-        >
-          <SelectItem key="COPY" textValue="Copy">
-            Copy (preserves seeding)
-          </SelectItem>
-          <SelectItem key="MOVE" textValue="Move">
-            Move (stops seeding)
-          </SelectItem>
-          <SelectItem key="HARDLINK" textValue="Hardlink">
-            Hardlink (same disk only)
-          </SelectItem>
-        </Select>
-
-        <Divider />
-
         <SettingRow label="Organize files" description={organizeDescription}>
           <Switch
             isSelected={values.organizeFiles}
@@ -390,6 +369,7 @@ export function LibrarySettingsForm({
           <NamingPatternSelector
             value={values.namingPattern}
             onChange={(v) => updateValue('namingPattern', v)}
+            libraryType={values.libraryType.toLowerCase()}
           />
         )}
       </>
@@ -520,10 +500,10 @@ export function LibrarySettingsForm({
             <span className="font-semibold">Organization</span>
           </div>
         }
-        subtitle="Post-download file handling"
+        subtitle="File organization and naming"
       >
         <div className="space-y-4 pb-2">
-          {renderPostDownloadSection()}
+          {renderOrganizationSection()}
         </div>
       </AccordionItem>
     )
@@ -553,7 +533,7 @@ export function LibrarySettingsForm({
 
       <Divider />
 
-      {renderPostDownloadSection()}
+      {renderOrganizationSection()}
 
       {mode === 'create' && (values.libraryType === 'TV' || values.libraryType === 'MOVIES') && (
         <>

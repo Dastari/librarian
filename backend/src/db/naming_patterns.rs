@@ -28,6 +28,14 @@ pub struct CreateNamingPattern {
     pub library_type: String,
 }
 
+/// Input for updating a naming pattern
+#[derive(Debug)]
+pub struct UpdateNamingPattern {
+    pub name: Option<String>,
+    pub pattern: Option<String>,
+    pub description: Option<String>,
+}
+
 /// Naming pattern repository
 pub struct NamingPatternRepository {
     pool: PgPool,
@@ -165,6 +173,55 @@ impl NamingPatternRepository {
         .await?;
 
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Update a naming pattern (only non-system patterns can be updated)
+    pub async fn update(&self, id: Uuid, input: UpdateNamingPattern) -> Result<Option<NamingPatternRecord>> {
+        // Build dynamic update query
+        let mut set_clauses = Vec::new();
+        let mut param_idx = 2; // $1 is id
+
+        if input.name.is_some() {
+            set_clauses.push(format!("name = ${}", param_idx));
+            param_idx += 1;
+        }
+        if input.pattern.is_some() {
+            set_clauses.push(format!("pattern = ${}", param_idx));
+            param_idx += 1;
+        }
+        if input.description.is_some() {
+            set_clauses.push(format!("description = ${}", param_idx));
+        }
+
+        if set_clauses.is_empty() {
+            // Nothing to update, just return the existing record
+            return self.get_by_id(id).await;
+        }
+
+        let query = format!(
+            r#"
+            UPDATE naming_patterns
+            SET {}
+            WHERE id = $1 AND is_system = false
+            RETURNING id, name, pattern, description, is_default, is_system, library_type, created_at
+            "#,
+            set_clauses.join(", ")
+        );
+
+        let mut query_builder = sqlx::query_as::<_, NamingPatternRecord>(&query).bind(id);
+
+        if let Some(name) = &input.name {
+            query_builder = query_builder.bind(name);
+        }
+        if let Some(pattern) = &input.pattern {
+            query_builder = query_builder.bind(pattern);
+        }
+        if let Some(description) = &input.description {
+            query_builder = query_builder.bind(description);
+        }
+
+        let record = query_builder.fetch_optional(&self.pool).await?;
+        Ok(record)
     }
 
     /// Set a pattern as the default for its library type (unsets any existing default for that type)

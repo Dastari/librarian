@@ -30,6 +30,7 @@ export { LibrarySettingsTab } from './LibrarySettingsTab'
 // Music library components
 export { LibraryAlbumsTab } from './LibraryAlbumsTab'
 export { LibraryArtistsTab } from './LibraryArtistsTab'
+export { LibraryTracksTab } from './LibraryTracksTab'
 export { AlbumCard, type AlbumCardProps } from './AlbumCard'
 export { AddAlbumModal } from './AddAlbumModal'
 

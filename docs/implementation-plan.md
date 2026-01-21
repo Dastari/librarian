@@ -37,10 +37,10 @@ This document tracks the implementation status of Librarian's features and outli
 | Feature | Status | Notes |
 |---------|--------|-------|
 | **Core Infrastructure** | ✅ Complete | GraphQL API, auth, database, job queue |
-| **TV Libraries** | ✅ Complete | Full scanning, metadata, episode tracking |
-| **Movie Libraries** | ✅ Complete | TMDB integration, auto-hunt |
-| **Music Libraries** | ✅ Complete | MusicBrainz integration, track matching |
-| **Audiobook Libraries** | ✅ Complete | Audible/OpenLibrary integration |
+| **TV Libraries** | ✅ Complete | Full pipeline: scanning, metadata, matching, organizing, hunting, playback |
+| **Movie Libraries** | ✅ Complete | Full pipeline: scanning, metadata, matching, organizing, hunting, playback |
+| **Music Libraries** | 🟡 Backend Complete | Backend complete; frontend missing audio playback |
+| **Audiobook Libraries** | 🟡 Backend Complete | Backend complete; frontend missing detail page and playback |
 | **Native Torrent Client** | ✅ Complete | librqbit with real-time subscriptions |
 | **File-Level Matching** | ✅ Complete | Individual files matched to items |
 | **Post-Download Processing** | ✅ Complete | Auto-organize with quality verification |
@@ -48,16 +48,17 @@ This document tracks the implementation status of Librarian's features and outli
 | **Native Indexers** | ✅ Complete | IPTorrents, Cardigann, Newznab |
 | **Auto-Hunt** | ✅ Complete | Event-driven content hunting |
 | **Chromecast Casting** | ✅ Complete | Device discovery, playback controls |
-| **Usenet Downloads** | ✅ Complete | NNTP client, NZB parsing |
+| **Usenet Downloads** | ✅ Complete | NNTP client, NZB parsing, background downloading |
 | **Source Priorities** | ✅ Complete | Per-library-type source ordering |
 | **LLM Filename Parsing** | ✅ Complete | Ollama integration for difficult filenames |
 | **Media Chapters** | ✅ Complete | Chapter extraction and playback |
 | **Watch Progress** | ✅ Complete | Cross-device resume playback |
-| **Subtitle Downloads** | 🟡 Partial | OpenSubtitles integration (manual) |
-| **Archive Extraction** | 🟡 Partial | ZIP/RAR support (limited) |
+| **Archive Extraction** | ✅ Complete | ZIP, RAR (multi-part), 7z with auto-extraction |
+| **Subtitle Downloads** | 🟡 Partial | OpenSubtitles client ready, auto-download TODO |
+| **Quality Upgrade Detection** | ✅ Complete | Detection implemented, auto-download TODO |
 | **AirPlay Casting** | ⏳ Planned | Native Safari support only |
 | **Hardware Transcoding** | ⏳ Planned | NVENC/VAAPI/QSV |
-| **Quality Upgrading** | ⏳ Planned | Auto-upgrade to better quality |
+| **Filesystem Watching** | ⏳ Planned | inotify for real-time detection |
 
 ---
 
@@ -85,11 +86,17 @@ This document tracks the implementation status of Librarian's features and outli
 - ✅ Track-level status tracking
 - ✅ Cover art from Cover Art Archive
 - ✅ Audio quality settings (FLAC, lossy preferences)
+- ✅ Backend: Matching, organizing, scanning, hunting, processing
+- ✅ Frontend: Album detail page, track list, hunt navigation
+- 🟡 Frontend: Audio playback (placeholder only)
 
 #### Audiobook Library System
 - ✅ Audiobook management with Audible/OpenLibrary
 - ✅ Chapter-based tracking
 - ✅ Author and narrator metadata
+- ✅ Backend: Matching, organizing, scanning, hunting, processing
+- ✅ Frontend: Library list with search/filter
+- 🟡 Frontend: Detail page, chapter list, playback UI (not implemented)
 
 ### Phase 2: Automation (Complete)
 
@@ -219,28 +226,44 @@ This document tracks the implementation status of Librarian's features and outli
 
 ### High Priority
 
-#### Archive Extraction Enhancement
-- [ ] Full RAR support (multi-part archives)
-- [ ] 7z extraction
-- [ ] Automatic extraction after download
-- [ ] Cleanup of archive files after extraction
+#### Frontend: Music Playback
+- [ ] Audio player component (reuse playback context pattern from video)
+- [ ] Track playback via `/api/media/stream/{id}`
+- [ ] Album playback queue
+- [ ] `huntAlbum` GraphQL mutation for direct album hunting
+
+#### Frontend: Audiobook UI
+- [ ] `/audiobooks/$audiobookId` detail page (model on `/shows/$showId`)
+- [ ] Chapter list component with status indicators
+- [ ] Chapter playback integration
+- [ ] Hunt/download actions for chapters
+- [ ] GraphQL mutations for chapter management
 
 #### Subtitle System
-- [ ] Automatic subtitle search on download
+- [ ] Automatic subtitle search on download (client ready, auto-trigger TODO)
 - [ ] Subtitle sync with video
 - [ ] Multiple subtitle language support
 - [ ] OCR for PGS subtitles
 
-#### Quality Upgrading
-- [ ] Detect when better quality is available
+#### Quality Auto-Upgrade
+- [x] Detect when better quality is available (implemented)
 - [ ] Automatic upgrade downloads
 - [ ] Replace files while preserving metadata
 - [ ] Configurable upgrade thresholds
 
 ### Medium Priority
 
+#### Downloads Page Enhancements
+- [ ] Show individual file matches inline (currently in Info modal only)
+- [ ] "Fix Match" button to manually correct file-to-item matches
+- [ ] Show explicit file states (downloading, processing, organized)
+
+#### Library Detail Page Enhancements
+- [ ] "Suboptimal" filter option for all media types
+- [ ] Conflicts section showing files in `_conflicts` folder
+
 #### Filesystem Watching (inotify)
-- [ ] Real-time detection of new files
+- [ ] Real-time detection of new files (DB field exists, not used)
 - [ ] Fallback to periodic scan for network mounts
 - [ ] Per-library toggle for watch mode
 
@@ -270,6 +293,37 @@ This document tracks the implementation status of Librarian's features and outli
 #### DLNA Server
 - [ ] UPnP discovery
 - [ ] Media serving to DLNA clients
+
+---
+
+## Media Type Implementation Matrix
+
+This matrix shows the implementation status of each pipeline component per media type.
+
+| Component | TV Shows | Movies | Music | Audiobooks |
+|-----------|----------|--------|-------|------------|
+| **Backend** | | | | |
+| File Matching | ✅ | ✅ | ✅ | ✅ |
+| File Organizing | ✅ | ✅ | ✅ | ✅ |
+| Library Scanning | ✅ | ✅ | ✅ | ✅ |
+| Auto-Hunt | ✅ | ✅ | ✅ | ✅ |
+| RSS Processing | ✅ | ✅ | ✅ | ✅ |
+| Torrent Processing | ✅ | ✅ | ✅ | ✅ |
+| Usenet Processing | ✅ | ✅ | ✅ | ✅ |
+| Watch Progress | ✅ | ✅ | N/A | N/A |
+| **Frontend** | | | | |
+| Library List | ✅ | ✅ | ✅ | ✅ |
+| Detail Page | ✅ | ✅ | ✅ | ❌ |
+| Item List (episodes/tracks/chapters) | ✅ | N/A | ✅ | ❌ |
+| Playback UI | ✅ | ✅ | ❌ | ❌ |
+| Hunt Actions | ✅ | ✅ | 🟡 | ❌ |
+| Status Filters | ✅ | ✅ | ✅ | ✅ |
+| **GraphQL** | | | | |
+| Queries | ✅ | ✅ | ✅ | ✅ |
+| Mutations | ✅ | ✅ | ✅ | ✅ |
+| Hunt Mutations | ✅ | ✅ | ❌ | ❌ |
+
+**Legend:** ✅ Complete | 🟡 Partial | ❌ Missing | N/A Not Applicable
 
 ---
 

@@ -242,31 +242,38 @@ function HomePage() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
             {recentShows.map((show) => (
               <Link key={show.id} to="/shows/$showId" params={{ showId: show.id }}>
-                <Card isPressable isHoverable className="bg-content1 overflow-hidden">
-                  <div className="aspect-[2/3] relative">
-                    {show.posterUrl ? (
-                      <Image
-                        src={show.posterUrl}
-                        alt={show.name}
-                        classNames={{
-                          wrapper: "w-full h-full !max-w-full",
-                          img: "w-full h-full object-cover"
-                        }}
-                        radius="none"
-                      />
-                    ) : (
-                      <div className="w-full h-full bg-default-200 flex items-center justify-center">
-                        <IconDeviceTv size={40} className="text-blue-400" />
-                      </div>
-                    )}
-                  </div>
-                  <CardBody className="p-2">
-                    <p className="text-sm font-medium truncate">{show.name}</p>
-                    <p className="text-xs text-default-500">
-                      {show.episodeFileCount ?? 0} / {show.episodeCount ?? 0} episodes
-                    </p>
-                  </CardBody>
-                </Card>
+                <div className="aspect-[2/3]">
+                  <Card isPressable isHoverable className="bg-content1 overflow-hidden h-full w-full relative">
+                    {/* Background image */}
+                    <div className="absolute inset-0">
+                      {show.posterUrl ? (
+                        <>
+                          <Image
+                            src={show.posterUrl}
+                            alt={show.name}
+                            classNames={{
+                              wrapper: "absolute inset-0 w-full h-full !max-w-full",
+                              img: "w-full h-full object-cover"
+                            }}
+                            radius="none"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+                        </>
+                      ) : (
+                        <div className="w-full h-full bg-gradient-to-br from-blue-900 via-indigo-800 to-cyan-900 flex items-center justify-center">
+                          <IconDeviceTv size={40} className="text-blue-400 opacity-50" />
+                        </div>
+                      )}
+                    </div>
+                    {/* Bottom text overlay */}
+                    <div className="absolute bottom-0 left-0 right-0 p-2 bg-black/50 backdrop-blur-sm">
+                      <p className="text-sm font-medium truncate text-white">{show.name}</p>
+                      <p className="text-xs text-white/70">
+                        {show.episodeFileCount ?? 0} / {show.episodeCount ?? 0} episodes
+                      </p>
+                    </div>
+                  </Card>
+                </div>
               </Link>
             ))}
           </div>
@@ -284,42 +291,48 @@ function HomePage() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
             {globalUpcoming.map((ep) => (
-              <Card 
-                key={`${ep.show.tvmazeId}-${ep.season}-${ep.episode}`}
-                isHoverable
-                className="bg-content1 overflow-hidden"
-              >
-                <div className="aspect-[2/3] relative">
-                  {ep.show.posterUrl ? (
-                    <Image
-                      src={ep.show.posterUrl}
-                      alt={ep.show.name}
-                      classNames={{
-                        wrapper: "w-full h-full !max-w-full",
-                        img: "w-full h-full object-cover"
-                      }}
-                      radius="none"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-default-200 flex items-center justify-center">
-                      <IconDeviceTv size={40} className="text-blue-400" />
-                    </div>
-                  )}
+              <div key={`${ep.show.tvmazeId}-${ep.season}-${ep.episode}`} className="aspect-[2/3]">
+                <Card 
+                  isHoverable
+                  className="bg-content1 overflow-hidden h-full w-full relative"
+                >
+                  {/* Background image */}
+                  <div className="absolute inset-0">
+                    {ep.show.posterUrl ? (
+                      <>
+                        <Image
+                          src={ep.show.posterUrl}
+                          alt={ep.show.name}
+                          classNames={{
+                            wrapper: "absolute inset-0 w-full h-full !max-w-full",
+                            img: "w-full h-full object-cover"
+                          }}
+                          radius="none"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+                      </>
+                    ) : (
+                      <div className="w-full h-full bg-gradient-to-br from-blue-900 via-indigo-800 to-cyan-900 flex items-center justify-center">
+                        <IconDeviceTv size={40} className="text-blue-400 opacity-50" />
+                      </div>
+                    )}
+                  </div>
                   {/* Air date badge */}
                   <div className="absolute top-2 right-2 z-10">
                     <Chip size="sm" variant="solid" className="bg-black/70">
                       {formatAirDate(ep.airDate)}
                     </Chip>
                   </div>
-                </div>
-                <CardBody className="p-2">
-                  <p className="text-sm font-medium truncate">{ep.show.name}</p>
-                  <p className="text-xs text-default-500">
-                    S{ep.season.toString().padStart(2, '0')}E{ep.episode.toString().padStart(2, '0')}
-                    {ep.show.network && ` • ${ep.show.network}`}
-                  </p>
-                </CardBody>
-              </Card>
+                  {/* Bottom text overlay */}
+                  <div className="absolute bottom-0 left-0 right-0 p-2 bg-black/50 backdrop-blur-sm">
+                    <p className="text-sm font-medium truncate text-white">{ep.show.name}</p>
+                    <p className="text-xs text-white/70">
+                      S{ep.season.toString().padStart(2, '0')}E{ep.episode.toString().padStart(2, '0')}
+                      {ep.show.network && ` • ${ep.show.network}`}
+                    </p>
+                  </div>
+                </Card>
+              </div>
             ))}
           </div>
         </section>

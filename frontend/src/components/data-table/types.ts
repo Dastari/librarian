@@ -135,10 +135,10 @@ export interface BulkAction<T> {
 export interface RowAction<T> {
   /** Unique key */
   key: string
-  /** Display label */
-  label: string
-  /** Icon */
-  icon?: ReactNode
+  /** Display label (string or function that receives the item) */
+  label: string | ((item: T) => string)
+  /** Icon (ReactNode or function that receives the item) */
+  icon?: ReactNode | ((item: T) => ReactNode)
   /** Action color */
   color?: 'default' | 'primary' | 'secondary' | 'success' | 'warning' | 'danger'
   /** Handler function (receives the item) */

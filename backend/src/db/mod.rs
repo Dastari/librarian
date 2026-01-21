@@ -47,7 +47,7 @@ pub use libraries::{CreateLibrary, LibraryRecord, LibraryRepository, LibraryStat
 pub use logs::{CreateLog, LogFilter, LogsRepository};
 pub use media_files::{CreateMediaFile, MediaFileRecord, MediaFileRepository};
 pub use movies::{CreateMovie, MovieCollectionRecord, MovieRecord, MovieRepository, UpdateMovie};
-pub use naming_patterns::{CreateNamingPattern, NamingPatternRecord, NamingPatternRepository};
+pub use naming_patterns::{CreateNamingPattern, NamingPatternRecord, NamingPatternRepository, UpdateNamingPattern};
 pub use playback::{
     PlaybackRepository, PlaybackSessionRecord, UpdatePlaybackPosition, UpsertPlaybackSession,
 };

@@ -21,7 +21,6 @@ import { Route as SettingsUsenetRouteImport } from './routes/settings/usenet'
 import { Route as SettingsTorrentRouteImport } from './routes/settings/torrent'
 import { Route as SettingsSourcePrioritiesRouteImport } from './routes/settings/source-priorities'
 import { Route as SettingsRssRouteImport } from './routes/settings/rss'
-import { Route as SettingsParserRouteImport } from './routes/settings/parser'
 import { Route as SettingsOrganizationRouteImport } from './routes/settings/organization'
 import { Route as SettingsMetadataRouteImport } from './routes/settings/metadata'
 import { Route as SettingsLogsRouteImport } from './routes/settings/logs'
@@ -30,6 +29,7 @@ import { Route as SettingsCastingRouteImport } from './routes/settings/casting'
 import { Route as MoviesMovieIdRouteImport } from './routes/movies/$movieId'
 import { Route as LibrariesLibraryIdRouteImport } from './routes/libraries/$libraryId'
 import { Route as AuthLoginRouteImport } from './routes/auth/login'
+import { Route as AudiobooksAudiobookIdRouteImport } from './routes/audiobooks/$audiobookId'
 import { Route as AlbumsAlbumIdRouteImport } from './routes/albums/$albumId'
 import { Route as LibrariesLibraryIdIndexRouteImport } from './routes/libraries/$libraryId/index'
 import { Route as LibrariesLibraryIdUnmatchedRouteImport } from './routes/libraries/$libraryId/unmatched'
@@ -105,11 +105,6 @@ const SettingsRssRoute = SettingsRssRouteImport.update({
   path: '/rss',
   getParentRoute: () => SettingsRoute,
 } as any)
-const SettingsParserRoute = SettingsParserRouteImport.update({
-  id: '/parser',
-  path: '/parser',
-  getParentRoute: () => SettingsRoute,
-} as any)
 const SettingsOrganizationRoute = SettingsOrganizationRouteImport.update({
   id: '/organization',
   path: '/organization',
@@ -148,6 +143,11 @@ const LibrariesLibraryIdRoute = LibrariesLibraryIdRouteImport.update({
 const AuthLoginRoute = AuthLoginRouteImport.update({
   id: '/auth/login',
   path: '/auth/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AudiobooksAudiobookIdRoute = AudiobooksAudiobookIdRouteImport.update({
+  id: '/audiobooks/$audiobookId',
+  path: '/audiobooks/$audiobookId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AlbumsAlbumIdRoute = AlbumsAlbumIdRouteImport.update({
@@ -231,6 +231,7 @@ export interface FileRoutesByFullPath {
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRouteWithChildren
   '/albums/$albumId': typeof AlbumsAlbumIdRoute
+  '/audiobooks/$audiobookId': typeof AudiobooksAudiobookIdRoute
   '/auth/login': typeof AuthLoginRoute
   '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
   '/movies/$movieId': typeof MoviesMovieIdRoute
@@ -239,7 +240,6 @@ export interface FileRoutesByFullPath {
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
   '/settings/organization': typeof SettingsOrganizationRoute
-  '/settings/parser': typeof SettingsParserRoute
   '/settings/rss': typeof SettingsRssRoute
   '/settings/source-priorities': typeof SettingsSourcePrioritiesRoute
   '/settings/torrent': typeof SettingsTorrentRoute
@@ -266,6 +266,7 @@ export interface FileRoutesByTo {
   '/hunt': typeof HuntRoute
   '/search': typeof SearchRoute
   '/albums/$albumId': typeof AlbumsAlbumIdRoute
+  '/audiobooks/$audiobookId': typeof AudiobooksAudiobookIdRoute
   '/auth/login': typeof AuthLoginRoute
   '/movies/$movieId': typeof MoviesMovieIdRoute
   '/settings/casting': typeof SettingsCastingRoute
@@ -273,7 +274,6 @@ export interface FileRoutesByTo {
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
   '/settings/organization': typeof SettingsOrganizationRoute
-  '/settings/parser': typeof SettingsParserRoute
   '/settings/rss': typeof SettingsRssRoute
   '/settings/source-priorities': typeof SettingsSourcePrioritiesRoute
   '/settings/torrent': typeof SettingsTorrentRoute
@@ -302,6 +302,7 @@ export interface FileRoutesById {
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRouteWithChildren
   '/albums/$albumId': typeof AlbumsAlbumIdRoute
+  '/audiobooks/$audiobookId': typeof AudiobooksAudiobookIdRoute
   '/auth/login': typeof AuthLoginRoute
   '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
   '/movies/$movieId': typeof MoviesMovieIdRoute
@@ -310,7 +311,6 @@ export interface FileRoutesById {
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
   '/settings/organization': typeof SettingsOrganizationRoute
-  '/settings/parser': typeof SettingsParserRoute
   '/settings/rss': typeof SettingsRssRoute
   '/settings/source-priorities': typeof SettingsSourcePrioritiesRoute
   '/settings/torrent': typeof SettingsTorrentRoute
@@ -340,6 +340,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/settings'
     | '/albums/$albumId'
+    | '/audiobooks/$audiobookId'
     | '/auth/login'
     | '/libraries/$libraryId'
     | '/movies/$movieId'
@@ -348,7 +349,6 @@ export interface FileRouteTypes {
     | '/settings/logs'
     | '/settings/metadata'
     | '/settings/organization'
-    | '/settings/parser'
     | '/settings/rss'
     | '/settings/source-priorities'
     | '/settings/torrent'
@@ -375,6 +375,7 @@ export interface FileRouteTypes {
     | '/hunt'
     | '/search'
     | '/albums/$albumId'
+    | '/audiobooks/$audiobookId'
     | '/auth/login'
     | '/movies/$movieId'
     | '/settings/casting'
@@ -382,7 +383,6 @@ export interface FileRouteTypes {
     | '/settings/logs'
     | '/settings/metadata'
     | '/settings/organization'
-    | '/settings/parser'
     | '/settings/rss'
     | '/settings/source-priorities'
     | '/settings/torrent'
@@ -410,6 +410,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/settings'
     | '/albums/$albumId'
+    | '/audiobooks/$audiobookId'
     | '/auth/login'
     | '/libraries/$libraryId'
     | '/movies/$movieId'
@@ -418,7 +419,6 @@ export interface FileRouteTypes {
     | '/settings/logs'
     | '/settings/metadata'
     | '/settings/organization'
-    | '/settings/parser'
     | '/settings/rss'
     | '/settings/source-priorities'
     | '/settings/torrent'
@@ -447,6 +447,7 @@ export interface RootRouteChildren {
   SearchRoute: typeof SearchRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   AlbumsAlbumIdRoute: typeof AlbumsAlbumIdRoute
+  AudiobooksAudiobookIdRoute: typeof AudiobooksAudiobookIdRoute
   AuthLoginRoute: typeof AuthLoginRoute
   LibrariesLibraryIdRoute: typeof LibrariesLibraryIdRouteWithChildren
   MoviesMovieIdRoute: typeof MoviesMovieIdRoute
@@ -541,13 +542,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRssRouteImport
       parentRoute: typeof SettingsRoute
     }
-    '/settings/parser': {
-      id: '/settings/parser'
-      path: '/parser'
-      fullPath: '/settings/parser'
-      preLoaderRoute: typeof SettingsParserRouteImport
-      parentRoute: typeof SettingsRoute
-    }
     '/settings/organization': {
       id: '/settings/organization'
       path: '/organization'
@@ -602,6 +596,13 @@ declare module '@tanstack/react-router' {
       path: '/auth/login'
       fullPath: '/auth/login'
       preLoaderRoute: typeof AuthLoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/audiobooks/$audiobookId': {
+      id: '/audiobooks/$audiobookId'
+      path: '/audiobooks/$audiobookId'
+      fullPath: '/audiobooks/$audiobookId'
+      preLoaderRoute: typeof AudiobooksAudiobookIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/albums/$albumId': {
@@ -704,7 +705,6 @@ interface SettingsRouteChildren {
   SettingsLogsRoute: typeof SettingsLogsRoute
   SettingsMetadataRoute: typeof SettingsMetadataRoute
   SettingsOrganizationRoute: typeof SettingsOrganizationRoute
-  SettingsParserRoute: typeof SettingsParserRoute
   SettingsRssRoute: typeof SettingsRssRoute
   SettingsSourcePrioritiesRoute: typeof SettingsSourcePrioritiesRoute
   SettingsTorrentRoute: typeof SettingsTorrentRoute
@@ -718,7 +718,6 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsLogsRoute: SettingsLogsRoute,
   SettingsMetadataRoute: SettingsMetadataRoute,
   SettingsOrganizationRoute: SettingsOrganizationRoute,
-  SettingsParserRoute: SettingsParserRoute,
   SettingsRssRoute: SettingsRssRoute,
   SettingsSourcePrioritiesRoute: SettingsSourcePrioritiesRoute,
   SettingsTorrentRoute: SettingsTorrentRoute,
@@ -769,6 +768,7 @@ const rootRouteChildren: RootRouteChildren = {
   SearchRoute: SearchRoute,
   SettingsRoute: SettingsRouteWithChildren,
   AlbumsAlbumIdRoute: AlbumsAlbumIdRoute,
+  AudiobooksAudiobookIdRoute: AudiobooksAudiobookIdRoute,
   AuthLoginRoute: AuthLoginRoute,
   LibrariesLibraryIdRoute: LibrariesLibraryIdRouteWithChildren,
   MoviesMovieIdRoute: MoviesMovieIdRoute,

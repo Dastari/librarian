@@ -714,27 +714,75 @@ impl MetadataService {
 
         let albums = self.musicbrainz.search_albums(query).await?;
 
-        // Fetch cover art for each album (async)
-        let mut results: Vec<AlbumSearchResult> = Vec::with_capacity(albums.len());
-        for album in albums {
-            let cover_url = self
-                .musicbrainz
-                .get_cover_art(album.id)
-                .await
-                .ok()
-                .flatten();
+        // Use Cover Art Archive's direct URL pattern for thumbnails
+        // This avoids making any HTTP requests - the URL will redirect to the actual image
+        // If no cover exists, the frontend will handle the 404 gracefully
+        let results: Vec<AlbumSearchResult> = albums
+            .into_iter()
+            .map(|album| {
+                // Cover Art Archive provides a redirect URL for release groups
+                // front-250 gives a 250px thumbnail, perfect for search results
+                let cover_url = Some(format!(
+                    "https://coverartarchive.org/release-group/{}/front-250",
+                    album.id
+                ));
 
-            results.push(AlbumSearchResult {
-                provider: MetadataProvider::MusicBrainz,
-                provider_id: album.id,
-                title: album.title.clone(),
-                artist_name: album.artist_names(),
-                year: album.year(),
-                album_type: Some(album.normalized_type()),
-                cover_url,
-                score: album.score,
-            });
-        }
+                AlbumSearchResult {
+                    provider: MetadataProvider::MusicBrainz,
+                    provider_id: album.id,
+                    title: album.title.clone(),
+                    artist_name: album.artist_names(),
+                    year: album.year(),
+                    album_type: Some(album.normalized_type()),
+                    cover_url,
+                    score: album.score,
+                }
+            })
+            .collect();
+
+        debug!(count = results.len(), "Found albums");
+        Ok(results)
+    }
+
+    /// Search for albums using MusicBrainz with type filtering
+    ///
+    /// Types can include: "Album", "EP", "Single", "Compilation", "Live", "Soundtrack"
+    pub async fn search_albums_with_types(
+        &self,
+        query: &str,
+        types: &[String],
+    ) -> Result<Vec<AlbumSearchResult>> {
+        info!(
+            "Searching MusicBrainz for album '{}' with types {:?}",
+            query, types
+        );
+
+        let albums = self
+            .musicbrainz
+            .search_albums_with_types(query, types)
+            .await?;
+
+        // Use Cover Art Archive's direct URL pattern for thumbnails
+        let results: Vec<AlbumSearchResult> = albums
+            .into_iter()
+            .map(|album| {
+                let cover_url = Some(format!(
+                    "https://coverartarchive.org/release-group/{}/front-250",
+                    album.id
+                ));
+
+                AlbumSearchResult {
+                    provider: MetadataProvider::MusicBrainz,
+                    provider_id: album.id,
+                    title: album.title.clone(),
+                    artist_name: album.artist_names(),
+                    year: album.year(),
+                    album_type: Some(album.normalized_type()),
+                    cover_url,
+                    score: album.score,
+                }
+            })
+            .collect();
 
         debug!(count = results.len(), "Found albums");
         Ok(results)
@@ -798,26 +846,75 @@ impl MetadataService {
         };
 
         // Get cover art
-        let cover_url = self
-            .musicbrainz
-            .get_cover_art(options.musicbrainz_id)
-            .await
-            .ok()
-            .flatten();
+        info!(
+            musicbrainz_id = %options.musicbrainz_id,
+            album_name = %album_details.title,
+            "Fetching cover art for album"
+        );
+        let cover_url = match self.musicbrainz.get_cover_art(options.musicbrainz_id).await {
+            Ok(url) => {
+                info!(
+                    musicbrainz_id = %options.musicbrainz_id,
+                    cover_url = ?url,
+                    "Cover art fetch result"
+                );
+                url
+            }
+            Err(e) => {
+                warn!(
+                    musicbrainz_id = %options.musicbrainz_id,
+                    error = %e,
+                    "Failed to fetch cover art from Cover Art Archive"
+                );
+                None
+            }
+        };
 
         // Cache artwork if available
         let cached_cover_url = if let Some(ref artwork_service) = self.artwork_service {
-            let entity_id = format!("album_{}", options.musicbrainz_id);
-            artwork_service
-                .cache_image_optional(
-                    cover_url.as_deref(),
-                    ArtworkType::Poster,
-                    "album",
-                    &entity_id,
-                )
-                .await
-                .or(cover_url)
+            if let Some(ref url) = cover_url {
+                let entity_id = format!("album_{}", options.musicbrainz_id);
+                info!(
+                    musicbrainz_id = %options.musicbrainz_id,
+                    original_url = %url,
+                    entity_id = %entity_id,
+                    "Caching album cover art to storage"
+                );
+                match artwork_service
+                    .cache_image(url, ArtworkType::Poster, "album", &entity_id)
+                    .await
+                {
+                    Ok(cached_url) => {
+                        info!(
+                            musicbrainz_id = %options.musicbrainz_id,
+                            original_url = %url,
+                            cached_url = %cached_url,
+                            "Successfully cached album cover art"
+                        );
+                        Some(cached_url)
+                    }
+                    Err(e) => {
+                        warn!(
+                            musicbrainz_id = %options.musicbrainz_id,
+                            error = %e,
+                            original_url = %url,
+                            "Failed to cache album cover art"
+                        );
+                        cover_url
+                    }
+                }
+            } else {
+                info!(
+                    musicbrainz_id = %options.musicbrainz_id,
+                    "No cover art URL available to cache (CAA returned none)"
+                );
+                None
+            }
         } else {
+            warn!(
+                musicbrainz_id = %options.musicbrainz_id,
+                "No artwork service available - cover art will not be cached"
+            );
             cover_url
         };
 
@@ -865,6 +962,21 @@ impl MetadataService {
 
         // Create track records
         if !track_list.is_empty() {
+            // Check library settings to determine initial track status
+            // If auto_hunt or auto_download is enabled, tracks should be "wanted" so they get hunted
+            let initial_status = {
+                let library = self.db.libraries().get_by_id(options.library_id).await?;
+                if let Some(lib) = library {
+                    if lib.auto_hunt || lib.auto_download {
+                        Some("wanted".to_string())
+                    } else {
+                        Some("missing".to_string())
+                    }
+                } else {
+                    Some("missing".to_string())
+                }
+            };
+
             let tracks_to_create: Vec<crate::db::CreateTrack> = track_list
                 .into_iter()
                 .map(|t| crate::db::CreateTrack {
@@ -879,15 +991,17 @@ impl MetadataService {
                     explicit: false,
                     artist_name: t.artist_name,
                     artist_id: None, // Could look up artist if different from album artist
+                    status: initial_status.clone(),
                 })
                 .collect();
 
             match tracks_repo.create_many(tracks_to_create).await {
                 Ok(created_tracks) => {
                     debug!(
-                        "Created {} track records for album '{}'",
+                        "Created {} track records for album '{}' with status '{}'",
                         created_tracks.len(),
-                        album.name
+                        album.name,
+                        initial_status.as_deref().unwrap_or("missing")
                     );
                 }
                 Err(e) => {

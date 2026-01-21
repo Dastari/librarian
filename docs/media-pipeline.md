@@ -369,10 +369,11 @@ fn verify_quality(media_file: &MediaFile, settings: &QualitySettings) -> Quality
 - **Action**: Skip during organization, leave in torrent for seeding
 - **Database**: Don't create media_file record
 
-### Archive Files (zip, rar, 7z)
+### Archive Files (zip, rar, 7z) — ✅ Fully Implemented
 
 - **Detection**: Extension is .zip, .rar, .7z, .tar.gz
 - **Extraction**: Extract to `{downloads}/{torrent_name}/_extracted/`
+- **Multi-part RAR**: Automatically handled (skips .r00, .r01 volumes, extracts from main .rar)
 - **Processing**: Run normal file matching on extracted contents
 - **Cleanup**: Leave archive in torrent for seeding
 
@@ -473,18 +474,18 @@ Both `indexer_configs` and `rss_feeds` have `post_download_action` column:
 
 ## Library Settings
 
-| Setting | Purpose |
-|---------|---------|
-| `auto_scan` | Run scan on schedule |
-| `scan_interval_minutes` | How often to scan |
-| `watch_for_changes` | Use inotify for real-time detection |
-| `auto_add_discovered` | Create entries from unmatched files |
-| `auto_download` | Auto-grab from RSS when match found |
-| `auto_hunt` | Search indexers for missing content |
-| `organize_files` | Automatically organize into folders |
-| `naming_pattern` | How to name/structure files |
-| `post_download_action` | copy/move/hardlink (default, overridden by indexer/feed) |
-| `conflicts_folder` | Where to move conflicting files (default: `_conflicts`) |
+| Setting | Purpose | Status |
+|---------|---------|--------|
+| `auto_scan` | Run scan on schedule | ✅ Implemented |
+| `scan_interval_minutes` | How often to scan | ✅ Implemented |
+| `watch_for_changes` | Use inotify for real-time detection | ⏳ DB field exists, not used |
+| `auto_add_discovered` | Create entries from unmatched files | ✅ Implemented |
+| `auto_download` | Auto-grab from RSS when match found | ✅ Implemented |
+| `auto_hunt` | Search indexers for missing content | ✅ Implemented |
+| `organize_files` | Automatically organize into folders | ✅ Implemented |
+| `naming_pattern` | How to name/structure files | ✅ Implemented |
+| `post_download_action` | copy/move/hardlink | ✅ Implemented |
+| `conflicts_folder` | Where to move conflicting files | ✅ Implemented (default: `_conflicts`) |
 
 ---
 
@@ -504,33 +505,157 @@ This is separate from `auto_hunt` and `auto_download` which control automation.
 
 All modules are implemented in `backend/src/services/`:
 
-| Module | Purpose |
-|--------|---------|
-| `torrent_file_matcher.rs` | Matches files within torrents to wanted items |
-| `media_processor.rs` | Unified download processing (torrents + usenet) |
-| `quality_evaluator.rs` | Uses ffprobe to verify actual quality |
-| `organizer.rs` | File organization with conflict handling |
-| `hunt.rs` | Auto-hunt service |
-| `scanner.rs` | Library scanning |
-| `usenet.rs` | Usenet NNTP client |
-| `extractor.rs` | Archive extraction (zip/rar) |
+| Module | Purpose | Status |
+|--------|---------|--------|
+| `torrent_file_matcher.rs` | Matches files within torrents to wanted items | ✅ Complete |
+| `media_processor.rs` | Unified download processing (torrents + usenet) | ✅ Complete |
+| `quality_evaluator.rs` | Uses ffprobe to verify actual quality | ✅ Complete |
+| `organizer.rs` | File organization with conflict handling | ✅ Complete |
+| `hunt.rs` | Auto-hunt service | ✅ Complete |
+| `scanner.rs` | Library scanning | ✅ Complete |
+| `usenet.rs` | Usenet NNTP client | ✅ Complete |
+| `extractor.rs` | Archive extraction (zip, rar, 7z) | ✅ Complete |
+| `track_matcher.rs` | Fuzzy track matching for music | ✅ Complete |
 
 ---
 
-## UI Additions Needed
+## Implementation Status by Media Type
+
+The backend pipeline is **fully implemented** for all media types. Frontend varies by type.
+
+### TV Shows — Reference Implementation (100%)
+
+**Backend:**
+- ✅ File matching (show/season/episode parsing, 80% similarity threshold)
+- ✅ File organization (Show Name (Year)/Season XX/ structure)
+- ✅ Library scanning (auto-add discovered shows, TVMaze/TMDB metadata)
+- ✅ Auto-hunt (event-driven, triggers on add + after scans)
+- ✅ RSS processing (episode matching, quality filtering)
+- ✅ Torrent processing (file-level matching, status updates)
+- ✅ Usenet processing (filename parsing, organization)
+
+**Frontend:**
+- ✅ `/shows/$showId` detail page with metadata, seasons, episodes
+- ✅ Episode table with quality chips, progress, status
+- ✅ Playback integration with resume support
+- ✅ Hunt/download actions per episode
+- ✅ Status filters (downloaded, wanted, missing, etc.)
+- ✅ Show-level quality settings overrides
+
+### Movies — Complete (95%)
+
+**Backend:**
+- ✅ File matching (title/year parsing)
+- ✅ File organization (Movie Title (Year)/ structure)
+- ✅ Library scanning (TMDB metadata, cast/crew)
+- ✅ Auto-hunt (triggers on add + after scans)
+- ✅ Torrent processing (file-level matching)
+- ✅ Usenet processing (organization)
+
+**Frontend:**
+- ✅ `/movies/$movieId` detail page with metadata
+- ✅ Playback integration
+- ✅ Hunt navigation
+- 🟡 Watch progress resume (backend ready, frontend fetch TODO)
+
+### Music/Albums — Backend Complete, Frontend Partial (85%)
+
+**Backend:**
+- ✅ File matching (artist/album/track parsing, 80% fuzzy threshold)
+- ✅ File organization (Artist/Album/TrackNumber - Title structure)
+- ✅ Library scanning (ID3 tags, MusicBrainz metadata)
+- ✅ Auto-hunt (validates tracks before downloading)
+- ✅ Torrent processing (track-level matching)
+- ✅ Usenet processing (organization)
+
+**Frontend:**
+- ✅ `/albums/$albumId` detail page with cover, tracks, progress bar
+- ✅ Track list with status indicators
+- ✅ Hunt navigation (navigates to /hunt page)
+- ❌ Audio playback (placeholder only, no player)
+- ❌ `huntAlbum` GraphQL mutation (uses navigation workaround)
+
+### Audiobooks — Backend Complete, Frontend Incomplete (70%)
+
+**Backend:**
+- ✅ File matching (author/title/chapter parsing)
+- ✅ File organization (Author/Book Title/ structure)
+- ✅ Library scanning (OpenLibrary/Audible metadata)
+- ✅ Auto-hunt (triggers on add + after scans)
+- ✅ Torrent processing (chapter-level matching)
+- ✅ Usenet processing (organization)
+
+**Frontend:**
+- ✅ Library list page with search/filter
+- ❌ Detail page (`/audiobooks/$audiobookId` does not exist)
+- ❌ Chapter list UI
+- ❌ Chapter playback
+- ❌ Hunt/download actions
+
+---
+
+## Pipeline Trigger Points
+
+All download sources correctly trigger the unified processing pipeline:
+
+| Entry Point | TV | Movies | Music | Audiobooks |
+|-------------|-------|--------|-------|------------|
+| RSS Feed → Auto-download | ✅ | ✅ | ✅ | ✅ |
+| Auto-Hunt → Download | ✅ | ✅ | ✅ | ✅ |
+| Manual /hunt → Download | ✅ | ✅ | ✅ | ✅ |
+| Direct magnet/URL add | ✅ | ✅ | ✅ | ✅ |
+| Usenet NZB download | ✅ | ✅ | ✅ | ✅ |
+| Library scan (existing files) | ✅ | ✅ | ✅ | ✅ |
+
+**Post-download processing** (triggered by Download Monitor Job):
+1. Torrent/Usenet completes → Archive extraction (if needed)
+2. Files analyzed with FFprobe
+3. Files matched to library items
+4. Files organized to library folder
+5. Item status updated to downloaded/suboptimal
+6. Stats updated
+
+---
+
+## UI Improvements Needed
 
 ### Downloads Page
 
-- Show individual file matches within each torrent
-- Show file status (downloading, processing, organized)
-- "Fix Match" button to manually correct a file's target item
+| Feature | Status | Notes |
+|---------|--------|-------|
+| File matches per torrent | 🟡 Partial | Available in Info modal, not inline |
+| File status display | 🟡 Partial | Progress shown, not explicit states |
+| "Fix Match" button | ❌ Missing | Manual correction not implemented |
 
 ### Library Detail Page
 
-- "Suboptimal" filter option alongside "Wanted"
-- Conflicts section showing files in `_conflicts` folder
+| Feature | Status | Notes |
+|---------|--------|-------|
+| "Suboptimal" filter | ❌ Missing | Type exists, no filter UI |
+| Conflicts section | ❌ Missing | No `_conflicts` folder display |
 
 ### Settings
 
-- Per-indexer `post_download_action` setting
-- Per-feed `post_download_action` setting
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Per-indexer `post_download_action` | ❌ Missing | DB column exists, no UI |
+| Per-feed `post_download_action` | ❌ Missing | DB column exists, no UI |
+
+---
+
+## Archive Extraction
+
+Fully implemented with support for:
+
+| Format | Status | Tool |
+|--------|--------|------|
+| ZIP | ✅ | Native Rust |
+| RAR (single) | ✅ | `unrar` |
+| RAR (multi-part) | ✅ | `unrar` (auto-handles .r00, .r01, etc.) |
+| 7z | ✅ | `7z` command |
+
+Extraction is triggered automatically:
+- After torrent completion (in `media_processor.rs`)
+- After usenet download completion
+- Archives extracted to `{download_path}/_extracted/`
+- Original archives preserved for seeding

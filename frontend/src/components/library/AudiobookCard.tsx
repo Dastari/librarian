@@ -1,8 +1,8 @@
-import { useCallback } from 'react'
 import { Card } from '@heroui/card'
 import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
 import { Button } from '@heroui/button'
 import { Image } from '@heroui/image'
+import { Link } from '@tanstack/react-router'
 import type { Audiobook } from '../../lib/graphql'
 import { IconEye, IconTrash, IconHeadphones, IconCheck, IconDotsVertical, IconClock } from '@tabler/icons-react'
 
@@ -35,10 +35,6 @@ function formatDuration(seconds: number | null): string {
 // ============================================================================
 
 export function AudiobookCard({ audiobook, authorName, onDelete }: AudiobookCardProps) {
-  const handleCardClick = useCallback(() => {
-    // Navigate to audiobook detail page when available
-    // For now, just a placeholder
-  }, [])
 
   return (
     <div className="aspect-[2/3]">
@@ -46,10 +42,10 @@ export function AudiobookCard({ audiobook, authorName, onDelete }: AudiobookCard
         className="relative overflow-hidden h-full w-full group border-none bg-content2"
       >
         {/* Clickable overlay for navigation - covers the entire card */}
-        <button
-          type="button"
+        <Link
+          to="/audiobooks/$audiobookId"
+          params={{ audiobookId: audiobook.id }}
           className="absolute inset-0 z-20 w-full h-full cursor-pointer bg-transparent border-none outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-          onClick={handleCardClick}
           aria-label={`View ${audiobook.title}`}
         />
 

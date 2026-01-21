@@ -129,17 +129,56 @@ export function sanitizeError(error: unknown): string {
 
 /**
  * Preview a naming pattern with sample data
- * Replaces all pattern variables with example values
+ * Replaces all pattern variables with example values based on library type
  */
-export function previewNamingPattern(pattern: string): string {
+export function previewNamingPattern(pattern: string, libraryType?: string): string {
   if (!pattern) return ''
-  return pattern
-    .replaceAll('{show}', 'Breaking Bad')
-    .replaceAll('{year}', '2008')
-    .replaceAll('{season:02}', '01')
-    .replaceAll('{season}', '1')
-    .replaceAll('{episode:02}', '05')
-    .replaceAll('{episode}', '5')
-    .replaceAll('{title}', 'Gray Matter')
-    .replaceAll('{ext}', 'mkv')
+  
+  let result = pattern
+  
+  // Common variables
+  result = result.replaceAll('{year}', '2008')
+  result = result.replaceAll('{ext}', libraryType === 'music' ? 'flac' : libraryType === 'audiobooks' ? 'm4b' : 'mkv')
+  result = result.replaceAll('{original}', 'original_filename')
+  
+  // TV Show variables
+  result = result.replaceAll('{show}', 'Breaking Bad')
+  result = result.replaceAll('{season:02}', '01')
+  result = result.replaceAll('{season}', '1')
+  result = result.replaceAll('{episode:02}', '05')
+  result = result.replaceAll('{episode}', '5')
+  
+  // Music variables
+  result = result.replaceAll('{artist}', 'Pink Floyd')
+  result = result.replaceAll('{album}', 'The Dark Side of the Moon')
+  result = result.replaceAll('{track:02}', '03')
+  result = result.replaceAll('{track}', '3')
+  result = result.replaceAll('{disc}', '1')
+  
+  // Movie variables
+  result = result.replaceAll('{quality}', '1080p BluRay')
+  
+  // Audiobook variables
+  result = result.replaceAll('{author}', 'Brandon Sanderson')
+  result = result.replaceAll('{series}', 'The Stormlight Archive')
+  result = result.replaceAll('{series_position}', '1')
+  result = result.replaceAll('{narrator}', 'Michael Kramer')
+  result = result.replaceAll('{chapter:02}', '01')
+  result = result.replaceAll('{chapter}', '1')
+  result = result.replaceAll('{chapter_title}', 'Prologue')
+  
+  // Title - use context-appropriate sample based on what other variables are present
+  // This must come last since multiple types use {title}
+  if (libraryType === 'music' || pattern.includes('{artist}') || pattern.includes('{album}')) {
+    result = result.replaceAll('{title}', 'Time')
+  } else if (libraryType === 'audiobooks' || pattern.includes('{author}')) {
+    result = result.replaceAll('{title}', 'The Way of Kings')
+  } else if (libraryType === 'movies' || (pattern.includes('{quality}') && !pattern.includes('{show}'))) {
+    result = result.replaceAll('{title}', 'The Matrix')
+  } else {
+    // Default to TV show episode title
+    result = result.replaceAll('{title}', 'Gray Matter')
+  }
+  
+  return result
 }

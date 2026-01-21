@@ -6,12 +6,14 @@ import { Card, CardBody } from '@heroui/card'
 import { Image } from '@heroui/image'
 import { Spinner } from '@heroui/spinner'
 import { Chip } from '@heroui/chip'
+import { Checkbox } from '@heroui/checkbox'
 import {
   IconSearch,
   IconDisc,
   IconUser,
   IconCalendar,
   IconPlus,
+  IconFilter,
 } from '@tabler/icons-react'
 import {
   graphqlClient,
@@ -44,7 +46,7 @@ interface SearchResultCardProps {
 
 function SearchResultCard({ result, onAdd, isAdding }: SearchResultCardProps) {
   return (
-    <Card>
+    <Card className="bg-content2">
       <CardBody className="flex flex-row gap-4 p-3">
         {result.coverUrl ? (
           <Image
@@ -100,6 +102,15 @@ function SearchResultCard({ result, onAdd, isAdding }: SearchResultCardProps) {
 // Main Component
 // ============================================================================
 
+// Filter options for album type
+interface AlbumTypeFilters {
+  includeEps: boolean
+  includeSingles: boolean
+  includeCompilations: boolean
+  includeLive: boolean
+  includeSoundtracks: boolean
+}
+
 export function AddAlbumModal({
   isOpen,
   onClose,
@@ -111,6 +122,14 @@ export function AddAlbumModal({
   const [searchResults, setSearchResults] = useState<AlbumSearchResult[]>([])
   const [addingId, setAddingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showFilters, setShowFilters] = useState(false)
+  const [filters, setFilters] = useState<AlbumTypeFilters>({
+    includeEps: false,
+    includeSingles: false,
+    includeCompilations: false,
+    includeLive: false,
+    includeSoundtracks: false,
+  })
 
   const handleSearch = useCallback(async () => {
     if (!searchQuery.trim()) return
@@ -123,6 +142,11 @@ export function AddAlbumModal({
       const result = await graphqlClient
         .query<{ searchAlbums: AlbumSearchResult[] }>(SEARCH_ALBUMS_QUERY, {
           query: searchQuery,
+          includeEps: filters.includeEps,
+          includeSingles: filters.includeSingles,
+          includeCompilations: filters.includeCompilations,
+          includeLive: filters.includeLive,
+          includeSoundtracks: filters.includeSoundtracks,
         })
         .toPromise()
 
@@ -136,7 +160,7 @@ export function AddAlbumModal({
     } finally {
       setSearching(false)
     }
-  }, [searchQuery])
+  }, [searchQuery, filters])
 
   const handleAddAlbum = useCallback(
     async (result: AlbumSearchResult) => {
@@ -196,25 +220,79 @@ export function AddAlbumModal({
               e.preventDefault()
               handleSearch()
             }}
-            className="flex gap-2"
+            className="flex flex-col gap-3"
           >
-            <Input
-              placeholder="Search for album or artist..."
-              value={searchQuery}
-              onValueChange={setSearchQuery}
-              startContent={<IconSearch size={18} className="text-default-400" />}
-              classNames={{
-                inputWrapper: 'flex-1',
-              }}
-            />
-            <Button
-              color="primary"
-              type="submit"
-              isLoading={searching}
-              isDisabled={!searchQuery.trim()}
-            >
-              Search
-            </Button>
+            <div className="flex gap-2">
+              <Input
+                placeholder="Album name, or 'artist: Artist - Album'"
+                value={searchQuery}
+                onValueChange={setSearchQuery}
+                startContent={<IconSearch size={18} className="text-default-400" />}
+                classNames={{
+                  inputWrapper: 'flex-1',
+                }}
+              />
+              <Button
+                color="primary"
+                type="submit"
+                isLoading={searching}
+                isDisabled={!searchQuery.trim()}
+              >
+                Search
+              </Button>
+            </div>
+
+            {/* Type filters */}
+
+              <div className="flex flex-wrap gap-4 p-3 bg-content1 rounded-lg">
+                <span className="text-sm text-default-600 w-full">Include release types:</span>
+                <Checkbox
+                  size="sm"
+                  isSelected={filters.includeEps}
+                  onValueChange={(checked) =>
+                    setFilters((f) => ({ ...f, includeEps: checked }))
+                  }
+                >
+                  EPs
+                </Checkbox>
+                <Checkbox
+                  size="sm"
+                  isSelected={filters.includeSingles}
+                  onValueChange={(checked) =>
+                    setFilters((f) => ({ ...f, includeSingles: checked }))
+                  }
+                >
+                  Singles
+                </Checkbox>
+                <Checkbox
+                  size="sm"
+                  isSelected={filters.includeCompilations}
+                  onValueChange={(checked) =>
+                    setFilters((f) => ({ ...f, includeCompilations: checked }))
+                  }
+                >
+                  Compilations
+                </Checkbox>
+                <Checkbox
+                  size="sm"
+                  isSelected={filters.includeLive}
+                  onValueChange={(checked) =>
+                    setFilters((f) => ({ ...f, includeLive: checked }))
+                  }
+                >
+                  Live
+                </Checkbox>
+                <Checkbox
+                  size="sm"
+                  isSelected={filters.includeSoundtracks}
+                  onValueChange={(checked) =>
+                    setFilters((f) => ({ ...f, includeSoundtracks: checked }))
+                  }
+                >
+                  Soundtracks
+                </Checkbox>
+              </div>
+   
           </form>
 
           {/* Error message */}

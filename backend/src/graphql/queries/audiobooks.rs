@@ -91,6 +91,68 @@ impl AudiobookQueries {
         Ok(record.map(Audiobook::from))
     }
 
+    /// Get an audiobook with all its chapters and status
+    async fn audiobook_with_chapters(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+    ) -> Result<Option<AudiobookWithChapters>> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let audiobook_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid audiobook ID: {}", e)))?;
+
+        let audiobook_record = db
+            .audiobooks()
+            .get_by_id(audiobook_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let Some(audiobook_record) = audiobook_record else {
+            return Ok(None);
+        };
+
+        // Fetch author if exists
+        let author = if let Some(author_id) = audiobook_record.author_id {
+            db.audiobooks()
+                .get_author_by_id(author_id)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?
+                .map(AudiobookAuthor::from)
+        } else {
+            None
+        };
+
+        // Fetch all chapters
+        let chapters = db
+            .chapters()
+            .list_by_audiobook(audiobook_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let chapter_count = chapters.len() as i32;
+        let chapters_with_files = chapters
+            .iter()
+            .filter(|c| c.media_file_id.is_some())
+            .count() as i32;
+        let missing_chapters = chapter_count - chapters_with_files;
+        let completion_percent = if chapter_count > 0 {
+            (chapters_with_files as f64 / chapter_count as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        Ok(Some(AudiobookWithChapters {
+            audiobook: audiobook_record.into(),
+            chapters: chapters.into_iter().map(AudiobookChapter::from).collect(),
+            chapter_count,
+            chapters_with_files,
+            missing_chapters,
+            completion_percent,
+            author,
+        }))
+    }
+
     /// Get all audiobook authors in a library
     async fn audiobook_authors(
         &self,

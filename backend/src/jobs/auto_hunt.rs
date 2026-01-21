@@ -118,6 +118,7 @@ async fn download_release(
     release: &ReleaseInfo,
     torrent_service: &Arc<TorrentService>,
     indexer_manager: &Arc<IndexerManager>,
+    user_id: Option<Uuid>,
 ) -> Result<TorrentInfo> {
     // Prefer magnet URI if available (no authentication needed)
     if let Some(ref magnet) = release.magnet_uri {
@@ -125,7 +126,7 @@ async fn download_release(
             release_title = %release.title,
             "Downloading via magnet URI"
         );
-        return torrent_service.add_magnet(magnet, None).await;
+        return torrent_service.add_magnet(magnet, user_id).await;
     }
 
     // For torrent file URLs, we need to download via the indexer to get proper auth
@@ -142,7 +143,7 @@ async fn download_release(
 
             // Add the torrent from bytes
             return torrent_service
-                .add_torrent_bytes(&torrent_bytes, None)
+                .add_torrent_bytes(&torrent_bytes, user_id)
                 .await;
         } else {
             // No indexer_id - try direct download (might fail for private trackers)
@@ -150,7 +151,7 @@ async fn download_release(
                 release_title = %release.title,
                 "Release has no indexer_id, attempting direct download"
             );
-            return torrent_service.add_torrent_url(link, None).await;
+            return torrent_service.add_torrent_url(link, user_id).await;
         }
     }
 
@@ -231,26 +232,73 @@ async fn create_file_matches_for_album(
     torrent_info: &TorrentInfo,
     album_id: Uuid,
 ) -> Result<()> {
-    let torrent_record = db
-        .torrents()
-        .get_by_info_hash(&torrent_info.info_hash)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("Torrent record not found"))?;
-
-    let matcher = TorrentFileMatcher::new(db.clone());
-    matcher
-        .create_matches_for_album(torrent_record.id, &torrent_info.files, album_id)
-        .await?;
-
-    debug!(
+    info!(
         job = "auto_hunt",
-        torrent_id = %torrent_record.id,
+        info_hash = %torrent_info.info_hash,
         album_id = %album_id,
-        files = torrent_info.files.len(),
-        "Created file-level matches for album"
+        file_count = torrent_info.files.len(),
+        "Looking up torrent record to create file matches"
     );
 
-    Ok(())
+    let torrent_record = match db.torrents().get_by_info_hash(&torrent_info.info_hash).await {
+        Ok(Some(record)) => {
+            info!(
+                job = "auto_hunt",
+                torrent_id = %record.id,
+                torrent_name = %record.name,
+                "Found torrent record in database"
+            );
+            record
+        }
+        Ok(None) => {
+            warn!(
+                job = "auto_hunt",
+                info_hash = %torrent_info.info_hash,
+                "Torrent record not found in database - was it saved with user_id?"
+            );
+            return Err(anyhow::anyhow!(
+                "Torrent record not found for info_hash {}",
+                torrent_info.info_hash
+            ));
+        }
+        Err(e) => {
+            warn!(
+                job = "auto_hunt",
+                info_hash = %torrent_info.info_hash,
+                error = %e,
+                "Database error looking up torrent record"
+            );
+            return Err(e);
+        }
+    };
+
+    let matcher = TorrentFileMatcher::new(db.clone());
+    match matcher
+        .create_matches_for_album(torrent_record.id, &torrent_info.files, album_id)
+        .await
+    {
+        Ok(matches) => {
+            info!(
+                job = "auto_hunt",
+                torrent_id = %torrent_record.id,
+                album_id = %album_id,
+                files = torrent_info.files.len(),
+                matches_created = matches.len(),
+                "Successfully created file-level matches for album"
+            );
+            Ok(())
+        }
+        Err(e) => {
+            warn!(
+                job = "auto_hunt",
+                torrent_id = %torrent_record.id,
+                album_id = %album_id,
+                error = %e,
+                "Failed to create file matches via TorrentFileMatcher"
+            );
+            Err(e)
+        }
+    }
 }
 
 /// Effective quality settings for filtering releases
@@ -949,7 +997,7 @@ pub async fn hunt_single_movie(
         );
 
         // Download using the indexer's authentication
-        match download_release(best, torrent_service, indexer_manager).await {
+        match download_release(best, torrent_service, indexer_manager, Some(library.user_id)).await {
             Ok(torrent_info) => {
                 info!(
                     job = "auto_hunt",
@@ -1183,7 +1231,7 @@ async fn hunt_movies_impl(
             );
 
             // Download using the indexer's authentication
-            match download_release(best, torrent_service, indexer_manager).await {
+            match download_release(best, torrent_service, indexer_manager, Some(library.user_id)).await {
                 Ok(torrent_info) => {
                     info!(
                         job = "auto_hunt",
@@ -1376,7 +1424,7 @@ async fn hunt_tv_episodes_impl(
                 result.matched += 1;
 
                 // Use the download_release helper which handles indexer authentication
-                let add_result = download_release(best, torrent_service, indexer_manager).await;
+                let add_result = download_release(best, torrent_service, indexer_manager, Some(library.user_id)).await;
 
                 match add_result {
                     Ok(torrent_info) => {
@@ -1478,12 +1526,9 @@ async fn hunt_music(
         let expected_tracks = db.tracks().list_by_album(album.id).await?;
         let has_track_info = !expected_tracks.is_empty();
 
-        // Build search query - artist + album name + year
-        let search_term = if let Some(year) = album.year {
-            format!("{} {} {}", artist_name, album.name, year)
-        } else {
-            format!("{} {}", artist_name, album.name)
-        };
+        // Search with just the album name to get more results
+        // We'll score results by how well they match artist and year
+        let search_term = album.name.clone();
 
         let mut query = TorznabQuery::music_search(&search_term);
         query.categories = categories::music_all();
@@ -1494,7 +1539,8 @@ async fn hunt_music(
             artist = %artist_name,
             album_year = ?album.year,
             expected_tracks = expected_tracks.len(),
-            "Searching for album"
+            "Searching for album with query: '{}'",
+            search_term
         );
 
         // Search all indexers
@@ -1528,17 +1574,18 @@ async fn hunt_music(
                 job = "auto_hunt",
                 album_name = %album.name,
                 artist = %artist_name,
-                search_term = %search_term,
                 indexers_queried = indexer_count,
-                "No releases found for album"
+                "No releases found for album (searched: '{}')",
+                search_term
             );
             result.skipped += 1;
             tokio::time::sleep(tokio::time::Duration::from_millis(SEARCH_BATCH_DELAY_MS)).await;
             continue;
         }
 
-        // Score and sort releases by quality
-        let scored_releases = score_music_releases(&all_releases);
+        // Score and sort releases by artist match, year match, and quality
+        let scored_releases =
+            score_music_releases_with_context(&all_releases, &artist_name, &album.name, album.year);
 
         // Separate releases with .torrent files (can validate) from magnet-only
         let (torrent_releases, magnet_releases): (Vec<_>, Vec<_>) = scored_releases
@@ -1696,7 +1743,7 @@ async fn hunt_music(
 
                 result.matched += 1;
 
-                match download_release(release, torrent_service, indexer_manager).await {
+                match download_release(release, torrent_service, indexer_manager, Some(library.user_id)).await {
                     Ok(info) => {
                         info!(
                             job = "auto_hunt",
@@ -1744,6 +1791,129 @@ async fn hunt_music(
 }
 
 /// Score music releases and return sorted by score (highest first)
+/// Score music releases based on artist/year match and quality
+///
+/// Scoring prioritizes:
+/// 1. Artist name word matches (most important)
+/// 2. Year match
+/// 3. Quality indicators (FLAC, 24bit, etc.)
+/// 4. Seeders and freeleech
+///
+/// TODO: Integrate library quality settings to boost scores for matching formats.
+/// If the library has quality preferences configured (e.g., prefers FLAC over MP3,
+/// or requires 24bit), we should:
+/// - Add bonus points when release matches preferred quality (FLAC, 24bit, 320kbps, etc.)
+/// - Add bonus points when release matches preferred codec (AAC, MP3, FLAC, ALAC, etc.)
+/// - Potentially filter out releases that don't meet minimum quality requirements
+/// - Consider bitrate preferences (lossless vs lossy, specific bitrates)
+fn score_music_releases_with_context<'a>(
+    releases: &'a [ReleaseInfo],
+    artist_name: &str,
+    album_name: &str,
+    year: Option<i32>,
+) -> Vec<(&'a ReleaseInfo, i32)> {
+    // Extract words from artist name for matching (lowercase, filter short words)
+    let artist_words: Vec<String> = artist_name
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 2)
+        .map(|w| w.to_string())
+        .collect();
+
+    // Extract words from album name for matching
+    let album_words: Vec<String> = album_name
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 2)
+        .map(|w| w.to_string())
+        .collect();
+
+    let year_str = year.map(|y| y.to_string());
+
+    let mut scored: Vec<_> = releases
+        .iter()
+        .filter(|r| r.seeders.unwrap_or(0) >= 1)
+        .map(|r| {
+            let mut score = 0i32;
+            let title_lower = r.title.to_lowercase();
+
+            // Count how many artist words appear in the release title
+            let artist_matches = artist_words
+                .iter()
+                .filter(|word| title_lower.contains(word.as_str()))
+                .count();
+
+            // Artist match is very important (50 points per matching word)
+            score += (artist_matches as i32) * 50;
+
+            // Bonus if ALL artist words match
+            if artist_matches == artist_words.len() && !artist_words.is_empty() {
+                score += 100; // Full artist match bonus
+            }
+
+            // Count album name word matches
+            let album_matches = album_words
+                .iter()
+                .filter(|word| title_lower.contains(word.as_str()))
+                .count();
+
+            // Album match (30 points per word, but album name was our search term so most should match)
+            score += (album_matches as i32) * 30;
+
+            // Year match (important for avoiding wrong versions)
+            if let Some(ref y) = year_str {
+                if title_lower.contains(y) {
+                    score += 150 // Year match bonus
+                }
+            }
+
+            // // Quality indicators (higher is better)
+            // if title_lower.contains("24bit") || title_lower.contains("24-bit") {
+            //     score += 40; // Hi-res
+            // } else if title_lower.contains("flac") {
+            //     score += 30;
+            // } else if title_lower.contains("320") || title_lower.contains("v0") {
+            //     score += 20; // High bitrate MP3
+            // } else if title_lower.contains("mp3") {
+            //     score += 10;
+            // }
+
+            // Prefer web releases over rips
+            if title_lower.contains("web") {
+                score += 5;
+            }
+
+            // Add seeders to score (capped at 30)
+            let seeders = r.seeders.unwrap_or(0);
+            score += seeders.min(30);
+
+            // Prefer freeleech
+            if r.download_volume_factor == 0.0 {
+                score += 15;
+            }
+
+            (r, score)
+        })
+        .collect();
+
+    // Sort by score descending
+    scored.sort_by(|a, b| b.1.cmp(&a.1));
+
+    // Log the top results for debugging
+    for (i, (release, score)) in scored.iter().take(3).enumerate() {
+        tracing::debug!(
+            rank = i + 1,
+            score = score,
+            title = %release.title,
+            seeders = ?release.seeders,
+            "Top album release candidate"
+        );
+    }
+
+    scored
+}
+
+/// Legacy scoring function for backwards compatibility
 fn score_music_releases(releases: &[ReleaseInfo]) -> Vec<(&ReleaseInfo, i32)> {
     let mut scored: Vec<_> = releases
         .iter()
@@ -1786,26 +1956,691 @@ fn score_music_releases(releases: &[ReleaseInfo]) -> Vec<(&ReleaseInfo, i32)> {
     scored
 }
 
-/// Hunt for missing audiobooks (placeholder - implement when audiobook tables are ready)
-async fn hunt_audiobooks(
-    _db: &Database,
+/// Hunt for a single specific album immediately
+/// Called when a new album is added to trigger instant search
+pub async fn hunt_single_album(
+    db: &Database,
+    album: &crate::db::AlbumRecord,
     library: &LibraryRecord,
-    _torrent_service: &Arc<TorrentService>,
-    _indexer_manager: &Arc<IndexerManager>,
+    torrent_service: &Arc<TorrentService>,
+    indexer_manager: &Arc<IndexerManager>,
 ) -> Result<HuntResult> {
-    debug!(
+    // Skip if album already has files
+    if album.has_files {
+        debug!(
+            job = "auto_hunt",
+            album_name = %album.name,
+            "Album already has files, skipping hunt"
+        );
+        return Ok(HuntResult::default());
+    }
+
+    info!(
+        job = "auto_hunt",
+        album_id = %album.id,
+        album_name = %album.name,
+        "Hunting for specific album"
+    );
+
+    let mut result = HuntResult::default();
+    result.searched = 1;
+
+    // Get artist name
+    let artist_name = db
+        .albums()
+        .get_artist_by_id(album.artist_id)
+        .await?
+        .map(|a| a.name)
+        .unwrap_or_else(|| "Unknown Artist".to_string());
+
+    // Get expected tracks for this album (for track matching)
+    let expected_tracks = db.tracks().list_by_album(album.id).await?;
+    let has_track_info = !expected_tracks.is_empty();
+
+    // Search with just the album name to get more results
+    // We'll score results by how well they match artist and year
+    let search_term = album.name.clone();
+
+    let mut query = TorznabQuery::music_search(&search_term);
+    query.categories = categories::music_all();
+
+    info!(
+        job = "auto_hunt",
+        album_name = %album.name,
+        artist = %artist_name,
+        album_year = ?album.year,
+        expected_tracks = expected_tracks.len(),
+        "Searching indexers for album with query: '{}'",
+        search_term
+    );
+
+    // Search all indexers
+    let search_results = indexer_manager.search_all(&query).await;
+
+    let mut all_releases: Vec<ReleaseInfo> = Vec::new();
+    for indexer_result in search_results {
+        if let Some(ref error) = indexer_result.error {
+            warn!(
+                job = "auto_hunt",
+                indexer_name = %indexer_result.indexer_name,
+                error = %error,
+                "Indexer search failed"
+            );
+            continue;
+        }
+        if indexer_result.releases.is_empty() {
+            debug!(
+                job = "auto_hunt",
+                indexer_name = %indexer_result.indexer_name,
+                "Indexer returned 0 results for album"
+            );
+        } else {
+            info!(
+                job = "auto_hunt",
+                indexer_name = %indexer_result.indexer_name,
+                release_count = indexer_result.releases.len(),
+                "Indexer returned {} results for album",
+                indexer_result.releases.len()
+            );
+        }
+        all_releases.extend(indexer_result.releases);
+    }
+
+    if all_releases.is_empty() {
+        info!(
+            job = "auto_hunt",
+            album_name = %album.name,
+            artist = %artist_name,
+            "No releases found for album across all indexers (searched: '{}')",
+            search_term
+        );
+        result.skipped = 1;
+        return Ok(result);
+    }
+
+    info!(
+        job = "auto_hunt",
+        album_name = %album.name,
+        release_count = all_releases.len(),
+        "Found {} releases for album, scoring by artist/year match",
+        all_releases.len()
+    );
+
+    // Score and sort releases by artist match, year match, and quality
+    let scored_releases =
+        score_music_releases_with_context(&all_releases, &artist_name, &album.name, album.year);
+
+    // Separate releases with .torrent files (can validate) from magnet-only
+    let (torrent_releases, magnet_releases): (Vec<_>, Vec<_>) = scored_releases
+        .into_iter()
+        .partition(|(r, _)| r.link.is_some() && r.indexer_id.is_some());
+
+    let mut downloaded = false;
+
+    // Try .torrent releases first (can validate track listing)
+    if has_track_info {
+        for (release, score) in &torrent_releases {
+            let indexer_id = release.indexer_id.as_ref().unwrap();
+            let link = release.link.as_ref().unwrap();
+
+            match indexer_manager.download_torrent(indexer_id, link).await {
+                Ok(torrent_bytes) => {
+                    match parse_torrent_files(&torrent_bytes) {
+                        Ok(files) => {
+                            let audio_files = extract_audio_files(&files);
+
+                            // Check if it's a single-file album (needs splitting)
+                            if is_single_file_album(&files) {
+                                debug!(
+                                    job = "auto_hunt",
+                                    album_name = %album.name,
+                                    release_title = %release.title,
+                                    "Skipping single-file album (needs splitting)"
+                                );
+                                continue;
+                            }
+
+                            // Match tracks
+                            let match_result = match_tracks(&expected_tracks, &files);
+
+                            info!(
+                                job = "auto_hunt",
+                                album_name = %album.name,
+                                release_title = %release.title,
+                                matched = match_result.matched_count,
+                                expected = match_result.expected_count,
+                                match_pct = format!("{:.1}%", match_result.match_percentage * 100.0),
+                                audio_files = audio_files.len(),
+                                score = score,
+                                "Track matching result for album"
+                            );
+
+                            // Check if match meets threshold (80%)
+                            if match_result.meets_threshold(TrackMatchResult::DEFAULT_THRESHOLD) {
+                                result.matched += 1;
+
+                                match torrent_service
+                                    .add_torrent_bytes(&torrent_bytes, Some(library.user_id))
+                                    .await
+                                {
+                                    Ok(info) => {
+                                        info!(
+                                            job = "auto_hunt",
+                                            album_name = %album.name,
+                                            release_title = %release.title,
+                                            info_hash = %info.info_hash,
+                                            matched_tracks = match_result.matched_count,
+                                            "Album download started (validated)"
+                                        );
+
+                                        // Create file-level matches for the album
+                                        if let Err(e) =
+                                            create_file_matches_for_album(db, &info, album.id).await
+                                        {
+                                            warn!(job = "auto_hunt", error = %e, "Failed to create file matches for album");
+                                        }
+
+                                        result.downloaded += 1;
+                                        downloaded = true;
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            job = "auto_hunt",
+                                            album_name = %album.name,
+                                            error = %e,
+                                            "Failed to add validated torrent for album"
+                                        );
+                                    }
+                                }
+                            } else {
+                                debug!(
+                                    job = "auto_hunt",
+                                    album_name = %album.name,
+                                    release_title = %release.title,
+                                    match_pct = format!("{:.1}%", match_result.match_percentage * 100.0),
+                                    "Release rejected - insufficient track match"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                job = "auto_hunt",
+                                album_name = %album.name,
+                                release_title = %release.title,
+                                error = %e,
+                                "Failed to parse torrent file for album"
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        job = "auto_hunt",
+                        album_name = %album.name,
+                        release_title = %release.title,
+                        error = %e,
+                        "Failed to download torrent file for validation"
+                    );
+                }
+            }
+        }
+    }
+
+    // Fall back to magnet releases (no validation possible) or if no track info
+    if !downloaded {
+        let fallback_release = magnet_releases
+            .first()
+            .or_else(|| torrent_releases.first())
+            .map(|(r, _)| r);
+
+        if let Some(release) = fallback_release {
+            if !has_track_info {
+                info!(
+                    job = "auto_hunt",
+                    album_name = %album.name,
+                    "No track info available, downloading album without validation"
+                );
+            } else {
+                info!(
+                    job = "auto_hunt",
+                    album_name = %album.name,
+                    "No validated releases, falling back to unvalidated download for album"
+                );
+            }
+
+            result.matched += 1;
+
+            match download_release(release, torrent_service, indexer_manager, Some(library.user_id)).await {
+                Ok(info) => {
+                    info!(
+                        job = "auto_hunt",
+                        album_name = %album.name,
+                        info_hash = %info.info_hash,
+                        "Album download started (unvalidated fallback)"
+                    );
+
+                    // Create file-level matches for the album
+                    if let Err(e) = create_file_matches_for_album(db, &info, album.id).await {
+                        warn!(job = "auto_hunt", error = %e, "Failed to create file matches for album");
+                    }
+
+                    result.downloaded += 1;
+                }
+                Err(e) => {
+                    error!(
+                        job = "auto_hunt",
+                        album_name = %album.name,
+                        error = %e,
+                        "Failed to start fallback download for album"
+                    );
+                    result.failed += 1;
+                }
+            }
+        } else {
+            result.skipped += 1;
+        }
+    }
+
+    Ok(result)
+}
+
+/// Hunt for missing audiobooks
+async fn hunt_audiobooks(
+    db: &Database,
+    library: &LibraryRecord,
+    torrent_service: &Arc<TorrentService>,
+    indexer_manager: &Arc<IndexerManager>,
+) -> Result<HuntResult> {
+    hunt_audiobooks_impl(db, library, torrent_service, indexer_manager).await
+}
+
+/// Public function to hunt for audiobooks in a specific library
+/// Called from GraphQL mutation for manual triggering
+pub async fn hunt_audiobooks_for_library(
+    db: &Database,
+    library: &LibraryRecord,
+    torrent_service: &Arc<TorrentService>,
+    indexer_manager: &Arc<IndexerManager>,
+) -> Result<HuntResult> {
+    hunt_audiobooks_impl(db, library, torrent_service, indexer_manager).await
+}
+
+/// Hunt for a single specific audiobook immediately
+/// Called when a new audiobook is added to trigger instant search
+pub async fn hunt_single_audiobook(
+    db: &Database,
+    audiobook: &crate::db::AudiobookRecord,
+    library: &LibraryRecord,
+    torrent_service: &Arc<TorrentService>,
+    indexer_manager: &Arc<IndexerManager>,
+) -> Result<HuntResult> {
+    // Skip if audiobook already has files
+    if audiobook.has_files {
+        debug!(
+            job = "auto_hunt",
+            audiobook_title = %audiobook.title,
+            "Audiobook already has files, skipping hunt"
+        );
+        return Ok(HuntResult::default());
+    }
+
+    info!(
+        job = "auto_hunt",
+        audiobook_id = %audiobook.id,
+        audiobook_title = %audiobook.title,
+        "Hunting for specific audiobook"
+    );
+
+    let mut result = HuntResult::default();
+    result.searched = 1;
+
+    // Get author name for search
+    let author_name = if let Some(author_id) = audiobook.author_id {
+        db.audiobooks()
+            .get_author_by_id(author_id)
+            .await?
+            .map(|a| a.name)
+            .unwrap_or_else(|| "Unknown Author".to_string())
+    } else {
+        "Unknown Author".to_string()
+    };
+
+    // Build search query - author + title
+    let search_term = format!("{} {}", author_name, audiobook.title);
+
+    let mut query = TorznabQuery::search(&search_term);
+    query.categories = categories::audiobooks();
+
+    info!(
+        job = "auto_hunt",
+        audiobook_title = %audiobook.title,
+        author = %author_name,
+        search_term = %search_term,
+        "Searching indexers for audiobook"
+    );
+
+    // Search all enabled indexers
+    let search_results = indexer_manager.search_all(&query).await;
+
+    let mut all_releases: Vec<ReleaseInfo> = Vec::new();
+    for indexer_result in search_results {
+        if let Some(ref error) = indexer_result.error {
+            warn!(
+                job = "auto_hunt",
+                indexer_name = %indexer_result.indexer_name,
+                error = %error,
+                "Indexer search failed"
+            );
+        }
+        all_releases.extend(indexer_result.releases);
+    }
+
+    if all_releases.is_empty() {
+        debug!(
+            job = "auto_hunt",
+            audiobook_title = %audiobook.title,
+            "No releases found for audiobook"
+        );
+        return Ok(result);
+    }
+
+    info!(
+        job = "auto_hunt",
+        audiobook_title = %audiobook.title,
+        release_count = all_releases.len(),
+        "Found releases for audiobook"
+    );
+
+    // Score and sort releases
+    let scored_releases = score_audiobook_releases(&all_releases, &audiobook.title, &author_name);
+
+    // Try to download the best release
+    for (release, score) in scored_releases {
+        if score < 10 {
+            debug!(
+                job = "auto_hunt",
+                audiobook_title = %audiobook.title,
+                release_title = %release.title,
+                score = score,
+                "Release score too low, skipping"
+            );
+            continue;
+        }
+
+        info!(
+            job = "auto_hunt",
+            audiobook_title = %audiobook.title,
+            release_title = %release.title,
+            release_size = ?release.size,
+            score = score,
+            "Attempting to download audiobook release"
+        );
+
+        // Download the release
+        match download_release(release, torrent_service, indexer_manager, Some(library.user_id)).await {
+            Ok(_) => {
+                info!(
+                    job = "auto_hunt",
+                    audiobook_title = %audiobook.title,
+                    release_title = %release.title,
+                    "Successfully started download for audiobook"
+                );
+                result.downloaded += 1;
+                break;
+            }
+            Err(e) => {
+                warn!(
+                    job = "auto_hunt",
+                    audiobook_title = %audiobook.title,
+                    release_title = %release.title,
+                    error = %e,
+                    "Failed to download audiobook release, trying next"
+                );
+                continue;
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Hunt for missing audiobooks implementation
+async fn hunt_audiobooks_impl(
+    db: &Database,
+    library: &LibraryRecord,
+    torrent_service: &Arc<TorrentService>,
+    indexer_manager: &Arc<IndexerManager>,
+) -> Result<HuntResult> {
+    info!(
         job = "auto_hunt",
         library_id = %library.id,
         library_name = %library.name,
-        "Audiobook auto-hunt not yet implemented"
+        "Hunting for missing audiobooks"
     );
 
-    // TODO: Implement when audiobook tables exist
-    // 1. Get audiobooks without files
-    // 2. Search indexers by title + author
-    // 3. Download best match
+    // Get audiobooks without files
+    let audiobooks = db
+        .audiobooks()
+        .list_needing_files(library.id, MAX_HUNT_PER_RUN as i64)
+        .await?;
 
-    Ok(HuntResult::default())
+    if audiobooks.is_empty() {
+        debug!(
+            job = "auto_hunt",
+            library_name = %library.name,
+            "No missing audiobooks found"
+        );
+        return Ok(HuntResult::default());
+    }
+
+    info!(
+        job = "auto_hunt",
+        library_name = %library.name,
+        audiobook_count = audiobooks.len(),
+        "Found missing audiobooks to hunt"
+    );
+
+    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_SEARCHES));
+    let mut result = HuntResult::default();
+
+    for audiobook in audiobooks {
+        let _permit = semaphore.acquire().await?;
+        result.searched += 1;
+
+        // Get author name
+        let author_name = if let Some(author_id) = audiobook.author_id {
+            db.audiobooks()
+                .get_author_by_id(author_id)
+                .await?
+                .map(|a| a.name)
+                .unwrap_or_else(|| "Unknown Author".to_string())
+        } else {
+            "Unknown Author".to_string()
+        };
+
+        // Build search query - author + title
+        let search_term = format!("{} {}", author_name, audiobook.title);
+
+        let mut query = TorznabQuery::search(&search_term);
+        query.categories = categories::audiobooks();
+
+        debug!(
+            job = "auto_hunt",
+            audiobook_title = %audiobook.title,
+            author = %author_name,
+            search_term = %search_term,
+            "Searching for audiobook"
+        );
+
+        // Search all enabled indexers
+        let search_results = indexer_manager.search_all(&query).await;
+
+        let mut all_releases: Vec<ReleaseInfo> = Vec::new();
+        for indexer_result in search_results {
+            if indexer_result.error.is_none() {
+                all_releases.extend(indexer_result.releases);
+            }
+        }
+
+        if all_releases.is_empty() {
+            debug!(
+                job = "auto_hunt",
+                audiobook_title = %audiobook.title,
+                "No releases found"
+            );
+            result.skipped += 1;
+            continue;
+        }
+
+        debug!(
+            job = "auto_hunt",
+            audiobook_title = %audiobook.title,
+            release_count = all_releases.len(),
+            "Found releases for audiobook"
+        );
+
+        // Score and sort releases
+        let scored_releases = score_audiobook_releases(&all_releases, &audiobook.title, &author_name);
+
+        // Try to download the best release
+        for (release, score) in scored_releases {
+            if score < 10 {
+                continue;
+            }
+
+            info!(
+                job = "auto_hunt",
+                audiobook_title = %audiobook.title,
+                release_title = %release.title,
+                score = score,
+                "Attempting to download audiobook"
+            );
+
+            match download_release(release, torrent_service, indexer_manager, Some(library.user_id)).await {
+                Ok(_) => {
+                    info!(
+                        job = "auto_hunt",
+                        audiobook_title = %audiobook.title,
+                        release_title = %release.title,
+                        "Successfully started download for audiobook"
+                    );
+                    result.downloaded += 1;
+                    break;
+                }
+                Err(e) => {
+                    warn!(
+                        job = "auto_hunt",
+                        audiobook_title = %audiobook.title,
+                        error = %e,
+                        "Failed to download, trying next release"
+                    );
+                    result.failed += 1;
+                    continue;
+                }
+            }
+        }
+    }
+
+    info!(
+        job = "auto_hunt",
+        library_name = %library.name,
+        searched = result.searched,
+        downloaded = result.downloaded,
+        "Audiobook hunt complete"
+    );
+
+    Ok(result)
+}
+
+/// Score audiobook releases based on title/author match and quality indicators
+fn score_audiobook_releases<'a>(
+    releases: &'a [ReleaseInfo],
+    title: &str,
+    author: &str,
+) -> Vec<(&'a ReleaseInfo, i32)> {
+    let title_lower = title.to_lowercase();
+    let author_lower = author.to_lowercase();
+
+    let mut scored: Vec<(&ReleaseInfo, i32)> = releases
+        .iter()
+        .map(|r| {
+            let mut score = 0i32;
+            let release_lower = r.title.to_lowercase();
+
+            // Title match
+            if release_lower.contains(&title_lower) {
+                score += 50;
+            } else {
+                // Partial title match - check word overlap
+                let title_words: std::collections::HashSet<_> = title_lower
+                    .split_whitespace()
+                    .filter(|w| w.len() > 2)
+                    .collect();
+                let release_words: std::collections::HashSet<_> = release_lower
+                    .split_whitespace()
+                    .filter(|w| w.len() > 2)
+                    .collect();
+                let overlap = title_words.intersection(&release_words).count();
+                score += (overlap * 10) as i32;
+            }
+
+            // Author match
+            if release_lower.contains(&author_lower) {
+                score += 30;
+            } else {
+                // Check author last name
+                if let Some(last_name) = author_lower.split_whitespace().last() {
+                    if release_lower.contains(last_name) {
+                        score += 15;
+                    }
+                }
+            }
+
+            // Prefer M4B format (common for audiobooks)
+            if release_lower.contains("m4b") {
+                score += 10;
+            }
+
+            // Prefer unabridged
+            if release_lower.contains("unabridged") {
+                score += 15;
+            }
+
+            // Penalize abridged
+            if release_lower.contains("abridged") && !release_lower.contains("unabridged") {
+                score -= 20;
+            }
+
+            // Prefer larger files (likely higher quality)
+            if let Some(size) = r.size {
+                if size > 500_000_000 {
+                    // > 500MB
+                    score += 10;
+                }
+                if size > 1_000_000_000 {
+                    // > 1GB
+                    score += 5;
+                }
+            }
+
+            // Bonus for seeders
+            if let Some(seeders) = r.seeders {
+                if seeders > 5 {
+                    score += 5;
+                }
+                if seeders > 20 {
+                    score += 5;
+                }
+            }
+
+            (r, score)
+        })
+        .collect();
+
+    // Sort by score descending
+    scored.sort_by(|a, b| b.1.cmp(&a.1));
+    scored
 }
 
 /// Run auto-hunt for a single library

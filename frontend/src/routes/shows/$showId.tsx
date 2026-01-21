@@ -42,6 +42,7 @@ import {
   FileOrganizationBadge,
   MonitoredBadge,
   QualityFilterBadge,
+  PlayPauseIndicator,
 } from '../../components/shared'
 import { usePlaybackContext } from '../../contexts/PlaybackContext'
 import { FilePropertiesModal } from '../../components/FilePropertiesModal'
@@ -249,6 +250,7 @@ const episodeColumns: DataTableColumn<Episode>[] = [
 interface EpisodeTableProps {
   episodes: Episode[]
   seasonNumber: number
+  showId: string
   downloadingEpisodes: Set<string>
   onDownload: (episodeId: string) => void
   onPlay: (episode: Episode) => void
@@ -256,28 +258,59 @@ interface EpisodeTableProps {
   onShowProperties: (episode: Episode) => void
 }
 
-function EpisodeTable({ episodes, seasonNumber, downloadingEpisodes, onDownload, onPlay, onSearch, onShowProperties }: EpisodeTableProps) {
+function EpisodeTable({ episodes, seasonNumber, showId, downloadingEpisodes, onDownload, onPlay, onSearch, onShowProperties }: EpisodeTableProps) {
+  // Get session and updatePlayback directly from context for reliable updates
+  const { session, updatePlayback } = usePlaybackContext()
+  
+  // Handle pause directly using context
+  const handlePause = useCallback(() => {
+    updatePlayback({ isPlaying: false })
+  }, [updatePlayback])
+  
+  // Compute playing state from session
+  const currentlyPlayingEpisodeId = session?.tvShowId === showId ? session?.episodeId : null
+  const isPlaying = session?.isPlaying ?? false
+
   // Helper to determine if episode has resumable progress (any progress but not fully watched)
   const hasResumeProgress = (ep: Episode) =>
     ep.watchProgress !== null && ep.watchProgress > 0 && !ep.isWatched
 
-  const rowActions = useMemo<RowAction<Episode>[]>(() => [
+  // Helper to check if this episode is currently playing
+  const isCurrentlyPlaying = (ep: Episode) => currentlyPlayingEpisodeId === ep.id
+
+  // Dynamic key for play actions
+  const playActionKey = `play-${currentlyPlayingEpisodeId || 'none'}-${isPlaying}`
+
+  // Row actions - computed fresh on each render to ensure playing state is always current
+  const rowActions: RowAction<Episode>[] = [
+    // Playing indicator with pause on hover - shown for currently playing episode
     {
-      key: 'resume',
+      key: `playing-${currentlyPlayingEpisodeId || 'none'}`,
+      label: 'Pause',
+      icon: <PlayPauseIndicator size={16} isPlaying={isPlaying} colorClass="bg-success" />,
+      color: 'default',
+      inDropdown: false,
+      isVisible: (ep) => ep.status === 'DOWNLOADED' && !!ep.mediaFileId && isCurrentlyPlaying(ep) && isPlaying,
+      onAction: () => handlePause(),
+    },
+    // Resume action - shown for episodes with progress but not currently playing
+    {
+      key: `resume-${playActionKey}`,
       label: 'Resume',
       icon: <IconPlayerTrackNext size={16} />,
       color: 'success',
       inDropdown: false,
-      isVisible: (ep) => ep.status === 'DOWNLOADED' && !!ep.mediaFileId && hasResumeProgress(ep),
+      isVisible: (ep) => ep.status === 'DOWNLOADED' && !!ep.mediaFileId && hasResumeProgress(ep) && !isCurrentlyPlaying(ep),
       onAction: (ep) => onPlay(ep),
     },
+    // Play action - shown for episodes without progress and not currently playing
     {
-      key: 'play',
+      key: `play-${playActionKey}`,
       label: 'Play',
       icon: <IconPlayerPlay size={16} />,
       color: 'success',
       inDropdown: false,
-      isVisible: (ep) => ep.status === 'DOWNLOADED' && !!ep.mediaFileId && !hasResumeProgress(ep),
+      isVisible: (ep) => ep.status === 'DOWNLOADED' && !!ep.mediaFileId && !hasResumeProgress(ep) && !isCurrentlyPlaying(ep),
       onAction: (ep) => onPlay(ep),
     },
     {
@@ -308,10 +341,22 @@ function EpisodeTable({ episodes, seasonNumber, downloadingEpisodes, onDownload,
       isVisible: (ep) => ep.status === 'DOWNLOADED' && !!ep.mediaFileId,
       onAction: (ep) => onShowProperties(ep),
     },
-  ], [downloadingEpisodes, onDownload, onPlay, onSearch, onShowProperties])
+  ]
+
+  // Create selection set for highlighting currently playing episode
+  const selectedKeys = useMemo(() => {
+    if (currentlyPlayingEpisodeId) {
+      return new Set([currentlyPlayingEpisodeId])
+    }
+    return new Set<string>()
+  }, [currentlyPlayingEpisodeId])
+
+  // Key that changes when playback state changes to force re-render
+  const tableKey = `episodes-${currentlyPlayingEpisodeId || 'none'}-${isPlaying}`
 
   return (
     <DataTable
+      key={tableKey}
       data={episodes}
       columns={episodeColumns}
       getRowKey={(ep) => ep.id}
@@ -323,6 +368,8 @@ function EpisodeTable({ episodes, seasonNumber, downloadingEpisodes, onDownload,
       defaultSortColumn="episode"
       defaultSortDirection="asc"
       rowActions={rowActions}
+      selectionMode={currentlyPlayingEpisodeId ? 'single' : 'none'}
+      selectedKeys={selectedKeys}
     />
   )
 }
@@ -634,6 +681,8 @@ function ShowDetailPage() {
       await startEpisodePlayback(episode.id, episode.mediaFileId, show.id, episode, show, startPosition)
     }
   }, [show, startEpisodePlayback])
+
+  // Note: Playing state and pause handling are now inside EpisodeTable component directly from context
 
   // Navigate to hunt page with pre-filled query for missing episode
   const handleSearchEpisode = useCallback((episode: Episode) => {
@@ -1036,6 +1085,7 @@ function ShowDetailPage() {
                 <EpisodeTable
                   episodes={seasonData.episodes}
                   seasonNumber={seasonData.season}
+                  showId={show!.id}
                   downloadingEpisodes={downloadingEpisodes}
                   onDownload={handleDownloadEpisode}
                   onPlay={handlePlay}
