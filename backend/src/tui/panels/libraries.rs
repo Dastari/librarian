@@ -7,7 +7,15 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+#[cfg(feature = "postgres")]
 use sqlx::PgPool;
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+use sqlx::SqlitePool;
+
+#[cfg(feature = "postgres")]
+type DbPool = PgPool;
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+type DbPool = SqlitePool;
 
 use crate::tui::input::Action;
 use crate::tui::panels::Panel;
@@ -33,7 +41,7 @@ pub fn create_shared_libraries() -> SharedLibraries {
 }
 
 /// Spawn a background task to update library stats
-pub fn spawn_libraries_updater(pool: PgPool, libraries: SharedLibraries) {
+pub fn spawn_libraries_updater(pool: DbPool, libraries: SharedLibraries) {
     tokio::spawn(async move {
         loop {
             // Query library stats
@@ -45,7 +53,7 @@ pub fn spawn_libraries_updater(pool: PgPool, libraries: SharedLibraries) {
 }
 
 /// Fetch library stats from database
-async fn fetch_library_stats(pool: &PgPool) -> Vec<LibraryStats> {
+async fn fetch_library_stats(pool: &DbPool) -> Vec<LibraryStats> {
     // Query libraries with id, name, type, path
     let result = sqlx::query_as::<_, (uuid::Uuid, String, String, String)>(
         r#"

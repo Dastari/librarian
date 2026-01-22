@@ -1,4 +1,83 @@
 // ============================================================================
+// Auth Mutations
+// ============================================================================
+
+export const REGISTER_MUTATION = `
+  mutation Register($input: RegisterUserInput!) {
+    register(input: $input) {
+      success
+      error
+      user {
+        id
+        email
+        username
+        role
+        displayName
+      }
+      tokens {
+        accessToken
+        refreshToken
+        expiresIn
+        tokenType
+      }
+    }
+  }
+`;
+
+export const LOGIN_MUTATION = `
+  mutation Login($input: LoginInput!) {
+    login(input: $input) {
+      success
+      error
+      user {
+        id
+        email
+        username
+        role
+        displayName
+      }
+      tokens {
+        accessToken
+        refreshToken
+        expiresIn
+        tokenType
+      }
+    }
+  }
+`;
+
+/** Check if the system needs first-time setup (no users exist) */
+export const NEEDS_SETUP_QUERY = `
+  query NeedsSetup {
+    needsSetup
+  }
+`;
+
+export const REFRESH_TOKEN_MUTATION = `
+  mutation RefreshToken($input: RefreshTokenInput!) {
+    refreshToken(input: $input) {
+      success
+      error
+      tokens {
+        accessToken
+        refreshToken
+        expiresIn
+        tokenType
+      }
+    }
+  }
+`;
+
+export const LOGOUT_MUTATION = `
+  mutation Logout($input: LogoutInput!) {
+    logout(input: $input) {
+      success
+      error
+    }
+  }
+`;
+
+// ============================================================================
 // Torrent Mutations
 // ============================================================================
 
@@ -219,6 +298,20 @@ export const REFRESH_TV_SHOW_MUTATION = `
       tvShow {
         id
         episodeCount
+      }
+      error
+    }
+  }
+`;
+
+export const REFRESH_MOVIE_MUTATION = `
+  mutation RefreshMovie($id: String!) {
+    refreshMovie(id: $id) {
+      success
+      movie {
+        id
+        posterUrl
+        backdropUrl
       }
       error
     }
@@ -535,37 +628,6 @@ export const CLEAR_OLD_LOGS_MUTATION = `
 `;
 
 // ============================================================================
-// Security Settings Mutations
-// ============================================================================
-
-export const INITIALIZE_ENCRYPTION_KEY_MUTATION = `
-  mutation InitializeEncryptionKey {
-    initializeEncryptionKey {
-      success
-      error
-      settings {
-        encryptionKeySet
-        encryptionKeyPreview
-        encryptionKeyLastModified
-      }
-    }
-  }
-`;
-
-export const REGENERATE_ENCRYPTION_KEY_MUTATION = `
-  mutation RegenerateEncryptionKey($input: GenerateEncryptionKeyInput!) {
-    regenerateEncryptionKey(input: $input) {
-      success
-      error
-      settings {
-        encryptionKeySet
-        encryptionKeyPreview
-        encryptionKeyLastModified
-      }
-    }
-  }
-`;
-
 // ============================================================================
 // Cast Mutations
 // ============================================================================

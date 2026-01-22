@@ -151,7 +151,14 @@ function SourcePrioritiesPage() {
       setSources(sourcesResult.data?.availableSources || [])
       setError(null)
     } catch (err) {
-      setError(sanitizeError(err))
+      // Silently ignore auth errors - they can happen during login race conditions
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      if (errorMsg.toLowerCase().includes('authentication')) {
+        // Clear any error for auth issues
+        setError(null)
+      } else {
+        setError(sanitizeError(err))
+      }
     } finally {
       setLoading(false)
     }

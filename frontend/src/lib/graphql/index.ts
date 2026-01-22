@@ -1,10 +1,16 @@
 // Re-export everything from sub-modules for easy importing
 
 // Client
-export { apolloClient, graphqlClient, onGraphQLError } from './client';
+export { apolloClient, graphqlClient, onGraphQLError } from "./client";
 
 // Types
 export type {
+  // Auth Types
+  AuthResult,
+  LogoutResult,
+  AuthUserInfo,
+  LoginInput,
+  RegisterInput,
   // Library Type Helpers
   LibraryTypeInfo,
   // Media Item (legacy)
@@ -129,10 +135,6 @@ export type {
   AudioStreamInfo,
   SubtitleInfo,
   ChapterInfo,
-  // Security Settings
-  SecuritySettings,
-  SecuritySettingsResult,
-  GenerateEncryptionKeyInput,
   // Cast Types
   CastDeviceType,
   CastPlayerState,
@@ -179,13 +181,17 @@ export type {
   NotificationResult,
   MarkAllReadResult,
   NotificationEvent,
-} from './types';
+} from "./types";
 
 // Constants
-export { LIBRARY_TYPES, getLibraryTypeInfo } from './types';
+export { LIBRARY_TYPES, getLibraryTypeInfo } from "./types";
 
 // Queries
 export {
+  // Auth Queries
+  CHECK_SETUP_STATUS_QUERY,
+  ME_QUERY,
+  // Torrent Queries
   TORRENTS_QUERY,
   TORRENT_QUERY,
   TORRENT_DETAILS_QUERY,
@@ -239,7 +245,6 @@ export {
   MEDIA_FILE_BY_PATH_QUERY,
   MOVIE_MEDIA_FILE_QUERY,
   MEDIA_FILE_DETAILS_QUERY,
-  SECURITY_SETTINGS_QUERY,
   // Cast Queries
   CAST_DEVICES_QUERY,
   CAST_DEVICE_QUERY,
@@ -263,10 +268,17 @@ export {
   RECENT_NOTIFICATIONS_QUERY,
   NOTIFICATION_COUNTS_QUERY,
   UNREAD_NOTIFICATION_COUNT_QUERY,
-} from './queries';
+} from "./queries";
 
 // Mutations
 export {
+  // Auth Mutations
+  REGISTER_MUTATION,
+  LOGIN_MUTATION,
+  REFRESH_TOKEN_MUTATION,
+  LOGOUT_MUTATION,
+  NEEDS_SETUP_QUERY,
+  // Torrent Mutations
   ADD_TORRENT_MUTATION,
   PAUSE_TORRENT_MUTATION,
   RESUME_TORRENT_MUTATION,
@@ -291,6 +303,7 @@ export {
   ADD_MOVIE_MUTATION,
   UPDATE_MOVIE_MUTATION,
   DELETE_MOVIE_MUTATION,
+  REFRESH_MOVIE_MUTATION,
   // Album Mutations
   ADD_ALBUM_MUTATION,
   DELETE_ALBUM_MUTATION,
@@ -310,8 +323,6 @@ export {
   SET_DEFAULT_NAMING_PATTERN_MUTATION,
   CLEAR_ALL_LOGS_MUTATION,
   CLEAR_OLD_LOGS_MUTATION,
-  INITIALIZE_ENCRYPTION_KEY_MUTATION,
-  REGENERATE_ENCRYPTION_KEY_MUTATION,
   // Cast Mutations
   DISCOVER_CAST_DEVICES_MUTATION,
   ADD_CAST_DEVICE_MUTATION,
@@ -343,7 +354,7 @@ export {
   MARK_ALL_NOTIFICATIONS_READ_MUTATION,
   RESOLVE_NOTIFICATION_MUTATION,
   DELETE_NOTIFICATION_MUTATION,
-} from './mutations';
+} from "./mutations";
 
 // Subscriptions
 export {
@@ -363,7 +374,7 @@ export {
   // Notification Subscriptions
   NOTIFICATION_RECEIVED_SUBSCRIPTION,
   NOTIFICATION_COUNTS_SUBSCRIPTION,
-} from './subscriptions';
+} from "./subscriptions";
 
 // GraphQL-based filesystem functions (replaces REST API)
-export { browseDirectory, createDirectory } from './filesystem';
+export { browseDirectory, createDirectory } from "./filesystem";

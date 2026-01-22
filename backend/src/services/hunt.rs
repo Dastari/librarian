@@ -238,7 +238,7 @@ impl HuntService {
 
         if let Some(rule) = rule {
             let rule_desc = self.describe_rule(&rule);
-            let priority_order: Vec<SourceRef> = rule.priority_order.0.clone();
+            let priority_order: Vec<SourceRef> = rule.priority_order.clone();
 
             return Ok((priority_order, rule.search_all_sources, rule_desc));
         }

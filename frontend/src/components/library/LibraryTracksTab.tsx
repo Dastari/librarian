@@ -57,6 +57,9 @@ export function LibraryTracksTab({ libraryId, loading: parentLoading }: LibraryT
   // Normalize selectedLetter: empty string becomes null for the filter logic
   const normalizedLetter = selectedLetter === '' ? null : selectedLetter
 
+  // Check if we should skip queries (loading or template ID)
+  const shouldSkipQueries = parentLoading || libraryId.startsWith('template')
+
   // Handle sort change from DataTable
   const handleSortChange = useCallback((column: string, direction: 'asc' | 'desc') => {
     setSortColumn(column)
@@ -97,6 +100,7 @@ export function LibraryTracksTab({ libraryId, loading: parentLoading }: LibraryT
     variables: queryVariables,
     getConnection: (data) => data.tracksConnection,
     batchSize: 50,
+    enabled: !shouldSkipQueries,
     deps: [libraryId, searchTerm],
   })
 
@@ -205,6 +209,7 @@ export function LibraryTracksTab({ libraryId, loading: parentLoading }: LibraryT
       <div className="flex-1 min-h-0">
         <DataTable
           stateKey="library-tracks"
+          skeletonDelay={500}
           data={filteredTracks}
           columns={columns}
           getRowKey={(track) => track.id}

@@ -7,7 +7,15 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+#[cfg(feature = "postgres")]
 use sqlx::PgPool;
+#[cfg(feature = "sqlite")]
+use sqlx::SqlitePool;
+
+#[cfg(feature = "postgres")]
+type DbPool = PgPool;
+#[cfg(feature = "sqlite")]
+type DbPool = SqlitePool;
 
 use crate::tui::input::Action;
 use crate::tui::panels::Panel;
@@ -35,7 +43,7 @@ pub fn create_shared_table_counts() -> SharedTableCounts {
 }
 
 /// Spawn a background task to update table counts
-pub fn spawn_table_counts_updater(pool: PgPool, counts: SharedTableCounts) {
+pub fn spawn_table_counts_updater(pool: DbPool, counts: SharedTableCounts) {
     tokio::spawn(async move {
         loop {
             let new_counts = fetch_all_table_counts(&pool).await;
@@ -48,7 +56,7 @@ pub fn spawn_table_counts_updater(pool: PgPool, counts: SharedTableCounts) {
 }
 
 /// Fetch counts for all tables from database
-async fn fetch_all_table_counts(pool: &PgPool) -> TableCounts {
+async fn fetch_all_table_counts(pool: &DbPool) -> TableCounts {
     // Get all table names from the database schema
     let table_names = vec![
         "albums",
@@ -109,13 +117,13 @@ async fn fetch_all_table_counts(pool: &PgPool) -> TableCounts {
 
 /// Database panel showing connection pool stats and table counts
 pub struct DatabasePanel {
-    pool: PgPool,
+    pool: DbPool,
     table_counts: SharedTableCounts,
     list_state: ListState,
 }
 
 impl DatabasePanel {
-    pub fn new(pool: PgPool, table_counts: SharedTableCounts) -> Self {
+    pub fn new(pool: DbPool, table_counts: SharedTableCounts) -> Self {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
         Self {
@@ -241,7 +249,7 @@ impl Panel for DatabasePanel {
 fn render_pool_stats(
     frame: &mut Frame,
     area: Rect,
-    pool: &PgPool,
+    pool: &DbPool,
     border_style: ratatui::style::Style,
 ) {
     let pool_size = pool.size();

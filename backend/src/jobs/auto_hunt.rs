@@ -8,8 +8,16 @@
 
 use anyhow::Result;
 use regex::Regex;
+#[cfg(feature = "postgres")]
 use sqlx::PgPool;
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+use sqlx::SqlitePool;
 use std::sync::Arc;
+
+#[cfg(feature = "postgres")]
+type DbPool = PgPool;
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+type DbPool = SqlitePool;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
@@ -667,7 +675,7 @@ pub struct HuntResult {
 
 /// Main auto-hunt job entry point
 pub async fn run_auto_hunt(
-    pool: PgPool,
+    pool: DbPool,
     torrent_service: Arc<TorrentService>,
     indexer_manager: Arc<IndexerManager>,
 ) -> Result<()> {
@@ -960,6 +968,7 @@ pub async fn hunt_single_movie(
 }
 
 /// Hunt for missing movies implementation
+#[cfg(feature = "postgres")]
 async fn hunt_movies_impl(
     db: &Database,
     library: &LibraryRecord,
@@ -1193,6 +1202,242 @@ async fn hunt_movies_impl(
     Ok(result)
 }
 
+/// Hunt for missing movies implementation (SQLite version)
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn hunt_movies_impl(
+    db: &Database,
+    library: &LibraryRecord,
+    torrent_service: &Arc<TorrentService>,
+    indexer_manager: &Arc<IndexerManager>,
+) -> Result<HuntResult> {
+    use crate::db::sqlite_helpers::uuid_to_str;
+    
+    info!(
+        job = "auto_hunt",
+        library_id = %library.id,
+        library_name = %library.name,
+        "Hunting for missing movies in '{}'",
+        library.name
+    );
+
+    // First, check if there are any active downloads for movies in this library
+    let active_movie_downloads: i32 = sqlx::query_scalar(
+        r#"SELECT COUNT(DISTINCT pfm.movie_id) FROM pending_file_matches pfm
+           JOIN torrents t ON t.id = pfm.source_id AND pfm.source_type = 'torrent'
+           JOIN movies m ON m.id = pfm.movie_id
+           WHERE m.library_id = ?1 
+           AND pfm.movie_id IS NOT NULL 
+           AND pfm.copied_at IS NULL
+           AND t.state NOT IN ('removed', 'error')"#,
+    )
+    .bind(uuid_to_str(library.id))
+    .fetch_one(db.pool())
+    .await
+    .unwrap_or(0);
+
+    if active_movie_downloads > 0 {
+        debug!(
+            job = "auto_hunt",
+            library_name = %library.name,
+            active_downloads = active_movie_downloads,
+            "Found active downloads for movies in this library"
+        );
+    }
+
+    // Debug: Get all movies in this library to understand state
+    let all_movies: Vec<(String, bool, bool)> =
+        sqlx::query_as(r#"SELECT title, monitored, (media_file_id IS NOT NULL) as has_file FROM movies WHERE library_id = ?1"#)
+            .bind(uuid_to_str(library.id))
+            .fetch_all(db.pool())
+            .await
+            .unwrap_or_default();
+
+    for (title, monitored, has_file) in &all_movies {
+        debug!(
+            job = "auto_hunt",
+            library_name = %library.name,
+            movie_title = %title,
+            monitored = monitored,
+            has_file = has_file,
+            "Movie state"
+        );
+    }
+
+    // Get monitored movies without files (media_file_id IS NULL = no file linked)
+    let movies: Vec<MovieRecord> = sqlx::query_as(
+        r#"
+        SELECT id, library_id, user_id, title, sort_title, original_title, year,
+               tmdb_id, imdb_id, overview, tagline, runtime, genres,
+               production_countries, spoken_languages, director, cast_names,
+               tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
+               collection_id, collection_name, collection_poster_url,
+               release_date, certification, status, monitored,
+               media_file_id, created_at, updated_at
+        FROM movies
+        WHERE library_id = ?1
+          AND monitored = 1
+          AND media_file_id IS NULL
+        ORDER BY created_at DESC
+        LIMIT ?2
+        "#,
+    )
+    .bind(uuid_to_str(library.id))
+    .bind(MAX_HUNT_PER_RUN as i32)
+    .fetch_all(db.pool())
+    .await?;
+
+    if movies.is_empty() {
+        info!(
+            job = "auto_hunt",
+            library_name = %library.name,
+            total_movies = all_movies.len(),
+            "No missing monitored movies found (all movies either have files or are not monitored)"
+        );
+        return Ok(HuntResult::default());
+    }
+
+    info!(
+        job = "auto_hunt",
+        library_name = %library.name,
+        movie_count = movies.len(),
+        "Found missing movies to hunt"
+    );
+
+    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_SEARCHES));
+    let mut result = HuntResult::default();
+
+    for movie in movies {
+        let _permit = semaphore.acquire().await?;
+        result.searched += 1;
+
+        let quality_settings = EffectiveQualitySettings::from_library_and_movie(library, &movie);
+
+        // Build search query
+        let search_term = if let Some(year) = movie.year {
+            format!("{} {}", movie.title, year)
+        } else {
+            movie.title.clone()
+        };
+
+        let mut query = TorznabQuery::movie_search(&search_term);
+        query.categories = categories::movies_all();
+        query.year = movie.year;
+
+        // Add IMDB ID if available for more accurate search
+        if let Some(ref imdb_id) = movie.imdb_id {
+            query.imdb_id = Some(imdb_id.clone());
+        }
+
+        // Add TMDB ID if available
+        if let Some(tmdb_id) = movie.tmdb_id {
+            query.tmdb_id = Some(tmdb_id);
+        }
+
+        info!(
+            job = "auto_hunt",
+            movie_title = %movie.title,
+            movie_year = ?movie.year,
+            imdb_id = ?movie.imdb_id,
+            "Searching for movie"
+        );
+
+        // Search all indexers
+        let search_results = indexer_manager.search_all(&query).await;
+
+        let mut all_releases: Vec<ReleaseInfo> = Vec::new();
+        for indexer_result in search_results {
+            if let Some(ref error) = indexer_result.error {
+                warn!(
+                    job = "auto_hunt",
+                    indexer_name = %indexer_result.indexer_name,
+                    error = %error,
+                    "Indexer search failed"
+                );
+                continue;
+            }
+            all_releases.extend(indexer_result.releases);
+        }
+
+        if all_releases.is_empty() {
+            debug!(
+                job = "auto_hunt",
+                movie_title = %movie.title,
+                "No releases found"
+            );
+            result.skipped += 1;
+            continue;
+        }
+
+        info!(
+            job = "auto_hunt",
+            movie_title = %movie.title,
+            release_count = all_releases.len(),
+            "Found releases, selecting best match"
+        );
+
+        // Select best release based on quality settings
+        if let Some(best) = select_best_release(&all_releases, &quality_settings) {
+            result.matched += 1;
+
+            info!(
+                job = "auto_hunt",
+                movie_title = %movie.title,
+                release_title = %best.title,
+                seeders = ?best.seeders,
+                indexer = ?best.indexer_name,
+                "Downloading best match via indexer"
+            );
+
+            // Download using the indexer's authentication
+            match download_release(best, torrent_service, indexer_manager, Some(library.user_id)).await {
+                Ok(torrent_info) => {
+                    info!(
+                        job = "auto_hunt",
+                        movie_title = %movie.title,
+                        torrent_id = torrent_info.id,
+                        torrent_name = %torrent_info.name,
+                        "Successfully started download"
+                    );
+
+                    // Create file-level matches for the movie
+                    if let Err(e) = create_file_matches_for_movie(db, &torrent_info, movie.id).await
+                    {
+                        error!(
+                            job = "auto_hunt",
+                            movie_title = %movie.title,
+                            error = %e,
+                            "Failed to create file matches for movie"
+                        );
+                    }
+
+                    result.downloaded += 1;
+                }
+                Err(e) => {
+                    error!(
+                        job = "auto_hunt",
+                        movie_title = %movie.title,
+                        error = %e,
+                        "Failed to start download"
+                    );
+                    result.failed += 1;
+                }
+            }
+        } else {
+            debug!(
+                job = "auto_hunt",
+                movie_title = %movie.title,
+                "No releases matched quality settings"
+            );
+            result.skipped += 1;
+        }
+
+        // Delay between searches
+        tokio::time::sleep(Duration::from_millis(SEARCH_BATCH_DELAY_MS)).await;
+    }
+
+    Ok(result)
+}
+
 /// Hunt for missing TV episodes (internal)
 async fn hunt_tv_episodes(
     db: &Database,
@@ -1214,7 +1459,8 @@ pub async fn hunt_tv_for_library(
     hunt_tv_episodes_impl(db, library, torrent_service, indexer_manager).await
 }
 
-/// Hunt for missing TV episodes implementation
+/// Hunt for missing TV episodes implementation (PostgreSQL)
+#[cfg(feature = "postgres")]
 async fn hunt_tv_episodes_impl(
     db: &Database,
     library: &LibraryRecord,
@@ -1351,6 +1597,171 @@ async fn hunt_tv_episodes_impl(
                         );
 
                         // Create file-level matches for the episode
+                        if let Err(e) =
+                            create_file_matches_for_episode(db, &torrent_info, episode_id).await
+                        {
+                            error!(job = "auto_hunt", error = %e, "Failed to create file matches for episode");
+                        }
+
+                        result.downloaded += 1;
+                    }
+                    Err(e) => {
+                        error!(
+                            job = "auto_hunt",
+                            show_name = %show.name,
+                            error = %e,
+                            "Failed to start download"
+                        );
+                        result.failed += 1;
+                    }
+                }
+            } else {
+                result.skipped += 1;
+            }
+
+            tokio::time::sleep(Duration::from_millis(SEARCH_BATCH_DELAY_MS)).await;
+        }
+    }
+
+    Ok(result)
+}
+
+/// Hunt for missing TV episodes implementation (SQLite)
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+async fn hunt_tv_episodes_impl(
+    db: &Database,
+    library: &LibraryRecord,
+    torrent_service: &Arc<TorrentService>,
+    indexer_manager: &Arc<IndexerManager>,
+) -> Result<HuntResult> {
+    use crate::db::sqlite_helpers::uuid_to_str;
+    
+    info!(
+        job = "auto_hunt",
+        library_id = %library.id,
+        library_name = %library.name,
+        "Hunting for missing TV episodes"
+    );
+
+    // Get monitored shows with auto_hunt enabled (via override or library default)
+    let shows: Vec<TvShowRecord> = sqlx::query_as(
+        r#"
+        SELECT id, library_id, user_id, name, sort_name, year, status,
+               tvmaze_id, tmdb_id, tvdb_id, imdb_id, overview, network, runtime,
+               genres, poster_url, backdrop_url, monitored, monitor_type, path,
+               auto_download_override, backfill_existing, organize_files_override,
+               rename_style_override, auto_hunt_override, episode_count,
+               episode_file_count, size_bytes, created_at, updated_at,
+               allowed_resolutions_override, allowed_video_codecs_override,
+               allowed_audio_formats_override, require_hdr_override,
+               allowed_hdr_types_override, allowed_sources_override,
+               release_group_blacklist_override, release_group_whitelist_override
+        FROM tv_shows
+        WHERE library_id = ?1
+          AND monitored = 1
+          AND (auto_hunt_override = 1 OR (auto_hunt_override IS NULL AND ?2 = 1))
+        "#,
+    )
+    .bind(uuid_to_str(library.id))
+    .bind(if library.auto_hunt { 1 } else { 0 })
+    .fetch_all(db.pool())
+    .await?;
+
+    let mut result = HuntResult::default();
+    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_SEARCHES));
+
+    for show in shows {
+        // Get missing episodes for this show
+        let episodes: Vec<(String, i32, i32)> = sqlx::query_as(
+            r#"
+            SELECT id, season, episode
+            FROM episodes
+            WHERE tv_show_id = ?1
+              AND media_file_id IS NULL
+            ORDER BY season, episode
+            LIMIT ?2
+            "#,
+        )
+        .bind(uuid_to_str(show.id))
+        .bind(MAX_HUNT_PER_RUN as i32)
+        .fetch_all(db.pool())
+        .await?;
+
+        if episodes.is_empty() {
+            continue;
+        }
+
+        info!(
+            job = "auto_hunt",
+            show_name = %show.name,
+            episode_count = episodes.len(),
+            "Found {} missing episodes to hunt for '{}'",
+            episodes.len(), show.name
+        );
+
+        let quality_settings = EffectiveQualitySettings::from_library_and_show(library, &show);
+
+        for (episode_id_str, season, episode) in episodes {
+            let episode_id = Uuid::parse_str(&episode_id_str)?;
+            let _permit = semaphore.acquire().await?;
+            result.searched += 1;
+
+            // Build search query
+            let search_term = format!("{} S{:02}E{:02}", show.name, season, episode);
+            let mut query = TorznabQuery::tv_search(&show.name);
+            query.season = Some(season);
+            query.episode = Some(format!("{:02}", episode));
+            query.categories = categories::tv_all();
+
+            // Add IDs if available
+            if let Some(imdb_id) = &show.imdb_id {
+                query.imdb_id = Some(imdb_id.clone());
+            }
+            if let Some(tvdb_id) = show.tvdb_id {
+                query.tvdb_id = Some(tvdb_id);
+            }
+            if let Some(tmdb_id) = show.tmdb_id {
+                query.tmdb_id = Some(tmdb_id);
+            }
+
+            info!(
+                job = "auto_hunt",
+                show_name = %show.name,
+                search_term = %search_term,
+                "Searching for episode '{}'",
+                search_term
+            );
+
+            let search_results = indexer_manager.search_all(&query).await;
+
+            let mut all_releases: Vec<ReleaseInfo> = Vec::new();
+            for indexer_result in search_results {
+                if indexer_result.error.is_none() {
+                    all_releases.extend(indexer_result.releases);
+                }
+            }
+
+            if all_releases.is_empty() {
+                result.skipped += 1;
+                continue;
+            }
+
+            if let Some(best) = select_best_release(&all_releases, &quality_settings) {
+                result.matched += 1;
+
+                let add_result = download_release(best, torrent_service, indexer_manager, Some(library.user_id)).await;
+
+                match add_result {
+                    Ok(torrent_info) => {
+                        info!(
+                            job = "auto_hunt",
+                            show_name = %show.name,
+                            season = season,
+                            episode = episode,
+                            torrent_name = %torrent_info.name,
+                            "Successfully started episode download"
+                        );
+
                         if let Err(e) =
                             create_file_matches_for_episode(db, &torrent_info, episode_id).await
                         {
@@ -2556,12 +2967,13 @@ fn score_audiobook_releases<'a>(
     scored
 }
 
-/// Run auto-hunt for a single library
+/// Run auto-hunt for a single library (PostgreSQL version)
 ///
 /// This is called after library scans complete or can be triggered manually.
 /// It respects the library's auto_hunt setting.
+#[cfg(feature = "postgres")]
 pub async fn run_auto_hunt_for_library(
-    pool: PgPool,
+    pool: DbPool,
     library_id: Uuid,
     torrent_service: Arc<TorrentService>,
     indexer_manager: Arc<IndexerManager>,
@@ -2606,6 +3018,137 @@ pub async fn run_auto_hunt_for_library(
         .fetch_one(db.pool())
         .await
         .unwrap_or(false)
+    } else {
+        false
+    };
+
+    if !library.auto_hunt && !has_show_overrides {
+        debug!(
+            job = "auto_hunt",
+            library_id = %library_id,
+            library_name = %library.name,
+            "Library does not have auto_hunt enabled and no show overrides, skipping"
+        );
+        return Ok(HuntResult::default());
+    }
+
+    info!(
+        job = "auto_hunt",
+        library_id = %library_id,
+        library_name = %library.name,
+        library_type = %library.library_type,
+        has_show_overrides = has_show_overrides,
+        "Running auto-hunt for library after scan"
+    );
+
+    // Load indexers for this library's user
+    if let Err(e) = indexer_manager.load_user_indexers(library.user_id).await {
+        warn!(
+            job = "auto_hunt",
+            library_id = %library_id,
+            user_id = %library.user_id,
+            error = %e,
+            "Failed to load indexers for user"
+        );
+        return Ok(HuntResult::default());
+    }
+
+    // Run hunt based on library type (case-insensitive)
+    let result = match library.library_type.to_lowercase().as_str() {
+        "movies" => hunt_movies(&db, &library, &torrent_service, &indexer_manager).await,
+        "tv" => hunt_tv_episodes(&db, &library, &torrent_service, &indexer_manager).await,
+        "music" => hunt_music(&db, &library, &torrent_service, &indexer_manager).await,
+        "audiobooks" => hunt_audiobooks(&db, &library, &torrent_service, &indexer_manager).await,
+        _ => {
+            debug!(
+                job = "auto_hunt",
+                library_type = %library.library_type,
+                "Unsupported library type for auto-hunt"
+            );
+            Ok(HuntResult::default())
+        }
+    };
+
+    match &result {
+        Ok(r) => {
+            info!(
+                job = "auto_hunt",
+                library_id = %library_id,
+                library_name = %library.name,
+                searched = r.searched,
+                matched = r.matched,
+                downloaded = r.downloaded,
+                skipped = r.skipped,
+                failed = r.failed,
+                "Auto-hunt complete for '{}': {} searched, {} matched, {} downloaded",
+                library.name, r.searched, r.matched, r.downloaded
+            );
+        }
+        Err(e) => {
+            error!(
+                job = "auto_hunt",
+                library_id = %library_id,
+                library_name = %library.name,
+                error = %e,
+                "Auto-hunt for library failed"
+            );
+        }
+    }
+
+    result
+}
+
+/// Run auto-hunt for a single library (SQLite version)
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub async fn run_auto_hunt_for_library(
+    pool: DbPool,
+    library_id: Uuid,
+    torrent_service: Arc<TorrentService>,
+    indexer_manager: Arc<IndexerManager>,
+) -> Result<HuntResult> {
+    use crate::db::sqlite_helpers::uuid_to_str;
+    
+    let db = Database::new(pool);
+
+    // Get the library
+    let library: Option<LibraryRecord> = sqlx::query_as(
+        r#"
+        SELECT id, user_id, name, path, library_type, icon, color,
+               auto_scan, scan_interval_minutes, watch_for_changes,
+               post_download_action, organize_files, rename_style, naming_pattern,
+               auto_add_discovered, auto_download, auto_hunt,
+               scanning, last_scanned_at, created_at, updated_at,
+               allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
+               require_hdr, allowed_hdr_types, allowed_sources,
+               release_group_blacklist, release_group_whitelist,
+               auto_download_subtitles, preferred_subtitle_languages
+        FROM libraries
+        WHERE id = ?1
+        "#,
+    )
+    .bind(uuid_to_str(library_id))
+    .fetch_optional(db.pool())
+    .await?;
+
+    let Some(library) = library else {
+        warn!(
+            job = "auto_hunt",
+            library_id = %library_id,
+            "Library not found"
+        );
+        return Ok(HuntResult::default());
+    };
+
+    // Check if auto_hunt should run (library-level or show-level overrides)
+    let has_show_overrides = if library.library_type.to_lowercase() == "tv" {
+        let result: Option<i32> = sqlx::query_scalar(
+            "SELECT 1 FROM tv_shows WHERE library_id = ?1 AND auto_hunt_override = 1 AND monitored = 1 LIMIT 1"
+        )
+        .bind(uuid_to_str(library_id))
+        .fetch_optional(db.pool())
+        .await
+        .unwrap_or(None);
+        result.is_some()
     } else {
         false
     };

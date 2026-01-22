@@ -1,4 +1,4 @@
-import React, { useState, useRef, useLayoutEffect, useMemo, Children, cloneElement, isValidElement } from 'react'
+import React, { useState, useRef, useLayoutEffect, useMemo, useEffect, Children, cloneElement, isValidElement } from 'react'
 
 interface ShimmerRect {
   x: number
@@ -20,6 +20,8 @@ interface ShimmerLoaderProps {
   duration?: number
   /** Fallback border radius for elements with no CSS border-radius */
   fallbackBorderRadius?: number
+  /** Delay in ms before showing shimmer (avoids flash for fast loads) */
+  delay?: number
 }
 
 /**
@@ -75,10 +77,33 @@ export function ShimmerLoader({
   backgroundColor = 'rgba(255, 255, 255, 0.04)',
   duration = 1.5,
   fallbackBorderRadius = 8,
+  delay = 0,
 }: ShimmerLoaderProps) {
   const [rects, setRects] = useState<ShimmerRect[]>([])
+  const [showShimmer, setShowShimmer] = useState(delay === 0)
   const measureRef = useRef<HTMLDivElement>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
+
+  // Handle delayed shimmer display
+  useEffect(() => {
+    if (!loading) {
+      // Reset when loading stops
+      setShowShimmer(delay === 0)
+      return
+    }
+
+    if (delay === 0) {
+      setShowShimmer(true)
+      return
+    }
+
+    // Start timer to show shimmer after delay
+    const timer = setTimeout(() => {
+      setShowShimmer(true)
+    }, delay)
+
+    return () => clearTimeout(timer)
+  }, [loading, delay])
 
   // Inject templateProps into the first child when loading
   const childrenWithProps = useMemo(() => {
@@ -120,6 +145,11 @@ export function ShimmerLoader({
 
   if (!loading) {
     return <>{children}</>
+  }
+
+  // If loading but delay hasn't passed, render nothing (no flash)
+  if (!showShimmer) {
+    return null
   }
 
   return (

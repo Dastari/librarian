@@ -116,8 +116,14 @@ export function LibraryAuthorsTab({
   const [audiobooks, setAudiobooks] = useState<Audiobook[]>([])
   const [audiobooksLoading, setAudiobooksLoading] = useState(true)
 
+  // Check if we should skip queries (loading or template ID)
+  const shouldSkipQueries = parentLoading || libraryId.startsWith('template')
+
   // Fetch audiobooks for counting (still load all for accurate counts)
   useEffect(() => {
+    if (shouldSkipQueries) {
+      return
+    }
     const fetchAudiobooks = async () => {
       try {
         const result = await graphqlClient
@@ -133,7 +139,7 @@ export function LibraryAuthorsTab({
       }
     }
     fetchAudiobooks()
-  }, [libraryId])
+  }, [libraryId, shouldSkipQueries])
 
   // Map column keys to GraphQL sort fields
   const sortFieldMap: Record<string, string> = {
@@ -175,6 +181,7 @@ export function LibraryAuthorsTab({
     variables: queryVariables,
     getConnection: (data) => data.audiobookAuthorsConnection,
     batchSize: 50,
+    enabled: !shouldSkipQueries,
     deps: [libraryId, searchTerm],
   })
 
@@ -269,6 +276,7 @@ export function LibraryAuthorsTab({
       <div className="flex-1 min-h-0">
         <DataTable
           stateKey="library-authors"
+          skeletonDelay={500}
           data={filteredAuthors}
           columns={columns}
           getRowKey={(author) => author.id}

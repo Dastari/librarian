@@ -233,4 +233,111 @@ impl MovieMutations {
             }),
         }
     }
+
+    /// Refresh metadata for a movie (re-fetches from TMDB and caches artwork)
+    async fn refresh_movie(&self, ctx: &Context<'_>, id: String) -> Result<MovieResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        let movie_id = Uuid::parse_str(&id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid movie ID: {}", e)))?;
+
+        let movie = db
+            .movies()
+            .get_by_id(movie_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            .ok_or_else(|| async_graphql::Error::new("Movie not found"))?;
+
+        // Get TMDB ID
+        let tmdb_id = match movie.tmdb_id {
+            Some(id) => id as u32,
+            None => {
+                return Ok(MovieResult {
+                    success: false,
+                    movie: None,
+                    error: Some("No TMDB ID found for movie".to_string()),
+                });
+            }
+        };
+
+        // Fetch fresh movie details from TMDB
+        let movie_details = metadata
+            .get_movie(tmdb_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        // Cache artwork if artwork service is available
+        let (cached_poster_url, cached_backdrop_url) =
+            if let Some(artwork_service) = metadata.artwork_service() {
+                let entity_id = format!("{}_{}", tmdb_id, movie.library_id);
+
+                let poster_url = artwork_service
+                    .cache_image_optional(
+                        movie_details.poster_url.as_deref(),
+                        crate::services::artwork::ArtworkType::Poster,
+                        "movie",
+                        &entity_id,
+                    )
+                    .await;
+
+                let backdrop_url = artwork_service
+                    .cache_image_optional(
+                        movie_details.backdrop_url.as_deref(),
+                        crate::services::artwork::ArtworkType::Backdrop,
+                        "movie",
+                        &entity_id,
+                    )
+                    .await;
+
+                tracing::info!(
+                    movie_id = %movie_id,
+                    movie_title = %movie.title,
+                    poster_cached = poster_url.is_some(),
+                    backdrop_cached = backdrop_url.is_some(),
+                    "Refreshed movie artwork caching"
+                );
+
+                (poster_url, backdrop_url)
+            } else {
+                (
+                    movie_details.poster_url.clone(),
+                    movie_details.backdrop_url.clone(),
+                )
+            };
+
+        // Update movie metadata including artwork
+        let update = crate::db::UpdateMovie {
+            title: Some(movie_details.title),
+            original_title: movie_details.original_title,
+            overview: movie_details.overview,
+            tagline: movie_details.tagline,
+            runtime: movie_details.runtime,
+            genres: Some(movie_details.genres),
+            director: movie_details.director,
+            cast_names: Some(movie_details.cast_names),
+            poster_url: cached_poster_url,
+            backdrop_url: cached_backdrop_url,
+            ..Default::default()
+        };
+
+        match db.movies().update(movie_id, update).await {
+            Ok(Some(record)) => Ok(MovieResult {
+                success: true,
+                movie: Some(movie_record_to_graphql(record)),
+                error: None,
+            }),
+            Ok(None) => Ok(MovieResult {
+                success: false,
+                movie: None,
+                error: Some("Movie not found after update".to_string()),
+            }),
+            Err(e) => Ok(MovieResult {
+                success: false,
+                movie: None,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
 }

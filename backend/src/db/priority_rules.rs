@@ -6,8 +6,22 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
+
+#[cfg(feature = "postgres")]
+use sqlx::PgPool;
+#[cfg(feature = "sqlite")]
+use sqlx::SqlitePool;
+
+#[cfg(feature = "sqlite")]
+use crate::db::sqlite_helpers::{
+    bool_to_int, from_json, int_to_bool, str_to_datetime, str_to_uuid, to_json, uuid_to_str,
+};
+
+#[cfg(feature = "postgres")]
+type DbPool = PgPool;
+#[cfg(feature = "sqlite")]
+type DbPool = SqlitePool;
 
 /// Source type enum for priority ordering
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,17 +61,79 @@ pub struct SourceRef {
 }
 
 /// Source priority rule record from database
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone)]
 pub struct PriorityRuleRecord {
     pub id: Uuid,
     pub user_id: Uuid,
     pub library_type: Option<String>,
     pub library_id: Option<Uuid>,
-    pub priority_order: sqlx::types::Json<Vec<SourceRef>>,
+    pub priority_order: Vec<SourceRef>,
     pub search_all_sources: bool,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[cfg(feature = "postgres")]
+impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for PriorityRuleRecord {
+    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
+        use sqlx::Row;
+        use time::OffsetDateTime;
+
+        fn offset_to_chrono(odt: OffsetDateTime) -> DateTime<Utc> {
+            DateTime::from_timestamp(odt.unix_timestamp(), odt.nanosecond()).unwrap_or_default()
+        }
+
+        let priority_order: sqlx::types::Json<Vec<SourceRef>> = row.try_get("priority_order")?;
+        let created_at: OffsetDateTime = row.try_get("created_at")?;
+        let updated_at: OffsetDateTime = row.try_get("updated_at")?;
+
+        Ok(Self {
+            id: row.try_get("id")?,
+            user_id: row.try_get("user_id")?,
+            library_type: row.try_get("library_type")?,
+            library_id: row.try_get("library_id")?,
+            priority_order: priority_order.0,
+            search_all_sources: row.try_get("search_all_sources")?,
+            enabled: row.try_get("enabled")?,
+            created_at: offset_to_chrono(created_at),
+            updated_at: offset_to_chrono(updated_at),
+        })
+    }
+}
+
+#[cfg(feature = "sqlite")]
+impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for PriorityRuleRecord {
+    fn from_row(row: &sqlx::sqlite::SqliteRow) -> sqlx::Result<Self> {
+        use sqlx::Row;
+
+        let id_str: String = row.try_get("id")?;
+        let user_id_str: String = row.try_get("user_id")?;
+        let library_id_str: Option<String> = row.try_get("library_id")?;
+        let priority_order_json: String = row.try_get("priority_order")?;
+        let search_all_sources_int: i32 = row.try_get("search_all_sources")?;
+        let enabled_int: i32 = row.try_get("enabled")?;
+        let created_at_str: String = row.try_get("created_at")?;
+        let updated_at_str: String = row.try_get("updated_at")?;
+
+        Ok(Self {
+            id: str_to_uuid(&id_str).map_err(|e| sqlx::Error::Decode(e.into()))?,
+            user_id: str_to_uuid(&user_id_str).map_err(|e| sqlx::Error::Decode(e.into()))?,
+            library_type: row.try_get("library_type")?,
+            library_id: library_id_str
+                .map(|s| str_to_uuid(&s))
+                .transpose()
+                .map_err(|e| sqlx::Error::Decode(e.into()))?,
+            priority_order: from_json(&priority_order_json)
+                .map_err(|e| sqlx::Error::Decode(e.into()))?,
+            search_all_sources: int_to_bool(search_all_sources_int),
+            enabled: int_to_bool(enabled_int),
+            created_at: str_to_datetime(&created_at_str)
+                .map_err(|e| sqlx::Error::Decode(e.into()))?,
+            updated_at: str_to_datetime(&updated_at_str)
+                .map_err(|e| sqlx::Error::Decode(e.into()))?,
+        })
+    }
 }
 
 /// Data for creating a new priority rule
@@ -80,16 +156,17 @@ pub struct UpdatePriorityRule {
 
 /// Priority rules database repository
 pub struct PriorityRulesRepository {
-    pool: PgPool,
+    pool: DbPool,
 }
 
 impl PriorityRulesRepository {
     /// Create a new repository instance
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
 
     /// Get a priority rule by ID
+    #[cfg(feature = "postgres")]
     pub async fn get(&self, id: Uuid) -> Result<Option<PriorityRuleRecord>> {
         let record = sqlx::query_as::<_, PriorityRuleRecord>(
             r#"
@@ -106,7 +183,25 @@ impl PriorityRulesRepository {
         Ok(record)
     }
 
+    #[cfg(feature = "sqlite")]
+    pub async fn get(&self, id: Uuid) -> Result<Option<PriorityRuleRecord>> {
+        let record = sqlx::query_as::<_, PriorityRuleRecord>(
+            r#"
+            SELECT id, user_id, library_type, library_id, priority_order,
+                   search_all_sources, enabled, created_at, updated_at
+            FROM source_priority_rules
+            WHERE id = ?1
+            "#,
+        )
+        .bind(uuid_to_str(id))
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(record)
+    }
+
     /// Get all priority rules for a user
+    #[cfg(feature = "postgres")]
     pub async fn list_by_user(&self, user_id: Uuid) -> Result<Vec<PriorityRuleRecord>> {
         let records = sqlx::query_as::<_, PriorityRuleRecord>(
             r#"
@@ -128,7 +223,30 @@ impl PriorityRulesRepository {
         Ok(records)
     }
 
+    #[cfg(feature = "sqlite")]
+    pub async fn list_by_user(&self, user_id: Uuid) -> Result<Vec<PriorityRuleRecord>> {
+        let records = sqlx::query_as::<_, PriorityRuleRecord>(
+            r#"
+            SELECT id, user_id, library_type, library_id, priority_order,
+                   search_all_sources, enabled, created_at, updated_at
+            FROM source_priority_rules
+            WHERE user_id = ?1
+            ORDER BY 
+                CASE WHEN library_id IS NOT NULL THEN 0
+                     WHEN library_type IS NOT NULL THEN 1
+                     ELSE 2 END,
+                library_type
+            "#,
+        )
+        .bind(uuid_to_str(user_id))
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(records)
+    }
+
     /// Get a user's default priority rule (no library_type or library_id)
+    #[cfg(feature = "postgres")]
     pub async fn get_user_default(&self, user_id: Uuid) -> Result<Option<PriorityRuleRecord>> {
         let record = sqlx::query_as::<_, PriorityRuleRecord>(
             r#"
@@ -148,7 +266,28 @@ impl PriorityRulesRepository {
         Ok(record)
     }
 
+    #[cfg(feature = "sqlite")]
+    pub async fn get_user_default(&self, user_id: Uuid) -> Result<Option<PriorityRuleRecord>> {
+        let record = sqlx::query_as::<_, PriorityRuleRecord>(
+            r#"
+            SELECT id, user_id, library_type, library_id, priority_order,
+                   search_all_sources, enabled, created_at, updated_at
+            FROM source_priority_rules
+            WHERE user_id = ?1
+              AND library_type IS NULL
+              AND library_id IS NULL
+              AND enabled = 1
+            "#,
+        )
+        .bind(uuid_to_str(user_id))
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(record)
+    }
+
     /// Get a priority rule by library type (e.g., "tv", "movies")
+    #[cfg(feature = "postgres")]
     pub async fn get_by_library_type(
         &self,
         user_id: Uuid,
@@ -173,7 +312,33 @@ impl PriorityRulesRepository {
         Ok(record)
     }
 
+    #[cfg(feature = "sqlite")]
+    pub async fn get_by_library_type(
+        &self,
+        user_id: Uuid,
+        library_type: &str,
+    ) -> Result<Option<PriorityRuleRecord>> {
+        let record = sqlx::query_as::<_, PriorityRuleRecord>(
+            r#"
+            SELECT id, user_id, library_type, library_id, priority_order,
+                   search_all_sources, enabled, created_at, updated_at
+            FROM source_priority_rules
+            WHERE user_id = ?1
+              AND library_type = ?2
+              AND library_id IS NULL
+              AND enabled = 1
+            "#,
+        )
+        .bind(uuid_to_str(user_id))
+        .bind(library_type)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(record)
+    }
+
     /// Get a priority rule by specific library
+    #[cfg(feature = "postgres")]
     pub async fn get_by_library(
         &self,
         user_id: Uuid,
@@ -191,6 +356,30 @@ impl PriorityRulesRepository {
         )
         .bind(user_id)
         .bind(library_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(record)
+    }
+
+    #[cfg(feature = "sqlite")]
+    pub async fn get_by_library(
+        &self,
+        user_id: Uuid,
+        library_id: Uuid,
+    ) -> Result<Option<PriorityRuleRecord>> {
+        let record = sqlx::query_as::<_, PriorityRuleRecord>(
+            r#"
+            SELECT id, user_id, library_type, library_id, priority_order,
+                   search_all_sources, enabled, created_at, updated_at
+            FROM source_priority_rules
+            WHERE user_id = ?1
+              AND library_id = ?2
+              AND enabled = 1
+            "#,
+        )
+        .bind(uuid_to_str(user_id))
+        .bind(uuid_to_str(library_id))
         .fetch_optional(&self.pool)
         .await?;
 
@@ -228,6 +417,7 @@ impl PriorityRulesRepository {
     }
 
     /// Create a new priority rule
+    #[cfg(feature = "postgres")]
     pub async fn create(&self, data: CreatePriorityRule) -> Result<PriorityRuleRecord> {
         let record = sqlx::query_as::<_, PriorityRuleRecord>(
             r#"
@@ -250,7 +440,39 @@ impl PriorityRulesRepository {
         Ok(record)
     }
 
+    #[cfg(feature = "sqlite")]
+    pub async fn create(&self, data: CreatePriorityRule) -> Result<PriorityRuleRecord> {
+        let id = Uuid::new_v4();
+        let id_str = uuid_to_str(id);
+        let user_id_str = uuid_to_str(data.user_id);
+        let library_id_str = data.library_id.map(uuid_to_str);
+        let priority_order_json = to_json(&data.priority_order);
+
+        sqlx::query(
+            r#"
+            INSERT INTO source_priority_rules (
+                id, user_id, library_type, library_id, priority_order, 
+                search_all_sources, enabled, created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, datetime('now'), datetime('now'))
+            "#,
+        )
+        .bind(&id_str)
+        .bind(&user_id_str)
+        .bind(&data.library_type)
+        .bind(&library_id_str)
+        .bind(&priority_order_json)
+        .bind(bool_to_int(data.search_all_sources))
+        .execute(&self.pool)
+        .await?;
+
+        self.get(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Failed to create priority rule"))
+    }
+
     /// Update a priority rule
+    #[cfg(feature = "postgres")]
     pub async fn update(&self, id: Uuid, data: UpdatePriorityRule) -> Result<PriorityRuleRecord> {
         // Build dynamic update query
         let mut set_clauses = Vec::new();
@@ -304,7 +526,63 @@ impl PriorityRulesRepository {
         Ok(record)
     }
 
+    #[cfg(feature = "sqlite")]
+    pub async fn update(&self, id: Uuid, data: UpdatePriorityRule) -> Result<PriorityRuleRecord> {
+        // Build dynamic update query
+        let mut set_clauses = Vec::new();
+        let mut param_idx = 2; // ?1 is the ID
+
+        if data.priority_order.is_some() {
+            set_clauses.push(format!("priority_order = ?{}", param_idx));
+            param_idx += 1;
+        }
+        if data.search_all_sources.is_some() {
+            set_clauses.push(format!("search_all_sources = ?{}", param_idx));
+            param_idx += 1;
+        }
+        if data.enabled.is_some() {
+            set_clauses.push(format!("enabled = ?{}", param_idx));
+            // param_idx += 1;
+        }
+
+        if set_clauses.is_empty() {
+            // Nothing to update, just return current record
+            return self.get(id).await?.ok_or_else(|| anyhow::anyhow!("Rule not found"));
+        }
+
+        set_clauses.push("updated_at = datetime('now')".to_string());
+
+        let query = format!(
+            r#"
+            UPDATE source_priority_rules
+            SET {}
+            WHERE id = ?1
+            "#,
+            set_clauses.join(", ")
+        );
+
+        let id_str = uuid_to_str(id);
+        let mut query_builder = sqlx::query(&query).bind(&id_str);
+
+        if let Some(ref order) = data.priority_order {
+            query_builder = query_builder.bind(to_json(order));
+        }
+        if let Some(search_all) = data.search_all_sources {
+            query_builder = query_builder.bind(bool_to_int(search_all));
+        }
+        if let Some(enabled) = data.enabled {
+            query_builder = query_builder.bind(bool_to_int(enabled));
+        }
+
+        query_builder.execute(&self.pool).await?;
+
+        self.get(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Rule not found after update"))
+    }
+
     /// Upsert a priority rule (create or update based on scope)
+    #[cfg(feature = "postgres")]
     pub async fn upsert(&self, data: CreatePriorityRule) -> Result<PriorityRuleRecord> {
         let record = sqlx::query_as::<_, PriorityRuleRecord>(
             r#"
@@ -333,7 +611,57 @@ impl PriorityRulesRepository {
         Ok(record)
     }
 
+    #[cfg(feature = "sqlite")]
+    pub async fn upsert(&self, data: CreatePriorityRule) -> Result<PriorityRuleRecord> {
+        let user_id_str = uuid_to_str(data.user_id);
+        let library_id_str = data.library_id.map(uuid_to_str);
+        let priority_order_json = to_json(&data.priority_order);
+
+        // Check if rule exists for this scope
+        let existing = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT id FROM source_priority_rules
+            WHERE user_id = ?1
+              AND COALESCE(library_type, '') = COALESCE(?2, '')
+              AND COALESCE(library_id, '') = COALESCE(?3, '')
+            "#,
+        )
+        .bind(&user_id_str)
+        .bind(&data.library_type)
+        .bind(&library_id_str)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(existing_id) = existing {
+            // Update existing
+            sqlx::query(
+                r#"
+                UPDATE source_priority_rules SET
+                    priority_order = ?1,
+                    search_all_sources = ?2,
+                    enabled = 1,
+                    updated_at = datetime('now')
+                WHERE id = ?3
+                "#,
+            )
+            .bind(&priority_order_json)
+            .bind(bool_to_int(data.search_all_sources))
+            .bind(&existing_id)
+            .execute(&self.pool)
+            .await?;
+
+            let id = str_to_uuid(&existing_id)?;
+            self.get(id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Rule not found after update"))
+        } else {
+            // Create new
+            self.create(data).await
+        }
+    }
+
     /// Delete a priority rule
+    #[cfg(feature = "postgres")]
     pub async fn delete(&self, id: Uuid) -> Result<bool> {
         let result = sqlx::query("DELETE FROM source_priority_rules WHERE id = $1")
             .bind(id)
@@ -343,7 +671,18 @@ impl PriorityRulesRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    #[cfg(feature = "sqlite")]
+    pub async fn delete(&self, id: Uuid) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM source_priority_rules WHERE id = ?1")
+            .bind(uuid_to_str(id))
+            .execute(&self.pool)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Delete a priority rule by scope
+    #[cfg(feature = "postgres")]
     pub async fn delete_by_scope(
         &self,
         user_id: Uuid,
@@ -361,6 +700,33 @@ impl PriorityRulesRepository {
         .bind(user_id)
         .bind(library_type)
         .bind(library_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    #[cfg(feature = "sqlite")]
+    pub async fn delete_by_scope(
+        &self,
+        user_id: Uuid,
+        library_type: Option<&str>,
+        library_id: Option<Uuid>,
+    ) -> Result<bool> {
+        // SQLite doesn't have IS NOT DISTINCT FROM, so we use COALESCE comparison
+        let library_id_str = library_id.map(uuid_to_str);
+
+        let result = sqlx::query(
+            r#"
+            DELETE FROM source_priority_rules
+            WHERE user_id = ?1
+              AND COALESCE(library_type, '') = COALESCE(?2, '')
+              AND COALESCE(library_id, '') = COALESCE(?3, '')
+            "#,
+        )
+        .bind(uuid_to_str(user_id))
+        .bind(library_type)
+        .bind(library_id_str)
         .execute(&self.pool)
         .await?;
 

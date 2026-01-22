@@ -79,5 +79,3 @@ const { data } = await graphqlClient
 | Variable | Description |
 |----------|-------------|
 | `VITE_API_URL` | Backend API URL (default: `http://localhost:3001`) |
-| `VITE_SUPABASE_URL` | Supabase URL |
-| `VITE_SUPABASE_ANON_KEY` | Supabase anonymous key |

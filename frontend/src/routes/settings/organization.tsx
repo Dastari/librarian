@@ -280,7 +280,14 @@ function OrganizationSettingsPage() {
       }
       setPatternsError(null)
     } catch (e) {
-      setPatternsError(e instanceof Error ? e.message : 'Failed to load naming patterns')
+      // Silently ignore auth errors - they can happen during login race conditions
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (errorMsg.toLowerCase().includes('authentication')) {
+        // Clear any error for auth issues - user just needs to sign in
+        setPatternsError(null)
+      } else {
+        setPatternsError(errorMsg || 'Failed to load naming patterns')
+      }
     } finally {
       setIsLoadingPatterns(false)
     }
@@ -306,18 +313,26 @@ function OrganizationSettingsPage() {
         setModelAudiobooks(s.modelAudiobooks || '')
       }
       if (result.error) {
+        // Silently ignore auth errors - they can happen during login race conditions
+        const isAuthError = result.error.message?.toLowerCase().includes('authentication');
+        if (!isAuthError) {
+          addToast({
+            title: 'Error',
+            description: sanitizeError(result.error),
+            color: 'danger',
+          })
+        }
+      }
+    } catch (e) {
+      // Silently ignore auth errors
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (!errorMsg.toLowerCase().includes('authentication')) {
         addToast({
           title: 'Error',
-          description: sanitizeError(result.error),
+          description: sanitizeError(e),
           color: 'danger',
         })
       }
-    } catch (e) {
-      addToast({
-        title: 'Error',
-        description: sanitizeError(e),
-        color: 'danger',
-      })
     } finally {
       setIsLoadingLlm(false)
     }
@@ -859,6 +874,7 @@ function OrganizationSettingsPage() {
               </div>
             ) : (
               <DataTable
+                skeletonDelay={500}
                 data={patterns}
                 columns={columns}
                 getRowKey={(pattern) => pattern.id}

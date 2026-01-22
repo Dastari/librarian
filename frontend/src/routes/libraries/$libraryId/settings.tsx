@@ -12,7 +12,7 @@ function SettingsPage() {
   const { library, loading, handleUpdateLibrary, actionLoading } = useLibraryContext()
 
   return (
-    <ShimmerLoader loading={loading} templateProps={{ library: libraryTemplate }}>
+    <ShimmerLoader loading={loading} delay={500} templateProps={{ library: libraryTemplate }}>
       <LibrarySettingsTab
         library={library}
         onSave={handleUpdateLibrary}

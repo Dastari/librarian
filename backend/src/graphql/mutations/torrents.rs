@@ -480,15 +480,11 @@ impl TorrentMutations {
         // Get files based on source type
         let files: Vec<FileInfo> = if source_type == "torrent" {
             // Get torrent record by ID
-            let torrent: Option<crate::db::TorrentRecord> = sqlx::query_as(
-                "SELECT * FROM torrents WHERE id = $1"
-            )
-            .bind(source_uuid)
-            .fetch_optional(db.pool())
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-
-            let torrent = torrent.ok_or_else(|| async_graphql::Error::new("Torrent not found"))?;
+            let torrent = db.torrents()
+                .get_by_id(source_uuid)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?
+                .ok_or_else(|| async_graphql::Error::new("Torrent not found"))?;
 
             // Get files from torrent service
             let torrent_files = torrent_service.get_files_for_torrent(&torrent.info_hash).await
