@@ -355,6 +355,7 @@ function EpisodeTable({ episodes, seasonNumber, showId, onPlay, onSearch, onShow
   return (
     <DataTable
       key={tableKey}
+      skeletonDelay={500}
       data={episodes}
       columns={episodeColumns}
       getRowKey={(ep) => ep.id}
@@ -748,7 +749,7 @@ function ShowDetailPage() {
   const displayLibrary = library ?? libraryTemplate
 
   return (
-    <ShimmerLoader loading={loading} templateProps={{ show: showTemplate }}>
+    <ShimmerLoader loading={loading} delay={500} templateProps={{ show: showTemplate }}>
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col mb-20 ">
         {/* Header with Show Info */}
         <div className="flex flex-col md:flex-row gap-6 mb-8">

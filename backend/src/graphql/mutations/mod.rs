@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod audiobooks;
 pub mod filesystem;
 pub mod indexers;
@@ -16,6 +17,7 @@ pub mod tv_shows;
 pub mod usenet;
 pub mod user;
 
+pub use auth::AuthMutations;
 pub use audiobooks::AudiobookMutations;
 pub use filesystem::FilesystemMutations;
 pub use indexers::IndexerMutations;

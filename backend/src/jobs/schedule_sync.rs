@@ -4,8 +4,16 @@
 //! This reduces API calls and ensures fast schedule queries.
 
 use anyhow::Result;
+#[cfg(feature = "postgres")]
 use sqlx::PgPool;
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+use sqlx::SqlitePool;
 use tracing::{debug, error, info, warn};
+
+#[cfg(feature = "postgres")]
+type DbPool = PgPool;
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+type DbPool = SqlitePool;
 
 use crate::db::schedule::{ScheduleRepository, UpsertScheduleEntry};
 use crate::services::tvmaze::TvMazeClient;
@@ -20,7 +28,7 @@ const DEFAULT_COUNTRIES: &[&str] = &["US", "GB"];
 const CACHE_MAX_AGE_MINUTES: i64 = 60 * 6; // 6 hours
 
 /// Sync TV schedule from TVMaze for configured countries
-pub async fn sync_schedule(pool: PgPool) -> Result<()> {
+pub async fn sync_schedule(pool: DbPool) -> Result<()> {
     info!("Starting TV schedule sync");
 
     let client = TvMazeClient::new();
@@ -148,7 +156,7 @@ async fn sync_country(
 }
 
 /// Check if any country needs a sync (cache is stale)
-pub async fn needs_sync(pool: PgPool) -> Result<bool> {
+pub async fn needs_sync(pool: DbPool) -> Result<bool> {
     let repo = ScheduleRepository::new(pool);
 
     for &country in DEFAULT_COUNTRIES {
@@ -161,7 +169,7 @@ pub async fn needs_sync(pool: PgPool) -> Result<bool> {
 }
 
 /// Sync a specific country on demand
-pub async fn sync_country_on_demand(pool: PgPool, country: &str, days: u32) -> Result<usize> {
+pub async fn sync_country_on_demand(pool: DbPool, country: &str, days: u32) -> Result<usize> {
     let client = TvMazeClient::new();
     let repo = ScheduleRepository::new(pool);
 

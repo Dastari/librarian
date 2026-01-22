@@ -7,6 +7,7 @@
  */
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
+import { useRouteContext } from '@tanstack/react-router';
 import {
   graphqlClient,
   PLAYBACK_SESSION_QUERY,
@@ -127,6 +128,9 @@ interface PlaybackContextValue {
 const PlaybackContext = createContext<PlaybackContextValue | null>(null);
 
 export function PlaybackProvider({ children }: { children: ReactNode }) {
+  // Get auth context from router - only fetch playback session if authenticated
+  const { auth } = useRouteContext({ from: '__root__' });
+  
   const [session, setSession] = useState<PlaybackSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [currentContent, setCurrentContent] = useState<CurrentContentMetadata | null>(null);
@@ -272,9 +276,16 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     }
   }, [clearAllState]);
 
+  // Only fetch playback session when user is authenticated
   useEffect(() => {
-    refreshSession();
-  }, [refreshSession]);
+    if (auth.isAuthenticated) {
+      refreshSession();
+    } else {
+      // Not authenticated - clear state and stop loading
+      setIsLoading(false);
+      setSession(null);
+    }
+  }, [auth.isAuthenticated, refreshSession]);
 
   const startPlayback = useCallback(async (
     input: StartPlaybackInput,

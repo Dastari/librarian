@@ -67,8 +67,14 @@ export function LibraryAlbumsTab({
   const [artists, setArtists] = useState<Artist[]>([])
   const [artistsLoading, setArtistsLoading] = useState(true)
 
+  // Check if we should skip queries (loading or template ID)
+  const shouldSkipQueries = parentLoading || libraryId.startsWith('template')
+
   // Fetch artists separately (still needed for name lookup)
   useEffect(() => {
+    if (shouldSkipQueries) {
+      return
+    }
     const fetchArtists = async () => {
       try {
         const result = await graphqlClient
@@ -84,7 +90,7 @@ export function LibraryAlbumsTab({
       }
     }
     fetchArtists()
-  }, [libraryId])
+  }, [libraryId, shouldSkipQueries])
 
   // Map column keys to GraphQL sort fields
   const sortFieldMap: Record<string, string> = {
@@ -128,6 +134,7 @@ export function LibraryAlbumsTab({
     variables: queryVariables,
     getConnection: (data) => data.albumsConnection,
     batchSize: 50,
+    enabled: !shouldSkipQueries,
     deps: [libraryId, searchTerm],
   })
 
@@ -294,6 +301,7 @@ export function LibraryAlbumsTab({
       <div className="flex-1 min-h-0">
         <DataTable
           stateKey="library-albums"
+          skeletonDelay={500}
           data={filteredAlbums}
           columns={columns}
           getRowKey={(album) => album.id}

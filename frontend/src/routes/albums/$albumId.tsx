@@ -244,6 +244,7 @@ function TrackTable({ tracks, albumId, onPlay, onSearch, onShowProperties, fetch
 
   return (
     <DataTable
+      skeletonDelay={500}
       headerContent={
         <div className="p-4">
           <h2 className="text-lg font-semibold flex items-center gap-2">
@@ -438,7 +439,7 @@ function AlbumDetailPage() {
   const isComplete = displayAlbumData.completionPercent === 100
 
   return (
-    <ShimmerLoader loading={isLoading} templateProps={{ albumData: albumTemplate }}>
+    <ShimmerLoader loading={isLoading} delay={500} templateProps={{ albumData: albumTemplate }}>
       <div className="container mx-auto p-4">
         {/* Breadcrumbs */}
         <Breadcrumbs className="mb-4">

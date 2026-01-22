@@ -27,6 +27,7 @@ use axum::http::header::AUTHORIZATION;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -36,12 +37,14 @@ use crate::db::Database;
 use crate::graphql::{AuthUser, LibrarianSchema, verify_token};
 use crate::graphql::{LibraryChangedEvent, MediaFileUpdatedEvent};
 use crate::services::{
-    ArtworkService, CastService, CastServiceConfig, DatabaseLoggerConfig, FfmpegService,
-    FilesystemService, FilesystemServiceConfig, MediaAnalysisQueue, MetadataServiceConfig,
-    ScannerService, StorageClient, TorrentService, TorrentServiceConfig,
-    artwork::ensure_artwork_bucket, create_database_layer, create_media_analysis_queue,
-    create_metadata_service_with_artwork, create_metrics_collector,
+    ArtworkService, AuthConfig, AuthService, CastService, CastServiceConfig, DatabaseLoggerConfig,
+    FfmpegService, FilesystemService, FilesystemServiceConfig, MediaAnalysisQueue,
+    MetadataServiceConfig, ScannerService, TorrentService, TorrentServiceConfig,
+    create_database_layer, create_media_analysis_queue, create_metadata_service_with_artwork,
+    create_metrics_collector,
 };
+#[cfg(feature = "postgres")]
+use crate::services::StorageClient;
 use crate::tui::{TuiApp, TuiConfig, create_tui_layer, should_use_tui};
 
 /// Application state shared across all handlers
@@ -79,6 +82,10 @@ async fn main() -> anyhow::Result<()> {
         std::process::exit(1);
     }
     eprintln!("Migrations complete!");
+
+    // Initialize JWT secret - load from database or generate and store if missing
+    // This ensures the secret persists across restarts and is available to all code
+    initialize_jwt_secret(&db).await?;
 
     // Create the database logging layer
     let db_logger_config = DatabaseLoggerConfig {
@@ -140,18 +147,37 @@ async fn main() -> anyhow::Result<()> {
     let torrent_service = Arc::new(TorrentService::new(torrent_config, db.clone()).await?);
     tracing::info!("Torrent service initialized with database persistence");
 
-    // Initialize Supabase storage client for artwork caching
-    let storage_client = StorageClient::new(
-        config.supabase_url.clone(),
-        config.supabase_service_key.clone(),
-    );
+    // Initialize artwork service
+    #[cfg(feature = "postgres")]
+    let artwork_service = {
+        use crate::services::artwork::{ArtworkService, ensure_artwork_bucket, StorageClient};
+        
+        let storage_client = StorageClient::new(
+            config.supabase_url.clone().expect("SUPABASE_URL required for postgres feature"),
+            config.supabase_service_key.clone().expect("SUPABASE_SERVICE_KEY required for postgres feature"),
+        );
 
-    // Ensure artwork bucket exists
-    if let Err(e) = ensure_artwork_bucket(&storage_client).await {
-        tracing::warn!(error = %e, "Failed to create artwork bucket - artwork caching may not work");
-    }
+        // Ensure artwork bucket exists
+        if let Err(e) = ensure_artwork_bucket(&storage_client).await {
+            tracing::warn!(error = %e, "Failed to create artwork bucket - artwork caching may not work");
+        }
 
-    let artwork_service = Arc::new(ArtworkService::new(storage_client));
+        Arc::new(ArtworkService::new(storage_client))
+    };
+    
+    #[cfg(feature = "sqlite")]
+    let artwork_service = {
+        use crate::services::artwork::{ArtworkService, ensure_artwork_storage};
+        
+        let base_url = format!("http://localhost:{}", config.port);
+        
+        // Ensure artwork storage is ready (SQLite tables exist)
+        if let Err(e) = ensure_artwork_storage(&db).await {
+            tracing::warn!(error = %e, "Failed to initialize artwork storage");
+        }
+        
+        Arc::new(ArtworkService::new(db.clone(), base_url))
+    };
     tracing::info!("Artwork service initialized");
 
     // Initialize metadata service with artwork caching
@@ -291,6 +317,12 @@ async fn main() -> anyhow::Result<()> {
     let notification_service = services::create_notification_service(db.clone());
     tracing::info!("Notification service initialized");
 
+    // Initialize auth service for user authentication
+    // Use JWT_SECRET from environment (which was set by initialize_jwt_secret)
+    let auth_config = AuthConfig::from_env();
+    let auth_service = Arc::new(AuthService::new(db.clone(), auth_config));
+    tracing::info!("Auth service initialized");
+
     // Build GraphQL schema
     let schema = graphql::build_schema(
         torrent_service.clone(),
@@ -299,6 +331,7 @@ async fn main() -> anyhow::Result<()> {
         cast_service.clone(),
         filesystem_service.clone(),
         notification_service.clone(),
+        auth_service.clone(),
         db.clone(),
         analysis_queue.clone(),
         Some(log_broadcast_sender),
@@ -417,12 +450,20 @@ async fn main() -> anyhow::Result<()> {
         .nest("/api", api::filesystem::router())
         // Torznab API for external apps (Sonarr, Radarr, etc.)
         .nest("/api", api::torznab::router())
+        // Artwork serving endpoint (SQLite mode - images stored as BLOBs)
+        .nest("/api", api::artwork::router())
         // Media streaming endpoints for cast devices and browser playback
         .nest("/api", media_routes().with_state(media_state))
         // GraphQL endpoint (handles all queries, mutations, subscriptions)
         .route("/graphql", get(graphiql).post(graphql_handler))
         // GraphQL WebSocket endpoint for subscriptions
         .route("/graphql/ws", get(graphql_ws_handler))
+        // Static file serving for frontend SPA (SQLite self-hosted mode)
+        // Falls back to index.html for client-side routing
+        .fallback_service(
+            ServeDir::new("./static")
+                .not_found_service(ServeFile::new("./static/index.html"))
+        )
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
@@ -471,6 +512,69 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Initialize JWT secret from database or generate if missing.
+/// 
+/// This ensures the JWT secret:
+/// 1. Persists across restarts (stored in database)
+/// 2. Is available via environment variable for all code paths
+/// 3. Doesn't require manual configuration for simple setups
+async fn initialize_jwt_secret(db: &Database) -> anyhow::Result<()> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use rand::RngCore;
+    
+    const JWT_SECRET_KEY: &str = "jwt_secret";
+    
+    // Check if JWT_SECRET is already set via environment (explicit override)
+    if let Ok(env_secret) = std::env::var("JWT_SECRET") {
+        if !env_secret.is_empty() && !env_secret.starts_with("dev-secret-") {
+            eprintln!("Using JWT_SECRET from environment variable");
+            return Ok(());
+        }
+    }
+    
+    let settings = db.settings();
+    
+    // Try to load from database
+    if let Ok(Some(secret)) = settings.get_value::<String>(JWT_SECRET_KEY).await {
+        if !secret.is_empty() {
+            // Set as environment variable so all code can access it
+            // SAFETY: This is called during single-threaded initialization before
+            // any worker threads access environment variables
+            unsafe { std::env::set_var("JWT_SECRET", &secret); }
+            eprintln!("Loaded JWT secret from database");
+            return Ok(());
+        }
+    }
+    
+    // Generate a new secret
+    let mut secret_bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut secret_bytes);
+    let secret = STANDARD.encode(secret_bytes);
+    
+    // Store in database
+    match settings.set_with_category(
+        JWT_SECRET_KEY,
+        &secret,
+        "security",
+        Some("JWT signing secret (auto-generated)"),
+    ).await {
+        Ok(_) => {
+            eprintln!("Generated and stored new JWT secret");
+        }
+        Err(e) => {
+            eprintln!("Warning: Failed to store JWT secret in database: {}", e);
+            eprintln!("Using generated secret (will change on restart)");
+        }
+    }
+    
+    // Set as environment variable
+    // SAFETY: This is called during single-threaded initialization before
+    // any worker threads access environment variables
+    unsafe { std::env::set_var("JWT_SECRET", &secret); }
+    
+    Ok(())
+}
+
 /// Extract bearer token from Authorization header
 fn extract_token(headers: &HeaderMap) -> Option<String> {
     headers
@@ -489,10 +593,19 @@ async fn graphql_handler(
     // Extract and verify auth token if present
     let mut request = req.into_inner();
 
-    if let Some(token) = extract_token(&headers)
-        && let Ok(user) = verify_token(&token)
-    {
-        request = request.data(user);
+    if let Some(token) = extract_token(&headers) {
+        match verify_token(&token) {
+            Ok(user) => {
+                tracing::debug!("Auth successful for user: {}", user.user_id);
+                request = request.data(user);
+            }
+            Err(e) => {
+                tracing::warn!("Token verification failed: {:?} (token starts with: {}...)", 
+                    e.message, &token[..token.len().min(20)]);
+            }
+        }
+    } else {
+        tracing::debug!("No auth token in request headers");
     }
 
     state.schema.execute(request).await.into()

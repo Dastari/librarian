@@ -18,21 +18,45 @@ impl MediaFileMutations {
             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
 
         // Update library subtitle settings
-        sqlx::query(
-            r#"
-            UPDATE libraries SET
-                auto_download_subtitles = COALESCE($2, auto_download_subtitles),
-                preferred_subtitle_languages = COALESCE($3, preferred_subtitle_languages),
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(lib_id)
-        .bind(input.auto_download)
-        .bind(input.languages.as_ref())
-        .execute(db.pool())
-        .await
-        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        #[cfg(feature = "postgres")]
+        {
+            sqlx::query(
+                r#"
+                UPDATE libraries SET
+                    auto_download_subtitles = COALESCE($2, auto_download_subtitles),
+                    preferred_subtitle_languages = COALESCE($3, preferred_subtitle_languages),
+                    updated_at = NOW()
+                WHERE id = $1
+                "#,
+            )
+            .bind(lib_id)
+            .bind(input.auto_download)
+            .bind(input.languages.as_ref())
+            .execute(db.pool())
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+
+        #[cfg(feature = "sqlite")]
+        {
+            use crate::db::sqlite_helpers::vec_to_json;
+            let languages_json = input.languages.as_ref().map(|v| vec_to_json(v));
+            sqlx::query(
+                r#"
+                UPDATE libraries SET
+                    auto_download_subtitles = COALESCE(?2, auto_download_subtitles),
+                    preferred_subtitle_languages = COALESCE(?3, preferred_subtitle_languages),
+                    updated_at = datetime('now')
+                WHERE id = ?1
+                "#,
+            )
+            .bind(lib_id.to_string())
+            .bind(input.auto_download)
+            .bind(languages_json)
+            .execute(db.pool())
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
 
         tracing::debug!("Updated library subtitle settings for {}", library_id);
 
@@ -60,19 +84,39 @@ impl MediaFileMutations {
             "languages": input.languages,
         });
 
-        sqlx::query(
-            r#"
-            UPDATE tv_shows SET
-                subtitle_settings_override = $2,
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(show_uuid)
-        .bind(&override_json)
-        .execute(db.pool())
-        .await
-        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        #[cfg(feature = "postgres")]
+        {
+            sqlx::query(
+                r#"
+                UPDATE tv_shows SET
+                    subtitle_settings_override = $2,
+                    updated_at = NOW()
+                WHERE id = $1
+                "#,
+            )
+            .bind(show_uuid)
+            .bind(&override_json)
+            .execute(db.pool())
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
+
+        #[cfg(feature = "sqlite")]
+        {
+            sqlx::query(
+                r#"
+                UPDATE tv_shows SET
+                    subtitle_settings_override = ?2,
+                    updated_at = datetime('now')
+                WHERE id = ?1
+                "#,
+            )
+            .bind(show_uuid.to_string())
+            .bind(&override_json)
+            .execute(db.pool())
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        }
 
         tracing::debug!("Updated show subtitle settings for {}", show_id);
 

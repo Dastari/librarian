@@ -1,5 +1,6 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useState, useEffect, useCallback } from 'react'
+import { getAccessToken } from '../../lib/auth'
 import { useDisclosure } from '@heroui/modal'
 import { addToast } from '@heroui/toast'
 import { Tabs, Tab } from '@heroui/tabs'
@@ -127,18 +128,26 @@ function DownloadsPage() {
         setTorrents(result.data.torrents)
       }
       if (result.error) {
+        // Silently ignore auth errors - they can happen during login race conditions
+        const isAuthError = result.error.message?.toLowerCase().includes('authentication');
+        if (!isAuthError) {
+          addToast({
+            title: 'Error',
+            description: sanitizeError(result.error),
+            color: 'danger',
+          })
+        }
+      }
+    } catch (e) {
+      // Silently ignore auth errors
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (!errorMsg.toLowerCase().includes('authentication')) {
         addToast({
           title: 'Error',
-          description: sanitizeError(result.error),
+          description: sanitizeError(e),
           color: 'danger',
         })
       }
-    } catch (e) {
-      addToast({
-        title: 'Error',
-        description: sanitizeError(e),
-        color: 'danger',
-      })
     } finally {
       setIsLoading(false)
     }
@@ -151,7 +160,11 @@ function DownloadsPage() {
         setUsenetDownloads(result.data.usenetDownloads)
       }
     } catch (e) {
-      console.error('Failed to fetch usenet downloads:', e)
+      // Silently ignore auth errors
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (!errorMsg.toLowerCase().includes('authentication')) {
+        console.error('Failed to fetch usenet downloads:', e)
+      }
     } finally {
       setIsUsenetLoading(false)
     }
@@ -323,19 +336,8 @@ function DownloadsPage() {
 
       const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
-      let authToken = ''
-      try {
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'http://localhost:54321'
-        const projectId = new URL(supabaseUrl).hostname.split('.')[0]
-        const storageKey = `sb-${projectId}-auth-token`
-        const stored = localStorage.getItem(storageKey)
-        if (stored) {
-          const session = JSON.parse(stored)
-          authToken = session?.access_token || ''
-        }
-      } catch {
-        /* ignore */
-      }
+      // Get auth token from cookie storage
+      const authToken = getAccessToken() || ''
 
       const response = await fetch(`${API_URL}/api/torrents/upload`, {
         method: 'POST',

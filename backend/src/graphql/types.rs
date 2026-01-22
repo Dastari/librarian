@@ -889,10 +889,7 @@ impl CastDevice {
             is_favorite: record.is_favorite,
             is_manual: record.is_manual,
             is_connected,
-            last_seen_at: record.last_seen_at.map(|t| {
-                t.format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_default()
-            }),
+            last_seen_at: record.last_seen_at.map(|t| t.to_rfc3339()),
         }
     }
 }
@@ -941,10 +938,7 @@ impl CastSession {
             duration: record.duration,
             volume: record.volume,
             is_muted: record.is_muted,
-            started_at: record
-                .started_at
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_default(),
+            started_at: record.started_at.to_rfc3339(),
         }
     }
 }
@@ -4186,39 +4180,6 @@ pub struct TorrentRelease {
 }
 
 // =============================================================================
-// Security Settings Types
-// =============================================================================
-
-/// Security settings for the application
-#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
-pub struct SecuritySettings {
-    /// Whether the indexer encryption key is set
-    pub encryption_key_set: bool,
-    /// Masked version of the encryption key (first/last 4 chars)
-    pub encryption_key_preview: Option<String>,
-    /// When the encryption key was last changed
-    pub encryption_key_last_modified: Option<String>,
-}
-
-/// Result of updating security settings
-#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
-pub struct SecuritySettingsResult {
-    /// Whether the operation succeeded
-    pub success: bool,
-    /// Error message if failed
-    pub error: Option<String>,
-    /// The updated settings
-    pub settings: Option<SecuritySettings>,
-}
-
-/// Input for generating a new encryption key
-#[derive(Debug, Clone, InputObject)]
-pub struct GenerateEncryptionKeyInput {
-    /// Confirm that you understand this will invalidate existing credentials
-    pub confirm_invalidation: bool,
-}
-
-// =============================================================================
 // Filesystem Types
 // =============================================================================
 
@@ -4557,7 +4518,6 @@ impl From<crate::db::PriorityRuleRecord> for SourcePriorityRule {
             library_id: record.library_id.map(|id| id.to_string()),
             priority_order: record
                 .priority_order
-                .0
                 .into_iter()
                 .map(SourceRef::from)
                 .collect(),

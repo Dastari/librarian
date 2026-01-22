@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useState, useEffect, useCallback } from 'react'
 import { Card, CardBody } from '@heroui/card'
 import { Button } from '@heroui/button'
@@ -25,6 +25,17 @@ import { sanitizeError } from '../../lib/format'
 import { InlineError } from '../../components/shared'
 
 export const Route = createFileRoute('/settings/usenet')({
+  beforeLoad: ({ context, location }) => {
+    if (!context.auth.isAuthenticated) {
+      throw redirect({
+        to: '/',
+        search: {
+          signin: true,
+          redirect: location.href,
+        },
+      })
+    }
+  },
   component: UsenetSettingsPage,
 })
 
@@ -173,7 +184,14 @@ function UsenetSettingsPage() {
       setServers(result.data?.usenetServers || [])
       setError(null)
     } catch (err) {
-      setError(sanitizeError(err))
+      // Silently ignore auth errors - they can happen during login race conditions
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      if (errorMsg.toLowerCase().includes('authentication')) {
+        // Clear any error for auth issues
+        setError(null)
+      } else {
+        setError(sanitizeError(err))
+      }
     } finally {
       setLoading(false)
     }

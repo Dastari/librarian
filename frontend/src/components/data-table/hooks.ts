@@ -448,33 +448,33 @@ export function useInfiniteScroll(options: UseInfiniteScrollOptions) {
         
         // Check all conditions via refs for fresh values
         if (isLoadingRef.current) {
-          console.log('[InfiniteScroll] Blocked: isLoading')
+          if (import.meta.env.DEV) console.log('[InfiniteScroll] Blocked: isLoading')
           return
         }
         if (!hasMoreRef.current) {
-          console.log('[InfiniteScroll] Blocked: !hasMore')
+          if (import.meta.env.DEV) console.log('[InfiniteScroll] Blocked: !hasMore')
           return
         }
         if (totalCountRef.current !== null && dataLengthRef.current >= totalCountRef.current) {
-          console.log('[InfiniteScroll] Blocked: dataLength >= totalCount')
+          if (import.meta.env.DEV) console.log('[InfiniteScroll] Blocked: dataLength >= totalCount')
           return
         }
-        
+
         // Cooldown check - prevent rapid-fire loads
         const now = Date.now()
         const timeSinceLastLoad = now - lastLoadTime.current
         if (timeSinceLastLoad < LOAD_COOLDOWN_MS) {
-          console.log(`[InfiniteScroll] Blocked: cooldown (${timeSinceLastLoad}ms < ${LOAD_COOLDOWN_MS}ms)`)
+          if (import.meta.env.DEV) console.log(`[InfiniteScroll] Blocked: cooldown (${timeSinceLastLoad}ms < ${LOAD_COOLDOWN_MS}ms)`)
           return
         }
-        
+
         // Guard against infinite loops when no data
         if (dataLengthRef.current === 0 && loadMoreAttempts.current >= 3) {
-          console.log('[InfiniteScroll] Blocked: max attempts with 0 data')
+          if (import.meta.env.DEV) console.log('[InfiniteScroll] Blocked: max attempts with 0 data')
           return
         }
-        
-        console.log(`[InfiniteScroll] Loading more... (dataLength: ${dataLengthRef.current}, attempts: ${loadMoreAttempts.current})`)
+
+        if (import.meta.env.DEV) console.log(`[InfiniteScroll] Loading more... (dataLength: ${dataLengthRef.current}, attempts: ${loadMoreAttempts.current})`)
         loadMoreAttempts.current++
         lastLoadTime.current = now
         onLoadMoreRef.current()

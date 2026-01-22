@@ -63,18 +63,26 @@ function TorrentSettingsPage() {
         setDownloadLimit(s.downloadLimit)
       }
       if (result.error) {
+        // Silently ignore auth errors - they can happen during login race conditions
+        const isAuthError = result.error.message?.toLowerCase().includes('authentication');
+        if (!isAuthError) {
+          addToast({
+            title: 'Error',
+            description: sanitizeError(result.error),
+            color: 'danger',
+          })
+        }
+      }
+    } catch (e) {
+      // Silently ignore auth errors
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (!errorMsg.toLowerCase().includes('authentication')) {
         addToast({
           title: 'Error',
-          description: sanitizeError(result.error),
+          description: sanitizeError(e),
           color: 'danger',
         })
       }
-    } catch (e) {
-      addToast({
-        title: 'Error',
-        description: sanitizeError(e),
-        color: 'danger',
-      })
     } finally {
       setIsLoading(false)
     }

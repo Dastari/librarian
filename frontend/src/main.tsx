@@ -1,22 +1,54 @@
-import { StrictMode, useState, useEffect, useMemo } from 'react'
-import ReactDOM from 'react-dom/client'
-import { RouterProvider, createRouter } from '@tanstack/react-router'
-import { HeroUIProvider } from '@heroui/system'
-import { NuqsAdapter } from 'nuqs/adapters/react'
+import { StrictMode, useState, useEffect, useMemo, useCallback } from "react";
+import ReactDOM from "react-dom/client";
+import { RouterProvider, createRouter } from "@tanstack/react-router";
+import { HeroUIProvider } from "@heroui/system";
+import { NuqsAdapter } from "nuqs/adapters/react";
 
 // Import the generated route tree
-import { routeTree } from './routeTree.gen'
-import { ErrorBoundary } from './components/ErrorBoundary'
-import { supabase, isSupabaseConfigured } from './lib/supabase'
-import type { AuthContext } from './lib/auth-context'
-import { initializeTheme } from './hooks/useTheme'
+import { routeTree } from "./routeTree.gen";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import type { AuthContext } from "./lib/auth-context";
+import type { AuthSession, AuthUser } from "./lib/auth";
+import {
+  getSession,
+  hasValidToken,
+  isTokenExpired,
+  getRefreshToken,
+  setTokens,
+  clearTokens,
+} from "./lib/auth";
+import { graphqlClient, REFRESH_TOKEN_MUTATION, ME_QUERY } from "./lib/graphql";
+import { initializeTheme } from "./hooks/useTheme";
 
-import './styles.css'
-import reportWebVitals from './reportWebVitals.ts'
+import "./styles.css";
+import reportWebVitals from "./reportWebVitals.ts";
 
 // Initialize theme immediately to prevent flash of wrong theme
-initializeTheme()
+initializeTheme();
 
+// Types for GraphQL responses
+interface AuthTokens {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+  tokenType: string;
+}
+
+interface RefreshTokenResponse {
+  success: boolean;
+  error: string | null;
+  tokens: AuthTokens | null;
+}
+
+interface MeUser {
+  id: string;
+  email: string | null;
+  role: string | null;
+}
+
+interface MeResponse {
+  me: MeUser | null;
+}
 
 // Create a new router instance with auth context
 const router = createRouter({
@@ -26,18 +58,19 @@ const router = createRouter({
       isAuthenticated: false,
       isLoading: true,
       session: null,
+      user: null,
     } as AuthContext,
   },
-  defaultPreload: 'intent',
+  defaultPreload: "intent",
   scrollRestoration: true,
   defaultStructuralSharing: true,
   defaultPreloadStaleTime: 0,
-})
+});
 
 // Register the router instance for type safety
-declare module '@tanstack/react-router' {
+declare module "@tanstack/react-router" {
   interface Register {
-    router: typeof router
+    router: typeof router;
   }
 }
 
@@ -47,55 +80,212 @@ function InnerApp() {
     isAuthenticated: false,
     isLoading: true,
     session: null,
-  })
+    user: null,
+  });
 
-  useEffect(() => {
-    if (!isSupabaseConfigured) {
-      setAuth({ isAuthenticated: false, isLoading: false, session: null })
-      return
+  // Refresh the access token using the refresh token
+  const refreshAccessToken = useCallback(async (): Promise<boolean> => {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) {
+      return false;
     }
 
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setAuth({
-        isAuthenticated: !!session,
-        isLoading: false,
-        session,
-      })
-    })
+    try {
+      const result = await graphqlClient
+        .mutation<{
+          refreshToken: RefreshTokenResponse;
+        }>(REFRESH_TOKEN_MUTATION, { input: { refreshToken } })
+        .toPromise();
 
-    // Listen for auth changes - only update on meaningful events
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      // Skip events that don't change auth status to avoid re-renders
-      // - TOKEN_REFRESHED: token was refreshed but user is still authenticated
-      // These events fire on window focus/visibility changes
-      if (event === 'TOKEN_REFRESHED') {
-        return
+      if (
+        result.data?.refreshToken.success &&
+        result.data.refreshToken.tokens
+      ) {
+        const tokens = result.data.refreshToken.tokens;
+        // Keep existing user from stored session
+        const existingSession = getSession();
+        if (existingSession) {
+          const newSession: AuthSession = {
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            expiresAt: Date.now() + tokens.expiresIn * 1000,
+            user: existingSession.user,
+          };
+          setTokens(newSession);
+          setAuth({
+            isAuthenticated: true,
+            isLoading: false,
+            session: newSession,
+            user: newSession.user,
+          });
+          return true;
+        }
       }
+    } catch (err) {
+      console.error("[Auth] Token refresh failed:", err);
+    }
 
-      setAuth((prev) => {
-        // Only update if authentication status actually changed
-        const isAuthenticated = !!session
-        const sessionChanged = prev.session?.access_token !== session?.access_token
+    // Refresh failed, clear everything
+    clearTokens();
+    setAuth({
+      isAuthenticated: false,
+      isLoading: false,
+      session: null,
+      user: null,
+    });
+    return false;
+  }, []);
 
-        // Skip update if nothing meaningful changed
-        if (prev.isAuthenticated === isAuthenticated && !prev.isLoading && !sessionChanged) {
-          return prev // Return same reference to avoid re-render
+  // Initialize auth state on mount
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        // Check for existing session in localStorage
+        const existingSession = getSession();
+
+        if (!existingSession) {
+          // No stored session
+          setAuth({
+            isAuthenticated: false,
+            isLoading: false,
+            session: null,
+            user: null,
+          });
+          return;
         }
 
-        return {
-          isAuthenticated,
+        // Check if token is expired
+        if (isTokenExpired()) {
+          // Try to refresh
+          const refreshed = await refreshAccessToken();
+          if (!refreshed) {
+            // Refresh failed, state already updated in refreshAccessToken
+            return;
+          }
+        } else {
+          // Token is still valid, verify with server
+          try {
+            const result = await graphqlClient
+              .query<MeResponse>(ME_QUERY, {})
+              .toPromise();
+
+            if (result.data?.me) {
+              // Convert MeUser to AuthUser format
+              const meUser = result.data.me;
+              const authUser: AuthUser = {
+                id: meUser.id,
+                email: meUser.email || undefined,
+                username: existingSession.user.username,
+                role: meUser.role || "member",
+                displayName: existingSession.user.displayName,
+              };
+              setAuth({
+                isAuthenticated: true,
+                isLoading: false,
+                session: existingSession,
+                user: authUser,
+              });
+            } else {
+              // Token was invalid, try refresh
+              await refreshAccessToken();
+            }
+          } catch {
+            // Server verification failed, try refresh
+            await refreshAccessToken();
+          }
+        }
+      } catch (err) {
+        console.error("[Auth] Init error:", err);
+        setAuth({
+          isAuthenticated: false,
           isLoading: false,
-          session,
-        }
-      })
-    })
+          session: null,
+          user: null,
+        });
+      }
+    };
 
-    return () => subscription.unsubscribe()
-  }, [])
+    initAuth();
+  }, [refreshAccessToken]);
+
+  // Set up token refresh interval
+  useEffect(() => {
+    if (!auth.session) return;
+
+    // Check token expiration every minute
+    const interval = setInterval(() => {
+      if (isTokenExpired()) {
+        refreshAccessToken();
+      }
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, [auth.session, refreshAccessToken]);
+
+  // Listen for auth changes from other components (e.g., SignInModal, Navbar signOut)
+  useEffect(() => {
+    // Handle same-tab auth changes (custom event from setTokens/clearTokens)
+    const handleAuthChange = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.type === 'login') {
+        const newSession = getSession();
+        if (newSession && hasValidToken()) {
+          setAuth({
+            isAuthenticated: true,
+            isLoading: false,
+            session: newSession,
+            user: newSession.user,
+          });
+        }
+      } else if (detail?.type === 'logout') {
+        setAuth({
+          isAuthenticated: false,
+          isLoading: false,
+          session: null,
+          user: null,
+        });
+      }
+    };
+
+    // Handle cross-tab auth changes via BroadcastChannel
+    // Cookies are shared across tabs, but we need to notify other tabs to update their state
+    let authChannel: BroadcastChannel | null = null;
+    try {
+      authChannel = new BroadcastChannel('librarian-auth');
+      authChannel.onmessage = (e) => {
+        if (e.data?.type === 'login') {
+          const newSession = getSession();
+          if (newSession && hasValidToken()) {
+            setAuth({
+              isAuthenticated: true,
+              isLoading: false,
+              session: newSession,
+              user: newSession.user,
+            });
+          }
+        } else if (e.data?.type === 'logout') {
+          setAuth({
+            isAuthenticated: false,
+            isLoading: false,
+            session: null,
+            user: null,
+          });
+        }
+      };
+    } catch {
+      // BroadcastChannel not supported, fall back to no cross-tab sync
+      console.warn('[Auth] BroadcastChannel not supported, cross-tab sync disabled');
+    }
+
+    window.addEventListener("auth-change", handleAuthChange);
+    return () => {
+      window.removeEventListener("auth-change", handleAuthChange);
+      authChannel?.close();
+    };
+  }, []);
 
   // Memoize the context object to prevent unnecessary router refreshes
-  const routerContext = useMemo(() => ({ auth }), [auth])
+  const routerContext = useMemo(() => ({ auth }), [auth]);
 
   // Show nothing while loading auth
   if (auth.isLoading) {
@@ -103,16 +293,16 @@ function InnerApp() {
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
-    )
+    );
   }
 
-  return <RouterProvider router={router} context={routerContext} />
+  return <RouterProvider router={router} context={routerContext} />;
 }
 
 // Render the app
-const rootElement = document.getElementById('app')
+const rootElement = document.getElementById("app");
 if (rootElement && !rootElement.innerHTML) {
-  const root = ReactDOM.createRoot(rootElement)
+  const root = ReactDOM.createRoot(rootElement);
   root.render(
     <StrictMode>
       <ErrorBoundary>
@@ -123,10 +313,10 @@ if (rootElement && !rootElement.innerHTML) {
         </HeroUIProvider>
       </ErrorBoundary>
     </StrictMode>,
-  )
+  );
 }
 
 // If you want to start measuring performance in your app, pass a function
 // to log results (for example: reportWebVitals(console.log))
 // or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
-reportWebVitals()
+reportWebVitals();

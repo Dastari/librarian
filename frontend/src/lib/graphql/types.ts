@@ -1,11 +1,52 @@
-import type { TablerIcon } from '@tabler/icons-react';
+import type { TablerIcon } from "@tabler/icons-react";
 import {
   IconMovie,
   IconDeviceTv,
   IconMusic,
   IconHeadphones,
   IconFolder,
-} from '@tabler/icons-react';
+} from "@tabler/icons-react";
+
+// ============================================================================
+// Auth Types
+// ============================================================================
+
+/** Auth response from login/register/refresh mutations */
+export interface AuthResult {
+  success: boolean;
+  error: string | null;
+  accessToken: string | null;
+  refreshToken: string | null;
+  expiresAt: number | null;
+  user: AuthUserInfo | null;
+}
+
+/** Logout response */
+export interface LogoutResult {
+  success: boolean;
+  error: string | null;
+}
+
+/** User info returned from auth endpoints */
+export interface AuthUserInfo {
+  id: string;
+  email: string;
+  username: string | null;
+  createdAt: string;
+}
+
+/** Input for login mutation */
+export interface LoginInput {
+  usernameOrEmail: string;
+  password: string;
+}
+
+/** Input for register mutation */
+export interface RegisterInput {
+  username: string;
+  password: string;
+  email?: string | null;
+}
 
 // ============================================================================
 // Library Type Helpers
@@ -21,11 +62,16 @@ export interface LibraryTypeInfo {
 
 /** Available library types with display info */
 export const LIBRARY_TYPES: LibraryTypeInfo[] = [
-  { value: 'MOVIES', label: 'Movies', Icon: IconMovie, color: 'purple' },
-  { value: 'TV', label: 'TV Shows', Icon: IconDeviceTv, color: 'blue' },
-  { value: 'MUSIC', label: 'Music', Icon: IconMusic, color: 'green' },
-  { value: 'AUDIOBOOKS', label: 'Audiobooks', Icon: IconHeadphones, color: 'orange' },
-  { value: 'OTHER', label: 'Other', Icon: IconFolder, color: 'slate' },
+  { value: "MOVIES", label: "Movies", Icon: IconMovie, color: "purple" },
+  { value: "TV", label: "TV Shows", Icon: IconDeviceTv, color: "blue" },
+  { value: "MUSIC", label: "Music", Icon: IconMusic, color: "green" },
+  {
+    value: "AUDIOBOOKS",
+    label: "Audiobooks",
+    Icon: IconHeadphones,
+    color: "orange",
+  },
+  { value: "OTHER", label: "Other", Icon: IconFolder, color: "slate" },
 ];
 
 /** Get display info for a library type */
@@ -40,7 +86,7 @@ export const getLibraryTypeInfo = (type: LibraryType): LibraryTypeInfo =>
 export interface MediaItem {
   id: string;
   title: string;
-  mediaType: 'movie' | 'episode';
+  mediaType: "movie" | "episode";
   year: number | null;
   overview: string | null;
   runtime: number | null;
@@ -72,7 +118,13 @@ export interface Torrent {
   addedAt: string | null;
 }
 
-export type TorrentState = 'QUEUED' | 'CHECKING' | 'DOWNLOADING' | 'SEEDING' | 'PAUSED' | 'ERROR';
+export type TorrentState =
+  | "QUEUED"
+  | "CHECKING"
+  | "DOWNLOADING"
+  | "SEEDING"
+  | "PAUSED"
+  | "ERROR";
 
 export interface TorrentProgress {
   id: number;
@@ -165,7 +217,7 @@ export interface PendingFileMatch {
   movieId: string | null;
   trackId: string | null;
   chapterId: string | null;
-  matchType: 'auto' | 'manual';
+  matchType: "auto" | "manual";
   matchConfidence: number | null;
   parsedResolution: string | null;
   parsedCodec: string | null;
@@ -206,10 +258,17 @@ export interface RemoveMatchResult {
 }
 
 /** Quality status of a media file */
-export type QualityStatus = 'UNKNOWN' | 'OPTIMAL' | 'SUBOPTIMAL' | 'EXCEEDS';
+export type QualityStatus = "UNKNOWN" | "OPTIMAL" | "SUBOPTIMAL" | "EXCEEDS";
 
 /** Download status of a media item */
-export type DownloadStatus = 'MISSING' | 'WANTED' | 'DOWNLOADING' | 'DOWNLOADED' | 'SUBOPTIMAL' | 'IGNORED' | 'PARTIAL';
+export type DownloadStatus =
+  | "MISSING"
+  | "WANTED"
+  | "DOWNLOADING"
+  | "DOWNLOADED"
+  | "SUBOPTIMAL"
+  | "IGNORED"
+  | "PARTIAL";
 
 // ============================================================================
 // Settings Types
@@ -367,7 +426,7 @@ export interface RenameFileInput {
 
 export interface DirectoryChangeEvent {
   path: string;
-  changeType: 'created' | 'modified' | 'deleted' | 'renamed';
+  changeType: "created" | "modified" | "deleted" | "renamed";
   name: string | null;
   newName: string | null;
   timestamp: string;
@@ -417,8 +476,8 @@ export interface RawBrowseResponse {
 // Library Types
 // ============================================================================
 
-export type LibraryType = 'MOVIES' | 'TV' | 'MUSIC' | 'AUDIOBOOKS' | 'OTHER';
-export type PostDownloadAction = 'COPY' | 'MOVE' | 'HARDLINK';
+export type LibraryType = "MOVIES" | "TV" | "MUSIC" | "AUDIOBOOKS" | "OTHER";
+export type PostDownloadAction = "COPY" | "MOVE" | "HARDLINK";
 
 export interface Library {
   id: string;
@@ -469,7 +528,7 @@ export interface LibraryResult {
   error: string | null;
 }
 
-export type LibraryChangeType = 'CREATED' | 'UPDATED' | 'DELETED';
+export type LibraryChangeType = "CREATED" | "UPDATED" | "DELETED";
 
 export interface LibraryChangedEvent {
   changeType: LibraryChangeType;
@@ -531,8 +590,13 @@ export interface UpdateLibraryInput {
 // TV Show Types
 // ============================================================================
 
-export type TvShowStatus = 'CONTINUING' | 'ENDED' | 'UPCOMING' | 'CANCELLED' | 'UNKNOWN';
-export type MonitorType = 'ALL' | 'FUTURE' | 'NONE';
+export type TvShowStatus =
+  | "CONTINUING"
+  | "ENDED"
+  | "UPCOMING"
+  | "CANCELLED"
+  | "UNKNOWN";
+export type MonitorType = "ALL" | "FUTURE" | "NONE";
 
 export interface TvShow {
   id: string;
@@ -703,7 +767,12 @@ export interface UpdateTvShowInput {
 // Movie Types
 // ============================================================================
 
-export type MovieStatus = 'RELEASED' | 'UPCOMING' | 'ANNOUNCED' | 'IN_PRODUCTION' | 'UNKNOWN';
+export type MovieStatus =
+  | "RELEASED"
+  | "UPCOMING"
+  | "ANNOUNCED"
+  | "IN_PRODUCTION"
+  | "UNKNOWN";
 
 export interface Movie {
   id: string;
@@ -830,7 +899,7 @@ export interface AddAlbumInput {
 // ============================================================================
 
 /** Track status: missing, wanted, downloading, downloaded */
-export type TrackStatus = 'missing' | 'wanted' | 'downloading' | 'downloaded';
+export type TrackStatus = "missing" | "wanted" | "downloading" | "downloaded";
 
 export interface Track {
   id: string;
@@ -940,7 +1009,7 @@ export interface AddAudiobookInput {
 // ============================================================================
 
 /** Chapter status: missing, wanted, downloading, downloaded */
-export type ChapterStatus = 'missing' | 'wanted' | 'downloading' | 'downloaded';
+export type ChapterStatus = "missing" | "wanted" | "downloading" | "downloaded";
 
 export interface AudiobookChapter {
   id: string;
@@ -1037,7 +1106,7 @@ export interface AudioStreamInfo {
 export interface SubtitleInfo {
   id: string;
   streamIndex: number | null;
-  sourceType: 'EMBEDDED' | 'EXTERNAL' | 'DOWNLOADED';
+  sourceType: "EMBEDDED" | "EXTERNAL" | "DOWNLOADED";
   codec: string | null;
   codecLongName: string | null;
   language: string | null;
@@ -1221,7 +1290,7 @@ export interface ParseAndIdentifyResult {
 // Log Types
 // ============================================================================
 
-export type LogLevel = 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+export type LogLevel = "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR";
 
 export interface LogEntry {
   id: string;
@@ -1318,7 +1387,7 @@ export interface LibraryUpcomingEpisode {
   season: number;
   episode: number;
   airDate: string;
-  mediaFileId: string | null;
+  status: string;
   show: LibraryUpcomingShow;
 }
 
@@ -1370,7 +1439,7 @@ export interface IndexerTypeInfo {
 export interface IndexerSettingDefinition {
   key: string;
   label: string;
-  settingType: 'text' | 'password' | 'checkbox' | 'select';
+  settingType: "text" | "password" | "checkbox" | "select";
   defaultValue: string | null;
   options: IndexerSettingOption[] | null;
 }
@@ -1480,37 +1549,20 @@ export interface TorrentRelease {
 }
 
 // ============================================================================
-// Security Settings Types
-// ============================================================================
-
-/** Security settings */
-export interface SecuritySettings {
-  encryptionKeySet: boolean;
-  encryptionKeyPreview: string | null;
-  encryptionKeyLastModified: string | null;
-}
-
-/** Result of security settings operation */
-export interface SecuritySettingsResult {
-  success: boolean;
-  error: string | null;
-  settings: SecuritySettings | null;
-}
-
-/** Input for generating encryption key */
-export interface GenerateEncryptionKeyInput {
-  confirmInvalidation: boolean;
-}
-
-// ============================================================================
 // Cast Types (Chromecast / Media Casting)
 // ============================================================================
 
 /** Cast device types */
-export type CastDeviceType = 'CHROMECAST' | 'CHROMECAST_AUDIO' | 'GOOGLE_HOME' | 'GOOGLE_NEST_HUB' | 'ANDROID_TV' | 'UNKNOWN';
+export type CastDeviceType =
+  | "CHROMECAST"
+  | "CHROMECAST_AUDIO"
+  | "GOOGLE_HOME"
+  | "GOOGLE_NEST_HUB"
+  | "ANDROID_TV"
+  | "UNKNOWN";
 
 /** Cast player states */
-export type CastPlayerState = 'IDLE' | 'BUFFERING' | 'PLAYING' | 'PAUSED';
+export type CastPlayerState = "IDLE" | "BUFFERING" | "PLAYING" | "PAUSED";
 
 /** A discovered or saved cast device */
 export interface CastDevice {
@@ -1556,7 +1608,7 @@ export interface CastSettings {
 // ============================================================================
 
 /** Content type for playback */
-export type PlaybackContentType = 'EPISODE' | 'MOVIE' | 'TRACK' | 'AUDIOBOOK';
+export type PlaybackContentType = "EPISODE" | "MOVIE" | "TRACK" | "AUDIOBOOK";
 
 /** A user's playback session (what they're currently watching/listening) */
 export interface PlaybackSession {
@@ -1754,7 +1806,7 @@ export interface DateFilter {
 // ============================================================================
 
 /** Order direction for sorting */
-export type OrderDirection = 'ASC' | 'DESC';
+export type OrderDirection = "ASC" | "DESC";
 
 /** Pagination info for connections */
 export interface PageInfo {
@@ -1793,7 +1845,7 @@ export interface MovieWhereInput {
 
 /** Order by input for movies */
 export interface MovieOrderByInput {
-  field: 'title' | 'year' | 'releaseDate' | 'createdAt' | 'sortTitle';
+  field: "title" | "year" | "releaseDate" | "createdAt" | "sortTitle";
   direction?: OrderDirection;
 }
 
@@ -1809,7 +1861,7 @@ export interface TvShowWhereInput {
 
 /** Order by input for TV shows */
 export interface TvShowOrderByInput {
-  field: 'name' | 'year' | 'createdAt' | 'sortName';
+  field: "name" | "year" | "createdAt" | "sortName";
   direction?: OrderDirection;
 }
 
@@ -1824,7 +1876,7 @@ export interface AlbumWhereInput {
 
 /** Order by input for albums */
 export interface AlbumOrderByInput {
-  field: 'name' | 'year' | 'createdAt' | 'sortName';
+  field: "name" | "year" | "createdAt" | "sortName";
   direction?: OrderDirection;
 }
 
@@ -1838,7 +1890,7 @@ export interface AudiobookWhereInput {
 
 /** Order by input for audiobooks */
 export interface AudiobookOrderByInput {
-  field: 'title' | 'createdAt' | 'sortTitle';
+  field: "title" | "createdAt" | "sortTitle";
   direction?: OrderDirection;
 }
 
@@ -1852,7 +1904,13 @@ export interface TrackWhereInput {
 
 /** Order by input for tracks */
 export interface TrackOrderByInput {
-  field: 'TITLE' | 'TRACK_NUMBER' | 'DISC_NUMBER' | 'ARTIST_NAME' | 'DURATION' | 'CREATED_AT';
+  field:
+    | "TITLE"
+    | "TRACK_NUMBER"
+    | "DISC_NUMBER"
+    | "ARTIST_NAME"
+    | "DURATION"
+    | "CREATED_AT";
   direction?: OrderDirection;
 }
 
@@ -1860,11 +1918,25 @@ export interface TrackOrderByInput {
 // Notification Types
 // ============================================================================
 
-export type NotificationType = 'INFO' | 'WARNING' | 'ERROR' | 'ACTION_REQUIRED';
-export type NotificationCategory = 'MATCHING' | 'PROCESSING' | 'QUALITY' | 'STORAGE' | 'EXTRACTION';
-export type NotificationActionType = 'CONFIRM_UPGRADE' | 'MANUAL_MATCH' | 'RETRY' | 'DISMISS' | 'REVIEW';
-export type NotificationResolution = 'ACCEPTED' | 'REJECTED' | 'DISMISSED' | 'AUTO_RESOLVED';
-export type NotificationEventType = 'CREATED' | 'READ' | 'RESOLVED' | 'DELETED';
+export type NotificationType = "INFO" | "WARNING" | "ERROR" | "ACTION_REQUIRED";
+export type NotificationCategory =
+  | "MATCHING"
+  | "PROCESSING"
+  | "QUALITY"
+  | "STORAGE"
+  | "EXTRACTION";
+export type NotificationActionType =
+  | "CONFIRM_UPGRADE"
+  | "MANUAL_MATCH"
+  | "RETRY"
+  | "DISMISS"
+  | "REVIEW";
+export type NotificationResolution =
+  | "ACCEPTED"
+  | "REJECTED"
+  | "DISMISSED"
+  | "AUTO_RESOLVED";
+export type NotificationEventType = "CREATED" | "READ" | "RESOLVED" | "DELETED";
 
 /** A user notification */
 export interface Notification {

@@ -7,7 +7,9 @@
 //! - Health checks
 //! - Torznab API for external app compatibility (Sonarr, Radarr)
 //! - Media streaming for cast devices and browser playback
+//! - Artwork serving (SQLite mode only - images are stored as BLOBs)
 
+pub mod artwork;
 pub mod filesystem;
 pub mod health;
 pub mod media;
