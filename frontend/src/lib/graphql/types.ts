@@ -533,7 +533,6 @@ export interface UpdateLibraryInput {
 
 export type TvShowStatus = 'CONTINUING' | 'ENDED' | 'UPCOMING' | 'CANCELLED' | 'UNKNOWN';
 export type MonitorType = 'ALL' | 'FUTURE' | 'NONE';
-export type EpisodeStatus = 'MISSING' | 'WANTED' | 'AVAILABLE' | 'DOWNLOADING' | 'DOWNLOADED' | 'IGNORED';
 
 export interface TvShow {
   id: string;
@@ -611,14 +610,9 @@ export interface Episode {
   overview: string | null;
   airDate: string | null;
   runtime: number | null;
-  status: EpisodeStatus;
   tvmazeId: number | null;
   tmdbId: number | null;
   tvdbId: number | null;
-  /** URL/magnet link to download this episode (when status is 'available') */
-  torrentLink: string | null;
-  /** When the torrent link was found in RSS */
-  torrentLinkAddedAt: string | null;
   /** Media file ID if episode has been downloaded (for playback) */
   mediaFileId: string | null;
 
@@ -649,6 +643,8 @@ export interface Episode {
   watchPosition: number | null;
   /** Whether the user has watched this episode (>=90% or manually marked) */
   isWatched: boolean | null;
+  /** Download progress (0.0 to 1.0) when status is 'DOWNLOADING', null otherwise */
+  downloadProgress: number | null;
 }
 
 export interface TvShowResult {
@@ -728,10 +724,8 @@ export interface Movie {
   posterUrl: string | null;
   backdropUrl: string | null;
   monitored: boolean;
-  /** Whether a file exists for this movie */
-  hasFile: boolean;
-  sizeBytes: number;
-  path: string | null;
+  /** Media file ID if movie has been downloaded */
+  mediaFileId: string | null;
   /** TMDB collection ID */
   collectionId: number | null;
   collectionName: string | null;
@@ -741,15 +735,6 @@ export interface Movie {
   tmdbVoteCount: number | null;
   certification: string | null;
   releaseDate: string | null;
-  // Quality override settings (null = inherit from library)
-  allowedResolutionsOverride: string[] | null;
-  allowedVideoCodecsOverride: string[] | null;
-  allowedAudioFormatsOverride: string[] | null;
-  requireHdrOverride: boolean | null;
-  allowedHdrTypesOverride: string[] | null;
-  allowedSourcesOverride: string[] | null;
-  releaseGroupBlacklistOverride: string[] | null;
-  releaseGroupWhitelistOverride: string[] | null;
 }
 
 export interface MovieSearchResult {
@@ -780,16 +765,6 @@ export interface AddMovieInput {
 
 export interface UpdateMovieInput {
   monitored?: boolean;
-  path?: string;
-  // Quality override settings (null = inherit, [] = any)
-  allowedResolutionsOverride?: string[] | null;
-  allowedVideoCodecsOverride?: string[] | null;
-  allowedAudioFormatsOverride?: string[] | null;
-  requireHdrOverride?: boolean | null;
-  allowedHdrTypesOverride?: string[] | null;
-  allowedSourcesOverride?: string[] | null;
-  releaseGroupBlacklistOverride?: string[] | null;
-  releaseGroupWhitelistOverride?: string[] | null;
 }
 
 // ============================================================================
@@ -824,6 +799,8 @@ export interface Album {
   hasFiles: boolean;
   sizeBytes: number | null;
   path: string | null;
+  /** Number of tracks with downloaded status */
+  downloadedTrackCount: number | null;
 }
 
 export interface AlbumSearchResult {
@@ -872,6 +849,8 @@ export interface Track {
   hasFile: boolean;
   /** Track status: missing, wanted, downloading, downloaded */
   status: TrackStatus;
+  /** Download progress (0.0 to 1.0) when status is 'downloading', null otherwise */
+  downloadProgress: number | null;
 }
 
 export interface TrackWithStatus {
@@ -928,6 +907,10 @@ export interface Audiobook {
   hasFiles: boolean;
   sizeBytes: number | null;
   path: string | null;
+  /** Total number of chapters */
+  chapterCount: number | null;
+  /** Number of chapters with downloaded status */
+  downloadedChapterCount: number | null;
 }
 
 export interface AudiobookSearchResult {
@@ -969,6 +952,8 @@ export interface AudiobookChapter {
   durationSecs: number | null;
   mediaFileId: string | null;
   status: ChapterStatus;
+  /** Download progress (0.0 to 1.0) when status is 'downloading', null otherwise */
+  downloadProgress: number | null;
 }
 
 export interface AudiobookWithChapters {
@@ -1087,6 +1072,12 @@ export interface EmbeddedMetadata {
   episode: number | null;
   /** Whether metadata has been extracted from this file */
   extracted: boolean;
+  /** Album art as base64-encoded image data */
+  coverArtBase64: string | null;
+  /** MIME type of the cover art (e.g., "image/jpeg") */
+  coverArtMime: string | null;
+  /** Lyrics extracted from embedded tags */
+  lyrics: string | null;
 }
 
 export interface MediaFileDetails {
@@ -1327,7 +1318,7 @@ export interface LibraryUpcomingEpisode {
   season: number;
   episode: number;
   airDate: string;
-  status: EpisodeStatus;
+  mediaFileId: string | null;
   show: LibraryUpcomingShow;
 }
 
@@ -1863,4 +1854,80 @@ export interface TrackWhereInput {
 export interface TrackOrderByInput {
   field: 'TITLE' | 'TRACK_NUMBER' | 'DISC_NUMBER' | 'ARTIST_NAME' | 'DURATION' | 'CREATED_AT';
   direction?: OrderDirection;
+}
+
+// ============================================================================
+// Notification Types
+// ============================================================================
+
+export type NotificationType = 'INFO' | 'WARNING' | 'ERROR' | 'ACTION_REQUIRED';
+export type NotificationCategory = 'MATCHING' | 'PROCESSING' | 'QUALITY' | 'STORAGE' | 'EXTRACTION';
+export type NotificationActionType = 'CONFIRM_UPGRADE' | 'MANUAL_MATCH' | 'RETRY' | 'DISMISS' | 'REVIEW';
+export type NotificationResolution = 'ACCEPTED' | 'REJECTED' | 'DISMISSED' | 'AUTO_RESOLVED';
+export type NotificationEventType = 'CREATED' | 'READ' | 'RESOLVED' | 'DELETED';
+
+/** A user notification */
+export interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  notificationType: NotificationType;
+  category: NotificationCategory;
+  libraryId: string | null;
+  torrentId: string | null;
+  mediaFileId: string | null;
+  pendingMatchId: string | null;
+  actionType: NotificationActionType | null;
+  actionData: Record<string, unknown> | null;
+  readAt: string | null;
+  resolvedAt: string | null;
+  resolution: NotificationResolution | null;
+  createdAt: string;
+}
+
+/** Paginated notifications result */
+export interface PaginatedNotifications {
+  notifications: Notification[];
+  totalCount: number;
+  hasMore: boolean;
+}
+
+/** Notification counts for badge display */
+export interface NotificationCounts {
+  unreadCount: number;
+  actionRequiredCount: number;
+}
+
+/** Filter input for notifications query */
+export interface NotificationFilterInput {
+  unreadOnly?: boolean;
+  unresolvedOnly?: boolean;
+  category?: NotificationCategory;
+  notificationType?: NotificationType;
+}
+
+/** Input for resolving a notification */
+export interface ResolveNotificationInput {
+  id: string;
+  resolution: NotificationResolution;
+}
+
+/** Result of a notification mutation */
+export interface NotificationResult {
+  success: boolean;
+  error: string | null;
+  notification: Notification | null;
+}
+
+/** Result of marking all notifications read */
+export interface MarkAllReadResult {
+  success: boolean;
+  count: number;
+  error: string | null;
+}
+
+/** Notification event for subscriptions */
+export interface NotificationEvent {
+  notification: Notification;
+  eventType: NotificationEventType;
 }

@@ -123,11 +123,11 @@ impl FileProcessor {
         }
 
         info!(
-            source_type = %source_type,
-            source_id = %source_id,
-            processed = result.files_processed,
-            failed = result.files_failed,
-            "Finished processing source"
+            "Finished processing {}/{}: {} files processed, {} failed",
+            source_type,
+            source_id,
+            result.files_processed,
+            result.files_failed
         );
 
         Ok(result)
@@ -172,6 +172,33 @@ impl FileProcessor {
             .pending_file_matches()
             .mark_copied(pending_match.id)
             .await?;
+
+        // Link the torrent_file to the media_file (if source is a torrent)
+        if pending_match.source_type == "torrent" {
+            if let (Some(source_id), Some(file_index)) = (pending_match.source_id, pending_match.source_file_index) {
+                if let Err(e) = self
+                    .db
+                    .torrent_files()
+                    .set_media_file_id(source_id, file_index, media_file.id)
+                    .await
+                {
+                    warn!(
+                        torrent_id = %source_id,
+                        file_index = file_index,
+                        media_file_id = %media_file.id,
+                        error = %e,
+                        "Failed to link torrent file to media file"
+                    );
+                } else {
+                    debug!(
+                        torrent_id = %source_id,
+                        file_index = file_index,
+                        media_file_id = %media_file.id,
+                        "Linked torrent file to media file"
+                    );
+                }
+            }
+        }
 
         // Queue for FFprobe analysis
         if let Some(ref queue) = self.analysis_queue {
@@ -234,6 +261,14 @@ impl FileProcessor {
                     ProcessTarget::Movie(id) => Some(*id),
                     _ => None,
                 },
+                track_id: match &target {
+                    ProcessTarget::Track(id) => Some(*id),
+                    _ => None,
+                },
+                chapter_id: match &target {
+                    ProcessTarget::Chapter(id) => Some(*id),
+                    _ => None,
+                },
                 relative_path: None,
                 original_name: Path::new(file_path)
                     .file_name()
@@ -242,42 +277,28 @@ impl FileProcessor {
                 resolution: None,
                 is_hdr: None,
                 hdr_type: None,
+                ..Default::default()
             })
             .await?;
 
-        // Link the item to the media_file and update status
+        // Bidirectional link: Set media_file_id on the content item
+        // (media_file already has the content FK set in the upsert above)
         match target {
             ProcessTarget::Episode(id) => {
-                self.db.episodes().update_status(id, "downloaded").await?;
-                sqlx::query("UPDATE episodes SET active_download_id = NULL WHERE id = $1")
-                    .bind(id)
-                    .execute(self.db.pool())
-                    .await?;
+                // Bidirectional: episode.media_file_id -> media_file
+                self.db.episodes().set_media_file(id, media_file.id).await?;
             }
             ProcessTarget::Movie(id) => {
-                sqlx::query(
-                    "UPDATE movies SET download_status = 'downloaded', has_file = true, active_download_id = NULL WHERE id = $1",
-                )
-                .bind(id)
-                .execute(self.db.pool())
-                .await?;
+                // Bidirectional: movie.media_file_id -> media_file
+                self.db.movies().set_media_file(id, media_file.id).await?;
             }
             ProcessTarget::Track(id) => {
-                self.db.tracks().update_status(id, "downloaded").await?;
+                // Bidirectional: track.media_file_id -> media_file
                 self.db.tracks().link_media_file(id, media_file.id).await?;
-                sqlx::query("UPDATE tracks SET active_download_id = NULL WHERE id = $1")
-                    .bind(id)
-                    .execute(self.db.pool())
-                    .await?;
             }
             ProcessTarget::Chapter(id) => {
-                sqlx::query(
-                    "UPDATE chapters SET status = 'downloaded', media_file_id = $2, active_download_id = NULL WHERE id = $1",
-                )
-                .bind(id)
-                .bind(media_file.id)
-                .execute(self.db.pool())
-                .await?;
+                // Bidirectional: chapter.media_file_id -> media_file
+                self.db.chapters().link_media_file(id, media_file.id).await?;
             }
         }
 
@@ -354,21 +375,21 @@ impl FileProcessor {
                 None,
                 None,
                 None,
+                None, // chapter_id
             )
             .await?;
 
-        // Update episode status
-        self.db.episodes().update_status(episode_id, "downloaded").await?;
-        sqlx::query("UPDATE episodes SET active_download_id = NULL WHERE id = $1")
-            .bind(episode_id)
-            .execute(self.db.pool())
-            .await?;
+        // Bidirectional link: episode.media_file_id -> media_file
+        // (media_file.episode_id is already set in copy_and_create_media_file)
+        self.db.episodes().set_media_file(episode_id, media_file.id).await?;
 
+        let file_name = dest_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
         info!(
-            episode = %episode_id,
-            show = %show.name,
-            dest = %dest_path.display(),
-            "Processed episode file"
+            "Processed episode: '{}' S{:02}E{:02} -> '{}'",
+            show.name,
+            episode.season,
+            episode.episode,
+            file_name
         );
 
         Ok(media_file)
@@ -426,22 +447,20 @@ impl FileProcessor {
                 Some(movie_id),
                 None,
                 None,
+                None, // chapter_id
             )
             .await?;
 
-        // Update movie status
-        sqlx::query(
-            "UPDATE movies SET download_status = 'downloaded', has_file = true, active_download_id = NULL WHERE id = $1",
-        )
-        .bind(movie_id)
-        .execute(self.db.pool())
-        .await?;
+        // Bidirectional link: movie.media_file_id -> media_file
+        // (media_file.movie_id is already set in copy_and_create_media_file)
+        self.db.movies().set_media_file(movie_id, media_file.id).await?;
 
+        let file_name = dest_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
         info!(
-            movie = %movie_id,
-            title = %movie.title,
-            dest = %dest_path.display(),
-            "Processed movie file"
+            "Processed movie: '{}' ({}) -> '{}'",
+            movie.title,
+            movie.year.unwrap_or(0),
+            file_name
         );
 
         Ok(media_file)
@@ -518,25 +537,24 @@ impl FileProcessor {
                 None,
                 Some(track_id),
                 Some(album.id),
+                None, // chapter_id
             )
             .await?;
 
-        // Link track to media file and update status
+        // Bidirectional link: track.media_file_id -> media_file
+        // (media_file.track_id is already set in copy_and_create_media_file)
         self.db.tracks().link_media_file(track_id, media_file.id).await?;
-        self.db.tracks().update_status(track_id, "downloaded").await?;
-        sqlx::query("UPDATE tracks SET active_download_id = NULL WHERE id = $1")
-            .bind(track_id)
-            .execute(self.db.pool())
-            .await?;
 
         // Update album has_files
         self.db.albums().update_has_files(album.id, true).await?;
 
+        let file_name = dest_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
         info!(
-            track = %track_id,
-            title = %track.title,
-            dest = %dest_path.display(),
-            "Processed track file"
+            "Processed track: '{}' - '{}' (#{}) -> '{}'",
+            album.name,
+            track.title,
+            track.track_number,
+            file_name
         );
 
         Ok(media_file)
@@ -603,7 +621,7 @@ impl FileProcessor {
             apply_audiobook_naming_pattern(&pattern, &author, &audiobook, original_filename, ext);
         let dest_path = Path::new(&library.path).join(&relative_path);
 
-        // Copy file
+        // Copy file with chapter_id set
         let media_file = self
             .copy_and_create_media_file(
                 &pending_match.source_path,
@@ -612,24 +630,21 @@ impl FileProcessor {
                 None,
                 None,
                 None,
-                None,
+                None, // album_id
+                Some(chapter_id),
             )
             .await?;
 
-        // Link chapter to media file and update status
-        sqlx::query(
-            "UPDATE chapters SET status = 'downloaded', media_file_id = $2, active_download_id = NULL WHERE id = $1",
-        )
-        .bind(chapter_id)
-        .bind(media_file.id)
-        .execute(self.db.pool())
-        .await?;
+        // Bidirectional link: chapter.media_file_id -> media_file
+        // (media_file.chapter_id is already set in copy_and_create_media_file)
+        self.db.chapters().link_media_file(chapter_id, media_file.id).await?;
 
+        let file_name = dest_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
         info!(
-            chapter = %chapter_id,
-            audiobook = %audiobook.title,
-            dest = %dest_path.display(),
-            "Processed chapter file"
+            "Processed chapter: '{}' Chapter {} -> '{}'",
+            audiobook.title,
+            chapter.chapter_number,
+            file_name
         );
 
         Ok(media_file)
@@ -651,6 +666,7 @@ impl FileProcessor {
         movie_id: Option<Uuid>,
         track_id: Option<Uuid>,
         album_id: Option<Uuid>,
+        chapter_id: Option<Uuid>,
     ) -> Result<MediaFileRecord> {
         // Create parent directories
         if let Some(parent) = dest_path.parent() {
@@ -676,11 +692,15 @@ impl FileProcessor {
                 )
             })?;
 
+        let file_name = Path::new(source_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(source_path);
         info!(
-            source = %source_path,
-            dest = %dest_path.display(),
-            size = file_size,
-            "Copied file to library"
+            "Copied '{}' to {} ({} bytes)",
+            file_name,
+            dest_path.display(),
+            file_size
         );
 
         // Create media_file record
@@ -702,6 +722,9 @@ impl FileProcessor {
                 file_hash: None,
                 episode_id,
                 movie_id,
+                track_id,
+                album_id,
+                chapter_id,
                 relative_path: dest_path
                     .strip_prefix(&library.path)
                     .ok()
@@ -714,6 +737,7 @@ impl FileProcessor {
                 resolution: None,
                 is_hdr: None,
                 hdr_type: None,
+                ..Default::default()
             })
             .await?;
 

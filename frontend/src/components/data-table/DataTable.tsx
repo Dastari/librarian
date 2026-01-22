@@ -273,6 +273,8 @@ export function DataTable<T>({
   viewMode: controlledViewMode,
   onViewModeChange,
   cardRenderer,
+  cardSkeleton,
+  skeletonCardCount = 6,
   cardGridClassName = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4',
   groupBy,
   groupHeaderRenderer,
@@ -1027,7 +1029,16 @@ export function DataTable<T>({
       {/* Card View - Ungrouped */}
       {viewMode === 'cards' && cardRenderer && !groupBy && (
         <div className={`${fillHeight ? 'flex-1 min-h-0 overflow-y-auto' : ''}`}>
-          {paginatedData.length === 0 ? (
+          {/* Show skeleton cards during loading */}
+          {isLoading && paginatedData.length === 0 && cardSkeleton ? (
+            <div className={`${cardGridClassName} ${fillHeight ? 'pb-4' : ''}`}>
+              {Array.from({ length: skeletonCardCount }).map((_, index) => (
+                <div key={`skeleton-card-${index}`}>
+                  {cardSkeleton()}
+                </div>
+              ))}
+            </div>
+          ) : paginatedData.length === 0 ? (
             <div className="py-8 text-center">
               {emptyContent ?? (
                 <>
@@ -1107,7 +1118,16 @@ export function DataTable<T>({
       {/* Card View - Grouped */}
       {viewMode === 'cards' && cardRenderer && groupBy && (
         <div className={`${fillHeight ? 'flex-1 min-h-0 overflow-y-auto' : ''}`}>
-          {groupedData.length === 0 ? (
+          {/* Show skeleton cards during loading */}
+          {isLoading && groupedData.length === 0 && cardSkeleton ? (
+            <div className={`${cardGridClassName} ${fillHeight ? 'pb-4' : ''}`}>
+              {Array.from({ length: skeletonCardCount }).map((_, index) => (
+                <div key={`skeleton-card-${index}`}>
+                  {cardSkeleton()}
+                </div>
+              ))}
+            </div>
+          ) : groupedData.length === 0 ? (
             <div className="py-8 text-center">
               {emptyContent ?? (
                 <>

@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SearchRouteImport } from './routes/search'
+import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as HuntRouteImport } from './routes/hunt'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
@@ -52,6 +53,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const SearchRoute = SearchRouteImport.update({
   id: '/search',
   path: '/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NotificationsRoute = NotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HuntRoute = HuntRouteImport.update({
@@ -228,6 +234,7 @@ const LibrariesLibraryIdAlbumsRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/hunt': typeof HuntRoute
+  '/notifications': typeof NotificationsRoute
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRouteWithChildren
   '/albums/$albumId': typeof AlbumsAlbumIdRoute
@@ -264,6 +271,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/hunt': typeof HuntRoute
+  '/notifications': typeof NotificationsRoute
   '/search': typeof SearchRoute
   '/albums/$albumId': typeof AlbumsAlbumIdRoute
   '/audiobooks/$audiobookId': typeof AudiobooksAudiobookIdRoute
@@ -299,6 +307,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/hunt': typeof HuntRoute
+  '/notifications': typeof NotificationsRoute
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRouteWithChildren
   '/albums/$albumId': typeof AlbumsAlbumIdRoute
@@ -337,6 +346,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/hunt'
+    | '/notifications'
     | '/search'
     | '/settings'
     | '/albums/$albumId'
@@ -373,6 +383,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/hunt'
+    | '/notifications'
     | '/search'
     | '/albums/$albumId'
     | '/audiobooks/$audiobookId'
@@ -407,6 +418,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/hunt'
+    | '/notifications'
     | '/search'
     | '/settings'
     | '/albums/$albumId'
@@ -444,6 +456,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HuntRoute: typeof HuntRoute
+  NotificationsRoute: typeof NotificationsRoute
   SearchRoute: typeof SearchRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   AlbumsAlbumIdRoute: typeof AlbumsAlbumIdRoute
@@ -470,6 +483,13 @@ declare module '@tanstack/react-router' {
       path: '/search'
       fullPath: '/search'
       preLoaderRoute: typeof SearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/notifications': {
+      id: '/notifications'
+      path: '/notifications'
+      fullPath: '/notifications'
+      preLoaderRoute: typeof NotificationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/hunt': {
@@ -765,6 +785,7 @@ const LibrariesLibraryIdRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HuntRoute: HuntRoute,
+  NotificationsRoute: NotificationsRoute,
   SearchRoute: SearchRoute,
   SettingsRoute: SettingsRouteWithChildren,
   AlbumsAlbumIdRoute: AlbumsAlbumIdRoute,

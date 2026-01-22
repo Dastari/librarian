@@ -23,7 +23,6 @@ export interface TvShowCardProps {
 
 export function TvShowCard({ show, onDelete }: TvShowCardProps) {
   const navigate = useNavigate()
-  const missingEpisodes = show.episodeCount - show.episodeFileCount
 
   const handleCardClick = useCallback(() => {
     navigate({ to: '/shows/$showId', params: { showId: show.id } })
@@ -69,27 +68,26 @@ export function TvShowCard({ show, onDelete }: TvShowCardProps) {
         )}
       </div>
 
-      {/* Status badge - top left */}
+      {/* Progress badge - top left */}
       <div className="absolute top-2 left-2 z-10 pointer-events-none">
-        <div
-          className={`px-2 py-1 rounded-md backdrop-blur-sm text-xs font-medium ${
-            show.monitored
-              ? 'bg-success/80 text-success-foreground'
-              : 'bg-black/50 text-white/90'
-          }`}
-        >
-          {show.monitored ? <><IconCheck size={12} className="inline mr-1 text-green-400" />Monitored</> : 'Unmonitored'}
-        </div>
+        {(() => {
+          const downloaded = show.episodeFileCount ?? 0
+          const total = show.episodeCount ?? 0
+          const isComplete = total > 0 && downloaded >= total
+          return (
+            <div
+              className={`px-2 py-1 rounded-md backdrop-blur-sm text-xs font-medium ${
+                isComplete
+                  ? 'bg-success/80 text-success-foreground'
+                  : 'bg-warning/80 text-warning-foreground'
+              }`}
+            >
+              {isComplete && <IconCheck size={12} className="inline mr-1" />}
+              {downloaded}/{total}
+            </div>
+          )
+        })()}
       </div>
-
-      {/* Missing episodes badge - top right */}
-      {missingEpisodes > 0 && (
-        <div className="absolute top-2 right-2 z-10 pointer-events-none">
-          <div className="px-2 py-1 rounded-md bg-warning/80 backdrop-blur-sm text-xs font-medium text-warning-foreground">
-            {missingEpisodes} missing
-          </div>
-        </div>
-      )}
 
       {/* Bottom content */}
       <div className="absolute bottom-0 left-0 right-0 z-10 p-3 pointer-events-none bg-black/50 backdrop-blur-sm h-20 flex flex-col">

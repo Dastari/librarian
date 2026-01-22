@@ -303,7 +303,10 @@ export function FilePropertiesModal({
                   {/* File Info Section */}
                   <div className="bg-default-100/30 rounded-xl p-4 border border-default-200/30">
                     <h4 className="text-sm font-semibold text-primary-400 mb-3 uppercase tracking-wide">File Information</h4>
-                    <PropertyRow label="File Name" value={file?.originalName || filename} />
+                    <PropertyRow label="File Name" value={filename} />
+                    {file?.originalName && file.originalName !== filename && (
+                      <PropertyRow label="Original Name" value={file.originalName} />
+                    )}
                     <PropertyRow label="Size" value={file?.sizeFormatted} />
                     <PropertyRow label="Container" value={file?.container?.toUpperCase()} />
                     <PropertyRow label="Duration" value={formatDuration(file?.duration ?? null)} />
@@ -649,6 +652,30 @@ function MetadataTab({ metadata }: { metadata: EmbeddedMetadata | null }) {
           <PropertyRow label="Show" value={metadata.showName} />
           <PropertyRow label="Season" value={metadata.season?.toString()} />
           <PropertyRow label="Episode" value={metadata.episode?.toString()} />
+        </div>
+      )}
+
+      {/* Album Art */}
+      {metadata.coverArtBase64 && metadata.coverArtMime && (
+        <div className="bg-default-100/30 rounded-xl p-4 border border-default-200/30">
+          <h4 className="text-sm font-semibold text-primary-400 mb-3 uppercase tracking-wide">Album Art</h4>
+          <div className="flex justify-center">
+            <img
+              src={`data:${metadata.coverArtMime};base64,${metadata.coverArtBase64}`}
+              alt="Album Art"
+              className="max-w-xs max-h-64 rounded-lg shadow-lg object-contain"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Lyrics */}
+      {metadata.lyrics && (
+        <div className="bg-default-100/30 rounded-xl p-4 border border-default-200/30">
+          <h4 className="text-sm font-semibold text-primary-400 mb-3 uppercase tracking-wide">Lyrics</h4>
+          <pre className="text-sm text-default-600 whitespace-pre-wrap font-sans leading-relaxed max-h-96 overflow-y-auto">
+            {metadata.lyrics}
+          </pre>
         </div>
       )}
     </div>

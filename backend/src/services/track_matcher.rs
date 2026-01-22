@@ -371,8 +371,7 @@ mod tests {
             explicit: false,
             artist_name: None,
             artist_id: None,
-            media_file_id: None,
-            status: "wanted".to_string(),
+            media_file_id: None, // Track status is derived: None = wanted
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

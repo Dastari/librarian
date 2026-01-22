@@ -76,17 +76,25 @@ export function AudiobookCard({ audiobook, authorName, onDelete }: AudiobookCard
           )}
         </div>
 
-        {/* Status badge - top left */}
+        {/* Progress badge - top left */}
         <div className="absolute top-2 left-2 z-10 pointer-events-none">
-          <div
-            className={`px-2 py-1 rounded-md backdrop-blur-sm text-xs font-medium ${
-              audiobook.hasFiles
-                ? 'bg-success/80 text-success-foreground'
-                : 'bg-warning/80 text-warning-foreground'
-            }`}
-          >
-            {audiobook.hasFiles ? <><IconCheck size={12} className="inline mr-1" />Downloaded</> : 'Wanted'}
-          </div>
+          {(() => {
+            const downloaded = audiobook.downloadedChapterCount ?? 0
+            const total = audiobook.chapterCount ?? 0
+            const isComplete = total > 0 && downloaded >= total
+            return (
+              <div
+                className={`px-2 py-1 rounded-md backdrop-blur-sm text-xs font-medium ${
+                  isComplete
+                    ? 'bg-success/80 text-success-foreground'
+                    : 'bg-warning/80 text-warning-foreground'
+                }`}
+              >
+                {isComplete && <IconCheck size={12} className="inline mr-1" />}
+                {downloaded}/{total}
+              </div>
+            )
+          })()}
         </div>
 
         {/* Duration badge - top right */}

@@ -1,5 +1,4 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Spinner } from '@heroui/spinner'
 import { LibraryUnmatchedFilesTab } from '../../../components/library'
 import { useLibraryContext } from '../$libraryId'
 
@@ -8,20 +7,13 @@ export const Route = createFileRoute('/libraries/$libraryId/unmatched')({
 })
 
 function UnmatchedPage() {
-  const ctx = useLibraryContext()
-
-  if (!ctx) {
-    return (
-      <div className="flex justify-center items-center py-12">
-        <Spinner size="lg" />
-      </div>
-    )
-  }
+  const { library, loading } = useLibraryContext()
 
   return (
     <LibraryUnmatchedFilesTab
-      libraryId={ctx.library.id}
-      libraryPath={ctx.library.path}
+      libraryId={library.id}
+      libraryPath={library.path}
+      loading={loading}
     />
   )
 }

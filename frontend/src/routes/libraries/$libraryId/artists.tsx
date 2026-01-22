@@ -7,22 +7,19 @@ export const Route = createFileRoute('/libraries/$libraryId/artists')({
 })
 
 function ArtistsPage() {
-  const ctx = useLibraryContext()
+  const { library, loading } = useLibraryContext()
   const navigate = useNavigate()
-
-  if (!ctx?.library) {
-    return null
-  }
 
   const handleSelectArtist = (_artistId: string) => {
     // Navigate to albums tab filtered by artist (future enhancement)
     // For now, just navigate to albums
-    navigate({ to: '/libraries/$libraryId/albums', params: { libraryId: ctx.library.id } })
+    navigate({ to: '/libraries/$libraryId/albums', params: { libraryId: library.id } })
   }
 
   return (
     <LibraryArtistsTab
-      libraryId={ctx.library.id}
+      libraryId={library.id}
+      loading={loading}
       onSelectArtist={handleSelectArtist}
     />
   )

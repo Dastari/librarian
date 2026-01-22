@@ -5,7 +5,8 @@ import { Card, CardBody } from '@heroui/card'
 import { useDisclosure } from '@heroui/modal'
 import { Chip } from '@heroui/chip'
 import { Tooltip } from '@heroui/tooltip'
-import { Skeleton } from '@heroui/skeleton'
+import { ShimmerLoader } from '../../components/shared/ShimmerLoader'
+import { rssFeedsTemplate } from '../../lib/template-data'
 import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell } from '@heroui/table'
 import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
 import { addToast } from '@heroui/toast'
@@ -332,23 +333,6 @@ function RssSettingsPage() {
     testModal.onOpen()
   }
 
-  // Skeleton loading content for the table
-  const SkeletonTable = () => (
-    <div className="p-4 space-y-3">
-      {[1, 2, 3].map((i) => (
-        <div key={i} className="flex items-center gap-4">
-          <div className="flex-1">
-            <Skeleton className="w-32 h-4 rounded mb-1" />
-            <Skeleton className="w-48 h-3 rounded" />
-          </div>
-          <Skeleton className="w-16 h-5 rounded-full" />
-          <Skeleton className="w-20 h-4 rounded" />
-          <Skeleton className="w-12 h-4 rounded" />
-          <Skeleton className="w-8 h-8 rounded" />
-        </div>
-      ))}
-    </div>
-  )
 
   return (
     <div className="flex flex-col gap-6">
@@ -373,9 +357,7 @@ function RssSettingsPage() {
       {/* Feeds Table */}
       <Card>
         <CardBody className="p-0">
-          {isLoading ? (
-            <SkeletonTable />
-          ) : (
+          <ShimmerLoader loading={isLoading} templateProps={{ feeds: rssFeedsTemplate }}>
           <Table aria-label="RSS Feeds" removeWrapper>
             <TableHeader>
               <TableColumn>NAME</TableColumn>
@@ -479,7 +461,7 @@ function RssSettingsPage() {
               ))}
             </TableBody>
           </Table>
-          )}
+          </ShimmerLoader>
         </CardBody>
       </Card>
 

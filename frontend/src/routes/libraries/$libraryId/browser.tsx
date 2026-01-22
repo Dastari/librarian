@@ -1,5 +1,4 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Spinner } from '@heroui/spinner'
 import { LibraryFileBrowserTab } from '../../../components/library'
 import { useLibraryContext } from '../$libraryId'
 
@@ -8,15 +7,7 @@ export const Route = createFileRoute('/libraries/$libraryId/browser')({
 })
 
 function BrowserPage() {
-  const ctx = useLibraryContext()
+  const { library, loading } = useLibraryContext()
 
-  if (!ctx) {
-    return (
-      <div className="flex justify-center items-center py-12">
-        <Spinner size="lg" />
-      </div>
-    )
-  }
-
-  return <LibraryFileBrowserTab libraryPath={ctx.library.path} />
+  return <LibraryFileBrowserTab libraryPath={library.path} loading={loading} />
 }

@@ -8,6 +8,7 @@ pub mod media;
 pub mod media_files;
 pub mod movies;
 pub mod music;
+pub mod notifications;
 pub mod playback;
 pub mod priority_rules;
 pub mod rss_feeds;
@@ -29,6 +30,7 @@ pub use media::MediaQueries;
 pub use media_files::MediaFileQueries;
 pub use movies::MovieQueries;
 pub use music::MusicQueries;
+pub use notifications::NotificationQueries;
 pub use playback::PlaybackQueries;
 pub use priority_rules::PriorityRuleQueries;
 pub use rss_feeds::RssFeedQueries;
@@ -54,6 +56,6 @@ pub(crate) mod prelude {
     pub(crate) use crate::graphql::pagination::{Connection, parse_pagination_args};
     pub(crate) use crate::graphql::types::*;
     pub(crate) use crate::services::{
-        CastService, FilesystemService, MetadataService, TorrentService,
+        CastService, FilesystemService, MetadataService, NotificationService, TorrentService,
     };
 }

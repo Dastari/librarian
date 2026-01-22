@@ -13,7 +13,7 @@ export const Route = createFileRoute('/libraries/$libraryId/books')({
 })
 
 function AudiobooksPage() {
-  const ctx = useLibraryContext()
+  const { library, loading } = useLibraryContext()
   const { isOpen, onOpen, onClose } = useDisclosure()
   const [refreshKey, setRefreshKey] = useState(0)
 
@@ -21,7 +21,6 @@ function AudiobooksPage() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
 
-  // All hooks must be called before any early returns (Rules of Hooks)
   const handleAudiobookAdded = useCallback(() => {
     onClose()
     setRefreshKey((k) => k + 1)
@@ -70,23 +69,19 @@ function AudiobooksPage() {
     }
   }, [deleteTarget])
 
-  // Early return after all hooks
-  if (!ctx?.library) {
-    return null
-  }
-
   return (
     <>
       <LibraryAudiobooksTab
         key={refreshKey}
-        libraryId={ctx.library.id}
+        libraryId={library.id}
+        loading={loading}
         onAddAudiobook={onOpen}
         onDeleteAudiobook={handleDeleteAudiobook}
       />
       <AddAudiobookModal
         isOpen={isOpen}
         onClose={onClose}
-        libraryId={ctx.library.id}
+        libraryId={library.id}
         onAudiobookAdded={handleAudiobookAdded}
       />
 

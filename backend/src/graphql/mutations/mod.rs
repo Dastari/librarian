@@ -6,6 +6,7 @@ pub mod logs;
 pub mod media_files;
 pub mod movies;
 pub mod music;
+pub mod notifications;
 pub mod playback;
 pub mod priority_rules;
 pub mod rss_feeds;
@@ -23,6 +24,7 @@ pub use logs::LogMutations;
 pub use media_files::MediaFileMutations;
 pub use movies::MovieMutations;
 pub use music::MusicMutations;
+pub use notifications::NotificationMutations;
 pub use playback::PlaybackMutations;
 pub use priority_rules::PriorityRuleMutations;
 pub use rss_feeds::RssFeedMutations;
@@ -43,6 +45,7 @@ pub(crate) mod prelude {
     pub(crate) use crate::graphql::helpers::*;
     pub(crate) use crate::graphql::types::*;
     pub(crate) use crate::services::{
-        CastService, FilesystemService, MetadataService, ScannerService, TorrentService,
+        CastService, FilesystemService, MetadataService, NotificationService, ScannerService,
+        TorrentService,
     };
 }

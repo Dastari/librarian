@@ -1,0 +1,76 @@
+---
+description: Media Pipeline Decision Making
+globs:
+  - backend/src/services/file_matcher.rs
+  - backend/src/services/file_processor.rs
+  - backend/src/services/scanner.rs
+  - backend/src/services/quality_evaluator.rs
+  - backend/src/services/organizer.rs
+  - backend/src/services/torrent_completion_handler.rs
+  - backend/src/services/filename_parser.rs
+  - backend/src/jobs/download_monitor.rs
+  - backend/src/jobs/auto_hunt.rs
+  - backend/src/db/pending_file_matches.rs
+  - backend/src/db/media_files.rs
+---
+
+# Media Pipeline Decision Making
+
+When making changes to any media pipeline component, **you MUST read and reference `/docs/media-pipeline-guide.md`** before implementing changes.
+
+## What is the Media Pipeline?
+
+The media pipeline handles:
+- File matching (determining which library item a file belongs to)
+- File processing (copying files from downloads to library)
+- Library scanning (discovering existing files)
+- Quality evaluation (determining if files meet quality requirements)
+- File organization (renaming/moving files within library)
+- Download event handling (torrent/usenet completion)
+
+## Before Making Changes
+
+1. **Read the guide first**: `docs/media-pipeline-guide.md` contains all decision points and expected behaviors
+2. **Check if your scenario is covered**: The guide has 36+ documented Q&As for common scenarios
+3. **Check the gaps section**: If your scenario is in the "Gaps" section, you need to make a decision and document it
+4. **Update the guide**: If you add new decision logic, add a corresponding Q&A entry
+
+## Key Principles (Always Follow)
+
+1. **Always COPY, never move** from download folders to library folders
+2. **Use what exists NOW** rather than waiting for downloads
+3. **Library owns files** - unlinking downloads never affects library files
+4. **No auto-delete** - move conflicts to designated folder instead
+5. **Partial fulfillment is OK** - 8 of 12 tracks is valid progress
+6. **Status reflects reality** - "downloading" = in queue, "downloaded" = file in library
+
+## Common Patterns
+
+### Matching Priority
+1. Embedded metadata (ID3/video tags) - highest priority
+2. Original filename (if different from current)
+3. Current filename - fallback
+
+### Status Transitions
+```
+missing → wanted → downloading → downloaded
+                                    ↓
+                               suboptimal
+```
+
+### Quality Decisions
+- No settings = everything optimal
+- Suboptimal detection does NOT auto-upgrade
+- HDR upgrades same-resolution files
+
+## When Adding New Logic
+
+Ask yourself:
+- What happens on success?
+- What happens on failure?
+- What happens on partial success?
+- What happens if the file/item already exists?
+- What status changes occur?
+- Should this trigger any follow-up actions?
+
+Document answers in the guide before implementing.

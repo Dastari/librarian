@@ -1,12 +1,13 @@
-import { createFileRoute, useParams } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { LibraryTracksTab } from '../../../components/library'
+import { useLibraryContext } from '../$libraryId'
 
 export const Route = createFileRoute('/libraries/$libraryId/tracks')({
   component: TracksPage,
 })
 
 function TracksPage() {
-  const { libraryId } = useParams({ from: '/libraries/$libraryId/tracks' })
+  const { library, loading } = useLibraryContext()
 
-  return <LibraryTracksTab libraryId={libraryId} />
+  return <LibraryTracksTab libraryId={library.id} loading={loading} />
 }

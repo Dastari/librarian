@@ -44,6 +44,10 @@ pub struct AudiobookRecord {
     pub is_finished: Option<bool>,
     pub last_played_at: Option<chrono::DateTime<chrono::Utc>>,
     pub path: Option<String>,
+    /// Total number of chapters
+    pub chapter_count: Option<i32>,
+    /// Number of chapters with media files
+    pub downloaded_chapter_count: Option<i32>,
     // Timestamps
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -90,15 +94,17 @@ impl AudiobookRepository {
     pub async fn get_by_id(&self, id: Uuid) -> Result<Option<AudiobookRecord>> {
         let record = sqlx::query_as::<_, AudiobookRecord>(
             r#"
-            SELECT id, author_id, library_id, user_id, title, sort_title, subtitle,
-                   audible_id, asin, isbn, openlibrary_id, goodreads_id,
-                   description, publisher, publish_date, language, narrators,
-                   series_name, series_position, duration_secs,
-                   audible_rating, audible_rating_count, cover_url,
-                   has_files, size_bytes, is_finished, last_played_at, path,
-                   created_at, updated_at
-            FROM audiobooks
-            WHERE id = $1
+            SELECT a.id, a.author_id, a.library_id, a.user_id, a.title, a.sort_title, a.subtitle,
+                   a.audible_id, a.asin, a.isbn, a.openlibrary_id, a.goodreads_id,
+                   a.description, a.publisher, a.publish_date, a.language, a.narrators,
+                   a.series_name, a.series_position, a.duration_secs,
+                   a.audible_rating, a.audible_rating_count, a.cover_url,
+                   a.has_files, a.size_bytes, a.is_finished, a.last_played_at, a.path,
+                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id) as chapter_count,
+                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id AND c.media_file_id IS NOT NULL) as downloaded_chapter_count,
+                   a.created_at, a.updated_at
+            FROM audiobooks a
+            WHERE a.id = $1
             "#,
         )
         .bind(id)
@@ -116,15 +122,17 @@ impl AudiobookRepository {
     ) -> Result<Option<AudiobookRecord>> {
         let record = sqlx::query_as::<_, AudiobookRecord>(
             r#"
-            SELECT id, author_id, library_id, user_id, title, sort_title, subtitle,
-                   audible_id, asin, isbn, openlibrary_id, goodreads_id,
-                   description, publisher, publish_date, language, narrators,
-                   series_name, series_position, duration_secs,
-                   audible_rating, audible_rating_count, cover_url,
-                   has_files, size_bytes, is_finished, last_played_at, path,
-                   created_at, updated_at
-            FROM audiobooks
-            WHERE library_id = $1 AND openlibrary_id = $2
+            SELECT a.id, a.author_id, a.library_id, a.user_id, a.title, a.sort_title, a.subtitle,
+                   a.audible_id, a.asin, a.isbn, a.openlibrary_id, a.goodreads_id,
+                   a.description, a.publisher, a.publish_date, a.language, a.narrators,
+                   a.series_name, a.series_position, a.duration_secs,
+                   a.audible_rating, a.audible_rating_count, a.cover_url,
+                   a.has_files, a.size_bytes, a.is_finished, a.last_played_at, a.path,
+                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id) as chapter_count,
+                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id AND c.media_file_id IS NOT NULL) as downloaded_chapter_count,
+                   a.created_at, a.updated_at
+            FROM audiobooks a
+            WHERE a.library_id = $1 AND a.openlibrary_id = $2
             "#,
         )
         .bind(library_id)
@@ -253,16 +261,18 @@ impl AudiobookRepository {
     pub async fn list_by_library(&self, library_id: Uuid) -> Result<Vec<AudiobookRecord>> {
         let records = sqlx::query_as::<_, AudiobookRecord>(
             r#"
-            SELECT id, author_id, library_id, user_id, title, sort_title, subtitle,
-                   audible_id, asin, isbn, openlibrary_id, goodreads_id,
-                   description, publisher, publish_date, language, narrators,
-                   series_name, series_position, duration_secs,
-                   audible_rating, audible_rating_count, cover_url,
-                   has_files, size_bytes, is_finished, last_played_at, path,
-                   created_at, updated_at
-            FROM audiobooks
-            WHERE library_id = $1
-            ORDER BY COALESCE(sort_title, title)
+            SELECT a.id, a.author_id, a.library_id, a.user_id, a.title, a.sort_title, a.subtitle,
+                   a.audible_id, a.asin, a.isbn, a.openlibrary_id, a.goodreads_id,
+                   a.description, a.publisher, a.publish_date, a.language, a.narrators,
+                   a.series_name, a.series_position, a.duration_secs,
+                   a.audible_rating, a.audible_rating_count, a.cover_url,
+                   a.has_files, a.size_bytes, a.is_finished, a.last_played_at, a.path,
+                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id) as chapter_count,
+                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id AND c.media_file_id IS NOT NULL) as downloaded_chapter_count,
+                   a.created_at, a.updated_at
+            FROM audiobooks a
+            WHERE a.library_id = $1
+            ORDER BY COALESCE(a.sort_title, a.title)
             "#,
         )
         .bind(library_id)
@@ -287,6 +297,8 @@ impl AudiobookRepository {
                    a.series_name, a.series_position, a.duration_secs,
                    a.audible_rating, a.audible_rating_count, a.cover_url,
                    a.has_files, a.size_bytes, a.is_finished, a.last_played_at, a.path,
+                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id) as chapter_count,
+                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id AND c.media_file_id IS NOT NULL) as downloaded_chapter_count,
                    a.created_at, a.updated_at
             FROM audiobooks a
             WHERE a.library_id = $1
@@ -348,19 +360,25 @@ impl AudiobookRepository {
         let count_query = format!("SELECT COUNT(*) FROM audiobooks WHERE {}", where_clause);
         let data_query = format!(
             r#"
-            SELECT id, author_id, library_id, user_id, title, sort_title, subtitle,
-                   audible_id, asin, isbn, openlibrary_id, goodreads_id,
-                   description, publisher, publish_date, language, narrators,
-                   series_name, series_position, duration_secs,
-                   audible_rating, audible_rating_count, cover_url,
-                   has_files, size_bytes, is_finished, last_played_at, path,
-                   created_at, updated_at
-            FROM audiobooks
+            SELECT a.id, a.author_id, a.library_id, a.user_id, a.title, a.sort_title, a.subtitle,
+                   a.audible_id, a.asin, a.isbn, a.openlibrary_id, a.goodreads_id,
+                   a.description, a.publisher, a.publish_date, a.language, a.narrators,
+                   a.series_name, a.series_position, a.duration_secs,
+                   a.audible_rating, a.audible_rating_count, a.cover_url,
+                   a.has_files, a.size_bytes, a.is_finished, a.last_played_at, a.path,
+                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id) as chapter_count,
+                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id AND c.media_file_id IS NOT NULL) as downloaded_chapter_count,
+                   a.created_at, a.updated_at
+            FROM audiobooks a
             WHERE {}
             {}
             LIMIT {} OFFSET {}
             "#,
-            where_clause, order_clause, limit, offset
+            where_clause.replace("library_id", "a.library_id")
+                .replace("title", "a.title")
+                .replace("has_files", "a.has_files"),
+            order_clause.replace(sort_col, &format!("a.{}", sort_col)),
+            limit, offset
         );
 
         let mut count_builder = sqlx::query_scalar::<_, i64>(&count_query).bind(library_id);
@@ -537,7 +555,6 @@ pub struct AudiobookChapterRecord {
     pub end_secs: i32,
     pub duration_secs: Option<i32>,
     pub media_file_id: Option<Uuid>,
-    pub status: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -565,7 +582,7 @@ impl AudiobookChapterRepository {
         let record = sqlx::query_as::<_, AudiobookChapterRecord>(
             r#"
             SELECT id, audiobook_id, chapter_number, title, start_secs, end_secs,
-                   duration_secs, media_file_id, status, created_at
+                   duration_secs, media_file_id, created_at
             FROM chapters
             WHERE id = $1
             "#,
@@ -585,7 +602,7 @@ impl AudiobookChapterRepository {
         let records = sqlx::query_as::<_, AudiobookChapterRecord>(
             r#"
             SELECT id, audiobook_id, chapter_number, title, start_secs, end_secs,
-                   duration_secs, media_file_id, status, created_at
+                   duration_secs, media_file_id, created_at
             FROM chapters
             WHERE audiobook_id = $1
             ORDER BY chapter_number
@@ -599,21 +616,27 @@ impl AudiobookChapterRepository {
     }
 
     /// List chapters with pagination and filtering
+    ///
+    /// `has_media_file_filter`: If Some(true), only chapters with media_file_id set.
+    ///                          If Some(false), only chapters without media_file_id.
     #[allow(clippy::too_many_arguments)]
     pub async fn list_by_audiobook_paginated(
         &self,
         audiobook_id: Uuid,
         offset: i64,
         limit: i64,
-        status_filter: Option<&str>,
+        has_media_file_filter: Option<bool>,
         sort_column: &str,
         sort_asc: bool,
     ) -> Result<(Vec<AudiobookChapterRecord>, i64)> {
         let mut conditions = vec!["audiobook_id = $1".to_string()];
-        let param_idx = 2;
 
-        if status_filter.is_some() {
-            conditions.push(format!("status = ${}", param_idx));
+        if let Some(has_file) = has_media_file_filter {
+            if has_file {
+                conditions.push("media_file_id IS NOT NULL".to_string());
+            } else {
+                conditions.push("media_file_id IS NULL".to_string());
+            }
         }
 
         let where_clause = conditions.join(" AND ");
@@ -631,7 +654,7 @@ impl AudiobookChapterRepository {
         let data_query = format!(
             r#"
             SELECT id, audiobook_id, chapter_number, title, start_secs, end_secs,
-                   duration_secs, media_file_id, status, created_at
+                   duration_secs, media_file_id, created_at
             FROM chapters
             WHERE {}
             {}
@@ -640,19 +663,11 @@ impl AudiobookChapterRepository {
             where_clause, order_clause, limit, offset
         );
 
-        let mut count_builder = sqlx::query_scalar::<_, i64>(&count_query).bind(audiobook_id);
-        if let Some(status) = status_filter {
-            count_builder = count_builder.bind(status);
-        }
-
+        let count_builder = sqlx::query_scalar::<_, i64>(&count_query).bind(audiobook_id);
         let total: i64 = count_builder.fetch_one(&self.pool).await?;
 
-        let mut data_builder =
+        let data_builder =
             sqlx::query_as::<_, AudiobookChapterRecord>(&data_query).bind(audiobook_id);
-        if let Some(status) = status_filter {
-            data_builder = data_builder.bind(status);
-        }
-
         let records = data_builder.fetch_all(&self.pool).await?;
 
         Ok((records, total))
@@ -665,7 +680,7 @@ impl AudiobookChapterRepository {
             INSERT INTO chapters (audiobook_id, chapter_number, title, start_secs, end_secs)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING id, audiobook_id, chapter_number, title, start_secs, end_secs,
-                      duration_secs, media_file_id, status, created_at
+                      duration_secs, media_file_id, created_at
             "#,
         )
         .bind(input.audiobook_id)
@@ -679,20 +694,9 @@ impl AudiobookChapterRepository {
         Ok(record)
     }
 
-    /// Update chapter status
-    pub async fn update_status(&self, id: Uuid, status: &str) -> Result<()> {
-        sqlx::query("UPDATE chapters SET status = $2 WHERE id = $1")
-            .bind(id)
-            .bind(status)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
-    }
-
     /// Link chapter to media file
     pub async fn link_media_file(&self, id: Uuid, media_file_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE chapters SET media_file_id = $2, status = 'downloaded' WHERE id = $1")
+        sqlx::query("UPDATE chapters SET media_file_id = $2 WHERE id = $1")
             .bind(id)
             .bind(media_file_id)
             .execute(&self.pool)
@@ -709,5 +713,49 @@ impl AudiobookChapterRepository {
             .await?;
 
         Ok(result.rows_affected())
+    }
+
+    /// Get or create a chapter by audiobook ID and chapter number
+    ///
+    /// Returns the existing chapter if it exists, or creates a new one if not.
+    pub async fn get_or_create_by_number(
+        &self,
+        audiobook_id: Uuid,
+        chapter_number: i32,
+    ) -> Result<AudiobookChapterRecord> {
+        // First try to find existing chapter
+        let existing = sqlx::query_as::<_, AudiobookChapterRecord>(
+            r#"
+            SELECT id, audiobook_id, chapter_number, title, start_secs, end_secs,
+                   duration_secs, media_file_id, created_at
+            FROM chapters
+            WHERE audiobook_id = $1 AND chapter_number = $2
+            "#,
+        )
+        .bind(audiobook_id)
+        .bind(chapter_number)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(chapter) = existing {
+            return Ok(chapter);
+        }
+
+        // Create new chapter
+        let record = sqlx::query_as::<_, AudiobookChapterRecord>(
+            r#"
+            INSERT INTO chapters (audiobook_id, chapter_number, title)
+            VALUES ($1, $2, $3)
+            RETURNING id, audiobook_id, chapter_number, title, start_secs, end_secs,
+                      duration_secs, media_file_id, created_at
+            "#,
+        )
+        .bind(audiobook_id)
+        .bind(chapter_number)
+        .bind(format!("Chapter {}", chapter_number))
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(record)
     }
 }

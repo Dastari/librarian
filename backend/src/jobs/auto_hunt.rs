@@ -211,11 +211,10 @@ async fn create_file_matches_for_target(
 
     info!(
         job = "auto_hunt",
-        torrent_id = %torrent_record.id,
-        torrent_name = %torrent_info.name,
-        target = ?target,
-        matches_created = records.len(),
-        "Created file-level matches via FileMatcher"
+        "Created {} file-level matches for '{}' via FileMatcher (target: {:?})",
+        records.len(),
+        torrent_info.name,
+        target
     );
 
     Ok(())
@@ -274,39 +273,12 @@ impl EffectiveQualitySettings {
         }
     }
 
-    /// Merge library settings with movie overrides
-    pub fn from_library_and_movie(library: &LibraryRecord, movie: &MovieRecord) -> Self {
-        Self {
-            allowed_resolutions: movie
-                .allowed_resolutions_override
-                .clone()
-                .unwrap_or_else(|| library.allowed_resolutions.clone()),
-            allowed_video_codecs: movie
-                .allowed_video_codecs_override
-                .clone()
-                .unwrap_or_else(|| library.allowed_video_codecs.clone()),
-            allowed_audio_formats: movie
-                .allowed_audio_formats_override
-                .clone()
-                .unwrap_or_else(|| library.allowed_audio_formats.clone()),
-            require_hdr: movie.require_hdr_override.unwrap_or(library.require_hdr),
-            allowed_hdr_types: movie
-                .allowed_hdr_types_override
-                .clone()
-                .unwrap_or_else(|| library.allowed_hdr_types.clone()),
-            allowed_sources: movie
-                .allowed_sources_override
-                .clone()
-                .unwrap_or_else(|| library.allowed_sources.clone()),
-            release_group_blacklist: movie
-                .release_group_blacklist_override
-                .clone()
-                .unwrap_or_else(|| library.release_group_blacklist.clone()),
-            release_group_whitelist: movie
-                .release_group_whitelist_override
-                .clone()
-                .unwrap_or_else(|| library.release_group_whitelist.clone()),
-        }
+    /// Get quality settings for a movie (uses library settings)
+    /// Note: Movie-level quality overrides have been removed.
+    /// Quality settings are now managed at the library level only.
+    pub fn from_library_and_movie(library: &LibraryRecord, _movie: &MovieRecord) -> Self {
+        // Movies no longer have quality overrides - use library settings
+        Self::from_library(library)
     }
 
     /// Merge library settings with show overrides
@@ -832,8 +804,8 @@ pub async fn hunt_single_movie(
     torrent_service: &Arc<TorrentService>,
     indexer_manager: &Arc<IndexerManager>,
 ) -> Result<HuntResult> {
-    // Skip if movie already has a file
-    if movie.has_file {
+    // Skip if movie already has a file (derived from media_file_id)
+    if movie.media_file_id.is_some() {
         debug!(
             job = "auto_hunt",
             movie_title = %movie.title,
@@ -1029,7 +1001,7 @@ async fn hunt_movies_impl(
 
     // Debug: Get all movies in this library to understand state
     let all_movies: Vec<(String, bool, bool)> =
-        sqlx::query_as(r#"SELECT title, monitored, has_file FROM movies WHERE library_id = $1"#)
+        sqlx::query_as(r#"SELECT title, monitored, (media_file_id IS NOT NULL) as has_file FROM movies WHERE library_id = $1"#)
             .bind(library.id)
             .fetch_all(db.pool())
             .await
@@ -1046,7 +1018,7 @@ async fn hunt_movies_impl(
         );
     }
 
-    // Get monitored movies without files
+    // Get monitored movies without files (media_file_id IS NULL = no file linked)
     let movies: Vec<MovieRecord> = sqlx::query_as(
         r#"
         SELECT id, library_id, user_id, title, sort_title, original_title, year,
@@ -1055,15 +1027,11 @@ async fn hunt_movies_impl(
                tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                collection_id, collection_name, collection_poster_url,
                release_date, certification, status, monitored,
-               allowed_resolutions_override, allowed_video_codecs_override,
-               allowed_audio_formats_override, require_hdr_override,
-               allowed_hdr_types_override, allowed_sources_override,
-               release_group_blacklist_override, release_group_whitelist_override,
-               has_file, size_bytes, path, created_at, updated_at, download_status
+               media_file_id, created_at, updated_at
         FROM movies
         WHERE library_id = $1
           AND monitored = true
-          AND (download_status IN ('missing', 'wanted', 'suboptimal') OR (download_status IS NULL AND has_file = false))
+          AND media_file_id IS NULL
         ORDER BY created_at DESC
         LIMIT $2
         "#,
@@ -1291,13 +1259,13 @@ async fn hunt_tv_episodes_impl(
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_SEARCHES));
 
     for show in shows {
-        // Get missing/wanted/suboptimal episodes for this show
-        let episodes: Vec<(Uuid, i32, i32, String)> = sqlx::query_as(
+        // Get missing episodes for this show (media_file_id IS NULL = no file linked)
+        let episodes: Vec<(Uuid, i32, i32)> = sqlx::query_as(
             r#"
-            SELECT id, season, episode, status
+            SELECT id, season, episode
             FROM episodes
             WHERE tv_show_id = $1
-              AND status IN ('missing', 'wanted', 'suboptimal')
+              AND media_file_id IS NULL
             ORDER BY season, episode
             LIMIT $2
             "#,
@@ -1315,13 +1283,13 @@ async fn hunt_tv_episodes_impl(
             job = "auto_hunt",
             show_name = %show.name,
             episode_count = episodes.len(),
-            "Found {} missing/suboptimal episodes to hunt for '{}'",
+            "Found {} missing episodes to hunt for '{}'",
             episodes.len(), show.name
         );
 
         let quality_settings = EffectiveQualitySettings::from_library_and_show(library, &show);
 
-        for (episode_id, season, episode, _status) in episodes {
+        for (episode_id, season, episode) in episodes {
             let _permit = semaphore.acquire().await?;
             result.searched += 1;
 
@@ -1539,10 +1507,10 @@ async fn hunt_music(
 
         info!(
             job = "auto_hunt",
-            album_name = %album.name,
-            torrent_count = torrent_releases.len(),
-            magnet_count = magnet_releases.len(),
-            "Separated releases by type"
+            "Found {} .torrent and {} magnet releases for album '{}'",
+            torrent_releases.len(),
+            magnet_releases.len(),
+            album.name
         );
 
         let mut downloaded = false;
@@ -1577,14 +1545,14 @@ async fn hunt_music(
 
                                 info!(
                                     job = "auto_hunt",
-                                    album_name = %album.name,
-                                    release_title = %release.title,
-                                    matched = match_result.matched_count,
-                                    expected = match_result.expected_count,
-                                    match_pct = format!("{:.1}%", match_result.match_percentage * 100.0),
-                                    audio_files = audio_files.len(),
-                                    score = score,
-                                    "Track matching result"
+                                    "Track match for '{}' release '{}': {}/{} tracks matched ({:.1}%), {} audio files, score={}",
+                                    album.name,
+                                    release.title,
+                                    match_result.matched_count,
+                                    match_result.expected_count,
+                                    match_result.match_percentage * 100.0,
+                                    audio_files.len(),
+                                    score
                                 );
 
                                 // Check if match meets threshold (80%)

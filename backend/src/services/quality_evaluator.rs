@@ -100,31 +100,12 @@ impl EffectiveQualitySettings {
         }
     }
 
-    /// Create settings from a movie with library fallback
-    pub fn from_movie(movie: &MovieRecord, library: &LibraryRecord) -> Self {
-        Self {
-            allowed_resolutions: movie
-                .allowed_resolutions_override
-                .clone()
-                .unwrap_or_else(|| library.allowed_resolutions.clone()),
-            allowed_video_codecs: movie
-                .allowed_video_codecs_override
-                .clone()
-                .unwrap_or_else(|| library.allowed_video_codecs.clone()),
-            allowed_audio_formats: movie
-                .allowed_audio_formats_override
-                .clone()
-                .unwrap_or_else(|| library.allowed_audio_formats.clone()),
-            require_hdr: movie.require_hdr_override.unwrap_or(library.require_hdr),
-            allowed_hdr_types: movie
-                .allowed_hdr_types_override
-                .clone()
-                .unwrap_or_else(|| library.allowed_hdr_types.clone()),
-            allowed_sources: movie
-                .allowed_sources_override
-                .clone()
-                .unwrap_or_else(|| library.allowed_sources.clone()),
-        }
+    /// Create settings from a movie with library settings
+    /// Note: Movie-level quality overrides have been removed.
+    /// Quality settings are now managed at the library level only.
+    pub fn from_movie(_movie: &MovieRecord, library: &LibraryRecord) -> Self {
+        // Movies no longer have quality overrides - use library settings
+        Self::from_library(library)
     }
 
     /// Check if settings allow any quality (no restrictions)

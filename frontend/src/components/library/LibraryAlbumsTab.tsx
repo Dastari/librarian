@@ -1,7 +1,6 @@
 import { useMemo, useState, useCallback, useEffect } from 'react'
 import { useQueryState, parseAsString, parseAsStringLiteral } from 'nuqs'
 import { Button } from '@heroui/button'
-import { Chip } from '@heroui/chip'
 import { Image } from '@heroui/image'
 import { Card, CardBody } from '@heroui/card'
 import {
@@ -16,6 +15,7 @@ import { graphqlClient, ALBUMS_CONNECTION_QUERY, ARTISTS_QUERY, type Album, type
 import type { Connection } from '../../lib/graphql/types'
 import { IconPlus, IconTrash, IconEye, IconDisc, IconMusic, IconCalendar } from '@tabler/icons-react'
 import { AlbumCard } from './AlbumCard'
+import { SquareCardSkeleton } from './MediaCardSkeleton'
 import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 // ============================================================================
@@ -24,6 +24,8 @@ import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 interface LibraryAlbumsTabProps {
   libraryId: string
+  /** Parent loading state (e.g., library context still loading) */
+  loading?: boolean
   onDeleteAlbum?: (albumId: string, albumName: string) => void
   onAddAlbum?: () => void
 }
@@ -42,6 +44,7 @@ interface AlbumsConnectionResponse {
 
 export function LibraryAlbumsTab({
   libraryId,
+  loading: parentLoading,
   onDeleteAlbum,
   onAddAlbum,
 }: LibraryAlbumsTabProps) {
@@ -227,19 +230,20 @@ export function LibraryAlbumsTab({
         ),
       },
       {
-        key: 'status',
-        label: 'STATUS',
-        width: 120,
+        key: 'progress',
+        label: 'PROGRESS',
+        width: 80,
         sortable: false,
-        render: (album) => (
-          <Chip
-            size="sm"
-            color={album.hasFiles ? 'success' : 'warning'}
-            variant="flat"
-          >
-            {album.hasFiles ? 'Downloaded' : 'Wanted'}
-          </Chip>
-        ),
+        render: (album) => {
+          const downloaded = album.downloadedTrackCount ?? 0
+          const total = album.trackCount ?? 0
+          const isComplete = total > 0 && downloaded >= total
+          return (
+            <span className={isComplete ? 'text-success font-medium' : 'text-warning font-medium'}>
+              {downloaded}/{total}
+            </span>
+          )
+        },
       },
     ],
     [artistMap]
@@ -300,6 +304,8 @@ export function LibraryAlbumsTab({
           showViewModeToggle
           defaultViewMode="cards"
           cardRenderer={cardRenderer}
+          cardSkeleton={() => <SquareCardSkeleton />}
+          skeletonCardCount={12}
           cardGridClassName="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
           rowActions={rowActions}
           showItemCount
@@ -311,7 +317,7 @@ export function LibraryAlbumsTab({
           paginationMode="infinite"
           hasMore={hasMore}
           onLoadMore={loadMore}
-          isLoading={isLoading}
+          isLoading={parentLoading || isLoading}
           isLoadingMore={isLoadingMore}
           headerContent={
             <AlphabetFilter

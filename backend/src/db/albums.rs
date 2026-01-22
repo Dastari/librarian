@@ -33,6 +33,8 @@ pub struct AlbumRecord {
     pub has_files: bool,
     pub size_bytes: Option<i64>,
     pub path: Option<String>,
+    /// Calculated: count of tracks with status = 'downloaded'
+    pub downloaded_track_count: Option<i32>,
     // Timestamps
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -82,12 +84,14 @@ impl AlbumRepository {
     pub async fn get_by_id(&self, id: Uuid) -> Result<Option<AlbumRecord>> {
         let record = sqlx::query_as::<_, AlbumRecord>(
             r#"
-            SELECT id, artist_id, library_id, user_id, name, sort_name, year,
-                   musicbrainz_id, album_type, genres, label, country, release_date,
-                   cover_url, track_count, disc_count, total_duration_secs,
-                   has_files, size_bytes, path, created_at, updated_at
-            FROM albums
-            WHERE id = $1
+            SELECT a.id, a.artist_id, a.library_id, a.user_id, a.name, a.sort_name, a.year,
+                   a.musicbrainz_id, a.album_type, a.genres, a.label, a.country, a.release_date,
+                   a.cover_url, a.track_count, a.disc_count, a.total_duration_secs,
+                   a.has_files, a.size_bytes, a.path,
+                   (SELECT COUNT(*)::int FROM tracks t WHERE t.album_id = a.id AND t.status = 'downloaded') as downloaded_track_count,
+                   a.created_at, a.updated_at
+            FROM albums a
+            WHERE a.id = $1
             "#,
         )
         .bind(id)
@@ -143,12 +147,14 @@ impl AlbumRepository {
     ) -> Result<Option<AlbumRecord>> {
         let record = sqlx::query_as::<_, AlbumRecord>(
             r#"
-            SELECT id, artist_id, library_id, user_id, name, sort_name, year,
-                   musicbrainz_id, album_type, genres, label, country, release_date,
-                   cover_url, track_count, disc_count, total_duration_secs,
-                   has_files, size_bytes, path, created_at, updated_at
-            FROM albums
-            WHERE library_id = $1 AND musicbrainz_id = $2
+            SELECT a.id, a.artist_id, a.library_id, a.user_id, a.name, a.sort_name, a.year,
+                   a.musicbrainz_id, a.album_type, a.genres, a.label, a.country, a.release_date,
+                   a.cover_url, a.track_count, a.disc_count, a.total_duration_secs,
+                   a.has_files, a.size_bytes, a.path,
+                   (SELECT COUNT(*)::int FROM tracks t WHERE t.album_id = a.id AND t.status = 'downloaded') as downloaded_track_count,
+                   a.created_at, a.updated_at
+            FROM albums a
+            WHERE a.library_id = $1 AND a.musicbrainz_id = $2
             "#,
         )
         .bind(library_id)
@@ -225,16 +231,22 @@ impl AlbumRepository {
     pub async fn create(&self, input: CreateAlbum) -> Result<AlbumRecord> {
         let album = sqlx::query_as::<_, AlbumRecord>(
             r#"
-            INSERT INTO albums (
-                artist_id, library_id, user_id, name, sort_name, year,
-                musicbrainz_id, album_type, genres, label, country, release_date,
-                cover_url, track_count, disc_count
+            WITH inserted AS (
+                INSERT INTO albums (
+                    artist_id, library_id, user_id, name, sort_name, year,
+                    musicbrainz_id, album_type, genres, label, country, release_date,
+                    cover_url, track_count, disc_count
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                RETURNING *
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-            RETURNING id, artist_id, library_id, user_id, name, sort_name, year,
-                      musicbrainz_id, album_type, genres, label, country, release_date,
-                      cover_url, track_count, disc_count, total_duration_secs,
-                      has_files, size_bytes, path, created_at, updated_at
+            SELECT i.id, i.artist_id, i.library_id, i.user_id, i.name, i.sort_name, i.year,
+                   i.musicbrainz_id, i.album_type, i.genres, i.label, i.country, i.release_date,
+                   i.cover_url, i.track_count, i.disc_count, i.total_duration_secs,
+                   i.has_files, i.size_bytes, i.path,
+                   0::int as downloaded_track_count,
+                   i.created_at, i.updated_at
+            FROM inserted i
             "#,
         )
         .bind(input.artist_id)
@@ -262,13 +274,15 @@ impl AlbumRepository {
     pub async fn list_by_library(&self, library_id: Uuid) -> Result<Vec<AlbumRecord>> {
         let records = sqlx::query_as::<_, AlbumRecord>(
             r#"
-            SELECT id, artist_id, library_id, user_id, name, sort_name, year,
-                   musicbrainz_id, album_type, genres, label, country, release_date,
-                   cover_url, track_count, disc_count, total_duration_secs,
-                   has_files, size_bytes, path, created_at, updated_at
-            FROM albums
-            WHERE library_id = $1
-            ORDER BY name ASC
+            SELECT a.id, a.artist_id, a.library_id, a.user_id, a.name, a.sort_name, a.year,
+                   a.musicbrainz_id, a.album_type, a.genres, a.label, a.country, a.release_date,
+                   a.cover_url, a.track_count, a.disc_count, a.total_duration_secs,
+                   a.has_files, a.size_bytes, a.path,
+                   (SELECT COUNT(*)::int FROM tracks t WHERE t.album_id = a.id AND t.status = 'downloaded') as downloaded_track_count,
+                   a.created_at, a.updated_at
+            FROM albums a
+            WHERE a.library_id = $1
+            ORDER BY a.name ASC
             "#,
         )
         .bind(library_id)
@@ -320,16 +334,23 @@ impl AlbumRepository {
         let count_query = format!("SELECT COUNT(*) FROM albums WHERE {}", where_clause);
         let data_query = format!(
             r#"
-            SELECT id, artist_id, library_id, user_id, name, sort_name, year,
-                   musicbrainz_id, album_type, genres, label, country, release_date,
-                   cover_url, track_count, disc_count, total_duration_secs,
-                   has_files, size_bytes, path, created_at, updated_at
-            FROM albums
+            SELECT a.id, a.artist_id, a.library_id, a.user_id, a.name, a.sort_name, a.year,
+                   a.musicbrainz_id, a.album_type, a.genres, a.label, a.country, a.release_date,
+                   a.cover_url, a.track_count, a.disc_count, a.total_duration_secs,
+                   a.has_files, a.size_bytes, a.path,
+                   (SELECT COUNT(*)::int FROM tracks t WHERE t.album_id = a.id AND t.status = 'downloaded') as downloaded_track_count,
+                   a.created_at, a.updated_at
+            FROM albums a
             WHERE {}
             {}
             LIMIT {} OFFSET {}
             "#,
-            where_clause, order_clause, limit, offset
+            where_clause.replace("library_id", "a.library_id")
+                .replace("name", "a.name")
+                .replace("year", "a.year")
+                .replace("has_files", "a.has_files"),
+            order_clause.replace(sort_col, &format!("a.{}", sort_col)),
+            limit, offset
         );
 
         let mut count_builder = sqlx::query_scalar::<_, i64>(&count_query).bind(library_id);
@@ -437,7 +458,8 @@ impl AlbumRepository {
     /// List albums that need files (for auto-hunt)
     ///
     /// Returns albums in the library that don't have complete files.
-    /// For now, this returns albums where has_files = false.
+    /// Album status is derived from track media_file_ids - an album needs files
+    /// if it has no files or has tracks without media files.
     pub async fn list_needing_files(
         &self,
         library_id: Uuid,
@@ -445,14 +467,19 @@ impl AlbumRepository {
     ) -> Result<Vec<AlbumRecord>> {
         let records = sqlx::query_as::<_, AlbumRecord>(
             r#"
-            SELECT id, artist_id, library_id, user_id, name, sort_name, year,
-                   musicbrainz_id, album_type, genres, label, country, release_date,
-                   cover_url, track_count, disc_count, total_duration_secs,
-                   has_files, size_bytes, path, created_at, updated_at
-            FROM albums
-            WHERE library_id = $1 
-              AND (download_status IN ('missing', 'wanted', 'suboptimal') OR (download_status IS NULL AND has_files = false))
-            ORDER BY created_at DESC
+            SELECT a.id, a.artist_id, a.library_id, a.user_id, a.name, a.sort_name, a.year,
+                   a.musicbrainz_id, a.album_type, a.genres, a.label, a.country, a.release_date,
+                   a.cover_url, a.track_count, a.disc_count, a.total_duration_secs,
+                   a.has_files, a.size_bytes, a.path,
+                   (SELECT COUNT(*)::int FROM tracks t WHERE t.album_id = a.id AND t.status = 'downloaded') as downloaded_track_count,
+                   a.created_at, a.updated_at
+            FROM albums a
+            WHERE a.library_id = $1 
+              AND (
+                a.has_files = false
+                OR EXISTS (SELECT 1 FROM tracks t WHERE t.album_id = a.id AND t.media_file_id IS NULL)
+              )
+            ORDER BY a.created_at DESC
             LIMIT $2
             "#,
         )

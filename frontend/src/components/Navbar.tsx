@@ -11,13 +11,17 @@ import { useDisclosure } from '@heroui/modal'
 import { useState, useEffect } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { useTheme } from '../hooks/useTheme'
-import { IconAlertTriangle, IconDownload, IconSearch, IconSun, IconMoon } from '@tabler/icons-react'
+import { IconAlertTriangle, IconBell, IconDownload, IconSearch, IconSun, IconMoon } from '@tabler/icons-react'
 import { SearchModal } from './SearchModal'
+import { NotificationPopover } from './NotificationPopover'
 import {
   graphqlClient,
   ACTIVE_DOWNLOAD_COUNT_QUERY,
   ACTIVE_DOWNLOAD_COUNT_SUBSCRIPTION,
+  NOTIFICATION_COUNTS_QUERY,
+  NOTIFICATION_COUNTS_SUBSCRIPTION,
   type ActiveDownloadCount,
+  type NotificationCounts,
 } from '../lib/graphql'
 
 const navItems = [
@@ -33,6 +37,7 @@ export function Navbar() {
   const { isDark, toggleTheme } = useTheme()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [activeDownloadCount, setActiveDownloadCount] = useState(0)
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0)
   const { isOpen: isSearchOpen, onOpen: onSearchOpen, onClose: onSearchClose } = useDisclosure()
   const location = useLocation()
   const navigate = useNavigate()
@@ -74,6 +79,39 @@ export function Navbar() {
         next: (result) => {
           if (result.data?.activeDownloadCount) {
             setActiveDownloadCount(result.data.activeDownloadCount.count)
+          }
+        },
+      })
+
+    return () => {
+      countSub.unsubscribe()
+    }
+  }, [user])
+
+  // Fetch notification count and subscribe to updates
+  useEffect(() => {
+    if (!user) {
+      setUnreadNotificationCount(0)
+      return
+    }
+
+    // Fetch initial count
+    graphqlClient
+      .query<{ notificationCounts: NotificationCounts }>(NOTIFICATION_COUNTS_QUERY, {})
+      .toPromise()
+      .then((result) => {
+        if (result.data?.notificationCounts) {
+          setUnreadNotificationCount(result.data.notificationCounts.unreadCount)
+        }
+      })
+
+    // Subscribe to notification count changes
+    const countSub = graphqlClient
+      .subscription<{ notificationCounts: NotificationCounts }>(NOTIFICATION_COUNTS_SUBSCRIPTION, {})
+      .subscribe({
+        next: (result) => {
+          if (result.data?.notificationCounts) {
+            setUnreadNotificationCount(result.data.notificationCounts.unreadCount)
           }
         },
       })
@@ -163,7 +201,7 @@ export function Navbar() {
           </NavbarItem>
         )}
 
-        {/* Download indicator - only show when logged in and has active downloads */}
+        {/* Download indicator - only show when logged in */}
         {user && (
           <NavbarItem>
             <Tooltip content={activeDownloadCount > 0 ? `${activeDownloadCount} active download${activeDownloadCount !== 1 ? 's' : ''}` : 'No active downloads'}>
@@ -186,6 +224,32 @@ export function Navbar() {
                 </Badge>
               </Button>
             </Tooltip>
+          </NavbarItem>
+        )}
+
+        {/* Notification indicator - only show when logged in */}
+        {user && (
+          <NavbarItem>
+            <NotificationPopover
+              trigger={
+                <Button
+                  isIconOnly
+                  variant="light"
+                  size="sm"
+                  aria-label={`${unreadNotificationCount} unread notifications`}
+                >
+                  <Badge
+                    content={unreadNotificationCount}
+                    color="warning"
+                    size="sm"
+                    isInvisible={unreadNotificationCount === 0}
+                    showOutline={false}
+                  >
+                    <IconBell size={20} className="text-amber-400" />
+                  </Badge>
+                </Button>
+              }
+            />
           </NavbarItem>
         )}
 
@@ -241,6 +305,9 @@ export function Navbar() {
                 <DropdownItem key="profile" className="h-14 gap-2">
                   <p className="font-semibold">Signed in as</p>
                   <p className="text-default-500">{user.email}</p>
+                </DropdownItem>
+                <DropdownItem key="notifications" onPress={() => navigate({ to: '/notifications' })}>
+                  Notifications
                 </DropdownItem>
                 <DropdownItem key="settings" onPress={() => navigate({ to: '/settings' })}>
                   Settings

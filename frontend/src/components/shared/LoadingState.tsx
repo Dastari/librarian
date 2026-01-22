@@ -57,6 +57,8 @@ export interface CardSkeletonProps {
 
 /**
  * Grid of card skeletons for loading states in card views.
+ * @deprecated Consider using ShimmerLoader from './ShimmerLoader' instead,
+ * which auto-generates shimmers from actual component structure.
  */
 export function CardSkeleton({ count = 6 }: CardSkeletonProps) {
   return (
@@ -81,6 +83,9 @@ export interface TableSkeletonProps {
 
 /**
  * Table skeleton for loading states in data tables.
+ * @deprecated Consider using ShimmerLoader from './ShimmerLoader' instead for
+ * non-DataTable views, which auto-generates shimmers from actual component structure.
+ * DataTable has its own built-in skeleton support that should be kept.
  */
 export function TableSkeleton({ rows = 5, columns = 4 }: TableSkeletonProps) {
   return (

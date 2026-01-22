@@ -39,7 +39,6 @@ impl MovieMutations {
                 library_id: lib_id,
                 user_id,
                 monitored: is_monitored,
-                path: input.path,
             })
             .await
         {
@@ -189,15 +188,6 @@ impl MovieMutations {
         // Build update
         let update = crate::db::UpdateMovie {
             monitored: input.monitored,
-            path: input.path,
-            allowed_resolutions_override: input.allowed_resolutions_override.flatten(),
-            allowed_video_codecs_override: input.allowed_video_codecs_override.flatten(),
-            allowed_audio_formats_override: input.allowed_audio_formats_override.flatten(),
-            require_hdr_override: input.require_hdr_override.flatten(),
-            allowed_hdr_types_override: input.allowed_hdr_types_override.flatten(),
-            allowed_sources_override: input.allowed_sources_override.flatten(),
-            release_group_blacklist_override: input.release_group_blacklist_override.flatten(),
-            release_group_whitelist_override: input.release_group_whitelist_override.flatten(),
             ..Default::default()
         };
 

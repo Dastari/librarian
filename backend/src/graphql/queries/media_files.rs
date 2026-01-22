@@ -136,6 +136,9 @@ impl MediaFileQueries {
                 season: file.meta_season,
                 episode: file.meta_episode,
                 extracted: true,
+                cover_art_base64: file.cover_art_base64.clone(),
+                cover_art_mime: file.cover_art_mime.clone(),
+                lyrics: file.lyrics.clone(),
             })
         } else {
             // Metadata not yet extracted - return empty with extracted=false

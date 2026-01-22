@@ -3287,10 +3287,7 @@ mod tests {
             tvmaze_id: None,
             tmdb_id: None,
             tvdb_id: None,
-            status: "downloaded".to_string(),
-            torrent_link: None,
-            torrent_link_added_at: None,
-            matched_rss_item_id: None,
+            media_file_id: Some(Uuid::new_v4()), // Has a file linked
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -3376,10 +3373,7 @@ mod tests {
             tvmaze_id: None,
             tmdb_id: None,
             tvdb_id: None,
-            status: "wanted".to_string(),
-            torrent_link: None,
-            torrent_link_added_at: None,
-            matched_rss_item_id: None,
+            media_file_id: None, // Wanted - no file yet
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -3456,10 +3450,7 @@ mod tests {
             tvmaze_id: None,
             tmdb_id: None,
             tvdb_id: None,
-            status: "wanted".to_string(),
-            torrent_link: None,
-            torrent_link_added_at: None,
-            matched_rss_item_id: None,
+            media_file_id: None, // Wanted - no file yet
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -3517,20 +3508,9 @@ mod tests {
             certification: None,
             status: None,
             monitored: true,
-            has_file: false,
-            size_bytes: None,
-            path: None,
-            download_status: "missing".to_string(),
+            media_file_id: None, // No file linked yet
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
-            allowed_resolutions_override: None,
-            allowed_video_codecs_override: None,
-            allowed_audio_formats_override: None,
-            require_hdr_override: None,
-            allowed_hdr_types_override: None,
-            allowed_sources_override: None,
-            release_group_blacklist_override: None,
-            release_group_whitelist_override: None,
         };
 
         let result = apply_movie_naming_pattern(
@@ -3594,20 +3574,9 @@ mod tests {
             certification: None,
             status: None,
             monitored: true,
-            has_file: false,
-            size_bytes: None,
-            path: None,
-            download_status: "missing".to_string(),
+            media_file_id: None, // No file linked yet
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
-            allowed_resolutions_override: None,
-            allowed_video_codecs_override: None,
-            allowed_audio_formats_override: None,
-            require_hdr_override: None,
-            allowed_hdr_types_override: None,
-            allowed_sources_override: None,
-            release_group_blacklist_override: None,
-            release_group_whitelist_override: None,
         };
 
         let result = apply_movie_naming_pattern(

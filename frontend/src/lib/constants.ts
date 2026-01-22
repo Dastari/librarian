@@ -3,7 +3,8 @@
  * Import from this file to ensure consistency across the application.
  */
 
-import type { EpisodeStatus, TorrentState, LibraryType, TvShowStatus, MovieStatus } from './graphql'
+import type { TorrentState, LibraryType, TvShowStatus, MovieStatus } from './graphql'
+import type { DerivedEpisodeStatus } from '../components/shared/EpisodeStatusChip'
 
 // ============================================================================
 // Chip Color Type (HeroUI compatible)
@@ -17,19 +18,16 @@ export interface StatusConfig {
 }
 
 // ============================================================================
-// Episode Status Configuration
+// Episode Status Configuration (derived from mediaFileId)
 // ============================================================================
 
-export const EPISODE_STATUS_CONFIG: Record<EpisodeStatus, StatusConfig> = {
+export const EPISODE_STATUS_CONFIG: Record<DerivedEpisodeStatus, StatusConfig> = {
   DOWNLOADED: { color: 'success', label: 'Downloaded' },
   DOWNLOADING: { color: 'primary', label: 'Downloading' },
-  AVAILABLE: { color: 'secondary', label: 'Available' },
   WANTED: { color: 'warning', label: 'Wanted' },
-  MISSING: { color: 'danger', label: 'Missing' },
-  IGNORED: { color: 'default', label: 'Ignored' },
 }
 
-export function getEpisodeStatusConfig(status: EpisodeStatus): StatusConfig {
+export function getEpisodeStatusConfig(status: DerivedEpisodeStatus): StatusConfig {
   return EPISODE_STATUS_CONFIG[status] ?? { color: 'default', label: status }
 }
 

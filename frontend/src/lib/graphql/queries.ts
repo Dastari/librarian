@@ -383,7 +383,7 @@ export const ALL_MOVIES_QUERY = `
       status
       posterUrl
       monitored
-      hasFile
+      mediaFileId
     }
   }
 `;
@@ -409,9 +409,7 @@ export const MOVIES_QUERY = `
       posterUrl
       backdropUrl
       monitored
-      hasFile
-      sizeBytes
-      path
+      mediaFileId
       collectionId
       collectionName
       collectionPosterUrl
@@ -419,14 +417,6 @@ export const MOVIES_QUERY = `
       tmdbVoteCount
       certification
       releaseDate
-      allowedResolutionsOverride
-      allowedVideoCodecsOverride
-      allowedAudioFormatsOverride
-      requireHdrOverride
-      allowedHdrTypesOverride
-      allowedSourcesOverride
-      releaseGroupBlacklistOverride
-      releaseGroupWhitelistOverride
     }
   }
 `;
@@ -465,9 +455,7 @@ export const MOVIES_CONNECTION_QUERY = `
           posterUrl
           backdropUrl
           monitored
-          hasFile
-          sizeBytes
-          path
+          mediaFileId
           tmdbRating
           releaseDate
         }
@@ -505,9 +493,7 @@ export const MOVIE_QUERY = `
       posterUrl
       backdropUrl
       monitored
-      hasFile
-      sizeBytes
-      path
+      mediaFileId
       collectionId
       collectionName
       collectionPosterUrl
@@ -515,14 +501,6 @@ export const MOVIE_QUERY = `
       tmdbVoteCount
       certification
       releaseDate
-      allowedResolutionsOverride
-      allowedVideoCodecsOverride
-      allowedAudioFormatsOverride
-      requireHdrOverride
-      allowedHdrTypesOverride
-      allowedSourcesOverride
-      releaseGroupBlacklistOverride
-      releaseGroupWhitelistOverride
     }
   }
 `;
@@ -616,6 +594,7 @@ export const ALBUMS_CONNECTION_QUERY = `
           coverUrl
           hasFiles
           trackCount
+          downloadedTrackCount
         }
         cursor
       }
@@ -696,6 +675,7 @@ export const ALBUM_WITH_TRACKS_QUERY = `
           mediaFileId
           hasFile
           status
+          downloadProgress
         }
         hasFile
         filePath
@@ -729,6 +709,8 @@ export const TRACKS_QUERY = `
       artistId
       mediaFileId
       hasFile
+      status
+      downloadProgress
     }
   }
 `;
@@ -764,6 +746,7 @@ export const TRACKS_CONNECTION_QUERY = `
           mediaFileId
           hasFile
           status
+          downloadProgress
         }
         cursor
       }
@@ -913,6 +896,7 @@ export const AUDIOBOOK_WITH_CHAPTERS_QUERY = `
         durationSecs
         mediaFileId
         status
+        downloadProgress
       }
       chapterCount
       chaptersWithFiles
@@ -934,6 +918,7 @@ export const AUDIOBOOK_CHAPTERS_QUERY = `
       durationSecs
       mediaFileId
       status
+      downloadProgress
     }
   }
 `;
@@ -979,6 +964,8 @@ export const AUDIOBOOKS_CONNECTION_QUERY = `
           coverUrl
           hasFiles
           seriesName
+          chapterCount
+          downloadedChapterCount
         }
         cursor
       }
@@ -1033,7 +1020,6 @@ export const EPISODES_QUERY = `
       overview
       airDate
       runtime
-      status
       tvmazeId
       tmdbId
       tvdbId
@@ -1050,6 +1036,7 @@ export const EPISODES_QUERY = `
       watchProgress
       watchPosition
       isWatched
+      downloadProgress
     }
   }
 `;
@@ -1063,7 +1050,7 @@ export const WANTED_EPISODES_QUERY = `
       episode
       title
       airDate
-      status
+      mediaFileId
     }
   }
 `;
@@ -1230,7 +1217,7 @@ export const LIBRARY_UPCOMING_EPISODES_QUERY = `
       season
       episode
       airDate
-      status
+      mediaFileId
       show {
         id
         name
@@ -1414,6 +1401,9 @@ export const MEDIA_FILE_DETAILS_QUERY = `
         season
         episode
         extracted
+        coverArtBase64
+        coverArtMime
+        lyrics
       }
     }
   }
@@ -1665,5 +1655,69 @@ export const INDEXER_CONFIGS_QUERY = `
       createdAt
       updatedAt
     }
+  }
+`;
+
+// ============================================================================
+// Notification Queries
+// ============================================================================
+
+export const NOTIFICATIONS_QUERY = `
+  query Notifications($filter: NotificationFilterInput, $limit: Int, $offset: Int) {
+    notifications(filter: $filter, limit: $limit, offset: $offset) {
+      notifications {
+        id
+        title
+        message
+        notificationType
+        category
+        libraryId
+        torrentId
+        mediaFileId
+        pendingMatchId
+        actionType
+        actionData
+        readAt
+        resolvedAt
+        resolution
+        createdAt
+      }
+      totalCount
+      hasMore
+    }
+  }
+`;
+
+export const RECENT_NOTIFICATIONS_QUERY = `
+  query RecentNotifications($limit: Int) {
+    recentNotifications(limit: $limit) {
+      id
+      title
+      message
+      notificationType
+      category
+      libraryId
+      actionType
+      actionData
+      readAt
+      resolvedAt
+      resolution
+      createdAt
+    }
+  }
+`;
+
+export const NOTIFICATION_COUNTS_QUERY = `
+  query NotificationCounts {
+    notificationCounts {
+      unreadCount
+      actionRequiredCount
+    }
+  }
+`;
+
+export const UNREAD_NOTIFICATION_COUNT_QUERY = `
+  query UnreadNotificationCount {
+    unreadNotificationCount
   }
 `;

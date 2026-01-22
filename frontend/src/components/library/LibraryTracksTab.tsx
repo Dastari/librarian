@@ -13,7 +13,6 @@ import { IconMusicBolt, IconCircleCheck, IconDownload } from '@tabler/icons-reac
 import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 import { formatDuration } from '../../lib/format'
 import { TrackStatusChip } from '../shared/TrackStatusChip'
-import type { TrackStatus } from '../../lib/graphql'
 
 // ============================================================================
 // Component Props
@@ -21,6 +20,8 @@ import type { TrackStatus } from '../../lib/graphql'
 
 interface LibraryTracksTabProps {
   libraryId: string
+  /** Parent loading state (e.g., library context still loading) */
+  loading?: boolean
 }
 
 // ============================================================================
@@ -43,7 +44,7 @@ const SORT_FIELD_MAP: Record<string, string> = {
   duration: 'DURATION',
 }
 
-export function LibraryTracksTab({ libraryId }: LibraryTracksTabProps) {
+export function LibraryTracksTab({ libraryId, loading: parentLoading }: LibraryTracksTabProps) {
   // URL-persisted state via nuqs (clean URLs when using defaults)
   const [selectedLetter, setSelectedLetter] = useQueryState('letter', parseAsString.withDefault(''))
   const [searchTerm, setSearchTerm] = useQueryState('q', parseAsString.withDefault(''))
@@ -179,7 +180,7 @@ export function LibraryTracksTab({ libraryId }: LibraryTracksTabProps) {
         width: 120,
         sortable: false,
         render: (track) => (
-          <TrackStatusChip status={track.status as TrackStatus} />
+          <TrackStatusChip mediaFileId={track.mediaFileId} downloadProgress={track.downloadProgress} />
         ),
       },
       {
@@ -222,7 +223,7 @@ export function LibraryTracksTab({ libraryId }: LibraryTracksTabProps) {
           paginationMode="infinite"
           hasMore={hasMore}
           onLoadMore={loadMore}
-          isLoading={isLoading}
+          isLoading={parentLoading || isLoading}
           isLoadingMore={isLoadingMore}
           headerContent={
             <AlphabetFilter

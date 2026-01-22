@@ -67,13 +67,15 @@ function getFileIcon(filename: string, isDir: boolean): React.ReactNode {
 
 interface LibraryFileBrowserTabProps {
   libraryPath: string
+  /** Parent loading state (e.g., library context still loading) */
+  loading?: boolean
 }
 
 // ============================================================================
 // Main Component
 // ============================================================================
 
-export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProps) {
+export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: LibraryFileBrowserTabProps) {
   const [currentPath, setCurrentPath] = useState(libraryPath)
   const [inputPath, setInputPath] = useState(libraryPath)
   const [entries, setEntries] = useState<FileEntry[]>([])
@@ -192,15 +194,9 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
   }
 
   // Check if file is a video file
-  const isVideoFile = (filename: string): boolean => {
-    const ext = filename.split('.').pop()?.toLowerCase()
-    return ['mkv', 'mp4', 'avi', 'mov', 'wmv', 'webm', 'm4v', 'ts', 'm2ts', 'flv', 'mpg', 'mpeg'].includes(ext || '')
-  }
-
   const handleProperties = async (entry: FileEntry) => {
-    // For video files, try to show the detailed FFmpeg analysis
-    if (!entry.isDir && isVideoFile(entry.name)) {
-      // Look up the media file by path
+    // For any file (not directory), try to look up in the database
+    if (!entry.isDir) {
       const result = await graphqlClient
         .query<{ mediaFileByPath: MediaFile | null }>(MEDIA_FILE_BY_PATH_QUERY, { path: entry.path })
         .toPromise()
@@ -215,7 +211,7 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
       // If not in database, fall through to basic toast
     }
 
-    // For non-video files or files not in database, show basic info toast
+    // For directories or files not in database, show basic info toast
     addToast({
       title: entry.name,
       description: `Path: ${entry.path}\nSize: ${formatBytes(entry.size)}\nType: ${entry.isDir ? 'Directory' : 'File'}`,
@@ -443,7 +439,7 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
               <Button
                 size="sm"
                 variant="light"
-                isLoading={loading}
+                isLoading={parentLoading || loading}
                 onPress={() => fetchDirectory(currentPath)}
                 isIconOnly
               >
@@ -487,7 +483,7 @@ export function LibraryFileBrowserTab({ libraryPath }: LibraryFileBrowserTabProp
           data={sortedEntries}
           columns={columns}
           getRowKey={(entry) => entry.path}
-          isLoading={loading}
+          isLoading={parentLoading || loading}
           selectionMode="multiple"
           isRowSelectable={(entry) => entry.name !== '..'}
           checkboxSelectionOnly

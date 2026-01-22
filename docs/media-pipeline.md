@@ -302,40 +302,107 @@ When matching a file to wanted items:
 2. **Library context** - If library_id provided, only match within that library
 3. **All libraries** - If no context, search all user's libraries with auto_download=true
 
-### Match Criteria
+### 3-Tier Matching Priority
 
-For a file to match an item:
+For each file, matching is attempted in this order:
+
+1. **Embedded Metadata** - ID3 tags (MP3), Vorbis comments (FLAC/OGG), container metadata (MKV/MP4)
+2. **Original Filename** - If the file was renamed, we try matching the stored `original_name`
+3. **Current Filename** - Fall back to parsing the current filename
 
 ```rust
-fn match_file(&self, file: &FileInfo, libraries: &[Library]) -> Option<FileMatchResult> {
-    // 1. Determine file type (video vs audio)
-    let is_video = is_video_file(&file.path);
-    let is_audio = is_audio_file(&file.path);
-    
-    // 2. Skip samples
-    if is_sample_file(&file.path, file.size) {
-        return Some(FileMatchResult::Sample);
+fn match_media_file(&self, file: &MediaFileRecord, library: &LibraryRecord) -> MatchResult {
+    // Tier 1: Try embedded metadata (highest priority)
+    if file.metadata_extracted_at.is_some() {
+        if let Some(result) = self.try_match_by_stored_metadata(file, library) {
+            return result;
+        }
     }
     
-    // 3. Parse filename for metadata
-    let parsed = filename_parser::parse(&file.path);
-    
-    // 4. Find matching item based on file type
-    if is_video {
-        try_match_episode(parsed) || try_match_movie(parsed)
-    } else if is_audio {
-        try_match_track(parsed) || try_match_chapter(parsed)
+    // Tier 2: Try original filename (if different from current)
+    if let Some(original) = &file.original_name {
+        if original != current_filename {
+            if let Some(result) = self.try_match_by_filename(original, library) {
+                return result;
+            }
+        }
     }
+    
+    // Tier 3: Try current filename
+    self.try_match_by_filename(current_filename, library)
 }
 ```
 
-### Fuzzy Matching
+### Weighted Fuzzy Matching
 
-Uses `rapidfuzz` for intelligent title matching:
+Uses `rapidfuzz` with field-specific weights and proportional scoring via `match_scorer.rs`:
 
-- Show name similarity threshold: 80%
-- Track title similarity threshold: 60%
-- Handles common variations (punctuation, "The" prefix, etc.)
+**Music Matching (100 points max):**
+| Field | Weight | Notes |
+|-------|--------|-------|
+| Artist | 30 | Exact match gets full points |
+| Album | 25 | Fuzzy match with proportional score |
+| Track Title | 25 | Fuzzy match with proportional score |
+| Track Number | 15 | Exact match only |
+| Year | 5 | Within ±1 year tolerance |
+
+**TV Show Matching (100 points max):**
+| Field | Weight | Notes |
+|-------|--------|-------|
+| Show Name | 35 | Fuzzy match with proportional score |
+| Season | 25 | Exact match only |
+| Episode | 25 | Exact match only |
+| Episode Title | 15 | Fuzzy match bonus |
+
+**Movie Matching (100 points max):**
+| Field | Weight | Notes |
+|-------|--------|-------|
+| Title | 50 | Fuzzy match with proportional score |
+| Year | 40 | Exact match or ±1 year |
+| Director | 10 | Fuzzy match bonus |
+
+**Audiobook Matching (100 points max):**
+| Field | Weight | Notes |
+|-------|--------|-------|
+| Author | 30 | Fuzzy match with proportional score |
+| Book Title | 30 | Fuzzy match with proportional score |
+| Chapter Title | 20 | Fuzzy match with proportional score |
+| Chapter Number | 20 | Exact match only |
+
+**Thresholds:**
+- **Auto-link**: Score ≥ 70 → automatically link file to item
+- **Suggest**: Score ≥ 40 → show in suggestions for manual review
+- **Reject**: Score < 40 → no match
+
+### Metadata Storage
+
+Extracted metadata is stored in the `media_files` table for consistent matching:
+
+```sql
+-- Audio/Music metadata
+meta_artist TEXT,
+meta_album TEXT,
+meta_title TEXT,
+meta_track_number INTEGER,
+meta_disc_number INTEGER,
+meta_year INTEGER,
+meta_genre TEXT,
+
+-- Video/TV metadata
+meta_show_name TEXT,
+meta_season INTEGER,
+meta_episode INTEGER,
+
+-- Processing timestamps
+ffprobe_analyzed_at TIMESTAMPTZ,
+metadata_extracted_at TIMESTAMPTZ,
+matched_at TIMESTAMPTZ,
+
+-- Album art and lyrics
+cover_art_base64 TEXT,
+cover_art_mime TEXT,
+lyrics TEXT
+```
 
 ---
 
@@ -344,14 +411,16 @@ Uses `rapidfuzz` for intelligent title matching:
 | Module | Purpose | Status |
 |--------|---------|--------|
 | `file_matcher.rs` | Source-agnostic file matching (THE ONLY matching code) | ✅ Complete |
+| `match_scorer.rs` | Weighted fuzzy matching for all media types | ✅ Complete |
 | `file_processor.rs` | Source-agnostic file copying (THE ONLY copy code) | ✅ Complete |
 | `pending_file_matches.rs` | Database repository for pending matches | ✅ Complete |
 | `organizer.rs` | Library-only file organization | ✅ Complete |
 | `quality_evaluator.rs` | FFprobe quality verification | ✅ Complete |
-| `scanner.rs` | Library scanning | 🟡 Needs FileMatcher integration |
+| `scanner.rs` | Library scanning with mismatch detection/correction | ✅ Complete |
 | `torrent_completion_handler.rs` | Torrent add/complete handling | ✅ Complete |
 | `download_monitor.rs` | Scheduled processing job | ✅ Complete |
 | `auto_hunt.rs` | Auto-hunt service | ✅ Complete |
+| `queues.rs` | Background job processing (metadata extraction) | ✅ Complete |
 
 ---
 
@@ -361,26 +430,31 @@ Uses `rapidfuzz` for intelligent title matching:
 
 - ✅ `pending_file_matches` database table (source-agnostic)
 - ✅ `active_download_id` on library items
-- ✅ `FileMatcher` service with fuzzy matching
+- ✅ `FileMatcher` service with weighted fuzzy matching
+- ✅ `match_scorer.rs` with field-specific weights for all media types
+- ✅ 3-tier matching priority (metadata → original filename → current filename)
+- ✅ Metadata storage in `media_files` table (ID3/Vorbis tags, album art, lyrics)
 - ✅ `FileProcessor` service with copy and link
-- ✅ GraphQL mutations: rematchSource, processSource, setMatch, removeMatch
-- ✅ GraphQL query: pendingFileMatches
+- ✅ GraphQL mutations: rematchSource, processSource, setMatch, removeMatch, rematchMediaFile, extractMediaFileMetadata
+- ✅ GraphQL query: pendingFileMatches, mediaFileDetails (with embedded metadata)
 - ✅ Torrent integration (match on add, process on complete)
 - ✅ Download monitor job updated
+- ✅ Scanner with mismatch detection and auto-correction
+- ✅ Bidirectional link consistency (media_files.track_id ↔ tracks.media_file_id)
 - ✅ Frontend: TorrentTable with Process/Rematch actions
 - ✅ Frontend: TorrentInfoModal with copy status and remove match
+- ✅ Frontend: FilePropertiesModal with Metadata tab (shows extracted tags, album art, lyrics)
+- ✅ Frontend: Progress fractions (e.g., "9/15") instead of status chips
 
 ### Pending
 
-- 🟡 Scanner integration (use FileMatcher for new files)
 - 🟡 Frontend: Library item progress bar when active_download_id is set
-- 🟡 Frontend: Pre-existing TypeScript warnings in unrelated files
 
 ### Future Enhancements
 
-- ⏳ Use FFprobe metadata (ID3 tags) to improve matching accuracy for audio
 - ⏳ Usenet integration with new services
 - ⏳ IRC/FTP download source support
+- ⏳ User notifications for unmatched files and processing failures
 
 ---
 

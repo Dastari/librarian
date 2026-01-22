@@ -287,6 +287,10 @@ async fn main() -> anyhow::Result<()> {
     let filesystem_service = FilesystemService::new(db.clone(), filesystem_config);
     tracing::info!("Filesystem service initialized");
 
+    // Initialize notification service for user alerts
+    let notification_service = services::create_notification_service(db.clone());
+    tracing::info!("Notification service initialized");
+
     // Build GraphQL schema
     let schema = graphql::build_schema(
         torrent_service.clone(),
@@ -294,6 +298,7 @@ async fn main() -> anyhow::Result<()> {
         scanner_service.clone(),
         cast_service.clone(),
         filesystem_service.clone(),
+        notification_service.clone(),
         db.clone(),
         analysis_queue.clone(),
         Some(log_broadcast_sender),

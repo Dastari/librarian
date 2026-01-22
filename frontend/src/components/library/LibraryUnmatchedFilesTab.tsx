@@ -22,9 +22,11 @@ interface UnmatchedFilesResponse {
 interface LibraryUnmatchedFilesTabProps {
   libraryId: string
   libraryPath: string
+  /** Parent loading state (e.g., library context still loading) */
+  loading?: boolean
 }
 
-export function LibraryUnmatchedFilesTab({ libraryId, libraryPath }: LibraryUnmatchedFilesTabProps) {
+export function LibraryUnmatchedFilesTab({ libraryId, libraryPath, loading: parentLoading }: LibraryUnmatchedFilesTabProps) {
   const [files, setFiles] = useState<MediaFile[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -99,7 +101,7 @@ export function LibraryUnmatchedFilesTab({ libraryId, libraryPath }: LibraryUnma
           variant="flat" 
           size="sm"
           onPress={fetchUnmatchedFiles}
-          isLoading={isLoading}
+          isLoading={parentLoading || isLoading}
         >
           <IconRefresh size={16} />
           Refresh

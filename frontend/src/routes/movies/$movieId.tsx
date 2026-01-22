@@ -4,7 +4,8 @@ import { Button } from '@heroui/button'
 import { Card, CardBody } from '@heroui/card'
 import { Chip } from '@heroui/chip'
 import { Image } from '@heroui/image'
-import { Skeleton } from '@heroui/skeleton'
+import { ShimmerLoader } from '../../components/shared/ShimmerLoader'
+import { movieTemplate } from '../../lib/template-data'
 import { Breadcrumbs, BreadcrumbItem } from '@heroui/breadcrumbs'
 import { useDisclosure } from '@heroui/modal'
 import { addToast } from '@heroui/toast'
@@ -98,7 +99,7 @@ function MovieDetailPage() {
               id: movieResult.data.movie.libraryId,
             })
             .toPromise(),
-          movieResult.data.movie.hasFile
+          movieResult.data.movie.mediaFileId
             ? graphqlClient
                 .query<{ movieMediaFile: MediaFile | null }>(MOVIE_MEDIA_FILE_QUERY, {
                   movieId,
@@ -214,27 +215,8 @@ function MovieDetailPage() {
     }
   }
 
-  // Loading skeleton
-  if (loading) {
-    return (
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex flex-col md:flex-row gap-6 mb-8">
-          <Skeleton className="w-64 h-96 rounded-lg shrink-0" />
-          <div className="flex-1">
-            <Skeleton className="w-48 h-4 rounded mb-4" />
-            <Skeleton className="w-96 h-8 rounded mb-4" />
-            <div className="flex gap-2 mb-4">
-              <Skeleton className="w-20 h-6 rounded-full" />
-              <Skeleton className="w-16 h-6 rounded-full" />
-            </div>
-            <Skeleton className="w-full h-24 rounded mb-4" />
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (!movie) {
+  // Show not found state only after loading is complete
+  if (!loading && !movie) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-8">
         <Card className="bg-content1">
@@ -249,16 +231,20 @@ function MovieDetailPage() {
     )
   }
 
+  // Use template data during loading, real data when available
+  const displayMovie = movie ?? movieTemplate
+
   return (
+    <ShimmerLoader loading={loading} templateProps={{ movie: movieTemplate }}>
     <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 mb-20">
       {/* Header */}
       <div className="flex flex-col md:flex-row gap-6 mb-8">
         {/* Poster */}
         <div className="shrink-0">
-          {movie.posterUrl ? (
+          {displayMovie.posterUrl ? (
             <Image
-              src={movie.posterUrl}
-              alt={movie.title}
+              src={displayMovie.posterUrl}
+              alt={displayMovie.title}
               className="w-64 h-96 object-cover rounded-lg shadow-lg"
             />
           ) : (
@@ -272,17 +258,17 @@ function MovieDetailPage() {
         <div className="flex-1">
           <Breadcrumbs className="mb-2">
             <BreadcrumbItem href="/libraries">Libraries</BreadcrumbItem>
-            <BreadcrumbItem href={`/libraries/${movie.libraryId}`}>
+            <BreadcrumbItem href={`/libraries/${displayMovie.libraryId}`}>
               {library?.name || 'Library'}
             </BreadcrumbItem>
-            <BreadcrumbItem isCurrent>{movie.title}</BreadcrumbItem>
+            <BreadcrumbItem isCurrent>{displayMovie.title}</BreadcrumbItem>
           </Breadcrumbs>
 
           <div className="flex items-start justify-between gap-4 mb-2">
             <h1 className="text-3xl font-bold">
-              {movie.title}
-              {movie.year && (
-                <span className="text-default-500 ml-2">({movie.year})</span>
+              {displayMovie.title}
+              {displayMovie.year && (
+                <span className="text-default-500 ml-2">({displayMovie.year})</span>
               )}
             </h1>
             <div className="flex items-center gap-1 shrink-0">
@@ -306,8 +292,8 @@ function MovieDetailPage() {
           </div>
 
           {/* Tagline */}
-          {movie.tagline && (
-            <p className="text-default-500 italic mb-4">"{movie.tagline}"</p>
+          {displayMovie.tagline && (
+            <p className="text-default-500 italic mb-4">"{displayMovie.tagline}"</p>
           )}
 
           {/* Chips */}
@@ -315,51 +301,51 @@ function MovieDetailPage() {
             {/* File status */}
             <Chip
               size="sm"
-              color={movie.hasFile ? 'success' : 'warning'}
+              color={displayMovie.mediaFileId ? 'success' : 'warning'}
               variant="flat"
-              startContent={movie.hasFile ? <IconCheck size={14} /> : <IconX size={14} />}
+              startContent={displayMovie.mediaFileId ? <IconCheck size={14} /> : <IconX size={14} />}
             >
-              {movie.hasFile ? 'Downloaded' : 'Missing'}
+              {displayMovie.mediaFileId ? 'Downloaded' : 'Missing'}
             </Chip>
 
             {/* Rating */}
-            {movie.tmdbRating && movie.tmdbRating > 0 && (
+            {displayMovie.tmdbRating && displayMovie.tmdbRating > 0 && (
               <Chip
                 size="sm"
                 variant="flat"
-                color={movie.tmdbRating >= 7 ? 'success' : movie.tmdbRating >= 5 ? 'warning' : 'danger'}
+                color={displayMovie.tmdbRating >= 7 ? 'success' : displayMovie.tmdbRating >= 5 ? 'warning' : 'danger'}
                 startContent={<IconStar size={14} />}
               >
-                {movie.tmdbRating.toFixed(1)} ({movie.tmdbVoteCount?.toLocaleString()} votes)
+                {displayMovie.tmdbRating.toFixed(1)} ({displayMovie.tmdbVoteCount?.toLocaleString()} votes)
               </Chip>
             )}
 
             {/* Certification */}
-            {movie.certification && (
+            {displayMovie.certification && (
               <Chip size="sm" variant="flat">
-                {movie.certification}
+                {displayMovie.certification}
               </Chip>
             )}
 
             {/* Runtime */}
-            {movie.runtime && (
+            {displayMovie.runtime && (
               <Chip size="sm" variant="flat" startContent={<IconClock size={14} />}>
-                {Math.floor(movie.runtime / 60)}h {movie.runtime % 60}m
+                {Math.floor(displayMovie.runtime / 60)}h {displayMovie.runtime % 60}m
               </Chip>
             )}
 
             {/* Release date */}
-            {movie.releaseDate && (
+            {displayMovie.releaseDate && (
               <Chip size="sm" variant="flat" startContent={<IconCalendar size={14} />}>
-                {new Date(movie.releaseDate).toLocaleDateString()}
+                {new Date(displayMovie.releaseDate).toLocaleDateString()}
               </Chip>
             )}
           </div>
 
           {/* Genres */}
-          {movie.genres.length > 0 && (
+          {displayMovie.genres.length > 0 && (
             <div className="flex flex-wrap gap-1 mb-4">
-              {movie.genres.map((genre) => (
+              {displayMovie.genres.map((genre) => (
                 <Chip key={genre} size="sm" variant="bordered" className="text-xs">
                   {genre}
                 </Chip>
@@ -368,32 +354,32 @@ function MovieDetailPage() {
           )}
 
           {/* Overview */}
-          {movie.overview && (
-            <p className="text-default-600 mb-4 line-clamp-4">{movie.overview}</p>
+          {displayMovie.overview && (
+            <p className="text-default-600 mb-4 line-clamp-4">{displayMovie.overview}</p>
           )}
 
           {/* Credits */}
           <div className="flex gap-8 text-sm mb-4">
-            {movie.director && (
+            {displayMovie.director && (
               <div>
                 <span className="text-default-500">Director:</span>{' '}
-                <span className="font-medium">{movie.director}</span>
+                <span className="font-medium">{displayMovie.director}</span>
               </div>
             )}
-            {movie.castNames.length > 0 && (
+            {displayMovie.castNames.length > 0 && (
               <div>
                 <span className="text-default-500">Cast:</span>{' '}
-                <span className="font-medium">{movie.castNames.slice(0, 3).join(', ')}</span>
+                <span className="font-medium">{displayMovie.castNames.slice(0, 3).join(', ')}</span>
               </div>
             )}
           </div>
 
           {/* Stats */}
           <div className="flex gap-4 text-sm text-default-500">
-            {movie.hasFile && movie.sizeBytes > 0 && (
+            {mediaFile && mediaFile.sizeBytes > 0 && (
               <div>
                 <span className="font-semibold text-foreground">
-                  {formatBytes(movie.sizeBytes)}
+                  {formatBytes(mediaFile.sizeBytes)}
                 </span>
                 <span> on disk</span>
               </div>
@@ -402,12 +388,12 @@ function MovieDetailPage() {
 
           {/* Actions */}
           <div className="flex gap-2 mt-6">
-            {movie.hasFile ? (
+            {displayMovie.mediaFileId ? (
               <Button
                 color="success"
                 startContent={loadingPlay ? <Spinner size="sm" color="current" /> : <IconPlayerPlay size={16} />}
                 onPress={handlePlay}
-                isDisabled={loadingPlay}
+                isDisabled={loadingPlay || loading}
               >
                 {loadingPlay ? 'Loading...' : 'Play'}
               </Button>
@@ -415,9 +401,10 @@ function MovieDetailPage() {
               <Button
                 color="primary"
                 startContent={<IconSearch size={16} />}
+                isDisabled={loading}
                 onPress={() => {
                   // Build search query: "Movie Title (Year)"
-                  const searchQuery = movie.year ? `${movie.title} ${movie.year}` : movie.title
+                  const searchQuery = displayMovie.year ? `${displayMovie.title} ${displayMovie.year}` : displayMovie.title
                   navigate({
                     to: '/hunt',
                     search: {
@@ -435,19 +422,19 @@ function MovieDetailPage() {
       </div>
 
       {/* Collection info */}
-      {movie.collectionName && (
+      {displayMovie.collectionName && (
         <Card className="bg-content1 mb-8">
           <CardBody>
             <div className="flex items-center gap-4">
-              {movie.collectionPosterUrl && (
+              {displayMovie.collectionPosterUrl && (
                 <Image
-                  src={movie.collectionPosterUrl}
-                  alt={movie.collectionName}
+                  src={displayMovie.collectionPosterUrl}
+                  alt={displayMovie.collectionName}
                   className="w-16 h-24 object-cover rounded"
                 />
               )}
               <div>
-                <h3 className="font-semibold">Part of {movie.collectionName}</h3>
+                <h3 className="font-semibold">Part of {displayMovie.collectionName}</h3>
                 <p className="text-sm text-default-500">
                   View all movies in this collection
                 </p>
@@ -458,17 +445,20 @@ function MovieDetailPage() {
       )}
 
       {/* Delete Confirmation */}
-      <ConfirmModal
-        isOpen={isDeleteOpen}
-        onClose={onDeleteClose}
-        onConfirm={handleDelete}
-        title="Delete Movie"
-        message={`Are you sure you want to delete "${movie.title}"?`}
-        description="This will remove the movie from your library. Downloaded files will not be deleted."
-        confirmLabel="Delete"
-        confirmColor="danger"
-        isLoading={deleting}
-      />
+      {movie && (
+        <ConfirmModal
+          isOpen={isDeleteOpen}
+          onClose={onDeleteClose}
+          onConfirm={handleDelete}
+          title="Delete Movie"
+          message={`Are you sure you want to delete "${movie.title}"?`}
+          description="This will remove the movie from your library. Downloaded files will not be deleted."
+          confirmLabel="Delete"
+          confirmColor="danger"
+          isLoading={deleting}
+        />
+      )}
     </div>
+    </ShimmerLoader>
   )
 }

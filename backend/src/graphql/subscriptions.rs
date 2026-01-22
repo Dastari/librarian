@@ -13,14 +13,16 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::services::{
     CastDevicesEvent, CastService, CastSessionEvent,
-    DirectoryChangeEvent as ServiceDirectoryChangeEvent, FilesystemService, LogEvent, TorrentEvent,
-    TorrentService,
+    DirectoryChangeEvent as ServiceDirectoryChangeEvent, FilesystemService, LogEvent,
+    NotificationCountEvent, NotificationEvent as ServiceNotificationEvent, NotificationService,
+    TorrentEvent, TorrentService,
 };
 
 use super::auth::AuthGuard;
 use super::types::{
     ActiveDownloadCount, CastDevice, CastPlayerState, CastSession, DirectoryChangeEvent,
-    LibraryChangedEvent, LogEventSubscription, LogLevel, MediaFileUpdatedEvent, TorrentAddedEvent,
+    LibraryChangedEvent, LogEventSubscription, LogLevel, MediaFileUpdatedEvent, Notification,
+    NotificationCounts, NotificationEvent, NotificationEventType, TorrentAddedEvent,
     TorrentCompletedEvent, TorrentProgress, TorrentRemovedEvent, TorrentState,
 };
 
@@ -488,6 +490,88 @@ impl SubscriptionRoot {
                     name: event.name,
                     new_name: event.new_name,
                     timestamp: event.timestamp.to_rfc3339(),
+                })
+            })
+        })
+    }
+
+    // ------------------------------------------------------------------------
+    // Notification Subscriptions
+    // ------------------------------------------------------------------------
+
+    /// Subscribe to notification events (new notifications, read, resolved)
+    ///
+    /// Receives events when notifications are created, marked as read, or resolved.
+    #[graphql(guard = "AuthGuard")]
+    async fn notification_received<'ctx>(
+        &self,
+        ctx: &Context<'ctx>,
+    ) -> impl Stream<Item = NotificationEvent> + 'ctx {
+        let notification_service = ctx.data_unchecked::<Arc<NotificationService>>();
+        let receiver = notification_service.subscribe();
+
+        // Get user ID from context for filtering
+        let user_id = ctx
+            .data_opt::<uuid::Uuid>()
+            .copied()
+            .unwrap_or(uuid::Uuid::nil());
+
+        BroadcastStream::new(receiver).filter_map(move |result| {
+            result.ok().and_then(|event: ServiceNotificationEvent| {
+                // Only send events for this user's notifications
+                if event.notification.user_id != user_id {
+                    return None;
+                }
+
+                let event_type = match event.event_type {
+                    crate::services::NotificationEventType::Created => {
+                        NotificationEventType::Created
+                    }
+                    crate::services::NotificationEventType::Read => NotificationEventType::Read,
+                    crate::services::NotificationEventType::Resolved => {
+                        NotificationEventType::Resolved
+                    }
+                    crate::services::NotificationEventType::Deleted => {
+                        NotificationEventType::Deleted
+                    }
+                };
+
+                Some(NotificationEvent {
+                    notification: Notification::from(event.notification),
+                    event_type,
+                })
+            })
+        })
+    }
+
+    /// Subscribe to notification count updates
+    ///
+    /// Receives events when the unread or action-required counts change.
+    /// Useful for updating the navbar badge.
+    #[graphql(guard = "AuthGuard")]
+    async fn notification_counts<'ctx>(
+        &self,
+        ctx: &Context<'ctx>,
+    ) -> impl Stream<Item = NotificationCounts> + 'ctx {
+        let notification_service = ctx.data_unchecked::<Arc<NotificationService>>();
+        let receiver = notification_service.subscribe_counts();
+
+        // Get user ID from context for filtering
+        let user_id = ctx
+            .data_opt::<uuid::Uuid>()
+            .copied()
+            .unwrap_or(uuid::Uuid::nil());
+
+        BroadcastStream::new(receiver).filter_map(move |result| {
+            result.ok().and_then(|event: NotificationCountEvent| {
+                // Only send events for this user
+                if event.user_id != user_id {
+                    return None;
+                }
+
+                Some(NotificationCounts {
+                    unread_count: event.unread_count,
+                    action_required_count: event.action_required_count,
                 })
             })
         })

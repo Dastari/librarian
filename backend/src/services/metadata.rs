@@ -147,8 +147,6 @@ pub struct AddMovieOptions {
     pub user_id: Uuid,
     /// Whether to monitor for releases
     pub monitored: bool,
-    /// Custom path within the library (optional)
-    pub path: Option<String>,
 }
 
 /// Album search result from MusicBrainz
@@ -671,7 +669,6 @@ impl MetadataService {
                 certification: movie_details.certification,
                 status: movie_details.status,
                 monitored: options.monitored,
-                path: options.path,
             })
             .await?;
 
@@ -962,21 +959,6 @@ impl MetadataService {
 
         // Create track records
         if !track_list.is_empty() {
-            // Check library settings to determine initial track status
-            // If auto_hunt or auto_download is enabled, tracks should be "wanted" so they get hunted
-            let initial_status = {
-                let library = self.db.libraries().get_by_id(options.library_id).await?;
-                if let Some(lib) = library {
-                    if lib.auto_hunt || lib.auto_download {
-                        Some("wanted".to_string())
-                    } else {
-                        Some("missing".to_string())
-                    }
-                } else {
-                    Some("missing".to_string())
-                }
-            };
-
             let tracks_to_create: Vec<crate::db::CreateTrack> = track_list
                 .into_iter()
                 .map(|t| crate::db::CreateTrack {
@@ -991,17 +973,15 @@ impl MetadataService {
                     explicit: false,
                     artist_name: t.artist_name,
                     artist_id: None, // Could look up artist if different from album artist
-                    status: initial_status.clone(),
                 })
                 .collect();
 
             match tracks_repo.create_many(tracks_to_create).await {
                 Ok(created_tracks) => {
                     debug!(
-                        "Created {} track records for album '{}' with status '{}'",
+                        "Created {} track records for album '{}'",
                         created_tracks.len(),
                         album.name,
-                        initial_status.as_deref().unwrap_or("missing")
                     );
                 }
                 Err(e) => {
@@ -1360,7 +1340,6 @@ impl MetadataService {
                             },
                             tmdb_id: None,
                             tvdb_id: None,
-                            status: None, // Will use database default
                         })
                         .await
                     {
@@ -1525,28 +1504,19 @@ impl MetadataService {
             };
 
             if let Some(ep) = matched_episode {
-                // Only update if episode is wanted/missing
-                if ep.status == "missing" || ep.status == "wanted" {
-                    if let Err(e) = self
-                        .db
-                        .episodes()
-                        .mark_available(ep.id, &torrent_link, Some(rss_item_id))
-                        .await
-                    {
-                        warn!(
-                            episode_id = %ep.id,
-                            error = %e,
-                            "Failed to mark episode as available from RSS cache"
-                        );
-                    } else {
-                        debug!(
-                            "Backfilled {} S{:02}E{:02} from RSS cache",
-                            tv_show.name, ep.season, ep.episode
-                        );
-                        matched_count += 1;
-                    }
+                // Episode status is now computed from media_file_id presence
+                // If episode doesn't have a media file, it's considered "wanted" (if aired) or "missing"
+                // We can just count the match - actual downloading is handled by auto-hunt
+                if ep.media_file_id.is_none() {
+                    debug!(
+                        "Found RSS match for {} S{:02}E{:02} (torrent: {})",
+                        tv_show.name, ep.season, ep.episode, torrent_link
+                    );
+                    matched_count += 1;
                 }
             }
+            // Suppress unused variable warning
+            let _ = rss_item_id;
         }
 
         Ok(matched_count)

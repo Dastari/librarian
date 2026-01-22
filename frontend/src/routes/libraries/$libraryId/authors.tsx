@@ -7,22 +7,19 @@ export const Route = createFileRoute('/libraries/$libraryId/authors')({
 })
 
 function AuthorsPage() {
-  const ctx = useLibraryContext()
+  const { library, loading } = useLibraryContext()
   const navigate = useNavigate()
-
-  if (!ctx?.library) {
-    return null
-  }
 
   const handleSelectAuthor = (_authorId: string) => {
     // Navigate to books tab filtered by author (future enhancement)
     // For now, just navigate to books
-    navigate({ to: '/libraries/$libraryId/books', params: { libraryId: ctx.library.id } })
+    navigate({ to: '/libraries/$libraryId/books', params: { libraryId: library.id } })
   }
 
   return (
     <LibraryAuthorsTab
-      libraryId={ctx.library.id}
+      libraryId={library.id}
+      loading={loading}
       onSelectAuthor={handleSelectAuthor}
     />
   )

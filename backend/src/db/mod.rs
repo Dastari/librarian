@@ -12,6 +12,7 @@ pub mod indexers;
 pub mod libraries;
 pub mod logs;
 pub mod media_files;
+pub mod notifications;
 pub mod movies;
 pub mod naming_patterns;
 pub mod pending_file_matches;
@@ -21,6 +22,7 @@ pub mod rss_feeds;
 pub mod schedule;
 pub mod settings;
 pub mod subtitles;
+pub mod torrent_files;
 pub mod torrents;
 pub mod tracks;
 pub mod tv_shows;
@@ -45,6 +47,11 @@ pub use episodes::{CreateEpisode, EpisodeRecord, EpisodeRepository};
 pub use indexers::{CreateIndexerConfig, IndexerRepository, UpdateIndexerConfig, UpsertCredential};
 pub use libraries::{CreateLibrary, LibraryRecord, LibraryRepository, LibraryStats, UpdateLibrary};
 pub use logs::{CreateLog, LogFilter, LogsRepository};
+pub use notifications::{
+    ActionType, CreateNotification, NotificationCategory, NotificationFilter,
+    NotificationRecord, NotificationRepository, NotificationType, PaginatedNotifications,
+    Resolution,
+};
 pub use media_files::{CreateMediaFile, EmbeddedMetadata, MediaFileRecord, MediaFileRepository};
 pub use movies::{CreateMovie, MovieCollectionRecord, MovieRecord, MovieRepository, UpdateMovie};
 pub use naming_patterns::{CreateNamingPattern, NamingPatternRecord, NamingPatternRepository, UpdateNamingPattern};
@@ -66,6 +73,7 @@ pub use subtitles::{
 pub use pending_file_matches::{
     CreatePendingFileMatch, MatchTarget, PendingFileMatchRecord, PendingFileMatchRepository,
 };
+pub use torrent_files::{TorrentFileRecord, TorrentFileRepository, UpsertTorrentFile};
 pub use torrents::{CreateTorrent, TorrentRecord, TorrentRepository};
 pub use tracks::{CreateTrack, TrackRecord, TrackRepository, TrackWithStatus, UpdateTrack};
 pub use tv_shows::{CreateTvShow, TvShowRecord, TvShowRepository, UpdateTvShow};
@@ -79,7 +87,6 @@ pub use usenet_servers::{
 };
 pub use usenet_downloads::{
     CreateUsenetDownload, UpdateUsenetDownload, UsenetDownloadRecord, UsenetDownloadsRepository,
-    UsenetFileMatchRecord,
 };
 
 /// Database wrapper providing connection pool access
@@ -147,6 +154,11 @@ impl Database {
     /// Get a torrent repository
     pub fn torrents(&self) -> TorrentRepository {
         TorrentRepository::new(self.pool.clone())
+    }
+
+    /// Get a torrent files repository
+    pub fn torrent_files(&self) -> TorrentFileRepository {
+        TorrentFileRepository::new(self.pool.clone())
     }
 
     /// Get a settings repository
@@ -267,6 +279,11 @@ impl Database {
     /// Get a usenet downloads repository
     pub fn usenet_downloads(&self) -> UsenetDownloadsRepository {
         UsenetDownloadsRepository::new(self.pool.clone())
+    }
+
+    /// Get a notifications repository
+    pub fn notifications(&self) -> NotificationRepository {
+        NotificationRepository::new(self.pool.clone())
     }
 
     /// Run database migrations

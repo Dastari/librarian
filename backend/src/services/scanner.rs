@@ -29,6 +29,8 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
+use super::file_matcher::{FileMatcher, FileInfo, FileMatchTarget};
+use super::file_processor::{FileProcessor, ProcessTarget};
 use super::filename_parser::{self, ParsedEpisode};
 use super::metadata::{
     AddAlbumOptions, AddAudiobookOptions, AddMovieOptions, AddTvShowOptions, MetadataProvider,
@@ -689,11 +691,10 @@ impl ScannerService {
                             }
                             None => {
                                 // Add as unlinked file
-                                if let Err(e) = Self::create_media_file_static(
+                                if let Err(e) = Self::create_unlinked_media_file_static(
                                     &db,
                                     library_id,
                                     &file,
-                                    None,
                                     &new_files,
                                     analysis_queue.as_ref(),
                                 )
@@ -725,9 +726,8 @@ impl ScannerService {
 
             processed_shows += chunk.len();
             info!(
-                processed = processed_shows,
-                total = show_count,
-                "Processed show chunk"
+                "Processed {}/{} shows in '{}'",
+                processed_shows, show_count, progress.library_name
             );
 
             // Small delay between chunks
@@ -909,11 +909,10 @@ impl ScannerService {
                             }
                             None => {
                                 // Add as unlinked file
-                                if let Err(e) = Self::create_media_file_static(
+                                if let Err(e) = Self::create_unlinked_media_file_static(
                                     &db,
                                     library_id,
                                     &file,
-                                    None,
                                     &new_files,
                                     analysis_queue.as_ref(),
                                 )
@@ -925,16 +924,9 @@ impl ScannerService {
                         }
                     }
 
-                    // Update movie stats if we have a movie
-                    if let Some(movie_id) = movie_id {
-                        if let Err(e) = db
-                            .movies()
-                            .update_file_status(movie_id, true, Some(total_size))
-                            .await
-                        {
-                            warn!(movie_id = %movie_id, error = %e, "Failed to update movie file status");
-                        }
-                    }
+                    // Movie status is now computed from media_file_id - no stats update needed
+                    let _ = movie_id; // Suppress unused variable warning
+                    let _ = total_size; // Suppress unused variable warning
                 });
 
                 handles.push(handle);
@@ -949,9 +941,7 @@ impl ScannerService {
 
             processed_movies += chunk.len();
             info!(
-                processed = processed_movies,
-                total = movie_count,
-                "Processed movie chunk: {}/{} movies in '{}'",
+                "Processed {}/{} movies in '{}'",
                 processed_movies, movie_count, progress.library_name
             );
 
@@ -1011,7 +1001,6 @@ impl ScannerService {
                     library_id,
                     user_id,
                     monitored: true,
-                    path: None,
                 })
                 .await?;
 
@@ -1038,7 +1027,6 @@ impl ScannerService {
                 library_id,
                 user_id,
                 monitored: true,
-                path: None,
             })
             .await?;
 
@@ -1046,6 +1034,9 @@ impl ScannerService {
     }
 
     /// Process a single file for a movie
+    ///
+    /// Uses FileMatcher to verify/find the movie match, then FileProcessor
+    /// to create media_file and set bidirectional links.
     async fn process_file_for_movie(
         db: &Database,
         library_id: Uuid,
@@ -1055,85 +1046,87 @@ impl ScannerService {
         new_files: &Arc<AtomicI32>,
         analysis_queue: Option<&Arc<MediaAnalysisQueue>>,
     ) -> Result<()> {
+        // Check if file already exists and is properly linked
         let media_files_repo = db.media_files();
-
-        // Check if file already exists
         if let Some(existing_file) = media_files_repo.get_by_path(&file.path).await? {
-            // File exists - check if it needs to be linked to the movie
-            if existing_file.movie_id.is_none() {
-                // Link the existing file to the movie
-                media_files_repo
-                    .link_to_movie(existing_file.id, movie_id)
-                    .await?;
-                debug!(
-                    "Linked file to movie: {}",
-                    std::path::Path::new(&file.path)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(&file.path)
-                );
-                files_linked.fetch_add(1, Ordering::SeqCst);
-            } else {
+            if existing_file.movie_id.is_some() {
                 debug!(path = %file.path, "File already linked to movie, skipping");
+                return Ok(());
             }
+            // File exists but not linked - will be handled by FileProcessor below
+        }
+
+        // Get the library to use with FileMatcher
+        let library = db.libraries().get_by_id(library_id).await?
+            .context("Library not found")?;
+
+        // Use FileMatcher to verify this is a valid video file (detect samples, etc.)
+        let file_matcher = FileMatcher::new(db.clone());
+        let file_info = FileInfo {
+            path: file.path.clone(),
+            size: file.size as i64,
+            file_index: None,
+            source_name: None,
+        };
+
+        let filename = std::path::Path::new(&file.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&file.path);
+
+        // Match video file against the library
+        let matches = file_matcher.match_video_file(&file_info, filename, &[library]).await?;
+
+        // Check if this is a sample file (FileMatcher detects samples)
+        let is_sample = matches.iter().any(|m| matches!(m.match_target, FileMatchTarget::Sample));
+        if is_sample {
+            debug!(path = %file.path, "File detected as sample by FileMatcher, skipping");
             return Ok(());
         }
 
-        // Create new media file record linked to the movie
-        let create_input = CreateMediaFile {
-            library_id,
-            path: file.path.clone(),
-            size_bytes: file.size as i64,
-            container: Path::new(&file.path)
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|s| s.to_lowercase()),
-            video_codec: file.parsed.codec.clone(),
-            audio_codec: file.parsed.audio.clone(),
-            width: None,
-            height: None,
-            duration: None,
-            bitrate: None,
-            file_hash: None,
-            episode_id: None,
-            movie_id: Some(movie_id),
-            relative_path: file.relative_path.clone(),
-            original_name: Some(file.filename.clone()),
-            resolution: file.parsed.resolution.clone(),
-            is_hdr: file.parsed.hdr.is_some().then_some(true),
-            hdr_type: file.parsed.hdr.clone(),
+        // Try to find a match for the expected movie, or use the passed movie_id as fallback
+        let target_movie_id = matches
+            .iter()
+            .find_map(|m| {
+                if let FileMatchTarget::Movie { movie_id: matched_id, .. } = &m.match_target {
+                    if matched_id == &movie_id {
+                        Some(*matched_id)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(movie_id);
+
+        // Use FileProcessor to create media_file and set bidirectional links
+        let file_processor = if let Some(queue) = analysis_queue {
+            FileProcessor::with_analysis_queue(db.clone(), queue.clone())
+        } else {
+            FileProcessor::new(db.clone())
         };
 
-        match media_files_repo.upsert(create_input).await {
-            Ok(media_file) => {
-                new_files.fetch_add(1, Ordering::SeqCst);
+        match file_processor
+            .link_existing_file(
+                &file.path,
+                file.size as i64,
+                library_id,
+                ProcessTarget::Movie(target_movie_id),
+            )
+            .await
+        {
+            Ok(_media_file) => {
                 files_linked.fetch_add(1, Ordering::SeqCst);
-                debug!(path = %file.path, movie_id = %movie_id, "Added/updated media file linked to movie");
-
-                // Queue for FFmpeg analysis to get real metadata
-                if let Some(queue) = analysis_queue {
-                    let job = MediaAnalysisJob {
-                        media_file_id: media_file.id,
-                        path: std::path::PathBuf::from(&file.path),
-                        check_subtitles: true,
-                    };
-                    if let Err(e) = queue.submit(job).await {
-                        warn!(
-                            media_file_id = %media_file.id,
-                            error = %e,
-                            "Failed to queue file for FFmpeg analysis"
-                        );
-                    } else {
-                        debug!(
-                            media_file_id = %media_file.id,
-                            path = %file.path,
-                            "Queued file for FFmpeg analysis"
-                        );
-                    }
-                }
+                new_files.fetch_add(1, Ordering::SeqCst);
+                debug!(
+                    path = %file.path,
+                    movie_id = %target_movie_id,
+                    "Linked file to movie via FileMatcher + FileProcessor"
+                );
             }
             Err(e) => {
-                error!(path = %file.path, error = %e, "Failed to create media file record");
+                error!(path = %file.path, error = %e, "Failed to link file to movie");
             }
         }
 
@@ -1278,7 +1271,7 @@ impl ScannerService {
                     };
 
                     // Process files for this album
-                    for (file, _meta) in &album_files {
+                    for (file, meta) in &album_files {
                         let current_scanned = scanned_files.fetch_add(1, Ordering::SeqCst) + 1;
 
                         // Send progress update every 10 files
@@ -1349,21 +1342,34 @@ impl ScannerService {
                                     warn!("Error verifying {}: {}", file_name, e);
                                 }
                             }
-                        } else {
-                            // Create new media file record (linked to album if we have one)
-                            if let Err(e) = Self::create_media_file_static(
+                        } else if let Some(album_id) = album_id {
+                            // New file with known album - use FileProcessor to link to track
+                            if let Err(e) = Self::process_file_for_album(
                                 &db,
                                 library_id,
+                                album_id,
                                 file,
-                                None, // No episode ID for music
+                                meta,
+                                &files_linked,
                                 &new_files,
                                 analysis_queue.as_ref(),
                             )
                             .await
                             {
-                                warn!(path = %file.path, error = %e, "Failed to create media file");
-                            } else {
-                                files_linked.fetch_add(1, Ordering::SeqCst);
+                                warn!(path = %file.path, error = %e, "Failed to process file for album");
+                            }
+                        } else {
+                            // No album found - create unlinked media file
+                            if let Err(e) = Self::create_unlinked_media_file_static(
+                                &db,
+                                library_id,
+                                file,
+                                &new_files,
+                                analysis_queue.as_ref(),
+                            )
+                            .await
+                            {
+                                warn!(path = %file.path, error = %e, "Failed to create unlinked media file");
                             }
                         }
                     }
@@ -1392,9 +1398,8 @@ impl ScannerService {
 
             processed_albums += chunk.len();
             info!(
-                processed = processed_albums,
-                total = album_count,
-                "Processed album chunk"
+                "Processed {}/{} albums in '{}'",
+                processed_albums, album_count, progress.library_name
             );
 
             // Small delay between chunks
@@ -1537,8 +1542,13 @@ impl ScannerService {
                     };
 
                     // Process files for this audiobook
-                    for file in &audiobook_files {
+                    // Sort files by name for consistent chapter ordering
+                    let mut sorted_files = audiobook_files.clone();
+                    sorted_files.sort_by(|a, b| a.path.cmp(&b.path));
+
+                    for (idx, file) in sorted_files.iter().enumerate() {
                         let current_scanned = scanned_files.fetch_add(1, Ordering::SeqCst) + 1;
+                        let chapter_number = (idx + 1) as i32;
 
                         // Send progress update every 10 files
                         if current_scanned % 10 == 0 {
@@ -1556,20 +1566,35 @@ impl ScannerService {
                             });
                         }
 
-                        // Create media file record (linked to audiobook if we have one)
-                        if let Err(e) = Self::create_media_file_static(
-                            &db,
-                            library_id,
-                            file,
-                            None, // No episode ID for audiobooks
-                            &new_files,
-                            analysis_queue.as_ref(),
-                        )
-                        .await
-                        {
-                            warn!(path = %file.path, error = %e, "Failed to create media file");
+                        if let Some(audiobook_id) = audiobook_id {
+                            // Use FileProcessor to link to chapter
+                            if let Err(e) = Self::process_file_for_audiobook(
+                                &db,
+                                library_id,
+                                audiobook_id,
+                                file,
+                                chapter_number,
+                                &files_linked,
+                                &new_files,
+                                analysis_queue.as_ref(),
+                            )
+                            .await
+                            {
+                                warn!(path = %file.path, error = %e, "Failed to process file for audiobook");
+                            }
                         } else {
-                            files_linked.fetch_add(1, Ordering::SeqCst);
+                            // No audiobook found - create unlinked media file
+                            if let Err(e) = Self::create_unlinked_media_file_static(
+                                &db,
+                                library_id,
+                                file,
+                                &new_files,
+                                analysis_queue.as_ref(),
+                            )
+                            .await
+                            {
+                                warn!(path = %file.path, error = %e, "Failed to create unlinked media file");
+                            }
                         }
                     }
 
@@ -1596,9 +1621,8 @@ impl ScannerService {
 
             processed_folders += chunk.len();
             info!(
-                processed = processed_folders,
-                total = folder_count,
-                "Processed audiobook chunk"
+                "Processed {}/{} audiobooks in '{}'",
+                processed_folders, folder_count, progress.library_name
             );
 
             // Small delay between chunks
@@ -1745,6 +1769,8 @@ impl ScannerService {
 
     /// Verify an existing music file's album link against its embedded metadata
     /// Returns true if the file is correctly linked, false if there's a mismatch
+    /// 
+    /// Now checks artist (most important), album, and track title.
     async fn verify_music_file_link(
         db: &Database,
         file_path: &str,
@@ -1785,13 +1811,31 @@ impl ScannerService {
             }
         };
 
+        // Get the artist for this album
+        let artist = db.albums().get_artist_by_id(album.artist_id).await?;
+        let db_artist_name = artist.map(|a| a.name).unwrap_or_default();
+
+        // CRITICAL: Check artist first - this is the most important differentiator
+        // "Appetite for Destruction" by Guns N' Roses vs Xzibit are DIFFERENT albums
+        if let Some(meta_artist) = metadata.artist.as_deref() {
+            let artist_similarity = filename_parser::show_name_similarity(&db_artist_name, meta_artist);
+            
+            if artist_similarity < 0.5 {
+                warn!(
+                    "ARTIST MISMATCH: {} linked to \"{}\" by \"{}\" but tags say artist \"{}\" (similarity: {:.0}%)",
+                    file_name, album.name, db_artist_name, meta_artist, artist_similarity * 100.0
+                );
+                return Ok(false);
+            }
+        }
+
         // Compare metadata album with linked album
         let meta_album = metadata.album.as_deref().unwrap_or("");
         let album_similarity = filename_parser::show_name_similarity(&album.name, meta_album);
 
         if album_similarity < 0.6 {
             warn!(
-                "MISMATCH: {} linked to \"{}\" but tags say \"{}\" (similarity: {:.0}%)",
+                "ALBUM MISMATCH: {} linked to \"{}\" but tags say \"{}\" (similarity: {:.0}%)",
                 file_name, album.name, meta_album, album_similarity * 100.0
             );
             return Ok(false);
@@ -1805,7 +1849,7 @@ impl ScannerService {
                 
                 if title_similarity < 0.5 {
                     warn!(
-                        "MISMATCH: {} linked to track \"{}\" but tags say \"{}\" (similarity: {:.0}%)",
+                        "TRACK MISMATCH: {} linked to track \"{}\" but tags say \"{}\" (similarity: {:.0}%)",
                         file_name, track.title, meta_title, title_similarity * 100.0
                     );
                     return Ok(false);
@@ -1814,9 +1858,40 @@ impl ScannerService {
         }
 
         info!(
-            "Verified: {} -> \"{}\" (meta: \"{}\", match: {:.0}%)",
-            file_name, album.name, meta_album, album_similarity * 100.0
+            "Verified: {} -> \"{}\" by \"{}\" (album: {:.0}%, artist: match)",
+            file_name, album.name, db_artist_name, album_similarity * 100.0
         );
+
+        // CRITICAL: Clean up bidirectional relationship inconsistencies
+        // If this file's track_id is correct, ensure the correct track has media_file_id pointing here
+        // AND clear any OTHER tracks that incorrectly have media_file_id pointing to this file
+        // Note: Status is derived from media_file_id presence, so we only update media_file_id
+        if let Some(correct_track_id) = existing_file.track_id {
+            // 1. Clear any OTHER tracks that incorrectly point to this file
+            let cleared = sqlx::query(
+                "UPDATE tracks SET media_file_id = NULL WHERE media_file_id = $1 AND id != $2"
+            )
+            .bind(existing_file.id)
+            .bind(correct_track_id)
+            .execute(db.pool())
+            .await?;
+
+            if cleared.rows_affected() > 0 {
+                info!(
+                    "Cleared {} stale track->file references for '{}'",
+                    cleared.rows_affected(), file_name
+                );
+            }
+
+            // 2. Ensure the correct track has media_file_id pointing to this file
+            sqlx::query(
+                "UPDATE tracks SET media_file_id = $1 WHERE id = $2"
+            )
+            .bind(existing_file.id)
+            .bind(correct_track_id)
+            .execute(db.pool())
+            .await?;
+        }
 
         Ok(true)
     }
@@ -1857,6 +1932,9 @@ impl ScannerService {
             show_name: None,
             season: None,
             episode: None,
+            cover_art_base64: None, // Album art extracted by queues processor
+            cover_art_mime: None,
+            lyrics: None, // Lyrics extracted by queues processor
         };
 
         db.media_files()
@@ -1899,6 +1977,21 @@ impl ScannerService {
                                 "[FIX] Auto-correcting via FileMatcher"
                             );
 
+                            // Update the OLD track: clear media_file_id
+                            // Note: Status is derived from media_file_id presence
+                            if let Some(old_track_id) = existing_file.track_id {
+                                if old_track_id != *track_id {
+                                    sqlx::query("UPDATE tracks SET media_file_id = NULL WHERE id = $1")
+                                        .bind(old_track_id)
+                                        .execute(db.pool())
+                                        .await?;
+                                    debug!(
+                                        "Unlinked old track {}: media_file_id=NULL",
+                                        old_track_id
+                                    );
+                                }
+                            }
+
                             // Update the media file link
                             db.media_files()
                                 .update_match(
@@ -1911,6 +2004,18 @@ impl ScannerService {
                                     Some("track"),
                                 )
                                 .await?;
+
+                            // Update the NEW track: set media_file_id
+                            // Note: Status is derived from media_file_id presence
+                            sqlx::query("UPDATE tracks SET media_file_id = $1 WHERE id = $2")
+                                .bind(existing_file.id)
+                                .bind(track_id)
+                                .execute(db.pool())
+                                .await?;
+                            debug!(
+                                "Linked new track {}: media_file_id={}",
+                                track_id, existing_file.id
+                            );
 
                             return Ok(true);
                         }
@@ -2066,6 +2171,9 @@ impl ScannerService {
     }
 
     /// Process a single file for a show
+    ///
+    /// Uses FileMatcher to find the matching episode, then FileProcessor to create
+    /// media_file and set bidirectional links.
     async fn process_file_for_show(
         db: &Database,
         library_id: Uuid,
@@ -2075,49 +2183,92 @@ impl ScannerService {
         new_files: &Arc<AtomicI32>,
         analysis_queue: Option<&Arc<MediaAnalysisQueue>>,
     ) -> Result<()> {
+        // Check if file already exists and is properly linked
         let media_files_repo = db.media_files();
-
-        // Check if file already exists
         if let Some(existing_file) = media_files_repo.get_by_path(&file.path).await? {
-            // File exists - check if it needs to be linked to an episode
-            if existing_file.episode_id.is_none() {
-                if let (Some(season), Some(episode)) = (file.parsed.season, file.parsed.episode) {
-                    let episodes_repo = db.episodes();
-                    if let Some(ep) = episodes_repo
-                        .get_by_show_season_episode(tv_show_id, season as i32, episode as i32)
-                        .await?
-                    {
-                        // Link the existing file to the episode
-                        media_files_repo
-                            .link_to_episode(existing_file.id, ep.id)
-                            .await?;
-                        debug!("Linked file to S{:02}E{:02}", season, episode);
-                        episodes_linked.fetch_add(1, Ordering::SeqCst);
-
-                        // Mark episode as downloaded
-                        episodes_repo
-                            .mark_downloaded(ep.id, existing_file.id)
-                            .await?;
-                    }
-                }
-            } else {
+            if existing_file.episode_id.is_some() {
                 debug!(path = %file.path, "File already linked to episode, skipping");
+                return Ok(());
             }
-            return Ok(());
+            // File exists but not linked - will be handled by FileProcessor below
         }
 
-        // Try to link to an episode
-        let episode_id =
+        // Get the library to use with FileMatcher
+        let library = db.libraries().get_by_id(library_id).await?
+            .context("Library not found")?;
+
+        // Use FileMatcher to find the matching episode
+        let file_matcher = FileMatcher::new(db.clone());
+        let file_info = FileInfo {
+            path: file.path.clone(),
+            size: file.size as i64,
+            file_index: None,
+            source_name: None,
+        };
+
+        let filename = std::path::Path::new(&file.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&file.path);
+
+        // Match video file against the library
+        let matches = file_matcher.match_video_file(&file_info, filename, &[library]).await?;
+
+        // Find a match for this specific show
+        let episode_match = matches.into_iter().find(|m| {
+            if let FileMatchTarget::Episode { show_id, .. } = &m.match_target {
+                show_id == &tv_show_id
+            } else {
+                false
+            }
+        });
+
+        if let Some(result) = episode_match {
+            if let FileMatchTarget::Episode { episode_id, season, episode, .. } = result.match_target {
+                // Use FileProcessor to create media_file and set bidirectional links
+                let file_processor = if let Some(queue) = analysis_queue {
+                    FileProcessor::with_analysis_queue(db.clone(), queue.clone())
+                } else {
+                    FileProcessor::new(db.clone())
+                };
+
+                match file_processor
+                    .link_existing_file(
+                        &file.path,
+                        file.size as i64,
+                        library_id,
+                        ProcessTarget::Episode(episode_id),
+                    )
+                    .await
+                {
+                    Ok(_media_file) => {
+                        episodes_linked.fetch_add(1, Ordering::SeqCst);
+                        new_files.fetch_add(1, Ordering::SeqCst);
+                        debug!(
+                            path = %file.path,
+                            episode_id = %episode_id,
+                            season = season,
+                            episode = episode,
+                            "Linked file to episode via FileMatcher + FileProcessor"
+                        );
+                    }
+                    Err(e) => {
+                        error!(path = %file.path, error = %e, "Failed to link file to episode");
+                    }
+                }
+            }
+        } else {
+            // FileMatcher couldn't find a match - try creating a placeholder episode
+            // based on parsed filename info, then link
             if let (Some(season), Some(episode)) = (file.parsed.season, file.parsed.episode) {
                 let episodes_repo = db.episodes();
-                if let Some(ep) = episodes_repo
+                let episode_id = if let Some(ep) = episodes_repo
                     .get_by_show_season_episode(tv_show_id, season as i32, episode as i32)
                     .await?
                 {
-                    episodes_linked.fetch_add(1, Ordering::SeqCst);
                     Some(ep.id)
                 } else {
-                    // Try to create placeholder episode
+                    // Create placeholder episode
                     match episodes_repo
                         .create(CreateEpisode {
                             tv_show_id,
@@ -2131,35 +2282,68 @@ impl ScannerService {
                             tvmaze_id: None,
                             tmdb_id: None,
                             tvdb_id: None,
-                            status: Some("downloaded".to_string()),
                         })
                         .await
                     {
-                        Ok(ep) => {
-                            episodes_linked.fetch_add(1, Ordering::SeqCst);
-                            Some(ep.id)
-                        }
+                        Ok(ep) => Some(ep.id),
                         Err(e) => {
                             warn!(error = %e, "Failed to create placeholder episode");
                             None
                         }
                     }
+                };
+
+                if let Some(ep_id) = episode_id {
+                    let file_processor = if let Some(queue) = analysis_queue {
+                        FileProcessor::with_analysis_queue(db.clone(), queue.clone())
+                    } else {
+                        FileProcessor::new(db.clone())
+                    };
+
+                    match file_processor
+                        .link_existing_file(
+                            &file.path,
+                            file.size as i64,
+                            library_id,
+                            ProcessTarget::Episode(ep_id),
+                        )
+                        .await
+                    {
+                        Ok(_media_file) => {
+                            episodes_linked.fetch_add(1, Ordering::SeqCst);
+                            new_files.fetch_add(1, Ordering::SeqCst);
+                            debug!(
+                                path = %file.path,
+                                episode_id = %ep_id,
+                                "Linked file to placeholder episode via FileProcessor"
+                            );
+                        }
+                        Err(e) => {
+                            error!(path = %file.path, error = %e, "Failed to link file to episode");
+                        }
+                    }
+                } else {
+                    // No episode to link to - create unlinked media file
+                    Self::create_unlinked_media_file_static(db, library_id, file, new_files, analysis_queue)
+                        .await?;
                 }
             } else {
-                None
-            };
+                // No season/episode parsed - create unlinked media file
+                Self::create_unlinked_media_file_static(db, library_id, file, new_files, analysis_queue)
+                    .await?;
+            }
+        }
 
-        // Create media file record
-        Self::create_media_file_static(db, library_id, file, episode_id, new_files, analysis_queue)
-            .await
+        Ok(())
     }
 
-    /// Static version of create_media_file for use in spawned tasks
-    async fn create_media_file_static(
+    /// Create an unlinked media file record
+    ///
+    /// Used for files that could not be matched to any content item.
+    async fn create_unlinked_media_file_static(
         db: &Database,
         library_id: Uuid,
         file: &DiscoveredFile,
-        episode_id: Option<Uuid>,
         new_files: &Arc<AtomicI32>,
         analysis_queue: Option<&Arc<MediaAnalysisQueue>>,
     ) -> Result<()> {
@@ -2178,8 +2362,12 @@ impl ScannerService {
             duration: None,
             bitrate: None,
             file_hash: None,
-            episode_id,
+            episode_id: None,
             movie_id: None,
+            track_id: None,
+            album_id: None,
+            audiobook_id: None,
+            chapter_id: None,
             relative_path: file.relative_path.clone(),
             original_name: Some(file.filename.clone()),
             resolution: file.parsed.resolution.clone(),
@@ -2191,15 +2379,7 @@ impl ScannerService {
         match media_files_repo.upsert(create_input).await {
             Ok(media_file) => {
                 new_files.fetch_add(1, Ordering::SeqCst);
-                debug!(path = %file.path, "Added/updated media file");
-
-                // If linked to an episode, mark it as downloaded
-                if let Some(ep_id) = episode_id {
-                    let episodes_repo = db.episodes();
-                    if let Err(e) = episodes_repo.mark_downloaded(ep_id, media_file.id).await {
-                        warn!(episode_id = %ep_id, error = %e, "Failed to mark episode as downloaded");
-                    }
-                }
+                debug!(path = %file.path, "Added unlinked media file");
 
                 // Queue for FFmpeg analysis to get real metadata
                 if let Some(queue) = analysis_queue {
@@ -2231,6 +2411,274 @@ impl ScannerService {
         Ok(())
     }
 
+    /// Process a single file for an album (music)
+    ///
+    /// Uses FileMatcher to find the matching track, then FileProcessor
+    /// to create media_file and set bidirectional links.
+    async fn process_file_for_album(
+        db: &Database,
+        library_id: Uuid,
+        album_id: Uuid,
+        file: &DiscoveredFile,
+        meta: &AudioMetadata,
+        files_linked: &Arc<AtomicI32>,
+        new_files: &Arc<AtomicI32>,
+        analysis_queue: Option<&Arc<MediaAnalysisQueue>>,
+    ) -> Result<()> {
+        // Check if file already exists and is properly linked
+        let media_files_repo = db.media_files();
+        if let Some(existing_file) = media_files_repo.get_by_path(&file.path).await? {
+            if existing_file.track_id.is_some() {
+                debug!(path = %file.path, "File already linked to track, skipping");
+                return Ok(());
+            }
+            // File exists but not linked - will be handled by FileProcessor below
+        }
+
+        // Get the library to use with FileMatcher
+        let library = db.libraries().get_by_id(library_id).await?
+            .context("Library not found")?;
+
+        // Use FileMatcher to find the matching track
+        let file_matcher = FileMatcher::new(db.clone());
+        let file_info = FileInfo {
+            path: file.path.clone(),
+            size: file.size as i64,
+            file_index: None,
+            source_name: None,
+        };
+
+        let filename = std::path::Path::new(&file.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&file.path);
+
+        // Match audio file against the library
+        let matches = file_matcher.match_audio_file(&file_info, filename, &[library]).await?;
+
+        // Find a match for this specific album
+        let track_match = matches.into_iter().find(|m| {
+            if let FileMatchTarget::Track { album_id: matched_album_id, .. } = &m.match_target {
+                matched_album_id == &album_id
+            } else {
+                false
+            }
+        });
+
+        if let Some(result) = track_match {
+            if let FileMatchTarget::Track { track_id, title, track_number, .. } = result.match_target {
+                // Use FileProcessor to create media_file and set bidirectional links
+                let file_processor = if let Some(queue) = analysis_queue {
+                    FileProcessor::with_analysis_queue(db.clone(), queue.clone())
+                } else {
+                    FileProcessor::new(db.clone())
+                };
+
+                match file_processor
+                    .link_existing_file(
+                        &file.path,
+                        file.size as i64,
+                        library_id,
+                        ProcessTarget::Track(track_id),
+                    )
+                    .await
+                {
+                    Ok(_media_file) => {
+                        files_linked.fetch_add(1, Ordering::SeqCst);
+                        new_files.fetch_add(1, Ordering::SeqCst);
+                        debug!(
+                            path = %file.path,
+                            track_id = %track_id,
+                            title = %title,
+                            track_number = track_number,
+                            "Linked file to track via FileMatcher + FileProcessor"
+                        );
+                    }
+                    Err(e) => {
+                        error!(path = %file.path, error = %e, "Failed to link file to track");
+                    }
+                }
+            }
+        } else {
+            // FileMatcher couldn't find a match - try fallback by track number
+            let track_id = if let Some(track_num) = meta.track_number {
+                let tracks = db.tracks().list_by_album(album_id).await?;
+                tracks
+                    .iter()
+                    .find(|t| t.track_number == track_num as i32)
+                    .map(|t| t.id)
+            } else {
+                None
+            };
+
+            if let Some(track_id) = track_id {
+                let file_processor = if let Some(queue) = analysis_queue {
+                    FileProcessor::with_analysis_queue(db.clone(), queue.clone())
+                } else {
+                    FileProcessor::new(db.clone())
+                };
+
+                match file_processor
+                    .link_existing_file(
+                        &file.path,
+                        file.size as i64,
+                        library_id,
+                        ProcessTarget::Track(track_id),
+                    )
+                    .await
+                {
+                    Ok(_media_file) => {
+                        files_linked.fetch_add(1, Ordering::SeqCst);
+                        new_files.fetch_add(1, Ordering::SeqCst);
+                        debug!(
+                            path = %file.path,
+                            track_id = %track_id,
+                            "Linked file to track via track number fallback"
+                        );
+                    }
+                    Err(e) => {
+                        error!(path = %file.path, error = %e, "Failed to link file to track");
+                    }
+                }
+            } else {
+                // No matching track found - create unlinked media file
+                Self::create_unlinked_media_file_static(db, library_id, file, new_files, analysis_queue)
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Process a single file for an audiobook
+    ///
+    /// Uses FileProcessor to create media_file and set bidirectional links to chapter.
+    async fn process_file_for_audiobook(
+        db: &Database,
+        library_id: Uuid,
+        audiobook_id: Uuid,
+        file: &DiscoveredFile,
+        chapter_number: i32,
+        files_linked: &Arc<AtomicI32>,
+        new_files: &Arc<AtomicI32>,
+        analysis_queue: Option<&Arc<MediaAnalysisQueue>>,
+    ) -> Result<()> {
+        // Check if file already exists and is properly linked
+        let media_files_repo = db.media_files();
+        if let Some(existing_file) = media_files_repo.get_by_path(&file.path).await? {
+            if existing_file.chapter_id.is_some() {
+                debug!(path = %file.path, "File already linked to chapter, skipping");
+                return Ok(());
+            }
+            // File exists but not linked - will be handled by FileProcessor below
+        }
+
+        // Get the library to use with FileMatcher
+        let library = db.libraries().get_by_id(library_id).await?
+            .context("Library not found")?;
+
+        // Use FileMatcher to find the matching chapter
+        let file_matcher = FileMatcher::new(db.clone());
+        let file_info = FileInfo {
+            path: file.path.clone(),
+            size: file.size as i64,
+            file_index: None,
+            source_name: None,
+        };
+
+        let filename = std::path::Path::new(&file.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&file.path);
+
+        // Match audio file against the library
+        let matches = file_matcher.match_audio_file(&file_info, filename, &[library]).await?;
+
+        // Find a match for this specific audiobook
+        let chapter_match = matches.into_iter().find(|m| {
+            if let FileMatchTarget::Chapter { audiobook_id: matched_audiobook_id, .. } = &m.match_target {
+                matched_audiobook_id == &audiobook_id
+            } else {
+                false
+            }
+        });
+
+        if let Some(result) = chapter_match {
+            if let FileMatchTarget::Chapter { chapter_id, chapter_number: matched_chapter, .. } = result.match_target {
+                // Use FileProcessor to create media_file and set bidirectional links
+                let file_processor = if let Some(queue) = analysis_queue {
+                    FileProcessor::with_analysis_queue(db.clone(), queue.clone())
+                } else {
+                    FileProcessor::new(db.clone())
+                };
+
+                match file_processor
+                    .link_existing_file(
+                        &file.path,
+                        file.size as i64,
+                        library_id,
+                        ProcessTarget::Chapter(chapter_id),
+                    )
+                    .await
+                {
+                    Ok(_media_file) => {
+                        files_linked.fetch_add(1, Ordering::SeqCst);
+                        new_files.fetch_add(1, Ordering::SeqCst);
+                        debug!(
+                            path = %file.path,
+                            chapter_id = %chapter_id,
+                            chapter_number = matched_chapter,
+                            "Linked file to chapter via FileMatcher + FileProcessor"
+                        );
+                    }
+                    Err(e) => {
+                        error!(path = %file.path, error = %e, "Failed to link file to chapter");
+                    }
+                }
+            }
+        } else {
+            // FileMatcher couldn't find a match - use the passed chapter_number as fallback
+            // Find or create the chapter
+            let chapter_id = db.chapters()
+                .get_or_create_by_number(audiobook_id, chapter_number)
+                .await?
+                .id;
+
+            // Use FileProcessor to create media_file and set bidirectional links
+            let file_processor = if let Some(queue) = analysis_queue {
+                FileProcessor::with_analysis_queue(db.clone(), queue.clone())
+            } else {
+                FileProcessor::new(db.clone())
+            };
+
+            match file_processor
+                .link_existing_file(
+                    &file.path,
+                    file.size as i64,
+                    library_id,
+                    ProcessTarget::Chapter(chapter_id),
+                )
+                .await
+            {
+                Ok(_media_file) => {
+                    files_linked.fetch_add(1, Ordering::SeqCst);
+                    new_files.fetch_add(1, Ordering::SeqCst);
+                    debug!(
+                        path = %file.path,
+                        chapter_id = %chapter_id,
+                        chapter_number = chapter_number,
+                        "Linked file to chapter via chapter number fallback"
+                    );
+                }
+                Err(e) => {
+                    error!(path = %file.path, error = %e, "Failed to link file to chapter");
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Simple file processing without show matching
     async fn process_files_simple(
         &self,
@@ -2255,7 +2703,7 @@ impl ScannerService {
                 continue;
             }
 
-            self.create_media_file(library_id, &file, None, &mut progress)
+            self.create_media_file(library_id, &file, &mut progress)
                 .await?;
         }
 
@@ -2284,7 +2732,7 @@ impl ScannerService {
             return Ok(());
         }
 
-        self.create_media_file(library_id, file, None, progress)
+        self.create_media_file(library_id, file, progress)
             .await
     }
 
@@ -2312,12 +2760,15 @@ impl ScannerService {
         }
     }
 
-    /// Create a media file record
+    /// Create a media file record (unlinked)
+    ///
+    /// This is only used for files that could not be matched to any content item.
+    /// For linked files, use FileProcessor.link_existing_file() instead, which
+    /// properly sets bidirectional links (content.media_file_id and media_file.{content}_id).
     async fn create_media_file(
         &self,
         library_id: Uuid,
         file: &DiscoveredFile,
-        episode_id: Option<Uuid>,
         progress: &mut ScanProgress,
     ) -> Result<()> {
         let create_input = CreateMediaFile {
@@ -2335,8 +2786,13 @@ impl ScannerService {
             duration: None,
             bitrate: None,
             file_hash: None,
-            episode_id,
+            // All content FKs are None - this is an unlinked file
+            episode_id: None,
             movie_id: None,
+            track_id: None,
+            album_id: None,
+            audiobook_id: None,
+            chapter_id: None,
             relative_path: file.relative_path.clone(),
             original_name: Some(file.filename.clone()),
             resolution: file.parsed.resolution.clone(),
@@ -2348,15 +2804,7 @@ impl ScannerService {
         match media_files_repo.upsert(create_input).await {
             Ok(media_file) => {
                 progress.new_files += 1;
-                debug!(path = %file.path, "Added/updated media file");
-
-                // If linked to an episode, mark it as downloaded
-                if let Some(ep_id) = episode_id {
-                    let episodes_repo = self.db.episodes();
-                    if let Err(e) = episodes_repo.mark_downloaded(ep_id, media_file.id).await {
-                        warn!(episode_id = %ep_id, error = %e, "Failed to mark episode as downloaded");
-                    }
-                }
+                debug!(path = %file.path, "Added unlinked media file");
 
                 // Queue for FFmpeg analysis to get real metadata
                 if let Some(ref queue) = self.analysis_queue {

@@ -15,9 +15,9 @@ import {
 } from '../data-table'
 import { MOVIES_CONNECTION_QUERY, type Movie } from '../../lib/graphql'
 import type { Connection } from '../../lib/graphql/types'
-import { formatBytes } from '../../lib/format'
 import { IconPlus, IconTrash, IconEye, IconMovie, IconClock, IconStar } from '@tabler/icons-react'
 import { MovieCard } from './MovieCard'
+import { MediaCardSkeleton } from './MediaCardSkeleton'
 import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 // ============================================================================
@@ -26,6 +26,8 @@ import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 interface LibraryMoviesTabProps {
   libraryId: string
+  /** Parent loading state (e.g., library context still loading) */
+  loading?: boolean
   onDeleteMovie: (movieId: string, movieTitle: string) => void
   onAddMovie: () => void
 }
@@ -51,7 +53,7 @@ const SORT_FIELD_MAP: Record<string, string> = {
   size: 'SIZE_BYTES',
 }
 
-export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: LibraryMoviesTabProps) {
+export function LibraryMoviesTab({ libraryId, loading: parentLoading, onDeleteMovie, onAddMovie }: LibraryMoviesTabProps) {
   // URL-persisted state via nuqs (clean URLs when using defaults)
   const [selectedLetter, setSelectedLetter] = useQueryState('letter', parseAsString.withDefault(''))
   const [searchTerm, setSearchTerm] = useQueryState('q', parseAsString.withDefault(''))
@@ -203,12 +205,6 @@ export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: Libra
         ),
       },
       {
-        key: 'size',
-        label: 'SIZE',
-        width: 100,
-        render: (movie) => <span>{movie.hasFile ? formatBytes(movie.sizeBytes) : '—'}</span>,
-      },
-      {
         key: 'status',
         label: 'STATUS',
         width: 120,
@@ -216,10 +212,10 @@ export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: Libra
         render: (movie) => (
           <Chip
             size="sm"
-            color={movie.hasFile ? 'success' : 'warning'}
+            color={movie.mediaFileId ? 'success' : 'warning'}
             variant="flat"
           >
-            {movie.hasFile ? 'Downloaded' : 'Missing'}
+            {movie.mediaFileId ? 'Downloaded' : 'Missing'}
           </Chip>
         ),
       },
@@ -277,6 +273,8 @@ export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: Libra
           showViewModeToggle
           defaultViewMode="cards"
           cardRenderer={cardRenderer}
+          cardSkeleton={() => <MediaCardSkeleton />}
+          skeletonCardCount={12}
           cardGridClassName="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
           rowActions={rowActions}
           showItemCount
@@ -290,7 +288,7 @@ export function LibraryMoviesTab({ libraryId, onDeleteMovie, onAddMovie }: Libra
           paginationMode="infinite"
           hasMore={hasMore}
           onLoadMore={loadMore}
-          isLoading={isLoading}
+          isLoading={parentLoading || isLoading}
           isLoadingMore={isLoadingMore}
           headerContent={
             <AlphabetFilter

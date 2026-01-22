@@ -186,18 +186,16 @@ async fn process_media_analysis(
         verify_and_update_quality(&db, job.media_file_id, &analysis, &updated_info).await
     {
         warn!(
-            media_file_id = %job.media_file_id,
-            error = %e,
-            "Failed to verify quality"
+            "Failed to verify quality for '{}': {}",
+            filename, e
         );
     }
 
     // Extract embedded metadata (ID3/Vorbis tags for audio, container tags for video)
     if let Err(e) = extract_and_store_embedded_metadata(&db, job.media_file_id, &job.path).await {
         debug!(
-            media_file_id = %job.media_file_id,
-            error = %e,
-            "Failed to extract embedded metadata (may not have tags)"
+            "No embedded metadata extracted from '{}' (may not have tags): {}",
+            filename, e
         );
     }
 
@@ -602,24 +600,21 @@ async fn verify_and_update_quality(
     if matches!(evaluation.quality_status, QualityStatus::Suboptimal) {
         if let Some(episode_id) = info.episode_id {
             info!(
-                "Episode has suboptimal quality ({}p vs target), marking as suboptimal",
-                actual_resolution
+                episode_id = %episode_id,
+                resolution = %actual_resolution,
+                "Episode has suboptimal quality - media file exists but quality could be upgraded"
             );
-            db.episodes()
-                .update_status(episode_id, "suboptimal")
-                .await
-                .ok();
+            // Note: Episode status is derived from media_file_id presence.
+            // "suboptimal" quality is tracked via the media_file metadata,
+            // and auto-hunt can be used to find better versions.
         } else if let Some(movie_id) = info.movie_id {
             info!(
-                "Movie has suboptimal quality ({}p vs target), marking as suboptimal",
-                actual_resolution
+                movie_id = %movie_id,
+                resolution = %actual_resolution,
+                "Movie has suboptimal quality - media file exists but quality could be upgraded"
             );
-            // Update movie download_status to suboptimal
-            sqlx::query("UPDATE movies SET download_status = 'suboptimal' WHERE id = $1")
-                .bind(movie_id)
-                .execute(db.pool())
-                .await
-                .ok();
+            // Note: Movie download_status is derived from media_file_id presence.
+            // Quality evaluation metadata is stored on the media_file record.
         }
     }
 
@@ -649,46 +644,39 @@ async fn extract_and_store_embedded_metadata(
     media_file_id: Uuid,
     path: &std::path::Path,
 ) -> Result<()> {
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
     use crate::db::EmbeddedMetadata;
-    use crate::services::file_matcher::read_audio_metadata;
     use crate::services::file_utils::is_audio_file;
 
     let path_str = path.to_string_lossy();
 
     // Check if file is audio or video
-    let metadata = if is_audio_file(&path_str) {
-        // Use lofty for audio files (ID3/Vorbis/etc)
-        read_audio_metadata(&path_str)
+    let embedded = if is_audio_file(&path_str) {
+        // Use lofty for audio files - extract all metadata including album art and lyrics
+        extract_audio_metadata_with_art(&path_str)
     } else {
         // For video files, we don't currently extract embedded metadata
         // TODO: Add ffprobe metadata extraction for video containers
         None
     };
 
-    if let Some(meta) = metadata {
-        let embedded = EmbeddedMetadata {
-            artist: meta.artist,
-            album: meta.album,
-            title: meta.title,
-            track_number: meta.track_number.map(|n| n as i32),
-            disc_number: meta.disc_number.map(|n| n as i32),
-            year: meta.year,
-            genre: None, // extend if lofty exposes genre
-            show_name: None,
-            season: meta.season,
-            episode: meta.episode,
-        };
-
+    if let Some(meta) = embedded {
+        let has_art = meta.cover_art_base64.is_some();
+        let has_lyrics = meta.lyrics.is_some();
+        
         db.media_files()
-            .update_embedded_metadata(media_file_id, &embedded)
+            .update_embedded_metadata(media_file_id, &meta)
             .await?;
 
+        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
         info!(
-            media_file_id = %media_file_id,
-            artist = ?embedded.artist,
-            album = ?embedded.album,
-            title = ?embedded.title,
-            "Extracted and stored embedded metadata"
+            "Extracted metadata from '{}': Artist={:?}, Album={:?}, Title={:?}, CoverArt={}, Lyrics={}",
+            filename,
+            meta.artist,
+            meta.album,
+            meta.title,
+            has_art,
+            has_lyrics
         );
     } else {
         // Mark as extracted even if no metadata found (to prevent re-extraction)
@@ -699,11 +687,74 @@ async fn extract_and_store_embedded_metadata(
         .execute(db.pool())
         .await?;
 
+        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
         debug!(
-            media_file_id = %media_file_id,
-            "No embedded metadata found in file"
+            "No embedded metadata found in '{}'",
+            filename
         );
     }
 
     Ok(())
+}
+
+/// Extract comprehensive audio metadata including album art and lyrics using lofty
+fn extract_audio_metadata_with_art(path: &str) -> Option<crate::db::EmbeddedMetadata> {
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+    use lofty::prelude::*;
+    use lofty::probe::Probe;
+
+    let tagged_file = Probe::open(path).ok()?.read().ok()?;
+    let tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag())?;
+
+    // Extract basic metadata
+    let title = tag.title().map(|s| s.to_string());
+    let artist = tag.artist().map(|s| s.to_string());
+    let album = tag.album().map(|s| s.to_string());
+    let year = tag.year().map(|y| y as i32);
+    let track_number = tag.track().map(|n| n as i32);
+    let disc_number = tag.disk().map(|n| n as i32);
+    
+    // Extract genre
+    let genre = tag.genre().map(|s| s.to_string());
+
+    // Extract album art - take the first picture (usually front cover)
+    let (cover_art_base64, cover_art_mime) = tag.pictures().first().map(|pic| {
+        let base64_data = BASE64.encode(pic.data());
+        let mime = match pic.mime_type() {
+            Some(lofty::picture::MimeType::Jpeg) => "image/jpeg",
+            Some(lofty::picture::MimeType::Png) => "image/png",
+            Some(lofty::picture::MimeType::Gif) => "image/gif",
+            Some(lofty::picture::MimeType::Bmp) => "image/bmp",
+            Some(lofty::picture::MimeType::Tiff) => "image/tiff",
+            _ => "image/jpeg", // Default to JPEG
+        };
+        (Some(base64_data), Some(mime.to_string()))
+    }).unwrap_or((None, None));
+
+    // Extract lyrics - try to get from tag items
+    // Vorbis/FLAC: LYRICS or UNSYNCEDLYRICS
+    // ID3v2: handled separately below
+    let lyrics = tag.get_string(&lofty::tag::ItemKey::Lyrics)
+        .map(|s| s.to_string())
+        .or_else(|| {
+            // Try UNSYNCEDLYRICS as fallback (common in some files)
+            tag.get_string(&lofty::tag::ItemKey::Unknown("UNSYNCEDLYRICS".to_string()))
+                .map(|s| s.to_string())
+        });
+
+    Some(crate::db::EmbeddedMetadata {
+        artist,
+        album,
+        title,
+        track_number,
+        disc_number,
+        year,
+        genre,
+        show_name: None,
+        season: None,
+        episode: None,
+        cover_art_base64,
+        cover_art_mime,
+        lyrics,
+    })
 }

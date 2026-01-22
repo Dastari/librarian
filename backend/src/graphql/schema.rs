@@ -12,7 +12,8 @@ use crate::graphql::mutations;
 use crate::graphql::queries;
 use crate::graphql::types::{LibraryChangedEvent, MediaFileUpdatedEvent};
 use crate::services::{
-    CastService, FilesystemService, LogEvent, MetadataService, ScannerService, TorrentService,
+    CastService, FilesystemService, LogEvent, MetadataService, NotificationService, ScannerService,
+    TorrentService,
 };
 
 use super::subscriptions::SubscriptionRoot;
@@ -27,6 +28,7 @@ pub fn build_schema(
     scanner_service: Arc<ScannerService>,
     cast_service: Arc<CastService>,
     filesystem_service: Arc<FilesystemService>,
+    notification_service: Arc<NotificationService>,
     db: Database,
     analysis_queue: Arc<crate::services::MediaAnalysisQueue>,
     log_broadcast: Option<tokio::sync::broadcast::Sender<LogEvent>>,
@@ -51,6 +53,7 @@ pub fn build_schema(
     .data(scanner_service)
     .data(cast_service)
     .data(filesystem_service)
+    .data(notification_service)
     .data(db)
     .data(analysis_queue)
     .data(library_tx)
@@ -86,6 +89,7 @@ pub struct QueryRoot(
     queries::SystemQueries,
     queries::PriorityRuleQueries,
     queries::UsenetQueries,
+    queries::NotificationQueries,
 );
 
 #[derive(MergedObject, Default)]
@@ -106,4 +110,5 @@ pub struct MutationRoot(
     mutations::FilesystemMutations,
     mutations::PriorityRuleMutations,
     mutations::UsenetMutations,
+    mutations::NotificationMutations,
 );

@@ -26,7 +26,7 @@ use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::db::{CreateTorrent, Database, TorrentRepository};
+use crate::db::{CreateTorrent, Database, TorrentRepository, UpsertTorrentFile};
 
 /// Helper to get info hash as hex string from handle
 fn get_info_hash_hex<T: AsRef<librqbit::ManagedTorrent>>(handle: &T) -> String {
@@ -1091,6 +1091,7 @@ impl TorrentService {
                 let torrents: Vec<(usize, Arc<librqbit::ManagedTorrent>)> =
                     session.with_torrents(|iter| iter.map(|(id, h)| (id, h.clone())).collect());
                 let repo = db.torrents();
+                let files_repo = db.torrent_files();
 
                 for (_id, handle) in torrents {
                     let stats = handle.stats();
@@ -1150,6 +1151,61 @@ impl TorrentService {
                         && let Err(e) = repo.mark_completed(&info_hash).await
                     {
                         warn!(error = %e, "Failed to mark torrent as completed in database");
+                    }
+
+                    // Sync torrent files to database
+                    // Get the torrent_id from database to link files
+                    if let Ok(Some(torrent_record)) = repo.get_by_info_hash(&info_hash).await {
+                        // Build file list from librqbit metadata
+                        if let Some(metadata) = handle.metadata.load_full() {
+                            let torrent_name = handle.name().unwrap_or_else(|| "unknown".to_string());
+                            let mut upsert_files = Vec::with_capacity(metadata.file_infos.len());
+
+                            for (idx, file_info) in metadata.file_infos.iter().enumerate() {
+                                let file_progress = stats.file_progress.get(idx).copied().unwrap_or(0);
+                                let size = file_info.len;
+                                let progress_ratio = if size > 0 {
+                                    (file_progress as f64 / size as f64).min(1.0) as f32
+                                } else {
+                                    0.0
+                                };
+
+                                let relative_path = file_info.relative_filename.to_string_lossy().to_string();
+
+                                // Build full path
+                                let full_path = if metadata.file_infos.len() == 1 {
+                                    download_dir
+                                        .join(&relative_path)
+                                        .to_string_lossy()
+                                        .to_string()
+                                } else {
+                                    download_dir
+                                        .join(&torrent_name)
+                                        .join(&relative_path)
+                                        .to_string_lossy()
+                                        .to_string()
+                                };
+
+                                // Check if file is excluded
+                                let is_excluded = torrent_record
+                                    .excluded_files
+                                    .contains(&(idx as i32));
+
+                                upsert_files.push(UpsertTorrentFile {
+                                    file_index: idx as i32,
+                                    file_path: full_path,
+                                    relative_path,
+                                    file_size: size as i64,
+                                    downloaded_bytes: file_progress as i64,
+                                    progress: progress_ratio,
+                                    is_excluded,
+                                });
+                            }
+
+                            if let Err(e) = files_repo.upsert_batch(torrent_record.id, &upsert_files).await {
+                                warn!(error = %e, info_hash = %info_hash, "Failed to sync torrent files to database");
+                            }
+                        }
                     }
                 }
             }
