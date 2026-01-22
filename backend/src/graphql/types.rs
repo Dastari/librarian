@@ -1690,11 +1690,9 @@ pub struct Movie {
     pub poster_url: Option<String>,
     pub backdrop_url: Option<String>,
     pub monitored: bool,
-    /// Whether a file exists for this movie
-    pub has_file: bool,
-    pub size_bytes: i64,
-    pub path: Option<String>,
-    /// Download status (missing, wanted, downloading, downloaded, suboptimal, ignored)
+    /// Media file ID if movie has been downloaded (for playback)
+    pub media_file_id: Option<String>,
+    /// Computed download status: "downloaded" if media_file_id is set, "wanted" if monitored, "missing" otherwise
     pub download_status: DownloadStatus,
     /// Collection info
     pub collection_id: Option<i32>,
@@ -1705,15 +1703,8 @@ pub struct Movie {
     pub tmdb_vote_count: Option<i32>,
     pub certification: Option<String>,
     pub release_date: Option<String>,
-    // Quality override settings (null = inherit from library)
-    pub allowed_resolutions_override: Option<Vec<String>>,
-    pub allowed_video_codecs_override: Option<Vec<String>>,
-    pub allowed_audio_formats_override: Option<Vec<String>>,
-    pub require_hdr_override: Option<bool>,
-    pub allowed_hdr_types_override: Option<Vec<String>>,
-    pub allowed_sources_override: Option<Vec<String>>,
-    pub release_group_blacklist_override: Option<Vec<String>>,
-    pub release_group_whitelist_override: Option<Vec<String>>,
+    /// Download progress (0.0 to 1.0) when download_status is 'downloading', None otherwise
+    pub download_progress: Option<f32>,
 }
 
 /// Movie search result from TMDB
@@ -1897,6 +1888,8 @@ pub struct Album {
     pub has_files: bool,
     pub size_bytes: Option<i64>,
     pub path: Option<String>,
+    /// Number of tracks that have been downloaded (status = 'downloaded')
+    pub downloaded_track_count: Option<i32>,
 }
 
 impl From<crate::db::AlbumRecord> for Album {
@@ -1921,6 +1914,7 @@ impl From<crate::db::AlbumRecord> for Album {
             has_files: r.has_files,
             size_bytes: r.size_bytes,
             path: r.path,
+            downloaded_track_count: r.downloaded_track_count,
         }
     }
 }
@@ -2024,10 +2018,21 @@ pub struct Track {
     pub has_file: bool,
     /// Track status: missing, wanted, downloading, downloaded
     pub status: String,
+    /// Download progress (0.0 to 1.0) when status is 'downloading', None otherwise
+    pub download_progress: Option<f32>,
 }
 
 impl From<crate::db::TrackRecord> for Track {
     fn from(r: crate::db::TrackRecord) -> Self {
+        let has_file = r.media_file_id.is_some();
+        // Status is derived from media_file_id:
+        // - "downloaded" if has a linked media file
+        // - "missing" if no media file linked
+        let status = if has_file {
+            "downloaded".to_string()
+        } else {
+            "missing".to_string()
+        };
         Self {
             id: r.id.to_string(),
             album_id: r.album_id.to_string(),
@@ -2042,8 +2047,9 @@ impl From<crate::db::TrackRecord> for Track {
             artist_name: r.artist_name,
             artist_id: r.artist_id.map(|id| id.to_string()),
             media_file_id: r.media_file_id.map(|id| id.to_string()),
-            has_file: r.media_file_id.is_some(),
-            status: r.status,
+            has_file,
+            status,
+            download_progress: None, // Populated by resolvers when needed
         }
     }
 }
@@ -2195,6 +2201,10 @@ pub struct Audiobook {
     pub has_files: bool,
     pub size_bytes: Option<i64>,
     pub path: Option<String>,
+    /// Total number of chapters
+    pub chapter_count: Option<i32>,
+    /// Number of chapters with media files
+    pub downloaded_chapter_count: Option<i32>,
 }
 
 impl From<crate::db::AudiobookRecord> for Audiobook {
@@ -2218,6 +2228,8 @@ impl From<crate::db::AudiobookRecord> for Audiobook {
             has_files: r.has_files,
             size_bytes: r.size_bytes,
             path: r.path,
+            chapter_count: r.chapter_count,
+            downloaded_chapter_count: r.downloaded_chapter_count,
         }
     }
 }
@@ -2337,11 +2349,22 @@ pub struct AudiobookChapter {
     pub end_secs: i32,
     pub duration_secs: Option<i32>,
     pub media_file_id: Option<String>,
+    /// Computed status: "downloaded" if media_file_id is set, "missing" otherwise
+    /// Note: "downloading" status is set by resolvers when a pending download exists
     pub status: String,
+    /// Download progress (0.0 to 1.0) when status is 'downloading', None otherwise
+    pub download_progress: Option<f32>,
 }
 
 impl From<crate::db::AudiobookChapterRecord> for AudiobookChapter {
     fn from(r: crate::db::AudiobookChapterRecord) -> Self {
+        // Compute status from media_file_id presence
+        let status = if r.media_file_id.is_some() {
+            "downloaded".to_string()
+        } else {
+            "missing".to_string()
+        };
+
         Self {
             id: r.id.to_string(),
             audiobook_id: r.audiobook_id.to_string(),
@@ -2351,7 +2374,8 @@ impl From<crate::db::AudiobookChapterRecord> for AudiobookChapter {
             end_secs: r.end_secs,
             duration_secs: r.duration_secs,
             media_file_id: r.media_file_id.map(|id| id.to_string()),
-            status: r.status,
+            status,
+            download_progress: None, // Populated by resolvers when downloading
         }
     }
 }
@@ -2359,8 +2383,8 @@ impl From<crate::db::AudiobookChapterRecord> for AudiobookChapter {
 /// Filter input for audiobook chapters query
 #[derive(Debug, Clone, Default, InputObject)]
 pub struct AudiobookChapterWhereInput {
-    /// Filter by status
-    pub status: Option<crate::graphql::filters::StringFilter>,
+    /// Filter by whether chapter has a media file
+    pub has_media_file: Option<crate::graphql::filters::BoolFilter>,
 }
 
 /// Sortable fields for audiobook chapters
@@ -2438,14 +2462,11 @@ pub struct Episode {
     pub overview: Option<String>,
     pub air_date: Option<String>,
     pub runtime: Option<i32>,
+    /// Computed status: "downloaded" if media_file_id is set, "wanted" if aired, "missing" otherwise
     pub status: EpisodeStatus,
     pub tvmaze_id: Option<i32>,
     pub tmdb_id: Option<i32>,
     pub tvdb_id: Option<i32>,
-    /// URL/magnet link to download this episode (when status is 'available')
-    pub torrent_link: Option<String>,
-    /// When the torrent link was found in RSS
-    pub torrent_link_added_at: Option<String>,
     /// Media file ID if episode has been downloaded (for playback)
     pub media_file_id: Option<String>,
 
@@ -2476,6 +2497,8 @@ pub struct Episode {
     pub watch_position: Option<f64>,
     /// Whether the user has watched this episode (>=90% or manually marked)
     pub is_watched: Option<bool>,
+    /// Download progress (0.0 to 1.0) when status is 'downloading', None otherwise
+    pub download_progress: Option<f32>,
 }
 
 impl Episode {
@@ -2493,16 +2516,7 @@ impl Episode {
         media_file: Option<crate::db::MediaFileRecord>,
         watch_progress: Option<crate::db::WatchProgressRecord>,
     ) -> Self {
-        let status = match r.status.as_str() {
-            "missing" => EpisodeStatus::Missing,
-            "wanted" => EpisodeStatus::Wanted,
-            "available" => EpisodeStatus::Available,
-            "downloading" => EpisodeStatus::Downloading,
-            "downloaded" => EpisodeStatus::Downloaded,
-            "ignored" => EpisodeStatus::Ignored,
-            _ => EpisodeStatus::Missing,
-        };
-
+        // Compute media file info
         let (
             media_file_id,
             resolution,
@@ -2514,21 +2528,37 @@ impl Episode {
             video_bitrate,
             file_size_bytes,
             file_size_formatted,
-        ) = if let Some(mf) = media_file {
+        ) = if let Some(mf) = &media_file {
             (
                 Some(mf.id.to_string()),
-                mf.resolution,
-                mf.video_codec,
-                mf.audio_codec,
-                mf.audio_channels,
+                mf.resolution.clone(),
+                mf.video_codec.clone(),
+                mf.audio_codec.clone(),
+                mf.audio_channels.clone(),
                 mf.is_hdr,
-                mf.hdr_type,
+                mf.hdr_type.clone(),
                 mf.video_bitrate,
                 Some(mf.size_bytes),
                 Some(format_bytes(mf.size_bytes as u64)),
             )
         } else {
             (None, None, None, None, None, None, None, None, None, None)
+        };
+
+        // Compute status from media_file_id presence and air_date
+        let status = if media_file.is_some() || r.media_file_id.is_some() {
+            EpisodeStatus::Downloaded
+        } else if let Some(air_date) = r.air_date {
+            // If episode has aired, it's wanted; otherwise it's missing (future episode)
+            let today = chrono::Utc::now().date_naive();
+            if air_date <= today {
+                EpisodeStatus::Wanted
+            } else {
+                EpisodeStatus::Missing
+            }
+        } else {
+            // No air date - treat as missing
+            EpisodeStatus::Missing
         };
 
         // Extract watch progress fields
@@ -2556,8 +2586,6 @@ impl Episode {
             tvmaze_id: r.tvmaze_id,
             tmdb_id: r.tmdb_id,
             tvdb_id: r.tvdb_id,
-            torrent_link: r.torrent_link,
-            torrent_link_added_at: r.torrent_link_added_at.map(|t| t.to_rfc3339()),
             media_file_id,
             resolution,
             video_codec,
@@ -2571,6 +2599,7 @@ impl Episode {
             watch_progress: wp_progress,
             watch_position: wp_position,
             is_watched: wp_is_watched,
+            download_progress: None, // Populated by resolvers when status is 'downloading'
         }
     }
 }
@@ -3717,6 +3746,12 @@ pub struct EmbeddedMetadataInfo {
     pub episode: Option<i32>,
     /// Whether metadata has been extracted
     pub extracted: bool,
+    /// Album art as base64-encoded image data
+    pub cover_art_base64: Option<String>,
+    /// MIME type of the cover art
+    pub cover_art_mime: Option<String>,
+    /// Lyrics extracted from embedded tags
+    pub lyrics: Option<String>,
 }
 
 /// Detailed media file info including all streams
@@ -4722,4 +4757,256 @@ pub struct UsenetDownloadResult {
     pub success: bool,
     pub error: Option<String>,
     pub download: Option<UsenetDownload>,
+}
+
+// ============================================================================
+// Notifications
+// ============================================================================
+
+/// Notification type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum NotificationType {
+    Info,
+    Warning,
+    Error,
+    ActionRequired,
+}
+
+impl From<crate::db::NotificationType> for NotificationType {
+    fn from(t: crate::db::NotificationType) -> Self {
+        match t {
+            crate::db::NotificationType::Info => NotificationType::Info,
+            crate::db::NotificationType::Warning => NotificationType::Warning,
+            crate::db::NotificationType::Error => NotificationType::Error,
+            crate::db::NotificationType::ActionRequired => NotificationType::ActionRequired,
+        }
+    }
+}
+
+impl From<NotificationType> for crate::db::NotificationType {
+    fn from(t: NotificationType) -> Self {
+        match t {
+            NotificationType::Info => crate::db::NotificationType::Info,
+            NotificationType::Warning => crate::db::NotificationType::Warning,
+            NotificationType::Error => crate::db::NotificationType::Error,
+            NotificationType::ActionRequired => crate::db::NotificationType::ActionRequired,
+        }
+    }
+}
+
+/// Notification category
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum NotificationCategory {
+    Matching,
+    Processing,
+    Quality,
+    Storage,
+    Extraction,
+}
+
+impl From<crate::db::NotificationCategory> for NotificationCategory {
+    fn from(c: crate::db::NotificationCategory) -> Self {
+        match c {
+            crate::db::NotificationCategory::Matching => NotificationCategory::Matching,
+            crate::db::NotificationCategory::Processing => NotificationCategory::Processing,
+            crate::db::NotificationCategory::Quality => NotificationCategory::Quality,
+            crate::db::NotificationCategory::Storage => NotificationCategory::Storage,
+            crate::db::NotificationCategory::Extraction => NotificationCategory::Extraction,
+        }
+    }
+}
+
+impl From<NotificationCategory> for crate::db::NotificationCategory {
+    fn from(c: NotificationCategory) -> Self {
+        match c {
+            NotificationCategory::Matching => crate::db::NotificationCategory::Matching,
+            NotificationCategory::Processing => crate::db::NotificationCategory::Processing,
+            NotificationCategory::Quality => crate::db::NotificationCategory::Quality,
+            NotificationCategory::Storage => crate::db::NotificationCategory::Storage,
+            NotificationCategory::Extraction => crate::db::NotificationCategory::Extraction,
+        }
+    }
+}
+
+/// Notification action type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum NotificationActionType {
+    ConfirmUpgrade,
+    ManualMatch,
+    Retry,
+    Dismiss,
+    Review,
+}
+
+impl From<crate::db::ActionType> for NotificationActionType {
+    fn from(a: crate::db::ActionType) -> Self {
+        match a {
+            crate::db::ActionType::ConfirmUpgrade => NotificationActionType::ConfirmUpgrade,
+            crate::db::ActionType::ManualMatch => NotificationActionType::ManualMatch,
+            crate::db::ActionType::Retry => NotificationActionType::Retry,
+            crate::db::ActionType::Dismiss => NotificationActionType::Dismiss,
+            crate::db::ActionType::Review => NotificationActionType::Review,
+        }
+    }
+}
+
+impl From<NotificationActionType> for crate::db::ActionType {
+    fn from(a: NotificationActionType) -> Self {
+        match a {
+            NotificationActionType::ConfirmUpgrade => crate::db::ActionType::ConfirmUpgrade,
+            NotificationActionType::ManualMatch => crate::db::ActionType::ManualMatch,
+            NotificationActionType::Retry => crate::db::ActionType::Retry,
+            NotificationActionType::Dismiss => crate::db::ActionType::Dismiss,
+            NotificationActionType::Review => crate::db::ActionType::Review,
+        }
+    }
+}
+
+/// Notification resolution type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum NotificationResolution {
+    Accepted,
+    Rejected,
+    Dismissed,
+    AutoResolved,
+}
+
+impl From<crate::db::Resolution> for NotificationResolution {
+    fn from(r: crate::db::Resolution) -> Self {
+        match r {
+            crate::db::Resolution::Accepted => NotificationResolution::Accepted,
+            crate::db::Resolution::Rejected => NotificationResolution::Rejected,
+            crate::db::Resolution::Dismissed => NotificationResolution::Dismissed,
+            crate::db::Resolution::AutoResolved => NotificationResolution::AutoResolved,
+        }
+    }
+}
+
+impl From<NotificationResolution> for crate::db::Resolution {
+    fn from(r: NotificationResolution) -> Self {
+        match r {
+            NotificationResolution::Accepted => crate::db::Resolution::Accepted,
+            NotificationResolution::Rejected => crate::db::Resolution::Rejected,
+            NotificationResolution::Dismissed => crate::db::Resolution::Dismissed,
+            NotificationResolution::AutoResolved => crate::db::Resolution::AutoResolved,
+        }
+    }
+}
+
+/// A user notification
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct Notification {
+    pub id: String,
+    pub title: String,
+    pub message: String,
+    pub notification_type: NotificationType,
+    pub category: NotificationCategory,
+    pub library_id: Option<String>,
+    pub torrent_id: Option<String>,
+    pub media_file_id: Option<String>,
+    pub pending_match_id: Option<String>,
+    pub action_type: Option<NotificationActionType>,
+    pub action_data: Option<serde_json::Value>,
+    pub read_at: Option<String>,
+    pub resolved_at: Option<String>,
+    pub resolution: Option<NotificationResolution>,
+    pub created_at: String,
+}
+
+impl From<crate::db::NotificationRecord> for Notification {
+    fn from(r: crate::db::NotificationRecord) -> Self {
+        Self {
+            id: r.id.to_string(),
+            title: r.title,
+            message: r.message,
+            notification_type: crate::db::NotificationType::from_str(&r.notification_type)
+                .map(NotificationType::from)
+                .unwrap_or(NotificationType::Info),
+            category: crate::db::NotificationCategory::from_str(&r.category)
+                .map(NotificationCategory::from)
+                .unwrap_or(NotificationCategory::Processing),
+            library_id: r.library_id.map(|id| id.to_string()),
+            torrent_id: r.torrent_id.map(|id| id.to_string()),
+            media_file_id: r.media_file_id.map(|id| id.to_string()),
+            pending_match_id: r.pending_match_id.map(|id| id.to_string()),
+            action_type: r.action_type.and_then(|a| {
+                crate::db::ActionType::from_str(&a).map(NotificationActionType::from)
+            }),
+            action_data: r.action_data,
+            read_at: r.read_at.map(|t| t.to_string()),
+            resolved_at: r.resolved_at.map(|t| t.to_string()),
+            resolution: r.resolution.and_then(|res| {
+                crate::db::Resolution::from_str(&res).map(NotificationResolution::from)
+            }),
+            created_at: r.created_at.to_string(),
+        }
+    }
+}
+
+/// Paginated notification result
+#[derive(Debug, Clone, SimpleObject)]
+pub struct PaginatedNotifications {
+    pub notifications: Vec<Notification>,
+    pub total_count: i64,
+    pub has_more: bool,
+}
+
+/// Notification counts for badge display
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct NotificationCounts {
+    pub unread_count: i64,
+    pub action_required_count: i64,
+}
+
+/// Input for listing notifications
+#[derive(Debug, Clone, InputObject)]
+pub struct NotificationFilterInput {
+    pub unread_only: Option<bool>,
+    pub unresolved_only: Option<bool>,
+    pub category: Option<NotificationCategory>,
+    pub notification_type: Option<NotificationType>,
+}
+
+/// Input for resolving a notification
+#[derive(Debug, Clone, InputObject)]
+pub struct ResolveNotificationInput {
+    pub id: String,
+    pub resolution: NotificationResolution,
+}
+
+/// Result of a notification mutation
+#[derive(Debug, Clone, SimpleObject)]
+pub struct NotificationResult {
+    pub success: bool,
+    pub error: Option<String>,
+    pub notification: Option<Notification>,
+}
+
+/// Result of marking all notifications read
+#[derive(Debug, Clone, SimpleObject)]
+pub struct MarkAllReadResult {
+    pub success: bool,
+    pub count: i64,
+    pub error: Option<String>,
+}
+
+/// Notification event for subscriptions
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct NotificationEvent {
+    pub notification: Notification,
+    pub event_type: NotificationEventType,
+}
+
+/// Notification event type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum NotificationEventType {
+    Created,
+    Read,
+    Resolved,
+    Deleted,
 }

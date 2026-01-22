@@ -17,6 +17,7 @@ import {
 } from '../../lib/graphql'
 import type { Connection } from '../../lib/graphql/types'
 import { IconUser, IconBook, IconHeadphones } from '@tabler/icons-react'
+import { SquareCardSkeleton } from './MediaCardSkeleton'
 import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 // ============================================================================
@@ -25,6 +26,8 @@ import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 interface LibraryAuthorsTabProps {
   libraryId: string
+  /** Parent loading state (e.g., library context still loading) */
+  loading?: boolean
   onSelectAuthor?: (authorId: string) => void
 }
 
@@ -91,6 +94,7 @@ function AuthorCard({ author, bookCount, onSelect }: AuthorCardProps) {
 
 export function LibraryAuthorsTab({
   libraryId,
+  loading: parentLoading,
   onSelectAuthor,
 }: LibraryAuthorsTabProps) {
   // URL-persisted state via nuqs
@@ -275,6 +279,8 @@ export function LibraryAuthorsTab({
           showViewModeToggle
           defaultViewMode="cards"
           cardRenderer={cardRenderer}
+          cardSkeleton={() => <SquareCardSkeleton />}
+          skeletonCardCount={12}
           cardGridClassName="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
           showItemCount
           ariaLabel="Authors table"
@@ -285,7 +291,7 @@ export function LibraryAuthorsTab({
           paginationMode="infinite"
           hasMore={hasMore}
           onLoadMore={loadMore}
-          isLoading={isLoading}
+          isLoading={parentLoading || isLoading}
           isLoadingMore={isLoadingMore}
           headerContent={
             <AlphabetFilter

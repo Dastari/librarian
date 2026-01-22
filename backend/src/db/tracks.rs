@@ -25,8 +25,6 @@ pub struct TrackRecord {
     pub artist_id: Option<Uuid>,
     // File link
     pub media_file_id: Option<Uuid>,
-    // Download status
-    pub status: String,
     // Timestamps
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -46,8 +44,6 @@ pub struct CreateTrack {
     pub explicit: bool,
     pub artist_name: Option<String>,
     pub artist_id: Option<Uuid>,
-    /// Initial status - defaults to "missing", set to "wanted" if library has auto_hunt/auto_download
-    pub status: Option<String>,
 }
 
 /// Input for updating a track
@@ -90,7 +86,7 @@ impl TrackRepository {
             r#"
             SELECT id, album_id, library_id, title, track_number, disc_number,
                    musicbrainz_id, isrc, duration_secs, explicit,
-                   artist_name, artist_id, media_file_id, status, created_at, updated_at
+                   artist_name, artist_id, media_file_id, created_at, updated_at
             FROM tracks
             WHERE id = $1
             "#,
@@ -108,7 +104,7 @@ impl TrackRepository {
             r#"
             SELECT id, album_id, library_id, title, track_number, disc_number,
                    musicbrainz_id, isrc, duration_secs, explicit,
-                   artist_name, artist_id, media_file_id, status, created_at, updated_at
+                   artist_name, artist_id, media_file_id, created_at, updated_at
             FROM tracks
             WHERE album_id = $1
             ORDER BY disc_number, track_number
@@ -139,7 +135,6 @@ impl TrackRepository {
             artist_name: Option<String>,
             artist_id: Option<Uuid>,
             media_file_id: Option<Uuid>,
-            status: String,
             created_at: chrono::DateTime<chrono::Utc>,
             updated_at: chrono::DateTime<chrono::Utc>,
             file_path: Option<String>,
@@ -155,7 +150,7 @@ impl TrackRepository {
             SELECT 
                 t.id, t.album_id, t.library_id, t.title, t.track_number, t.disc_number,
                 t.musicbrainz_id, t.isrc, t.duration_secs, t.explicit,
-                t.artist_name, t.artist_id, t.media_file_id, t.status, t.created_at, t.updated_at,
+                t.artist_name, t.artist_id, t.media_file_id, t.created_at, t.updated_at,
                 mf.path as file_path,
                 mf.size as file_size,
                 mf.audio_codec,
@@ -194,7 +189,6 @@ impl TrackRepository {
                     artist_name: row.artist_name,
                     artist_id: row.artist_id,
                     media_file_id: row.media_file_id,
-                    status: row.status,
                     created_at: row.created_at,
                     updated_at: row.updated_at,
                 },
@@ -228,20 +222,17 @@ impl TrackRepository {
 
     /// Create a new track
     pub async fn create(&self, input: CreateTrack) -> Result<TrackRecord> {
-        // Default to "missing" if not specified
-        let status = input.status.unwrap_or_else(|| "missing".to_string());
-
         let record = sqlx::query_as::<_, TrackRecord>(
             r#"
             INSERT INTO tracks (
                 album_id, library_id, title, track_number, disc_number,
                 musicbrainz_id, isrc, duration_secs, explicit,
-                artist_name, artist_id, status
+                artist_name, artist_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING id, album_id, library_id, title, track_number, disc_number,
                       musicbrainz_id, isrc, duration_secs, explicit,
-                      artist_name, artist_id, media_file_id, status, created_at, updated_at
+                      artist_name, artist_id, media_file_id, created_at, updated_at
             "#,
         )
         .bind(input.album_id)
@@ -255,7 +246,6 @@ impl TrackRepository {
         .bind(input.explicit)
         .bind(&input.artist_name)
         .bind(input.artist_id)
-        .bind(&status)
         .fetch_one(&self.pool)
         .await?;
 
@@ -290,7 +280,7 @@ impl TrackRepository {
             WHERE id = $1
             RETURNING id, album_id, library_id, title, track_number, disc_number,
                       musicbrainz_id, isrc, duration_secs, explicit,
-                      artist_name, artist_id, media_file_id, status, created_at, updated_at
+                      artist_name, artist_id, media_file_id, created_at, updated_at
             "#,
         )
         .bind(id)
@@ -368,7 +358,7 @@ impl TrackRepository {
             r#"
             SELECT id, album_id, library_id, title, track_number, disc_number,
                    musicbrainz_id, isrc, duration_secs, explicit,
-                   artist_name, artist_id, media_file_id, status, created_at, updated_at
+                   artist_name, artist_id, media_file_id, created_at, updated_at
             FROM tracks
             WHERE album_id = $1 AND musicbrainz_id = $2
             "#,
@@ -387,7 +377,7 @@ impl TrackRepository {
             r#"
             SELECT id, album_id, library_id, title, track_number, disc_number,
                    musicbrainz_id, isrc, duration_secs, explicit,
-                   artist_name, artist_id, media_file_id, status, created_at, updated_at
+                   artist_name, artist_id, media_file_id, created_at, updated_at
             FROM tracks
             WHERE album_id = $1 AND media_file_id IS NULL
             ORDER BY disc_number, track_number
@@ -411,7 +401,7 @@ impl TrackRepository {
             r#"
             SELECT id, album_id, library_id, title, track_number, disc_number,
                    musicbrainz_id, isrc, duration_secs, explicit,
-                   artist_name, artist_id, media_file_id, status, created_at, updated_at
+                   artist_name, artist_id, media_file_id, created_at, updated_at
             FROM tracks
             WHERE album_id = $1 AND disc_number = $2 AND track_number = $3
             "#,
@@ -432,7 +422,7 @@ impl TrackRepository {
             r#"
             SELECT id, album_id, library_id, title, track_number, disc_number,
                    musicbrainz_id, isrc, duration_secs, explicit,
-                   artist_name, artist_id, media_file_id, status, created_at, updated_at
+                   artist_name, artist_id, media_file_id, created_at, updated_at
             FROM tracks
             WHERE album_id = $1 AND LOWER(title) LIKE $2
             ORDER BY disc_number, track_number
@@ -446,31 +436,15 @@ impl TrackRepository {
         Ok(records)
     }
 
-    /// Update a track's download status
-    pub async fn update_status(&self, id: Uuid, status: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE tracks SET status = $2, updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .bind(status)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// List tracks by status across a library
+    /// List tracks without files across a library (wanted/missing tracks)
     pub async fn list_wanted_by_library(&self, library_id: Uuid) -> Result<Vec<TrackRecord>> {
         let records = sqlx::query_as::<_, TrackRecord>(
             r#"
             SELECT id, album_id, library_id, title, track_number, disc_number,
                    musicbrainz_id, isrc, duration_secs, explicit,
-                   artist_name, artist_id, media_file_id, status, created_at, updated_at
+                   artist_name, artist_id, media_file_id, created_at, updated_at
             FROM tracks
-            WHERE library_id = $1 AND status IN ('missing', 'wanted')
+            WHERE library_id = $1 AND media_file_id IS NULL
             ORDER BY album_id, disc_number, track_number
             "#,
         )
@@ -492,7 +466,6 @@ impl TrackRepository {
         limit: i64,
         title_filter: Option<&str>,
         has_file_filter: Option<bool>,
-        status_filter: Option<&str>,
         sort_column: &str,
         sort_asc: bool,
     ) -> Result<(Vec<TrackRecord>, i64)> {
@@ -503,12 +476,10 @@ impl TrackRepository {
             conditions.push(format!("LOWER(title) LIKE ${}", param_idx));
             param_idx += 1;
         }
+        let _ = param_idx; // Suppress unused variable warning
         if has_file_filter.is_some() {
             conditions.push(format!("media_file_id IS {} NULL", if has_file_filter.unwrap() { "NOT" } else { "" }));
             // No param needed, we use IS NULL / IS NOT NULL
-        }
-        if status_filter.is_some() {
-            conditions.push(format!("status = ${}", param_idx));
         }
 
         let where_clause = conditions.join(" AND ");
@@ -527,7 +498,7 @@ impl TrackRepository {
             r#"
             SELECT id, album_id, library_id, title, track_number, disc_number,
                    musicbrainz_id, isrc, duration_secs, explicit,
-                   artist_name, artist_id, media_file_id, status, created_at, updated_at
+                   artist_name, artist_id, media_file_id, created_at, updated_at
             FROM tracks
             WHERE {}
             {}
@@ -540,18 +511,12 @@ impl TrackRepository {
         if let Some(title) = title_filter {
             count_builder = count_builder.bind(format!("%{}%", title.to_lowercase()));
         }
-        if let Some(status) = status_filter {
-            count_builder = count_builder.bind(status);
-        }
 
         let total: i64 = count_builder.fetch_one(&self.pool).await?;
 
         let mut data_builder = sqlx::query_as::<_, TrackRecord>(&data_query).bind(library_id);
         if let Some(title) = title_filter {
             data_builder = data_builder.bind(format!("%{}%", title.to_lowercase()));
-        }
-        if let Some(status) = status_filter {
-            data_builder = data_builder.bind(status);
         }
 
         let records: Vec<TrackRecord> = data_builder.fetch_all(&self.pool).await?;

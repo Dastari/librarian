@@ -735,10 +735,11 @@ async fn create_file_matches_for_target(
                 .and_then(|n| n.to_str())
                 .unwrap_or(&file.path);
 
-            // Find best matching track
+            // Find best matching track (only match to tracks without files)
             let mut best_match: Option<(Uuid, f64)> = None;
             for track in &tracks {
-                if track.status != "wanted" && track.status != "missing" {
+                // Skip tracks that already have a linked media file
+                if track.media_file_id.is_some() {
                     continue;
                 }
                 let similarity = filename_parser::show_name_similarity(file_name, &track.title);
@@ -769,7 +770,6 @@ async fn create_file_matches_for_target(
                 };
 
                 if db.pending_file_matches().create(input).await.is_ok() {
-                    db.tracks().update_status(track_id, "downloading").await.ok();
                     matches_created += 1;
                 }
             }
@@ -813,12 +813,7 @@ async fn create_file_matches_for_target(
             };
 
             if db.pending_file_matches().create(input).await.is_ok() {
-                sqlx::query("UPDATE movies SET download_status = 'downloading' WHERE id = $1")
-                    .bind(movie_id)
-                    .execute(db.pool())
-                    .await
-                    .ok();
-
+                // Status is derived from pending_file_matches - no direct update needed
                 tracing::info!(
                     torrent_id = %torrent_record.id,
                     movie_id = %movie_id,
@@ -857,7 +852,8 @@ async fn create_file_matches_for_target(
             };
 
             if db.pending_file_matches().create(input).await.is_ok() {
-                db.episodes().update_status(episode_id, "downloading").await.ok();
+                // Episode status is now derived from media_file_id presence
+                // "downloading" status is determined by having pending_file_matches
 
                 tracing::info!(
                     torrent_id = %torrent_record.id,

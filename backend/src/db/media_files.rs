@@ -27,6 +27,8 @@ pub struct MediaFileRecord {
     pub album_id: Option<Uuid>,
     /// Link to audiobook record if this file is an audiobook
     pub audiobook_id: Option<Uuid>,
+    /// Link to audiobook chapter if this file is a chapter
+    pub chapter_id: Option<Uuid>,
     pub relative_path: Option<String>,
     pub original_name: Option<String>,
     pub video_bitrate: Option<i32>,
@@ -76,6 +78,14 @@ pub struct MediaFileRecord {
     pub metadata_extracted_at: Option<chrono::DateTime<chrono::Utc>>,
     /// When file was last matched to a library item
     pub matched_at: Option<chrono::DateTime<chrono::Utc>>,
+    
+    // Album art and lyrics
+    /// Cover art image as base64-encoded string
+    pub cover_art_base64: Option<String>,
+    /// MIME type of the cover art (e.g., "image/jpeg", "image/png")
+    pub cover_art_mime: Option<String>,
+    /// Lyrics extracted from embedded tags
+    pub lyrics: Option<String>,
 }
 
 /// Input for creating a media file
@@ -95,6 +105,14 @@ pub struct CreateMediaFile {
     pub file_hash: Option<String>,
     pub episode_id: Option<Uuid>,
     pub movie_id: Option<Uuid>,
+    /// Link to track record if this file is a music track
+    pub track_id: Option<Uuid>,
+    /// Link to album for grouping music files
+    pub album_id: Option<Uuid>,
+    /// Link to audiobook record if this file is an audiobook
+    pub audiobook_id: Option<Uuid>,
+    /// Link to audiobook chapter if this file is a chapter
+    pub chapter_id: Option<Uuid>,
     pub relative_path: Option<String>,
     pub original_name: Option<String>,
     pub resolution: Option<String>,
@@ -118,14 +136,15 @@ impl MediaFileRepository {
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
                    duration, bitrate, file_hash, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, relative_path,
+                   track_id, album_id, audiobook_id, chapter_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
                    content_type, quality_status,
                    meta_artist, meta_album, meta_title, meta_track_number, meta_disc_number,
                    meta_year, meta_genre, meta_show_name, meta_season, meta_episode,
-                   ffprobe_analyzed_at, metadata_extracted_at, matched_at
+                   ffprobe_analyzed_at, metadata_extracted_at, matched_at,
+                   cover_art_base64, cover_art_mime, lyrics
             FROM media_files
             WHERE library_id = $1
             ORDER BY path
@@ -156,14 +175,15 @@ impl MediaFileRepository {
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
                    duration, bitrate, file_hash, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, relative_path,
+                   track_id, album_id, audiobook_id, chapter_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
                    content_type, quality_status,
                    meta_artist, meta_album, meta_title, meta_track_number, meta_disc_number,
                    meta_year, meta_genre, meta_show_name, meta_season, meta_episode,
-                   ffprobe_analyzed_at, metadata_extracted_at, matched_at
+                   ffprobe_analyzed_at, metadata_extracted_at, matched_at,
+                   cover_art_base64, cover_art_mime, lyrics
             FROM media_files
             WHERE path = $1
             "#,
@@ -182,14 +202,15 @@ impl MediaFileRepository {
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
                    duration, bitrate, file_hash, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, relative_path,
+                   track_id, album_id, audiobook_id, chapter_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
                    content_type, quality_status,
                    meta_artist, meta_album, meta_title, meta_track_number, meta_disc_number,
                    meta_year, meta_genre, meta_show_name, meta_season, meta_episode,
-                   ffprobe_analyzed_at, metadata_extracted_at, matched_at
+                   ffprobe_analyzed_at, metadata_extracted_at, matched_at,
+                   cover_art_base64, cover_art_mime, lyrics
             FROM media_files
             WHERE episode_id = $1
             ORDER BY organized DESC, added_at ASC
@@ -215,14 +236,15 @@ impl MediaFileRepository {
             RETURNING id, library_id, path, size as size_bytes, 
                       container, video_codec, audio_codec, width, height,
                       duration, bitrate, file_hash, episode_id, movie_id,
-                      track_id, album_id, audiobook_id, relative_path,
+                      track_id, album_id, audiobook_id, chapter_id, relative_path,
                       original_name, video_bitrate, audio_channels, audio_language,
                       resolution, is_hdr, hdr_type, organized, organized_at,
                       original_path, organize_status, organize_error, added_at, modified_at,
                       content_type, quality_status,
                    meta_artist, meta_album, meta_title, meta_track_number, meta_disc_number,
                    meta_year, meta_genre, meta_show_name, meta_season, meta_episode,
-                   ffprobe_analyzed_at, metadata_extracted_at, matched_at
+                   ffprobe_analyzed_at, metadata_extracted_at, matched_at,
+                   cover_art_base64, cover_art_mime, lyrics
             "#,
         )
         .bind(input.library_id)
@@ -260,9 +282,10 @@ impl MediaFileRepository {
             INSERT INTO media_files (
                 library_id, path, size, container, video_codec, audio_codec,
                 width, height, duration, bitrate, file_hash, episode_id, movie_id,
+                track_id, album_id, audiobook_id, chapter_id,
                 relative_path, original_name, resolution, is_hdr, hdr_type
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
             ON CONFLICT (path) DO UPDATE SET
                 size = EXCLUDED.size,
                 container = EXCLUDED.container,
@@ -279,24 +302,32 @@ impl MediaFileRepository {
                 -- Only update movie_id/episode_id if the new value is not null
                 movie_id = COALESCE(EXCLUDED.movie_id, media_files.movie_id),
                 episode_id = COALESCE(EXCLUDED.episode_id, media_files.episode_id),
+                track_id = COALESCE(EXCLUDED.track_id, media_files.track_id),
+                album_id = COALESCE(EXCLUDED.album_id, media_files.album_id),
+                audiobook_id = COALESCE(EXCLUDED.audiobook_id, media_files.audiobook_id),
+                chapter_id = COALESCE(EXCLUDED.chapter_id, media_files.chapter_id),
                 -- Update content_type based on what's being linked
                 content_type = CASE 
                     WHEN EXCLUDED.movie_id IS NOT NULL THEN 'movie'
                     WHEN EXCLUDED.episode_id IS NOT NULL THEN 'episode'
+                    WHEN EXCLUDED.track_id IS NOT NULL THEN 'track'
+                    WHEN EXCLUDED.chapter_id IS NOT NULL THEN 'chapter'
+                    WHEN EXCLUDED.audiobook_id IS NOT NULL THEN 'audiobook'
                     ELSE media_files.content_type
                 END,
                 modified_at = NOW()
             RETURNING id, library_id, path, size as size_bytes, 
                       container, video_codec, audio_codec, width, height,
                       duration, bitrate, file_hash, episode_id, movie_id,
-                      track_id, album_id, audiobook_id, relative_path,
+                      track_id, album_id, audiobook_id, chapter_id, relative_path,
                       original_name, video_bitrate, audio_channels, audio_language,
                       resolution, is_hdr, hdr_type, organized, organized_at,
                       original_path, organize_status, organize_error, added_at, modified_at,
                       content_type, quality_status,
                    meta_artist, meta_album, meta_title, meta_track_number, meta_disc_number,
                    meta_year, meta_genre, meta_show_name, meta_season, meta_episode,
-                   ffprobe_analyzed_at, metadata_extracted_at, matched_at
+                   ffprobe_analyzed_at, metadata_extracted_at, matched_at,
+                   cover_art_base64, cover_art_mime, lyrics
             "#,
         )
         .bind(input.library_id)
@@ -312,6 +343,10 @@ impl MediaFileRepository {
         .bind(&input.file_hash)
         .bind(input.episode_id)
         .bind(input.movie_id)
+        .bind(input.track_id)
+        .bind(input.album_id)
+        .bind(input.audiobook_id)
+        .bind(input.chapter_id)
         .bind(&input.relative_path)
         .bind(&input.original_name)
         .bind(&input.resolution)
@@ -421,14 +456,15 @@ impl MediaFileRepository {
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
                    duration, bitrate, file_hash, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, relative_path,
+                   track_id, album_id, audiobook_id, chapter_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
                    content_type, quality_status,
                    meta_artist, meta_album, meta_title, meta_track_number, meta_disc_number,
                    meta_year, meta_genre, meta_show_name, meta_season, meta_episode,
-                   ffprobe_analyzed_at, metadata_extracted_at, matched_at
+                   ffprobe_analyzed_at, metadata_extracted_at, matched_at,
+                   cover_art_base64, cover_art_mime, lyrics
             FROM media_files
             WHERE episode_id = $1
             ORDER BY size_bytes DESC
@@ -452,14 +488,15 @@ impl MediaFileRepository {
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
                    duration, bitrate, file_hash, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, relative_path,
+                   track_id, album_id, audiobook_id, chapter_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
                    content_type, quality_status,
                    meta_artist, meta_album, meta_title, meta_track_number, meta_disc_number,
                    meta_year, meta_genre, meta_show_name, meta_season, meta_episode,
-                   ffprobe_analyzed_at, metadata_extracted_at, matched_at
+                   ffprobe_analyzed_at, metadata_extracted_at, matched_at,
+                   cover_art_base64, cover_art_mime, lyrics
             FROM media_files
             WHERE library_id = $1 AND organized = false
             ORDER BY path
@@ -628,14 +665,15 @@ impl MediaFileRepository {
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
                    duration, bitrate, file_hash, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, relative_path,
+                   track_id, album_id, audiobook_id, chapter_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
                    content_type, quality_status,
                    meta_artist, meta_album, meta_title, meta_track_number, meta_disc_number,
                    meta_year, meta_genre, meta_show_name, meta_season, meta_episode,
-                   ffprobe_analyzed_at, metadata_extracted_at, matched_at
+                   ffprobe_analyzed_at, metadata_extracted_at, matched_at,
+                   cover_art_base64, cover_art_mime, lyrics
             FROM media_files
             WHERE library_id = $1 AND organize_status = 'conflicted'
             ORDER BY path
@@ -666,14 +704,15 @@ impl MediaFileRepository {
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
                    duration, bitrate, file_hash, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, relative_path,
+                   track_id, album_id, audiobook_id, chapter_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
                    content_type, quality_status,
                    meta_artist, meta_album, meta_title, meta_track_number, meta_disc_number,
                    meta_year, meta_genre, meta_show_name, meta_season, meta_episode,
-                   ffprobe_analyzed_at, metadata_extracted_at, matched_at
+                   ffprobe_analyzed_at, metadata_extracted_at, matched_at,
+                   cover_art_base64, cover_art_mime, lyrics
             FROM media_files
             WHERE id = $1
             "#,
@@ -751,14 +790,15 @@ impl MediaFileRepository {
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
                    duration, bitrate, file_hash, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, relative_path,
+                   track_id, album_id, audiobook_id, chapter_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
                    content_type, quality_status,
                    meta_artist, meta_album, meta_title, meta_track_number, meta_disc_number,
                    meta_year, meta_genre, meta_show_name, meta_season, meta_episode,
-                   ffprobe_analyzed_at, metadata_extracted_at, matched_at
+                   ffprobe_analyzed_at, metadata_extracted_at, matched_at,
+                   cover_art_base64, cover_art_mime, lyrics
             FROM media_files
             WHERE movie_id = $1
             ORDER BY size_bytes DESC
@@ -778,14 +818,15 @@ impl MediaFileRepository {
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
                    duration, bitrate, file_hash, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, relative_path,
+                   track_id, album_id, audiobook_id, chapter_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
                    content_type, quality_status,
                    meta_artist, meta_album, meta_title, meta_track_number, meta_disc_number,
                    meta_year, meta_genre, meta_show_name, meta_season, meta_episode,
-                   ffprobe_analyzed_at, metadata_extracted_at, matched_at
+                   ffprobe_analyzed_at, metadata_extracted_at, matched_at,
+                   cover_art_base64, cover_art_mime, lyrics
             FROM media_files
             WHERE movie_id = $1
             ORDER BY size_bytes DESC
@@ -882,6 +923,9 @@ impl MediaFileRepository {
                 meta_show_name = $9,
                 meta_season = $10,
                 meta_episode = $11,
+                cover_art_base64 = $12,
+                cover_art_mime = $13,
+                lyrics = $14,
                 metadata_extracted_at = NOW(),
                 modified_at = NOW()
             WHERE id = $1
@@ -898,6 +942,9 @@ impl MediaFileRepository {
         .bind(&metadata.show_name)
         .bind(metadata.season)
         .bind(metadata.episode)
+        .bind(&metadata.cover_art_base64)
+        .bind(&metadata.cover_art_mime)
+        .bind(&metadata.lyrics)
         .execute(&self.pool)
         .await?;
 
@@ -961,14 +1008,15 @@ impl MediaFileRepository {
             RETURNING id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
                    duration, bitrate, file_hash, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, relative_path,
+                   track_id, album_id, audiobook_id, chapter_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
                    content_type, quality_status,
                    meta_artist, meta_album, meta_title, meta_track_number, meta_disc_number,
                    meta_year, meta_genre, meta_show_name, meta_season, meta_episode,
-                   ffprobe_analyzed_at, metadata_extracted_at, matched_at
+                   ffprobe_analyzed_at, metadata_extracted_at, matched_at,
+                   cover_art_base64, cover_art_mime, lyrics
             "#,
         )
         .bind(library_id)
@@ -988,14 +1036,15 @@ impl MediaFileRepository {
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
                    duration, bitrate, file_hash, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, relative_path,
+                   track_id, album_id, audiobook_id, chapter_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
                    content_type, quality_status,
                    meta_artist, meta_album, meta_title, meta_track_number, meta_disc_number,
                    meta_year, meta_genre, meta_show_name, meta_season, meta_episode,
-                   ffprobe_analyzed_at, metadata_extracted_at, matched_at
+                   ffprobe_analyzed_at, metadata_extracted_at, matched_at,
+                   cover_art_base64, cover_art_mime, lyrics
             FROM media_files
             WHERE library_id = $1 AND ffprobe_analyzed_at IS NULL
             ORDER BY added_at
@@ -1017,14 +1066,15 @@ impl MediaFileRepository {
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
                    duration, bitrate, file_hash, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, relative_path,
+                   track_id, album_id, audiobook_id, chapter_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
                    content_type, quality_status,
                    meta_artist, meta_album, meta_title, meta_track_number, meta_disc_number,
                    meta_year, meta_genre, meta_show_name, meta_season, meta_episode,
-                   ffprobe_analyzed_at, metadata_extracted_at, matched_at
+                   ffprobe_analyzed_at, metadata_extracted_at, matched_at,
+                   cover_art_base64, cover_art_mime, lyrics
             FROM media_files
             WHERE library_id = $1 AND metadata_extracted_at IS NULL
             ORDER BY added_at
@@ -1046,14 +1096,15 @@ impl MediaFileRepository {
             SELECT id, library_id, path, size as size_bytes, 
                    container, video_codec, audio_codec, width, height,
                    duration, bitrate, file_hash, episode_id, movie_id,
-                   track_id, album_id, audiobook_id, relative_path,
+                   track_id, album_id, audiobook_id, chapter_id, relative_path,
                    original_name, video_bitrate, audio_channels, audio_language,
                    resolution, is_hdr, hdr_type, organized, organized_at,
                    original_path, organize_status, organize_error, added_at, modified_at,
                    content_type, quality_status,
                    meta_artist, meta_album, meta_title, meta_track_number, meta_disc_number,
                    meta_year, meta_genre, meta_show_name, meta_season, meta_episode,
-                   ffprobe_analyzed_at, metadata_extracted_at, matched_at
+                   ffprobe_analyzed_at, metadata_extracted_at, matched_at,
+                   cover_art_base64, cover_art_mime, lyrics
             FROM media_files
             WHERE library_id = $1 
               AND episode_id IS NULL 
@@ -1086,4 +1137,10 @@ pub struct EmbeddedMetadata {
     pub show_name: Option<String>,
     pub season: Option<i32>,
     pub episode: Option<i32>,
+    /// Cover art as base64-encoded string
+    pub cover_art_base64: Option<String>,
+    /// MIME type of the cover art
+    pub cover_art_mime: Option<String>,
+    /// Lyrics from embedded tags
+    pub lyrics: Option<String>,
 }

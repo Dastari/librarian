@@ -5,7 +5,6 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/d
 import { Button } from '@heroui/button'
 import { Image } from '@heroui/image'
 import type { Movie } from '../../lib/graphql'
-import { formatBytes } from '../../lib/format'
 import { IconEye, IconTrash, IconMovie, IconCheck, IconDotsVertical, IconClock } from '@tabler/icons-react'
 
 // ============================================================================
@@ -72,12 +71,12 @@ export function MovieCard({ movie, onDelete }: MovieCardProps) {
       <div className="absolute top-2 left-2 z-10 pointer-events-none">
         <div
           className={`px-2 py-1 rounded-md backdrop-blur-sm text-xs font-medium ${
-            movie.hasFile
+            movie.mediaFileId
               ? 'bg-success/80 text-success-foreground'
               : 'bg-warning/80 text-warning-foreground'
           }`}
         >
-          {movie.hasFile ? <><IconCheck size={12} className="inline mr-1 text-green-400" />Downloaded</> : 'Missing'}
+          {movie.mediaFileId ? <><IconCheck size={12} className="inline mr-1 text-green-400" />Downloaded</> : 'Missing'}
         </div>
       </div>
 
@@ -111,10 +110,10 @@ export function MovieCard({ movie, onDelete }: MovieCardProps) {
               <span>{Math.floor(movie.runtime / 60)}h {movie.runtime % 60}m</span>
             </>
           )}
-          {movie.hasFile && movie.sizeBytes > 0 && (
+          {movie.mediaFileId && (
             <>
               <span>•</span>
-              <span>{formatBytes(movie.sizeBytes)}</span>
+              <IconCheck size={12} className="text-success" />
             </>
           )}
           {movie.genres.length > 0 && (

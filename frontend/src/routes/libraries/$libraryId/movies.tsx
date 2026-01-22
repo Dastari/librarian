@@ -1,6 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
-import { Spinner } from '@heroui/spinner'
 import { useDisclosure } from '@heroui/modal'
 import { addToast } from '@heroui/toast'
 import { LibraryMoviesTab, AddMovieModal } from '../../../components/library'
@@ -14,20 +13,10 @@ export const Route = createFileRoute('/libraries/$libraryId/movies')({
 })
 
 function MoviesPage() {
-  const ctx = useLibraryContext()
+  const { library, loading, fetchData } = useLibraryContext()
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
   const { isOpen: isAddOpen, onOpen: onAddOpen, onClose: onAddClose } = useDisclosure()
   const [movieToDelete, setMovieToDelete] = useState<{ id: string; title: string } | null>(null)
-
-  if (!ctx) {
-    return (
-      <div className="flex justify-center items-center py-12">
-        <Spinner size="lg" />
-      </div>
-    )
-  }
-
-  const { library, fetchData } = ctx
 
   const handleDeleteMovieClick = (movieId: string, movieTitle: string) => {
     setMovieToDelete({ id: movieId, title: movieTitle })
@@ -72,6 +61,7 @@ function MoviesPage() {
     <>
       <LibraryMoviesTab
         libraryId={library.id}
+        loading={loading}
         onDeleteMovie={handleDeleteMovieClick}
         onAddMovie={onAddOpen}
       />

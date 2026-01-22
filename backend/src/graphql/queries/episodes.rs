@@ -35,11 +35,12 @@ impl EpisodeQueries {
                 .filter_map(|wp| wp.episode_id.map(|eid| (eid, wp)))
                 .collect();
 
-        // For downloaded episodes, look up the media file with its metadata
+        // For episodes with media files, look up the media file with its metadata
         let mut episodes = Vec::with_capacity(records.len());
         for r in records {
             let episode_id = r.id;
-            let media_file = if r.status == "downloaded" {
+            // Status is derived from media_file_id: if set, episode is downloaded
+            let media_file = if r.media_file_id.is_some() {
                 // Try to get the media file for this episode (includes metadata from FFmpeg analysis)
                 db.media_files()
                     .get_by_episode_id(r.id)
@@ -53,11 +54,26 @@ impl EpisodeQueries {
             // Get watch progress for this episode
             let watch_progress = progress_map.get(&episode_id).cloned();
 
-            episodes.push(Episode::from_record_with_progress(
+            let mut episode = Episode::from_record_with_progress(
                 r,
                 media_file,
                 watch_progress,
-            ));
+            );
+
+            // Populate download_progress for episodes with status "downloading"
+            if episode.status == EpisodeStatus::Downloading {
+                if let Ok(episode_uuid) = Uuid::parse_str(&episode.id) {
+                    if let Ok(Some(progress)) = db
+                        .torrent_files()
+                        .get_download_progress_for_episode(episode_uuid)
+                        .await
+                    {
+                        episode.download_progress = Some(progress);
+                    }
+                }
+            }
+
+            episodes.push(episode);
         }
 
         Ok(episodes)

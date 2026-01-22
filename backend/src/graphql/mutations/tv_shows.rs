@@ -414,7 +414,6 @@ impl TvShowMutations {
                     },
                     tmdb_id: None,
                     tvdb_id: None,
-                    status: None,
                 })
                 .await;
         }

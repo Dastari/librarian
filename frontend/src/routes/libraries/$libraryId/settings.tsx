@@ -1,30 +1,23 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Spinner } from '@heroui/spinner'
 import { LibrarySettingsTab } from '../../../components/library'
 import { useLibraryContext } from '../$libraryId'
+import { ShimmerLoader } from '../../../components/shared/ShimmerLoader'
+import { libraryTemplate } from '../../../lib/template-data'
 
 export const Route = createFileRoute('/libraries/$libraryId/settings')({
   component: SettingsPage,
 })
 
 function SettingsPage() {
-  const ctx = useLibraryContext()
-
-  if (!ctx) {
-    return (
-      <div className="flex justify-center items-center py-12">
-        <Spinner size="lg" />
-      </div>
-    )
-  }
-
-  const { library, handleUpdateLibrary, actionLoading } = ctx
+  const { library, loading, handleUpdateLibrary, actionLoading } = useLibraryContext()
 
   return (
-    <LibrarySettingsTab
-      library={library}
-      onSave={handleUpdateLibrary}
-      isLoading={actionLoading}
-    />
+    <ShimmerLoader loading={loading} templateProps={{ library: libraryTemplate }}>
+      <LibrarySettingsTab
+        library={library}
+        onSave={handleUpdateLibrary}
+        isLoading={actionLoading}
+      />
+    </ShimmerLoader>
   )
 }

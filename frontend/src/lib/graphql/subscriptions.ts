@@ -154,3 +154,46 @@ export const DIRECTORY_CONTENTS_CHANGED_SUBSCRIPTION = `
     }
   }
 `;
+
+// ============================================================================
+// Notification Subscriptions
+// ============================================================================
+
+/**
+ * Subscribe to notification events (new, read, resolved)
+ * Use this to update the notification popover in real-time
+ */
+export const NOTIFICATION_RECEIVED_SUBSCRIPTION = `
+  subscription NotificationReceived {
+    notificationReceived {
+      notification {
+        id
+        title
+        message
+        notificationType
+        category
+        libraryId
+        actionType
+        actionData
+        readAt
+        resolvedAt
+        resolution
+        createdAt
+      }
+      eventType
+    }
+  }
+`;
+
+/**
+ * Subscribe to notification count updates
+ * Use this for the navbar badge
+ */
+export const NOTIFICATION_COUNTS_SUBSCRIPTION = `
+  subscription NotificationCounts {
+    notificationCounts {
+      unreadCount
+      actionRequiredCount
+    }
+  }
+`;

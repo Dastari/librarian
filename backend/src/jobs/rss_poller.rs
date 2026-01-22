@@ -1,13 +1,15 @@
 //! RSS/Torznab feed poller
 //!
+//! NOTE: This job is deprecated. The new media pipeline uses auto-hunt and
+//! pending_file_matches for tracking downloads instead of storing torrent links
+//! on episodes.
+//!
 //! This job:
 //! 1. Gets feeds that are due for polling
 //! 2. Fetches and parses each feed (with bounded concurrency)
 //! 3. Stores new items in the database
-//! 4. Matches items to wanted episodes
-//! 5. Updates episode status to "available" when matched
 //!
-//! Uses bounded concurrency to prevent overwhelming external RSS servers.
+//! Episode matching is no longer performed here - use auto-hunt instead.
 
 use anyhow::Result;
 use chrono::Datelike;
@@ -16,7 +18,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::db::libraries::LibraryRecord;
@@ -34,7 +36,11 @@ const FEED_BATCH_DELAY_MS: u64 = 200;
 
 /// Poll all RSS feeds that are due for polling
 pub async fn poll_feeds() -> Result<()> {
-    info!("Starting RSS feed poll job");
+    // RSS episode matching is deprecated - episodes now derive status from media_file_id
+    // and downloads are tracked via pending_file_matches. Use auto-hunt instead.
+    warn!("RSS feed polling with episode matching is deprecated. Use auto-hunt for automated downloads.");
+    
+    info!("Starting RSS feed poll job (fetch-only mode)");
 
     // Get database pool from environment
     let database_url = std::env::var("DATABASE_URL")
@@ -660,13 +666,17 @@ async fn try_match_episode(
 }
 
 /// Try to match by exact season/episode number
+///
+/// NOTE: This function no longer stores torrent_link on episodes.
+/// Episode status is now derived from media_file_id presence.
+/// Returns the episode ID if found and wanted (no media file).
 async fn try_exact_match(
     db: &Database,
     show_id: Uuid,
     season: i32,
     episode: i32,
-    torrent_link: &str,
-    rss_item_id: Uuid,
+    _torrent_link: &str,
+    _rss_item_id: Uuid,
 ) -> Result<Option<Uuid>> {
     let episode_record = db
         .episodes()
@@ -674,28 +684,25 @@ async fn try_exact_match(
         .await?;
 
     if let Some(ep) = episode_record {
-        if ep.status == "missing" || ep.status == "wanted" {
-            db.episodes()
-                .mark_available(ep.id, torrent_link, Some(rss_item_id))
-                .await?;
+        // Status is now derived from media_file_id:
+        // - No media_file_id = wanted/missing
+        // - Has media_file_id = downloaded
+        if ep.media_file_id.is_none() {
+            // Episode is wanted (no media file linked)
+            // Note: We no longer store torrent_link on episodes.
+            // The download would need to be triggered via auto-hunt or manual action.
+            debug!(
+                episode_id = %ep.id,
+                season = ep.season,
+                episode = ep.episode,
+                "Found wanted episode (no media file)"
+            );
             return Ok(Some(ep.id));
-        } else if ep.status == "available" {
-            // Update torrent_link if we have a different/better one
-            let current_link = ep.torrent_link.as_deref().unwrap_or("");
-            if current_link != torrent_link {
-                info!(
-                    "Updating torrent link for already-available episode (old: {}, new: {})",
-                    current_link, torrent_link
-                );
-                db.episodes()
-                    .mark_available(ep.id, torrent_link, Some(rss_item_id))
-                    .await?;
-                return Ok(Some(ep.id));
-            } else {
-                debug!("Episode already available with same link, skipping");
-            }
         } else {
-            debug!("Episode found but status is '{}', not matching", ep.status);
+            debug!(
+                episode_id = %ep.id,
+                "Episode already has media file, skipping"
+            );
         }
     }
 
@@ -704,13 +711,16 @@ async fn try_exact_match(
 
 /// Try to match using absolute episode number calculation
 /// For shows where scene uses S02E04 format but metadata has different numbering
+///
+/// NOTE: This function no longer stores torrent_link on episodes.
+/// Episode status is now derived from media_file_id presence.
 async fn try_absolute_match(
     db: &Database,
     show_id: Uuid,
     scene_season: i32,
     scene_episode: i32,
-    torrent_link: &str,
-    rss_item_id: Uuid,
+    _torrent_link: &str,
+    _rss_item_id: Uuid,
 ) -> Result<Option<Uuid>> {
     // For shows with year-based seasons (season > 2000) and absolute episode numbers,
     // we need to find the nth episode of that "scene season"
@@ -735,9 +745,10 @@ async fn try_absolute_match(
 
         if let Some(&year_season) = target_year_season {
             // Now find the nth episode of that year season
-            let episodes: Vec<(Uuid, i32, i32, String)> = sqlx::query_as(
+            // Status is derived from media_file_id: NULL = wanted, NOT NULL = downloaded
+            let episodes: Vec<(Uuid, i32, i32, Option<Uuid>)> = sqlx::query_as(
                 r#"
-                SELECT id, season, episode, status FROM episodes
+                SELECT id, season, episode, media_file_id FROM episodes
                 WHERE tv_show_id = $1 AND season = $2
                 ORDER BY episode
                 "#,
@@ -748,22 +759,19 @@ async fn try_absolute_match(
             .await?;
 
             // Scene episode N is the Nth episode in this season
-            if let Some((ep_id, found_season, found_episode, status)) =
+            if let Some((ep_id, found_season, found_episode, media_file_id)) =
                 episodes.get((scene_episode - 1) as usize)
             {
-                if status == "missing" || status == "wanted" || status == "available" {
+                // Episode is wanted if no media file is linked
+                if media_file_id.is_none() {
                     info!(
                         "Year-based absolute match: S{:02}E{:02} -> Season {} Episode {} (year season mapping)",
                         scene_season, scene_episode, found_season, found_episode
                     );
-                    db.episodes()
-                        .mark_available(*ep_id, torrent_link, Some(rss_item_id))
-                        .await?;
                     return Ok(Some(*ep_id));
                 } else {
                     debug!(
-                        "Found matching episode but status is '{}', skipping",
-                        status
+                        "Found matching episode but already has media file, skipping"
                     );
                 }
             }
@@ -779,11 +787,12 @@ async fn try_absolute_match(
     };
 
     // Try to find episodes by absolute_number field
-    let rows: Vec<(Uuid, i32, i32, String)> = sqlx::query_as(
+    // Status is derived from media_file_id: NULL = wanted
+    let rows: Vec<(Uuid, i32, i32)> = sqlx::query_as(
         r#"
-        SELECT id, season, episode, status FROM episodes
+        SELECT id, season, episode FROM episodes
         WHERE tv_show_id = $1
-          AND (status = 'missing' OR status = 'wanted' OR status = 'available')
+          AND media_file_id IS NULL
           AND absolute_number = $2
         LIMIT 1
         "#,
@@ -793,16 +802,11 @@ async fn try_absolute_match(
     .fetch_all(db.pool())
     .await?;
 
-    if let Some((ep_id, found_season, found_episode, status)) = rows.into_iter().next()
-        && (status == "missing" || status == "wanted" || status == "available")
-    {
+    if let Some((ep_id, found_season, found_episode)) = rows.into_iter().next() {
         info!(
             "Absolute number match: S{:02}E{:02} -> Season {} Episode {} (abs: {})",
             scene_season, scene_episode, found_season, found_episode, estimated_absolute
         );
-        db.episodes()
-            .mark_available(ep_id, torrent_link, Some(rss_item_id))
-            .await?;
         return Ok(Some(ep_id));
     }
 

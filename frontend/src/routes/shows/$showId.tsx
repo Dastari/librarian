@@ -4,7 +4,8 @@ import { Button } from '@heroui/button'
 import { Card, CardBody } from '@heroui/card'
 import { Chip } from '@heroui/chip'
 import { Image } from '@heroui/image'
-import { Skeleton } from '@heroui/skeleton'
+import { ShimmerLoader } from '../../components/shared/ShimmerLoader'
+import { showTemplate, libraryTemplate } from '../../lib/template-data'
 import { Accordion, AccordionItem } from '@heroui/accordion'
 import { Breadcrumbs, BreadcrumbItem } from '@heroui/breadcrumbs'
 import { useDisclosure } from '@heroui/modal'
@@ -18,21 +19,18 @@ import {
   LIBRARY_QUERY,
   EPISODES_QUERY,
   REFRESH_TV_SHOW_MUTATION,
-  DOWNLOAD_EPISODE_MUTATION,
   DELETE_TV_SHOW_MUTATION,
   UPDATE_TV_SHOW_MUTATION,
   MEDIA_FILE_UPDATED_SUBSCRIPTION,
   type TvShow,
   type Library,
   type Episode,
-  type EpisodeStatus,
-  type DownloadEpisodeResult,
   type TvShowResult,
   type MediaFileUpdatedEvent,
 } from '../../lib/graphql'
 import { formatBytes, formatDate } from '../../lib/format'
 import { DataTable, type DataTableColumn, type RowAction } from '../../components/data-table'
-import { IconDownload, IconDeviceTv, IconClipboard, IconPlayerPlay, IconPlayerTrackNext, IconRefresh, IconSearch, IconSettings, IconTrash, IconInfoCircle } from '@tabler/icons-react'
+import { IconDeviceTv, IconClipboard, IconPlayerPlay, IconPlayerTrackNext, IconRefresh, IconSearch, IconSettings, IconTrash, IconInfoCircle } from '@tabler/icons-react'
 import { Tooltip } from '@heroui/tooltip'
 import { DeleteShowModal, ShowSettingsModal, type ShowSettingsInput } from '../../components/shows'
 import {
@@ -184,7 +182,7 @@ const episodeColumns: DataTableColumn<Episode>[] = [
     label: 'Quality',
     width: 220,
     render: (ep) => {
-      if (ep.status !== 'DOWNLOADED' || !ep.mediaFileId) {
+      if (!ep.mediaFileId) {
         return <span className="text-default-400">-</span>
       }
       return (
@@ -213,7 +211,7 @@ const episodeColumns: DataTableColumn<Episode>[] = [
     label: 'Audio',
     width: 100,
     render: (ep) => {
-      if (ep.status !== 'DOWNLOADED' || !ep.audioCodec) {
+      if (!ep.mediaFileId || !ep.audioCodec) {
         return <span className="text-default-400">-</span>
       }
       return (
@@ -228,7 +226,7 @@ const episodeColumns: DataTableColumn<Episode>[] = [
     label: 'Size',
     width: 100,
     render: (ep) => {
-      if (ep.status !== 'DOWNLOADED' || !ep.fileSizeFormatted) {
+      if (!ep.mediaFileId || !ep.fileSizeFormatted) {
         return <span className="text-default-400">-</span>
       }
       return (
@@ -241,9 +239,14 @@ const episodeColumns: DataTableColumn<Episode>[] = [
   {
     key: 'status',
     label: 'Status',
-    width: 110,
+    width: 140,
     sortable: true,
-    render: (ep) => <EpisodeStatusChip status={ep.status} />,
+    render: (ep) => (
+      <EpisodeStatusChip
+        mediaFileId={ep.mediaFileId}
+        downloadProgress={ep.downloadProgress}
+      />
+    ),
   },
 ]
 
@@ -251,22 +254,20 @@ interface EpisodeTableProps {
   episodes: Episode[]
   seasonNumber: number
   showId: string
-  downloadingEpisodes: Set<string>
-  onDownload: (episodeId: string) => void
   onPlay: (episode: Episode) => void
   onSearch: (episode: Episode) => void
   onShowProperties: (episode: Episode) => void
 }
 
-function EpisodeTable({ episodes, seasonNumber, showId, downloadingEpisodes, onDownload, onPlay, onSearch, onShowProperties }: EpisodeTableProps) {
+function EpisodeTable({ episodes, seasonNumber, showId, onPlay, onSearch, onShowProperties }: EpisodeTableProps) {
   // Get session and updatePlayback directly from context for reliable updates
   const { session, updatePlayback } = usePlaybackContext()
-  
+
   // Handle pause directly using context
   const handlePause = useCallback(() => {
     updatePlayback({ isPlaying: false })
   }, [updatePlayback])
-  
+
   // Compute playing state from session
   const currentlyPlayingEpisodeId = session?.tvShowId === showId ? session?.episodeId : null
   const isPlaying = session?.isPlaying ?? false
@@ -281,6 +282,13 @@ function EpisodeTable({ episodes, seasonNumber, showId, downloadingEpisodes, onD
   // Dynamic key for play actions
   const playActionKey = `play-${currentlyPlayingEpisodeId || 'none'}-${isPlaying}`
 
+  // Helper to check if episode has file (downloaded)
+  const hasFile = (ep: Episode) => !!ep.mediaFileId
+  // Helper to check if episode is downloading
+  const isDownloading = (ep: Episode) => !ep.mediaFileId && ep.downloadProgress != null && ep.downloadProgress > 0
+  // Helper to check if episode is wanted (no file, not downloading)
+  const isWanted = (ep: Episode) => !ep.mediaFileId && !isDownloading(ep)
+
   // Row actions - computed fresh on each render to ensure playing state is always current
   const rowActions: RowAction<Episode>[] = [
     // Playing indicator with pause on hover - shown for currently playing episode
@@ -290,7 +298,7 @@ function EpisodeTable({ episodes, seasonNumber, showId, downloadingEpisodes, onD
       icon: <PlayPauseIndicator size={16} isPlaying={isPlaying} colorClass="bg-success" />,
       color: 'default',
       inDropdown: false,
-      isVisible: (ep) => ep.status === 'DOWNLOADED' && !!ep.mediaFileId && isCurrentlyPlaying(ep) && isPlaying,
+      isVisible: (ep) => hasFile(ep) && isCurrentlyPlaying(ep) && isPlaying,
       onAction: () => handlePause(),
     },
     // Resume action - shown for episodes with progress but not currently playing
@@ -300,7 +308,7 @@ function EpisodeTable({ episodes, seasonNumber, showId, downloadingEpisodes, onD
       icon: <IconPlayerTrackNext size={16} />,
       color: 'success',
       inDropdown: false,
-      isVisible: (ep) => ep.status === 'DOWNLOADED' && !!ep.mediaFileId && hasResumeProgress(ep) && !isCurrentlyPlaying(ep),
+      isVisible: (ep) => hasFile(ep) && hasResumeProgress(ep) && !isCurrentlyPlaying(ep),
       onAction: (ep) => onPlay(ep),
     },
     // Play action - shown for episodes without progress and not currently playing
@@ -310,7 +318,7 @@ function EpisodeTable({ episodes, seasonNumber, showId, downloadingEpisodes, onD
       icon: <IconPlayerPlay size={16} />,
       color: 'success',
       inDropdown: false,
-      isVisible: (ep) => ep.status === 'DOWNLOADED' && !!ep.mediaFileId && !hasResumeProgress(ep) && !isCurrentlyPlaying(ep),
+      isVisible: (ep) => hasFile(ep) && !hasResumeProgress(ep) && !isCurrentlyPlaying(ep),
       onAction: (ep) => onPlay(ep),
     },
     {
@@ -319,18 +327,8 @@ function EpisodeTable({ episodes, seasonNumber, showId, downloadingEpisodes, onD
       icon: <IconSearch size={16} />,
       color: 'default',
       inDropdown: false,
-      isVisible: (ep) => ep.status === 'MISSING' || ep.status === 'WANTED',
+      isVisible: (ep) => isWanted(ep),
       onAction: (ep) => onSearch(ep),
-    },
-    {
-      key: 'download',
-      label: 'Download Episode',
-      icon: <IconDownload size={16} />,
-      color: 'primary',
-      inDropdown: true,
-      isVisible: (ep) => ep.status === 'AVAILABLE',
-      isDisabled: (ep) => downloadingEpisodes.has(ep.id),
-      onAction: (ep) => onDownload(ep.id),
     },
     {
       key: 'properties',
@@ -338,7 +336,7 @@ function EpisodeTable({ episodes, seasonNumber, showId, downloadingEpisodes, onD
       icon: <IconInfoCircle size={16} />,
       color: 'default',
       inDropdown: true,
-      isVisible: (ep) => ep.status === 'DOWNLOADED' && !!ep.mediaFileId,
+      isVisible: (ep) => hasFile(ep),
       onAction: (ep) => onShowProperties(ep),
     },
   ]
@@ -382,7 +380,6 @@ function ShowDetailPage() {
   const [episodes, setEpisodes] = useState<Episode[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  const [downloadingEpisodes, setDownloadingEpisodes] = useState<Set<string>>(new Set())
   const [deleting, setDeleting] = useState(false)
   const [savingSettings, setSavingSettings] = useState(false)
   const [togglingAutoDownload, setTogglingAutoDownload] = useState(false)
@@ -469,14 +466,14 @@ function ShowDetailPage() {
                 prev.map((ep) =>
                   ep.id === event.episodeId
                     ? {
-                        ...ep,
-                        resolution: event.resolution ?? ep.resolution,
-                        videoCodec: event.videoCodec ?? ep.videoCodec,
-                        audioCodec: event.audioCodec ?? ep.audioCodec,
-                        audioChannels: event.audioChannels ?? ep.audioChannels,
-                        isHdr: event.isHdr ?? ep.isHdr,
-                        hdrType: event.hdrType ?? ep.hdrType,
-                      }
+                      ...ep,
+                      resolution: event.resolution ?? ep.resolution,
+                      videoCodec: event.videoCodec ?? ep.videoCodec,
+                      audioCodec: event.audioCodec ?? ep.audioCodec,
+                      audioChannels: event.audioChannels ?? ep.audioChannels,
+                      isHdr: event.isHdr ?? ep.isHdr,
+                      hdrType: event.hdrType ?? ep.hdrType,
+                    }
                     : ep
                 )
               )
@@ -529,55 +526,6 @@ function ShowDetailPage() {
       console.error('Failed to refresh show:', err)
     } finally {
       setRefreshing(false)
-    }
-  }
-
-  const handleDownloadEpisode = async (episodeId: string) => {
-    setDownloadingEpisodes(prev => new Set([...prev, episodeId]))
-    try {
-      const { data, error } = await graphqlClient
-        .mutation<{ downloadEpisode: DownloadEpisodeResult }>(
-          DOWNLOAD_EPISODE_MUTATION,
-          { episodeId }
-        )
-        .toPromise()
-
-      if (error || !data?.downloadEpisode.success) {
-        addToast({
-          title: 'Download Failed',
-          description: sanitizeError(data?.downloadEpisode.error || 'Failed to start download'),
-          color: 'danger',
-        })
-        return
-      }
-
-      addToast({
-        title: 'Download Started',
-        description: 'Episode download has been queued',
-        color: 'success',
-      })
-
-      // Update the episode status in local state
-      setEpisodes(prev =>
-        prev.map(ep =>
-          ep.id === episodeId
-            ? { ...ep, status: 'DOWNLOADING' as EpisodeStatus }
-            : ep
-        )
-      )
-    } catch (err) {
-      console.error('Failed to download episode:', err)
-      addToast({
-        title: 'Error',
-        description: 'Failed to start download',
-        color: 'danger',
-      })
-    } finally {
-      setDownloadingEpisodes(prev => {
-        const next = new Set(prev)
-        next.delete(episodeId)
-        return next
-      })
     }
   }
 
@@ -766,7 +714,7 @@ function ShowDetailPage() {
       .map(([season, eps]) => ({
         season,
         episodes: eps.sort((a, b) => a.episode - b.episode),
-        downloadedCount: eps.filter((e) => e.status === 'DOWNLOADED').length,
+        downloadedCount: eps.filter((e) => !!e.mediaFileId).length,
         totalCount: eps.length,
       }))
       .sort((a, b) => a.season - b.season)
@@ -775,55 +723,12 @@ function ShowDetailPage() {
   // Calculate totals (memoized to avoid recalculating on every render)
   const { totalEpisodes, downloadedEpisodes, missingEpisodes } = useMemo(() => ({
     totalEpisodes: episodes.length,
-    downloadedEpisodes: episodes.filter((e) => e.status === 'DOWNLOADED').length,
-    missingEpisodes: episodes.filter((e) => e.status === 'MISSING' || e.status === 'WANTED').length,
+    downloadedEpisodes: episodes.filter((e) => !!e.mediaFileId).length,
+    missingEpisodes: episodes.filter((e) => !e.mediaFileId).length,
   }), [episodes])
 
-  // Loading skeleton for show detail page
-  if (loading) {
-    return (
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col mb-20">
-        {/* Header Skeleton */}
-        <div className="flex flex-col md:flex-row gap-6 mb-8">
-          {/* Poster Skeleton */}
-          <Skeleton className="w-48 h-72 rounded-lg shrink-0" />
-
-          {/* Details Skeleton */}
-          <div className="flex-1">
-            <Skeleton className="w-48 h-4 rounded mb-4" />
-            <Skeleton className="w-64 h-8 rounded mb-4" />
-            <div className="flex gap-2 mb-4">
-              <Skeleton className="w-20 h-6 rounded-full" />
-              <Skeleton className="w-16 h-6 rounded-full" />
-              <Skeleton className="w-24 h-6 rounded-full" />
-            </div>
-            <Skeleton className="w-full h-16 rounded mb-4" />
-            <div className="flex gap-4 mb-4">
-              <Skeleton className="w-32 h-4 rounded" />
-              <Skeleton className="w-24 h-4 rounded" />
-            </div>
-            <div className="flex gap-2">
-              <Skeleton className="w-36 h-10 rounded-lg" />
-              <Skeleton className="w-28 h-10 rounded-lg" />
-              <Skeleton className="w-24 h-10 rounded-lg" />
-            </div>
-          </div>
-        </div>
-
-        {/* Seasons Skeleton */}
-        <div className="space-y-4">
-          <Skeleton className="w-48 h-6 rounded" />
-          <div className="space-y-2">
-            <Skeleton className="w-full h-14 rounded-lg" />
-            <Skeleton className="w-full h-14 rounded-lg" />
-            <Skeleton className="w-full h-14 rounded-lg" />
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (!show) {
+  // Show not found state only after loading is complete
+  if (!loading && !show) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-8">
         <Card className="bg-content1">
@@ -838,295 +743,303 @@ function ShowDetailPage() {
     )
   }
 
+  // Use template data during loading, real data when available
+  const displayShow = show ?? showTemplate
+  const displayLibrary = library ?? libraryTemplate
+
   return (
-    <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col mb-20 ">
-      {/* Header with Show Info */}
-      <div className="flex flex-col md:flex-row gap-6 mb-8">
-        {/* Poster */}
-        <div className="shrink-0">
-          {show.posterUrl ? (
-            <Image
-              src={show.posterUrl}
-              alt={show.name}
-              className="w-48 h-72 object-cover rounded-lg shadow-lg"
-            />
-          ) : (
-            <div className="w-48 h-72 bg-default-200 rounded-lg flex items-center justify-center">
-              <IconDeviceTv size={64} className="text-blue-400" />
-            </div>
-          )}
-        </div>
-
-        {/* Show Details */}
-        <div className="flex-1">
-          <Breadcrumbs className="mb-2">
-            <BreadcrumbItem href="/libraries">Libraries</BreadcrumbItem>
-            <BreadcrumbItem href={`/libraries/${show.libraryId}`}>
-              {library?.name || 'Library'}
-            </BreadcrumbItem>
-            <BreadcrumbItem isCurrent>{show.name}</BreadcrumbItem>
-          </Breadcrumbs>
-
-          <div className="flex items-start justify-between gap-4 mb-2">
-            <h1 className="text-3xl font-bold">
-              {show.name}
-              {show.year && (
-                <span className="text-default-500 ml-2">({show.year})</span>
-              )}
-            </h1>
-            <div className="flex items-center gap-1 shrink-0">
-              <Tooltip content="Refresh Metadata">
-                <Button
-                  isIconOnly
-                  variant="light"
-                  size="sm"
-                  onPress={handleRefresh}
-                  isLoading={refreshing}
-                >
-                  <IconRefresh size={18} />
-                </Button>
-              </Tooltip>
-              <Tooltip content="Settings">
-                <Button
-                  isIconOnly
-                  variant="light"
-                  size="sm"
-                  onPress={onSettingsOpen}
-                >
-                  <IconSettings size={18} />
-                </Button>
-              </Tooltip>
-              <Tooltip content="Delete Show">
-                <Button
-                  isIconOnly
-                  variant="light"
-                  size="sm"
-                  color="danger"
-                  onPress={onDeleteOpen}
-                >
-                  <IconTrash size={18} />
-                </Button>
-              </Tooltip>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2 mb-4">
-            <Chip
-              size="sm"
-              className='capitalize'
-              color={show.status === 'CONTINUING' ? 'success' : 'default'}
-              variant="flat"
-            >
-              {show.status}
-            </Chip>
-            {show.network && (
-              <Chip size="sm" variant="flat">
-                {show.network}
-              </Chip>
-            )}
-          </div>
-
-          {show.overview && (
-            <p className="text-default-600 mb-4 line-clamp-3">{show.overview}</p>
-          )}
-
-          <div className="flex gap-4 text-sm text-default-500 mb-4">
-            <div>
-              <span className="font-semibold text-foreground">{downloadedEpisodes}</span>
-              <span> / {totalEpisodes} episodes</span>
-            </div>
-            {missingEpisodes > 0 && (
-              <div className="text-warning">
-                <span className="font-semibold">{missingEpisodes}</span>
-                <span> missing</span>
-              </div>
-            )}
-            {show.sizeBytes > 0 && (
-              <div>
-                <span className="font-semibold text-foreground">{formatBytes(show.sizeBytes)}</span>
-                <span> on disk</span>
+    <ShimmerLoader loading={loading} templateProps={{ show: showTemplate }}>
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col mb-20 ">
+        {/* Header with Show Info */}
+        <div className="flex flex-col md:flex-row gap-6 mb-8">
+          {/* Poster */}
+          <div className="shrink-0">
+            {displayShow.posterUrl ? (
+              <Image
+                src={displayShow.posterUrl}
+                alt={displayShow.name}
+                className="w-48 h-72 object-cover rounded-lg shadow-lg"
+              />
+            ) : (
+              <div className="w-48 h-72 bg-default-200 rounded-lg flex items-center justify-center">
+                <IconDeviceTv size={64} className="text-blue-400" />
               </div>
             )}
           </div>
 
-          {/* Settings Badges - inline with show details */}
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Auto Download Badge */}
-            {(() => {
-              const isInherited = show.autoDownloadOverride === null
-              const effectiveValue = isInherited ? (library?.autoDownload ?? false) : show.autoDownloadOverride
-              const isEnabled = effectiveValue === true
+          {/* Show Details */}
+          <div className="flex-1">
+            <Breadcrumbs className="mb-2">
+              <BreadcrumbItem href="/libraries">Libraries</BreadcrumbItem>
+              <BreadcrumbItem href={`/libraries/${displayShow.libraryId}`}>
+                {displayLibrary.name}
+              </BreadcrumbItem>
+              <BreadcrumbItem isCurrent>{displayShow.name}</BreadcrumbItem>
+            </Breadcrumbs>
 
-              return (
-                <AutoDownloadBadge
-                  isInherited={isInherited}
-                  isEnabled={isEnabled}
-                  isLoading={togglingAutoDownload}
-                  onClick={() => handleToggleAutoDownload(!effectiveValue)}
-                />
-              )
-            })()}
-
-            {/* File Organization Badge */}
-            {(() => {
-              const isInherited = show.organizeFilesOverride === null
-              const effectiveValue = isInherited ? (library?.organizeFiles ?? false) : show.organizeFilesOverride
-              const isEnabled = effectiveValue === true
-
-              return (
-                <FileOrganizationBadge
-                  isInherited={isInherited}
-                  isEnabled={isEnabled}
-                />
-              )
-            })()}
-
-            {/* Auto Hunt Badge */}
-            {(() => {
-              const isInherited = show.autoHuntOverride === null
-              const effectiveValue = isInherited ? (library?.autoHunt ?? false) : show.autoHuntOverride
-              const isEnabled = effectiveValue === true
-
-              return (
-                <AutoHuntBadge
-                  isInherited={isInherited}
-                  isEnabled={isEnabled}
-                />
-              )
-            })()}
-
-            {/* Monitored Badge */}
-            <MonitoredBadge monitorType={show.monitorType} />
-
-            {/* Quality Filter Badge */}
-            {(() => {
-              const isInherited = show.allowedResolutionsOverride === null
-              const resolutions = isInherited
-                ? (library?.allowedResolutions || [])
-                : (show.allowedResolutionsOverride || [])
-              const codecs = isInherited
-                ? (library?.allowedVideoCodecs || [])
-                : (show.allowedVideoCodecsOverride || [])
-              const requireHdr = isInherited
-                ? (library?.requireHdr || false)
-                : (show.requireHdrOverride || false)
-
-              return (
-                <QualityFilterBadge
-                  resolutions={resolutions}
-                  codecs={codecs}
-                  requireHdr={requireHdr}
-                  isInherited={isInherited}
-                />
-              )
-            })()}
-          </div>
-        </div>
-      </div>
-
-      {/* Seasons & Episodes */}
-      <div className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <h2 className="text-xl font-semibold">Seasons & Episodes</h2>
-          {seasons.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {seasons.map((s) => (
-                <Button
-                  key={s.season}
-                  size="sm"
-                  variant="flat"
-                  onPress={() => scrollToSeason(s.season)}
-                >
-                  {s.season === 0 ? 'Specials' : `S${s.season}`}
-                </Button>
-              ))}
+            <div className="flex items-start justify-between gap-4 mb-2">
+              <h1 className="text-3xl font-bold">
+                {displayShow.name}
+                {displayShow.year && (
+                  <span className="text-default-500 ml-2">({displayShow.year})</span>
+                )}
+              </h1>
+              <div className="flex items-center gap-1 shrink-0">
+                <Tooltip content="Refresh Metadata">
+                  <Button
+                    isIconOnly
+                    variant="light"
+                    size="sm"
+                    onPress={handleRefresh}
+                    isLoading={refreshing}
+                  >
+                    <IconRefresh size={18} />
+                  </Button>
+                </Tooltip>
+                <Tooltip content="Settings">
+                  <Button
+                    isIconOnly
+                    variant="light"
+                    size="sm"
+                    onPress={onSettingsOpen}
+                  >
+                    <IconSettings size={18} />
+                  </Button>
+                </Tooltip>
+                <Tooltip content="Delete Show">
+                  <Button
+                    isIconOnly
+                    variant="light"
+                    size="sm"
+                    color="danger"
+                    onPress={onDeleteOpen}
+                  >
+                    <IconTrash size={18} />
+                  </Button>
+                </Tooltip>
+              </div>
             </div>
-          )}
-        </div>
 
-        {seasons.length === 0 ? (
-          <Card className="bg-content1/50 border-default-300 border-dashed border-2">
-            <CardBody className="py-12 text-center">
-              <IconClipboard size={48} className="mx-auto mb-4 text-default-400" />
-              <h3 className="text-lg font-semibold mb-2">No episodes found</h3>
-              <p className="text-default-500 mb-4">
-                Try refreshing the show metadata to fetch episodes.
-              </p>
-              <Button color="primary" onPress={handleRefresh} isLoading={refreshing}>
-                Refresh Metadata
-              </Button>
-            </CardBody>
-          </Card>
-        ) : (
-          <Accordion variant="splitted" selectionMode="multiple" defaultExpandedKeys={seasons.length <= 3 ? seasons.map(s => String(s.season)) : []}>
-            {seasons.map((seasonData) => (
-              <AccordionItem
-                key={String(seasonData.season)}
-                aria-label={`Season ${seasonData.season}`}
-                id={`season-${seasonData.season}`}
-                title={
-                  <div className="flex items-center justify-between w-full pr-4">
-                    <span className="font-semibold">
-                      {seasonData.season === 0 ? 'Specials' : `Season ${seasonData.season}`}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <Chip
-                        size="sm"
-                        color={seasonData.downloadedCount === seasonData.totalCount ? 'success' : 'warning'}
-                        variant="flat"
-                      >
-                        {seasonData.downloadedCount} / {seasonData.totalCount}
-                      </Chip>
-                    </div>
-                  </div>
-                }
-                className="bg-content1"
+            <div className="flex flex-wrap gap-2 mb-4">
+              <Chip
+                size="sm"
+                className='capitalize'
+                color={displayShow.status === 'CONTINUING' ? 'success' : 'default'}
+                variant="flat"
               >
-                <EpisodeTable
-                  episodes={seasonData.episodes}
-                  seasonNumber={seasonData.season}
-                  showId={show!.id}
-                  downloadingEpisodes={downloadingEpisodes}
-                  onDownload={handleDownloadEpisode}
-                  onPlay={handlePlay}
-                  onSearch={handleSearchEpisode}
-                  onShowProperties={handleShowProperties}
-                />
-              </AccordionItem>
-            ))}
-          </Accordion>
+                {displayShow.status}
+              </Chip>
+              {displayShow.network && (
+                <Chip size="sm" variant="flat">
+                  {displayShow.network}
+                </Chip>
+              )}
+            </div>
+
+            {displayShow.overview && (
+              <p className="text-default-600 mb-4 line-clamp-3">{displayShow.overview}</p>
+            )}
+
+            <div className="flex gap-4 text-sm text-default-500 mb-4">
+              <div>
+                <span className="font-semibold text-foreground">{downloadedEpisodes}</span>
+                <span> / {totalEpisodes} episodes</span>
+              </div>
+              {missingEpisodes > 0 && (
+                <div className="text-warning">
+                  <span className="font-semibold">{missingEpisodes}</span>
+                  <span> missing</span>
+                </div>
+              )}
+              {displayShow.sizeBytes > 0 && (
+                <div>
+                  <span className="font-semibold text-foreground">{formatBytes(displayShow.sizeBytes)}</span>
+                  <span> on disk</span>
+                </div>
+              )}
+            </div>
+
+            {/* Settings Badges - inline with show details */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Auto Download Badge */}
+              {(() => {
+                const isInherited = displayShow.autoDownloadOverride === null
+                const effectiveValue = isInherited ? (displayLibrary.autoDownload ?? false) : displayShow.autoDownloadOverride
+                const isEnabled = effectiveValue === true
+
+                return (
+                  <AutoDownloadBadge
+                    isInherited={isInherited}
+                    isEnabled={isEnabled}
+                    isLoading={togglingAutoDownload}
+                    onClick={() => handleToggleAutoDownload(!effectiveValue)}
+                  />
+                )
+              })()}
+
+              {/* File Organization Badge */}
+              {(() => {
+                const isInherited = displayShow.organizeFilesOverride === null
+                const effectiveValue = isInherited ? (displayLibrary.organizeFiles ?? false) : displayShow.organizeFilesOverride
+                const isEnabled = effectiveValue === true
+
+                return (
+                  <FileOrganizationBadge
+                    isInherited={isInherited}
+                    isEnabled={isEnabled}
+                  />
+                )
+              })()}
+
+              {/* Auto Hunt Badge */}
+              {(() => {
+                const isInherited = displayShow.autoHuntOverride === null
+                const effectiveValue = isInherited ? (displayLibrary.autoHunt ?? false) : displayShow.autoHuntOverride
+                const isEnabled = effectiveValue === true
+
+                return (
+                  <AutoHuntBadge
+                    isInherited={isInherited}
+                    isEnabled={isEnabled}
+                  />
+                )
+              })()}
+
+              {/* Monitored Badge */}
+              <MonitoredBadge monitorType={displayShow.monitorType} />
+
+              {/* Quality Filter Badge */}
+              {(() => {
+                const isInherited = displayShow.allowedResolutionsOverride === null
+                const resolutions = isInherited
+                  ? (displayLibrary.allowedResolutions || [])
+                  : (displayShow.allowedResolutionsOverride || [])
+                const codecs = isInherited
+                  ? (displayLibrary.allowedVideoCodecs || [])
+                  : (displayShow.allowedVideoCodecsOverride || [])
+                const requireHdr = isInherited
+                  ? (displayLibrary.requireHdr || false)
+                  : (displayShow.requireHdrOverride || false)
+
+                return (
+                  <QualityFilterBadge
+                    resolutions={resolutions}
+                    codecs={codecs}
+                    requireHdr={requireHdr}
+                    isInherited={isInherited}
+                  />
+                )
+              })()}
+            </div>
+          </div>
+        </div>
+
+        {/* Seasons & Episodes */}
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <h2 className="text-xl font-semibold">Seasons & Episodes</h2>
+            {seasons.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {seasons.map((s) => (
+                  <Button
+                    key={s.season}
+                    size="sm"
+                    variant="flat"
+                    onPress={() => scrollToSeason(s.season)}
+                  >
+                    {s.season === 0 ? 'Specials' : `S${s.season}`}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {seasons.length === 0 ? (
+            <Card className="bg-content1/50 border-default-300 border-dashed border-2">
+              <CardBody className="py-12 text-center">
+                <IconClipboard size={48} className="mx-auto mb-4 text-default-400" />
+                <h3 className="text-lg font-semibold mb-2">No episodes found</h3>
+                <p className="text-default-500 mb-4">
+                  Try refreshing the show metadata to fetch episodes.
+                </p>
+                <Button color="primary" onPress={handleRefresh} isLoading={refreshing}>
+                  Refresh Metadata
+                </Button>
+              </CardBody>
+            </Card>
+          ) : (
+            <Accordion variant="splitted" selectionMode="multiple" defaultExpandedKeys={seasons.length <= 3 ? seasons.map(s => String(s.season)) : []}>
+              {seasons.map((seasonData) => (
+                <AccordionItem
+                  key={String(seasonData.season)}
+                  aria-label={`Season ${seasonData.season}`}
+                  id={`season-${seasonData.season}`}
+                  title={
+                    <div className="flex items-center justify-between w-full pr-4">
+                      <span className="font-semibold">
+                        {seasonData.season === 0 ? 'Specials' : `Season ${seasonData.season}`}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Chip
+                          size="sm"
+                          color={seasonData.downloadedCount === seasonData.totalCount ? 'success' : 'warning'}
+                          variant="flat"
+                        >
+                          {seasonData.downloadedCount} / {seasonData.totalCount}
+                        </Chip>
+                      </div>
+                    </div>
+                  }
+                  className="bg-content1"
+                >
+                  <EpisodeTable
+                    episodes={seasonData.episodes}
+                    seasonNumber={seasonData.season}
+                    showId={displayShow.id}
+                    onPlay={handlePlay}
+                    onSearch={handleSearchEpisode}
+                    onShowProperties={handleShowProperties}
+                  />
+                </AccordionItem>
+              ))}
+            </Accordion>
+          )}
+        </div>
+
+        {/* Delete Confirmation Modal */}
+        {show && (
+          <DeleteShowModal
+            isOpen={isDeleteOpen}
+            onClose={onDeleteClose}
+            showName={show.name}
+            onConfirm={handleDelete}
+            isLoading={deleting}
+          />
         )}
+
+        {/* Settings Modal */}
+        {show && (
+          <ShowSettingsModal
+            isOpen={isSettingsOpen}
+            onClose={onSettingsClose}
+            show={show}
+            onSave={handleSaveSettings}
+            isLoading={savingSettings}
+          />
+        )}
+
+        {/* File Properties Modal */}
+        <FilePropertiesModal
+          isOpen={isPropertiesOpen}
+          onClose={() => {
+            onPropertiesClose()
+            setPropertiesEpisode(null)
+          }}
+          mediaFileId={propertiesEpisode?.mediaFileId ?? null}
+          title={propertiesEpisode ? `${displayShow.name} - S${String(propertiesEpisode.season).padStart(2, '0')}E${String(propertiesEpisode.episode).padStart(2, '0')}${propertiesEpisode.title ? ` - ${propertiesEpisode.title}` : ''}` : undefined}
+        />
+
       </div>
-
-      {/* Delete Confirmation Modal */}
-      <DeleteShowModal
-        isOpen={isDeleteOpen}
-        onClose={onDeleteClose}
-        showName={show.name}
-        onConfirm={handleDelete}
-        isLoading={deleting}
-      />
-
-      {/* Settings Modal */}
-      <ShowSettingsModal
-        isOpen={isSettingsOpen}
-        onClose={onSettingsClose}
-        show={show}
-        onSave={handleSaveSettings}
-        isLoading={savingSettings}
-      />
-
-      {/* File Properties Modal */}
-      <FilePropertiesModal
-        isOpen={isPropertiesOpen}
-        onClose={() => {
-          onPropertiesClose()
-          setPropertiesEpisode(null)
-        }}
-        mediaFileId={propertiesEpisode?.mediaFileId ?? null}
-        title={propertiesEpisode ? `${show.name} - S${String(propertiesEpisode.season).padStart(2, '0')}E${String(propertiesEpisode.episode).padStart(2, '0')}${propertiesEpisode.title ? ` - ${propertiesEpisode.title}` : ''}` : undefined}
-      />
-
-    </div>
+    </ShimmerLoader>
   )
 }

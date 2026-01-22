@@ -1,5 +1,26 @@
 use super::prelude::*;
 
+/// Helper to populate download_progress for chapters without media files
+/// Also sets status to "downloading" if there's an active pending match
+async fn populate_chapter_download_progress(db: &Database, chapters: &mut [AudiobookChapter]) {
+    let torrent_files_repo = db.torrent_files();
+    for chapter in chapters.iter_mut() {
+        // Only check chapters without media files
+        if chapter.media_file_id.is_none() {
+            if let Ok(chapter_id) = Uuid::parse_str(&chapter.id) {
+                // Check for download progress from torrent files
+                if let Ok(Some(progress)) = torrent_files_repo
+                    .get_download_progress_for_chapter(chapter_id)
+                    .await
+                {
+                    chapter.status = "downloading".to_string();
+                    chapter.download_progress = Some(progress);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct AudiobookQueries;
 
@@ -142,9 +163,12 @@ impl AudiobookQueries {
             0.0
         };
 
+        let mut chapter_list: Vec<AudiobookChapter> = chapters.into_iter().map(AudiobookChapter::from).collect();
+        populate_chapter_download_progress(db, &mut chapter_list).await;
+
         Ok(Some(AudiobookWithChapters {
             audiobook: audiobook_record.into(),
-            chapters: chapters.into_iter().map(AudiobookChapter::from).collect(),
+            chapters: chapter_list,
             chapter_count,
             chapters_with_files,
             missing_chapters,
@@ -241,7 +265,9 @@ impl AudiobookQueries {
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        Ok(records.into_iter().map(AudiobookChapter::from).collect())
+        let mut chapters: Vec<AudiobookChapter> = records.into_iter().map(AudiobookChapter::from).collect();
+        populate_chapter_download_progress(db, &mut chapters).await;
+        Ok(chapters)
     }
 
     /// Get audiobook chapters with cursor-based pagination and filtering
@@ -262,9 +288,9 @@ impl AudiobookQueries {
         let (offset, limit) =
             parse_pagination_args(first, after).map_err(|e| async_graphql::Error::new(e))?;
 
-        let status_filter = r#where
+        let has_media_file_filter = r#where
             .as_ref()
-            .and_then(|w| w.status.as_ref().and_then(|f| f.eq.clone()));
+            .and_then(|w| w.has_media_file.as_ref().and_then(|f| f.eq));
 
         let sort_field = order_by
             .as_ref()
@@ -281,15 +307,16 @@ impl AudiobookQueries {
                 book_id,
                 offset,
                 limit,
-                status_filter.as_deref(),
+                has_media_file_filter,
                 &audiobook_chapter_sort_field_to_column(sort_field),
                 sort_dir == OrderDirection::Asc,
             )
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        let chapters: Vec<AudiobookChapter> =
+        let mut chapters: Vec<AudiobookChapter> =
             records.into_iter().map(AudiobookChapter::from).collect();
+        populate_chapter_download_progress(db, &mut chapters).await;
         let connection = Connection::from_items(chapters, offset, limit, total);
 
         Ok(AudiobookChapterConnection::from_connection(connection))

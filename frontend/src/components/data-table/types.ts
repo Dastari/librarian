@@ -309,6 +309,10 @@ export interface DataTableProps<T> {
   onViewModeChange?: (mode: ViewMode) => void
   /** Custom card renderer (required if showViewModeToggle is true) */
   cardRenderer?: (props: CardRendererProps<T>) => ReactNode
+  /** Custom skeleton card renderer for loading state in card view */
+  cardSkeleton?: () => ReactNode
+  /** Number of skeleton cards to show during loading (default: 6) */
+  skeletonCardCount?: number
   /** Card grid classes (default: responsive grid) */
   cardGridClassName?: string
   /** Grouping function for card view (items are grouped in card view) */

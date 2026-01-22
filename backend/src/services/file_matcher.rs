@@ -463,9 +463,7 @@ impl FileMatcher {
 
                 match self.db.pending_file_matches().create(input).await {
                     Ok(record) => {
-                        // Update item status to "downloading" and set active_download_id
-                        self.update_item_status_downloading(&m.match_target, record.id)
-                            .await?;
+                        // Status is derived from pending_file_matches - no direct update needed
                         records.push(record);
                     }
                     Err(e) => {
@@ -537,6 +535,14 @@ impl FileMatcher {
     /// This does NOT read from disk - it uses metadata already stored in the database.
     /// This allows re-matching without re-extraction.
     ///
+    /// Matching priority:
+    /// 1. Embedded metadata (ID3/Vorbis tags stored in meta_* fields)
+    /// 2. Original filename (if different from current - useful after incorrect renames)
+    /// 3. Current filename (fallback)
+    ///
+    /// IMPORTANT: This function only matches within the specified library.
+    /// For files without a library, use a different entry point that searches all libraries.
+    ///
     /// Returns the match result which can be used to update the media_file's links.
     pub async fn match_media_file(
         &self,
@@ -544,10 +550,17 @@ impl FileMatcher {
         library: &crate::db::libraries::LibraryRecord,
     ) -> Result<FileMatchResult> {
         let file_path = &media_file.path;
-        let file_name = Path::new(file_path)
+        let current_filename = Path::new(file_path)
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or(file_path);
+
+        // Check if we have an original filename that differs from current
+        // (useful when file was incorrectly renamed)
+        let original_filename = media_file.original_name.as_deref();
+        let has_different_original = original_filename
+            .map(|orig| orig != current_filename)
+            .unwrap_or(false);
 
         // Build stored metadata from the media_file record
         let stored_meta = StoredMetadata {
@@ -564,103 +577,234 @@ impl FileMatcher {
         };
 
         let has_metadata = stored_meta.has_audio_tags() || stored_meta.has_video_tags();
-        let quality = filename_parser::parse_quality(file_path);
+        let _quality = filename_parser::parse_quality(file_path);
 
         // Match based on library type
         let library_type = library.library_type.to_lowercase();
         
         match library_type.as_str() {
             "music" => {
+                // Priority 1: Try metadata-first matching
                 if has_metadata && stored_meta.has_audio_tags() {
-                    // Try metadata-first matching for audio
                     if let Some(result) = self
                         .try_match_track_by_stored_metadata(&stored_meta, library, file_path, media_file.size_bytes)
                         .await?
                     {
+                        info!(
+                            path = %file_path,
+                            "Matched via embedded metadata"
+                        );
                         return Ok(result);
                     }
                 }
-                // Fall back to filename matching
+                
+                // Priority 2: Try original filename if different from current
+                if has_different_original {
+                    let orig_name = original_filename.unwrap();
+                    debug!(
+                        current = %current_filename,
+                        original = %orig_name,
+                        "Trying match with original filename"
+                    );
+                    let file_info = FileInfo {
+                        path: file_path.to_string(),
+                        size: media_file.size_bytes,
+                        file_index: None,
+                        source_name: None,
+                    };
+                    let results = self.match_audio_file(&file_info, orig_name, &[library.clone()]).await?;
+                    if let Some(result) = results.into_iter().next() {
+                        if result.match_target.is_matched() {
+                            info!(
+                                path = %file_path,
+                                original = %orig_name,
+                                "Matched via original filename"
+                            );
+                            return Ok(result);
+                        }
+                    }
+                }
+                
+                // Priority 3: Fall back to current filename matching
                 let file_info = FileInfo {
                     path: file_path.to_string(),
                     size: media_file.size_bytes,
                     file_index: None,
                     source_name: None,
                 };
-                let results = self.match_audio_file(&file_info, file_name, &[library.clone()]).await?;
+                let results = self.match_audio_file(&file_info, current_filename, &[library.clone()]).await?;
                 results.into_iter().next().ok_or_else(|| anyhow::anyhow!("No match result"))
             }
             "tv" | "tv shows" | "television" => {
+                // Priority 1: Try metadata-first matching
                 if has_metadata && stored_meta.has_video_tags() {
-                    // Try metadata-first matching for TV
                     if let Some(result) = self
                         .try_match_episode_by_stored_metadata(&stored_meta, library, file_path, media_file.size_bytes)
                         .await?
                     {
+                        info!(
+                            path = %file_path,
+                            "Matched via embedded metadata"
+                        );
                         return Ok(result);
                     }
                 }
-                // Fall back to filename matching
+                
+                // Priority 2: Try original filename if different from current
+                if has_different_original {
+                    let orig_name = original_filename.unwrap();
+                    debug!(
+                        current = %current_filename,
+                        original = %orig_name,
+                        "Trying match with original filename"
+                    );
+                    let file_info = FileInfo {
+                        path: file_path.to_string(),
+                        size: media_file.size_bytes,
+                        file_index: None,
+                        source_name: None,
+                    };
+                    let results = self.match_video_file(&file_info, orig_name, &[library.clone()]).await?;
+                    if let Some(result) = results.into_iter().next() {
+                        if result.match_target.is_matched() {
+                            info!(
+                                path = %file_path,
+                                original = %orig_name,
+                                "Matched via original filename"
+                            );
+                            return Ok(result);
+                        }
+                    }
+                }
+                
+                // Priority 3: Fall back to current filename matching
                 let file_info = FileInfo {
                     path: file_path.to_string(),
                     size: media_file.size_bytes,
                     file_index: None,
                     source_name: None,
                 };
-                let results = self.match_video_file(&file_info, file_name, &[library.clone()]).await?;
+                let results = self.match_video_file(&file_info, current_filename, &[library.clone()]).await?;
                 results.into_iter().next().ok_or_else(|| anyhow::anyhow!("No match result"))
             }
             "movies" => {
+                // Priority 1: Try metadata-first matching
                 if has_metadata && stored_meta.has_video_tags() {
-                    // Try metadata-first matching for movies
                     if let Some(result) = self
                         .try_match_movie_by_stored_metadata(&stored_meta, library, file_path, media_file.size_bytes)
                         .await?
                     {
+                        info!(
+                            path = %file_path,
+                            "Matched via embedded metadata"
+                        );
                         return Ok(result);
                     }
                 }
-                // Fall back to filename matching
+                
+                // Priority 2: Try original filename if different from current
+                if has_different_original {
+                    let orig_name = original_filename.unwrap();
+                    debug!(
+                        current = %current_filename,
+                        original = %orig_name,
+                        "Trying match with original filename"
+                    );
+                    let file_info = FileInfo {
+                        path: file_path.to_string(),
+                        size: media_file.size_bytes,
+                        file_index: None,
+                        source_name: None,
+                    };
+                    let results = self.match_video_file(&file_info, orig_name, &[library.clone()]).await?;
+                    if let Some(result) = results.into_iter().next() {
+                        if result.match_target.is_matched() {
+                            info!(
+                                path = %file_path,
+                                original = %orig_name,
+                                "Matched via original filename"
+                            );
+                            return Ok(result);
+                        }
+                    }
+                }
+                
+                // Priority 3: Fall back to current filename matching
                 let file_info = FileInfo {
                     path: file_path.to_string(),
                     size: media_file.size_bytes,
                     file_index: None,
                     source_name: None,
                 };
-                let results = self.match_video_file(&file_info, file_name, &[library.clone()]).await?;
+                let results = self.match_video_file(&file_info, current_filename, &[library.clone()]).await?;
                 results.into_iter().next().ok_or_else(|| anyhow::anyhow!("No match result"))
             }
             "audiobooks" => {
+                // Priority 1: Try metadata-first matching
                 if has_metadata && stored_meta.has_audio_tags() {
-                    // Try metadata-first matching for audiobooks
                     if let Some(result) = self
                         .try_match_chapter_by_stored_metadata(&stored_meta, library, file_path, media_file.size_bytes)
                         .await?
                     {
+                        info!(
+                            path = %file_path,
+                            "Matched via embedded metadata"
+                        );
                         return Ok(result);
                     }
                 }
-                // Fall back to filename matching
+                
+                // Priority 2: Try original filename if different from current
+                if has_different_original {
+                    let orig_name = original_filename.unwrap();
+                    debug!(
+                        current = %current_filename,
+                        original = %orig_name,
+                        "Trying match with original filename"
+                    );
+                    let file_info = FileInfo {
+                        path: file_path.to_string(),
+                        size: media_file.size_bytes,
+                        file_index: None,
+                        source_name: None,
+                    };
+                    let results = self.match_audio_file(&file_info, orig_name, &[library.clone()]).await?;
+                    if let Some(result) = results.into_iter().next() {
+                        if result.match_target.is_matched() {
+                            info!(
+                                path = %file_path,
+                                original = %orig_name,
+                                "Matched via original filename"
+                            );
+                            return Ok(result);
+                        }
+                    }
+                }
+                
+                // Priority 3: Fall back to current filename matching
                 let file_info = FileInfo {
                     path: file_path.to_string(),
                     size: media_file.size_bytes,
                     file_index: None,
                     source_name: None,
                 };
-                let results = self.match_audio_file(&file_info, file_name, &[library.clone()]).await?;
+                let results = self.match_audio_file(&file_info, current_filename, &[library.clone()]).await?;
                 results.into_iter().next().ok_or_else(|| anyhow::anyhow!("No match result"))
             }
-            _ => Ok(FileMatchResult {
-                file_path: file_path.to_string(),
-                file_size: media_file.size_bytes,
-                file_index: None,
-                match_target: FileMatchTarget::Unmatched {
-                    reason: format!("Unknown library type: {}", library_type),
-                },
-                match_type: FileMatchType::Auto,
-                confidence: 0.0,
-                quality,
-            }),
+            _ => {
+                let quality = filename_parser::parse_quality(file_path);
+                Ok(FileMatchResult {
+                    file_path: file_path.to_string(),
+                    file_size: media_file.size_bytes,
+                    file_index: None,
+                    match_target: FileMatchTarget::Unmatched {
+                        reason: format!("Unknown library type: {}", library_type),
+                    },
+                    match_type: FileMatchType::Auto,
+                    confidence: 0.0,
+                    quality,
+                })
+            }
         }
     }
 
@@ -672,98 +816,116 @@ impl FileMatcher {
         file_path: &str,
         file_size: i64,
     ) -> Result<Option<FileMatchResult>> {
+        use super::match_scorer::{score_music_match, parse_track_info, AUTO_LINK_THRESHOLD};
+        
         let quality = filename_parser::parse_quality(file_path);
 
-        // Need at least album or title to match
+        // Need at least album to match
         let meta_album = match &meta.album {
-            Some(a) if !a.is_empty() => a.as_str(),
-            _ => return Ok(None),
+            Some(a) if !a.is_empty() => Some(a.as_str()),
+            _ => None,
         };
-        let meta_title = meta.title.as_deref().unwrap_or("");
+        
+        // If no metadata, can't match by metadata
+        if meta_album.is_none() && meta.artist.is_none() && meta.title.is_none() {
+            return Ok(None);
+        }
 
-        // Get all albums in the library
+        let file_name = std::path::Path::new(file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(file_path);
+        let file_info = parse_track_info(file_name);
+
+        // Get all albums in the library and score each track
         let albums = self.db.albums().list_by_library(library.id).await?;
+        
+        // Store best match by value (IDs + cloned strings) to avoid lifetime issues
+        struct BestMatch {
+            track_id: Uuid,
+            album_id: Uuid,
+            track_title: String,
+            track_number: i32,
+            album_name: String,
+            artist_name: String,
+            score: f64,
+        }
+        let mut best_match: Option<BestMatch> = None;
 
-        // Find best matching album
-        let mut best_album: Option<(&crate::db::AlbumRecord, f64)> = None;
         for album in &albums {
-            let similarity = filename_parser::show_name_similarity(&album.name, meta_album);
-            if similarity >= 0.7 {
-                if best_album.is_none() || similarity > best_album.unwrap().1 {
-                    best_album = Some((album, similarity));
+            // Get artist for this album
+            let artist_name = self.db.albums().get_artist_by_id(album.artist_id).await?
+                .map(|a| a.name)
+                .unwrap_or_default();
+
+            // Get tracks for this album
+            let tracks = self.db.tracks().list_by_album(album.id).await?;
+
+            for track in &tracks {
+                // Use the weighted scorer
+                let breakdown = score_music_match(
+                    meta.artist.as_deref(),
+                    meta_album,
+                    meta.title.as_deref(),
+                    meta.track_number.map(|n| n as u32),
+                    meta.year,
+                    &file_info,
+                    &artist_name,
+                    &album.name,
+                    &track.title,
+                    track.track_number,
+                    album.year,
+                );
+
+                if breakdown.total > best_match.as_ref().map(|m| m.score).unwrap_or(0.0) {
+                    best_match = Some(BestMatch {
+                        track_id: track.id,
+                        album_id: album.id,
+                        track_title: track.title.clone(),
+                        track_number: track.track_number,
+                        album_name: album.name.clone(),
+                        artist_name: artist_name.clone(),
+                        score: breakdown.total,
+                    });
                 }
             }
         }
 
-        let (album, album_similarity) = match best_album {
-            Some(a) => a,
-            None => return Ok(None),
-        };
+        // Check if we found a match above the threshold
+        if let Some(m) = best_match {
+            if m.score >= AUTO_LINK_THRESHOLD {
+                info!(
+                    "Matched '{}' to '{}' - '{}' by '{}' (score: {:.1})",
+                    file_name, m.album_name, m.track_title, m.artist_name, m.score
+                );
 
-        // Get tracks for this album
-        let tracks = self.db.tracks().list_by_album(album.id).await?;
-
-        // Find best matching track
-        let mut best_track: Option<(&crate::db::TrackRecord, f64)> = None;
-        for track in &tracks {
-            // Match by title
-            let title_sim = if !meta_title.is_empty() {
-                filename_parser::show_name_similarity(&track.title, meta_title)
+                let confidence = (m.score / 100.0).min(1.0);
+                return Ok(Some(FileMatchResult {
+                    file_path: file_path.to_string(),
+                    file_size,
+                    file_index: None,
+                    match_target: FileMatchTarget::Track {
+                        track_id: m.track_id,
+                        album_id: m.album_id,
+                        title: m.track_title,
+                        track_number: m.track_number,
+                        library_id: library.id,
+                    },
+                    match_type: FileMatchType::Auto,
+                    confidence,
+                    quality,
+                }));
             } else {
-                0.0
-            };
-
-            // Boost if track number matches
-            let track_boost = if let Some(meta_track) = meta.track_number {
-                if track.track_number == meta_track as i32 {
-                    0.2
-                } else {
-                    0.0
-                }
-            } else {
-                0.0
-            };
-
-            let total_sim = (title_sim + track_boost).min(1.0);
-            if total_sim >= 0.5 {
-                if best_track.is_none() || total_sim > best_track.unwrap().1 {
-                    best_track = Some((track, total_sim));
-                }
+                debug!(
+                    "Best match for '{}' was '{}' - '{}' with score {:.1}, below threshold {}",
+                    file_name, m.album_name, m.track_title, m.score, AUTO_LINK_THRESHOLD
+                );
             }
-        }
-
-        if let Some((track, track_similarity)) = best_track {
-            let confidence = (album_similarity * 0.4 + track_similarity * 0.6).min(1.0);
-            
-            info!(
-                file = %file_path,
-                meta_album = %meta_album,
-                meta_title = %meta_title,
-                matched_album = %album.name,
-                matched_track = %track.title,
-                confidence = confidence,
-                "Matched track using stored metadata"
-            );
-
-            return Ok(Some(FileMatchResult {
-                file_path: file_path.to_string(),
-                file_size,
-                file_index: None,
-                match_target: FileMatchTarget::Track {
-                    track_id: track.id,
-                    album_id: album.id,
-                    title: track.title.clone(),
-                    track_number: track.track_number,
-                    library_id: library.id,
-                },
-                match_type: FileMatchType::Auto,
-                confidence,
-                quality,
-            }));
         }
 
         Ok(None)
     }
+
 
     /// Try to match an episode using stored metadata
     async fn try_match_episode_by_stored_metadata(
@@ -1073,10 +1235,10 @@ impl FileMatcher {
         info!(
             source_type = %source_type,
             source_id = %source_id,
-            album = %album.name,
-            audio_files = audio_files.len(),
-            tracks = tracks.len(),
-            "Matching audio files to album tracks"
+            "Matching {} audio files to {} tracks for album '{}'",
+            audio_files.len(),
+            tracks.len(),
+            album.name
         );
 
         // Match each audio file to a track using fuzzy matching
@@ -1086,10 +1248,11 @@ impl FileMatcher {
                 .and_then(|n| n.to_str())
                 .unwrap_or(&file.path);
 
-            // Find best matching track (only match to wanted/missing tracks)
+            // Find best matching track (only match to tracks without files)
             let mut best_match: Option<(Uuid, f64, &str)> = None;
             for track in &tracks {
-                if track.status != "wanted" && track.status != "missing" {
+                // Skip tracks that already have a linked media file
+                if track.media_file_id.is_some() {
                     continue;
                 }
 
@@ -1122,9 +1285,6 @@ impl FileMatcher {
 
                 match self.db.pending_file_matches().create(input).await {
                     Ok(record) => {
-                        // Update track status to downloading
-                        self.db.tracks().update_status(track_id, "downloading").await.ok();
-                        
                         debug!(
                             file = %file_name,
                             track = %track_title,
@@ -1152,9 +1312,9 @@ impl FileMatcher {
         info!(
             source_type = %source_type,
             source_id = %source_id,
-            album = %album.name,
-            matches_created = records.len(),
-            "Created file-level matches for album"
+            "Created {} file-level matches for album '{}'",
+            records.len(),
+            album.name
         );
 
         Ok(records)
@@ -1204,8 +1364,7 @@ impl FileMatcher {
 
             match self.db.pending_file_matches().create(input).await {
                 Ok(record) => {
-                    // Update episode status to downloading
-                    self.db.episodes().update_status(episode_id, "downloading").await.ok();
+                    // Episode status is now computed from media_file_id - no need to update
                     records.push(record);
                     
                     info!(
@@ -1279,12 +1438,7 @@ impl FileMatcher {
 
                 match self.db.pending_file_matches().create(input).await {
                 Ok(record) => {
-                    // Update movie status to downloading
-                    sqlx::query("UPDATE movies SET download_status = 'downloading' WHERE id = $1")
-                        .bind(movie_id)
-                        .execute(self.db.pool())
-                        .await
-                        .ok();
+                    // Status is derived from pending_file_matches - no direct update needed
                     records.push(record);
                     
                     info!(
@@ -1340,10 +1494,10 @@ impl FileMatcher {
         info!(
             source_type = %source_type,
             source_id = %source_id,
-            audiobook = %audiobook.title,
-            audio_files = audio_files.len(),
-            chapters = chapters.len(),
-            "Matching audio files to audiobook chapters"
+            "Matching {} audio files to {} chapters for audiobook '{}'",
+            audio_files.len(),
+            chapters.len(),
+            audiobook.title
         );
 
         // Match by chapter number from filename
@@ -1356,7 +1510,8 @@ impl FileMatcher {
             // Try to extract chapter number from filename
             if let Some(chapter_num) = self.extract_chapter_number(file_name) {
                 if let Some(chapter) = chapters.iter().find(|c| c.chapter_number == chapter_num) {
-                    if chapter.status != "wanted" && chapter.status != "missing" {
+                    // Skip chapters that already have a media file
+                    if chapter.media_file_id.is_some() {
                         continue;
                     }
 
@@ -1380,7 +1535,6 @@ impl FileMatcher {
 
                     match self.db.pending_file_matches().create(input).await {
                         Ok(record) => {
-                            self.db.chapters().update_status(chapter.id, "downloading").await.ok();
                             records.push(record);
                         }
                         Err(e) => {
@@ -1795,7 +1949,10 @@ impl FileMatcher {
     // Video Matching (TV Episodes & Movies)
     // =========================================================================
 
-    async fn match_video_file(
+    /// Match a video file to TV episodes or movies in the given libraries.
+    /// 
+    /// This is public for use by the scanner which already has library context.
+    pub async fn match_video_file(
         &self,
         file: &FileInfo,
         file_name: &str,
@@ -1891,6 +2048,9 @@ impl FileMatcher {
     }
 
     /// Match a TV episode using embedded container metadata
+    /// Match a TV episode using embedded metadata
+    ///
+    /// Uses weighted scoring: Show (30), Season (25), Episode (25), Title (15), Year (5)
     async fn try_match_episode_by_metadata(
         &self,
         file: &FileInfo,
@@ -1898,103 +2058,87 @@ impl FileMatcher {
         quality: &ParsedQuality,
         library: &LibraryRecord,
     ) -> Result<Option<FileMatchResult>> {
-        // For video metadata to be useful for TV, we need either:
-        // 1. show/series tag + season + episode tags, OR
-        // 2. title tag that matches an episode title
+        use super::match_scorer::{self, parse_episode_info, score_tv_match, AUTO_LINK_THRESHOLD};
 
         let shows = self.db.tv_shows().list_by_library(library.id).await?;
+        
+        // Parse filename for fallback info
+        let filename = std::path::Path::new(&file.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&file.path);
+        let file_info = parse_episode_info(filename);
+        
+        // Get metadata values
+        let meta_show = metadata.album.as_deref(); // Show name stored in album tag
+        let meta_season = metadata.season;
+        let meta_episode = metadata.episode;
+        let meta_title = metadata.title.as_deref();
+        
+        // Collect all candidates with scores
+        let mut candidates: Vec<(f64, match_scorer::ScoreBreakdown, FileMatchResult)> = Vec::new();
 
-        // Try matching by show name + season/episode if available
-        if let (Some(meta_show), Some(meta_season), Some(meta_episode)) = 
-            (&metadata.album, metadata.season, metadata.episode) 
-        {
-            for show in &shows {
-                let show_similarity = filename_parser::show_name_similarity(&show.name, meta_show);
-                if show_similarity >= 0.7 {
-                    // Look for the specific episode
-                    if let Some(ep) = self
-                        .db
-                        .episodes()
-                        .get_by_show_season_episode(show.id, meta_season, meta_episode)
-                        .await?
-                    {
-                        if ep.status == "wanted" || ep.status == "missing" || ep.status == "downloading" {
-                            let confidence = 0.95; // High confidence for metadata match
+        for show in &shows {
+            let episodes = self.db.episodes().list_by_show(show.id).await?;
+            
+            for ep in episodes {
+                // Skip episodes that already have a media file
+                if ep.media_file_id.is_some() {
+                    continue;
+                }
 
-                            debug!(
-                                show = %show.name,
-                                season = meta_season,
-                                episode = meta_episode,
-                                confidence = confidence,
-                                "Matched episode by embedded metadata"
-                            );
+                // Calculate weighted score
+                let breakdown = score_tv_match(
+                    meta_show,
+                    meta_season,
+                    meta_episode,
+                    meta_title,
+                    &file_info,
+                    file.source_name.as_deref(),
+                    &show.name,
+                    ep.season,
+                    ep.episode,
+                    ep.title.as_deref(),
+                );
 
-                            return Ok(Some(FileMatchResult {
-                                file_path: file.path.clone(),
-                                file_size: file.size,
-                                file_index: file.file_index,
-                                match_target: FileMatchTarget::Episode {
-                                    episode_id: ep.id,
-                                    show_id: show.id,
-                                    show_name: show.name.clone(),
-                                    season: meta_season,
-                                    episode: meta_episode,
-                                    library_id: library.id,
-                                },
-                                match_type: FileMatchType::Auto,
-                                confidence,
-                                quality: quality.clone(),
-                            }));
-                        }
-                    }
+                if breakdown.total >= match_scorer::SUGGEST_THRESHOLD {
+                    let result = FileMatchResult {
+                        file_path: file.path.clone(),
+                        file_size: file.size,
+                        file_index: file.file_index,
+                        match_target: FileMatchTarget::Episode {
+                            episode_id: ep.id,
+                            show_id: show.id,
+                            show_name: show.name.clone(),
+                            season: ep.season,
+                            episode: ep.episode,
+                            library_id: library.id,
+                        },
+                        match_type: FileMatchType::Auto,
+                        confidence: breakdown.total / 100.0,
+                        quality: quality.clone(),
+                    };
+                    candidates.push((breakdown.total, breakdown, result));
                 }
             }
         }
 
-        // Try matching by episode title if available
-        if let Some(ref meta_title) = metadata.title {
-            for show in &shows {
-                // Get all episodes for this show
-                let episodes = self.db.episodes().list_by_show(show.id).await?;
-                
-                for ep in episodes {
-                    if ep.status != "wanted" && ep.status != "missing" && ep.status != "downloading" {
-                        continue;
-                    }
+        // Sort by score descending and pick the best
+        candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-                    // Episode title is optional
-                    let ep_title = match &ep.title {
-                        Some(t) => t,
-                        None => continue,
-                    };
-
-                    let title_similarity = filename_parser::show_name_similarity(ep_title, meta_title);
-                    if title_similarity >= 0.8 {
-                        debug!(
-                            episode_title = %ep_title,
-                            meta_title = %meta_title,
-                            similarity = title_similarity,
-                            "Matched episode by title metadata"
-                        );
-
-                        return Ok(Some(FileMatchResult {
-                            file_path: file.path.clone(),
-                            file_size: file.size,
-                            file_index: file.file_index,
-                            match_target: FileMatchTarget::Episode {
-                                episode_id: ep.id,
-                                show_id: show.id,
-                                show_name: show.name.clone(),
-                                season: ep.season,
-                                episode: ep.episode,
-                                library_id: library.id,
-                            },
-                            match_type: FileMatchType::Auto,
-                            confidence: title_similarity,
-                            quality: quality.clone(),
-                        }));
-                    }
+        if let Some((score, breakdown, result)) = candidates.into_iter().next() {
+            if score >= AUTO_LINK_THRESHOLD {
+                if let FileMatchTarget::Episode { ref show_name, season, episode, .. } = result.match_target {
+                    debug!(
+                        show = %show_name,
+                        season = season,
+                        episode = episode,
+                        score = score,
+                        breakdown = %breakdown.summary(),
+                        "Matched episode by weighted scoring"
+                    );
                 }
+                return Ok(Some(result));
             }
         }
 
@@ -2002,6 +2146,8 @@ impl FileMatcher {
     }
 
     /// Match a movie using embedded container metadata
+    ///
+    /// Uses weighted scoring: Title (50), Year (30), Director (20)
     async fn try_match_movie_by_metadata(
         &self,
         file: &FileInfo,
@@ -2009,59 +2155,84 @@ impl FileMatcher {
         quality: &ParsedQuality,
         library: &LibraryRecord,
     ) -> Result<Option<FileMatchResult>> {
-        let meta_title = match &metadata.title {
-            Some(t) if !t.trim().is_empty() => t.trim(),
-            _ => return Ok(None),
-        };
+        use super::match_scorer::{self, parse_movie_info, score_movie_match, AUTO_LINK_THRESHOLD};
+
+        let meta_title = metadata.title.as_deref();
         let meta_year = metadata.year;
+        
+        // Parse filename for fallback info
+        let filename = std::path::Path::new(&file.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&file.path);
+        let file_info = parse_movie_info(filename);
 
         let movies = self.db.movies().list_by_library(library.id).await?;
+        
+        // Collect all candidates with scores
+        let mut candidates: Vec<(f64, match_scorer::ScoreBreakdown, FileMatchResult)> = Vec::new();
 
         for movie in movies {
-            let similarity = filename_parser::show_name_similarity(&movie.title, meta_title);
+            // Skip movies that already have a media file (status would be "downloaded")
+            if movie.media_file_id.is_some() {
+                continue;
+            }
 
-            // Year match boosts confidence
-            let year_match = match (meta_year, movie.year) {
-                (Some(py), Some(my)) if (py - my).abs() <= 1 => 0.1,
-                _ => 0.0,
-            };
+            // Calculate weighted score
+            let breakdown = score_movie_match(
+                meta_title,
+                meta_year,
+                None, // No director in metadata typically
+                &file_info,
+                file.source_name.as_deref(),
+                &movie.title,
+                movie.year,
+                None, // No director in movie record typically
+            );
 
-            let total_confidence = similarity + year_match;
+            if breakdown.total >= match_scorer::SUGGEST_THRESHOLD {
+                let result = FileMatchResult {
+                    file_path: file.path.clone(),
+                    file_size: file.size,
+                    file_index: file.file_index,
+                    match_target: FileMatchTarget::Movie {
+                        movie_id: movie.id,
+                        title: movie.title.clone(),
+                        year: movie.year,
+                        library_id: library.id,
+                    },
+                    match_type: FileMatchType::Auto,
+                    confidence: breakdown.total / 100.0,
+                    quality: quality.clone(),
+                };
+                candidates.push((breakdown.total, breakdown, result));
+            }
+        }
 
-            if total_confidence >= 0.8 {
-                if movie.download_status == "wanted"
-                    || movie.download_status == "missing"
-                    || movie.download_status == "downloading"
-                {
+        // Sort by score descending and pick the best
+        candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        if let Some((score, breakdown, result)) = candidates.into_iter().next() {
+            if score >= AUTO_LINK_THRESHOLD {
+                if let FileMatchTarget::Movie { ref title, year, .. } = result.match_target {
                     debug!(
-                        movie = %movie.title,
-                        meta_title = %meta_title,
-                        year = ?movie.year,
-                        confidence = total_confidence,
-                        "Matched movie by embedded metadata"
+                        movie = %title,
+                        year = ?year,
+                        score = score,
+                        breakdown = %breakdown.summary(),
+                        "Matched movie by weighted scoring"
                     );
-
-                    return Ok(Some(FileMatchResult {
-                        file_path: file.path.clone(),
-                        file_size: file.size,
-                        file_index: file.file_index,
-                        match_target: FileMatchTarget::Movie {
-                            movie_id: movie.id,
-                            title: movie.title.clone(),
-                            year: movie.year,
-                            library_id: library.id,
-                        },
-                        match_type: FileMatchType::Auto,
-                        confidence: total_confidence.min(1.0),
-                        quality: quality.clone(),
-                    }));
                 }
+                return Ok(Some(result));
             }
         }
 
         Ok(None)
     }
 
+    /// Match a TV episode using filename parsing
+    ///
+    /// Uses weighted scoring: Show (30), Season (25), Episode (25), Title (15), Year (5)
     async fn try_match_episode(
         &self,
         parsed: &ParsedEpisode,
@@ -2069,58 +2240,94 @@ impl FileMatcher {
         quality: &ParsedQuality,
         library: &LibraryRecord,
     ) -> Result<Option<FileMatchResult>> {
-        let show_name = parsed.show_name.as_ref().map(|s| s.as_str()).unwrap_or("");
-        let season = parsed.season.unwrap_or(1) as i32;
-        let episode_num = parsed.episode.unwrap_or(1) as i32;
+        use super::match_scorer::{self, parse_episode_info, score_tv_match, AUTO_LINK_THRESHOLD};
 
-        // Find shows in this library that match the parsed name
+        // Parse filename for additional info
+        let filename = std::path::Path::new(&file.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&file.path);
+        let file_info = parse_episode_info(filename);
+        
+        // Use parsed values, falling back to file_info
+        let parsed_season = parsed.season.map(|s| s as i32);
+        let parsed_episode = parsed.episode.map(|e| e as i32);
+
         let shows = self.db.tv_shows().list_by_library(library.id).await?;
         
-        for show in shows {
-            let similarity = filename_parser::show_name_similarity(&show.name, show_name);
-            if similarity >= 0.7 {
-                // Look for the specific episode
-                if let Some(ep) = self
-                    .db
-                    .episodes()
-                    .get_by_show_season_episode(show.id, season, episode_num)
-                    .await?
-                {
-                    // Check if episode is wanted
-                    if ep.status == "wanted" || ep.status == "missing" || ep.status == "downloading"
-                    {
-                        debug!(
-                            show = %show.name,
-                            season = season,
-                            episode = episode_num,
-                            similarity = similarity,
-                            "Matched episode"
-                        );
+        // Collect all candidates with scores
+        let mut candidates: Vec<(f64, match_scorer::ScoreBreakdown, FileMatchResult)> = Vec::new();
 
-                        return Ok(Some(FileMatchResult {
-                            file_path: file.path.clone(),
-                            file_size: file.size,
-                            file_index: file.file_index,
-                            match_target: FileMatchTarget::Episode {
-                                episode_id: ep.id,
-                                show_id: show.id,
-                                show_name: show.name.clone(),
-                                season,
-                                episode: episode_num,
-                                library_id: library.id,
-                            },
-                            match_type: FileMatchType::Auto,
-                            confidence: similarity,
-                            quality: quality.clone(),
-                        }));
-                    }
+        for show in shows {
+            let episodes = self.db.episodes().list_by_show(show.id).await?;
+            
+            for ep in episodes {
+                // Skip episodes that already have a media file
+                if ep.media_file_id.is_some() {
+                    continue;
                 }
+
+                // Calculate weighted score
+                let breakdown = score_tv_match(
+                    parsed.show_name.as_deref(),
+                    parsed_season,
+                    parsed_episode,
+                    None, // No title from filename parser
+                    &file_info,
+                    file.source_name.as_deref(),
+                    &show.name,
+                    ep.season,
+                    ep.episode,
+                    ep.title.as_deref(),
+                );
+
+                if breakdown.total >= match_scorer::SUGGEST_THRESHOLD {
+                    let result = FileMatchResult {
+                        file_path: file.path.clone(),
+                        file_size: file.size,
+                        file_index: file.file_index,
+                        match_target: FileMatchTarget::Episode {
+                            episode_id: ep.id,
+                            show_id: show.id,
+                            show_name: show.name.clone(),
+                            season: ep.season,
+                            episode: ep.episode,
+                            library_id: library.id,
+                        },
+                        match_type: FileMatchType::Auto,
+                        confidence: breakdown.total / 100.0,
+                        quality: quality.clone(),
+                    };
+                    candidates.push((breakdown.total, breakdown, result));
+                }
+            }
+        }
+
+        // Sort by score descending and pick the best
+        candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        if let Some((score, breakdown, result)) = candidates.into_iter().next() {
+            if score >= AUTO_LINK_THRESHOLD {
+                if let FileMatchTarget::Episode { ref show_name, season, episode, .. } = result.match_target {
+                    debug!(
+                        show = %show_name,
+                        season = season,
+                        episode = episode,
+                        score = score,
+                        breakdown = %breakdown.summary(),
+                        "Matched episode by filename scoring"
+                    );
+                }
+                return Ok(Some(result));
             }
         }
 
         Ok(None)
     }
 
+    /// Match a movie using filename parsing
+    ///
+    /// Uses weighted scoring: Title (50), Year (30), Director (20)
     async fn try_match_movie(
         &self,
         parsed: &ParsedEpisode,  // parse_movie returns ParsedEpisode
@@ -2128,51 +2335,74 @@ impl FileMatcher {
         quality: &ParsedQuality,
         library: &LibraryRecord,
     ) -> Result<Option<FileMatchResult>> {
-        let title = parsed.show_name.as_ref().map(|s| s.as_str()).unwrap_or("");
+        use super::match_scorer::{self, parse_movie_info, score_movie_match, AUTO_LINK_THRESHOLD};
+
+        // Parse filename for additional info
+        let filename = std::path::Path::new(&file.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&file.path);
+        let file_info = parse_movie_info(filename);
+        
         let parsed_year = parsed.year.map(|y| y as i32);
 
-        // Find movies in this library
         let movies = self.db.movies().list_by_library(library.id).await?;
+        
+        // Collect all candidates with scores
+        let mut candidates: Vec<(f64, match_scorer::ScoreBreakdown, FileMatchResult)> = Vec::new();
 
         for movie in movies {
-            let similarity = filename_parser::show_name_similarity(&movie.title, title);
-            
-            // Year match boosts confidence
-            let year_match = match (parsed_year, movie.year) {
-                (Some(py), Some(my)) if (py - my).abs() <= 1 => 0.1,
-                _ => 0.0,
-            };
+            // Skip movies that already have a media file (status would be "downloaded")
+            if movie.media_file_id.is_some() {
+                continue;
+            }
 
-            let total_confidence = similarity + year_match;
+            // Calculate weighted score
+            let breakdown = score_movie_match(
+                None, // No metadata title
+                parsed_year,
+                None, // No director
+                &file_info,
+                file.source_name.as_deref(),
+                &movie.title,
+                movie.year,
+                None, // No director in DB
+            );
 
-            if total_confidence >= 0.7 {
-                // Check if movie is wanted
-                if movie.download_status == "wanted"
-                    || movie.download_status == "missing"
-                    || movie.download_status == "downloading"
-                {
+            if breakdown.total >= match_scorer::SUGGEST_THRESHOLD {
+                let result = FileMatchResult {
+                    file_path: file.path.clone(),
+                    file_size: file.size,
+                    file_index: file.file_index,
+                    match_target: FileMatchTarget::Movie {
+                        movie_id: movie.id,
+                        title: movie.title.clone(),
+                        year: movie.year,
+                        library_id: library.id,
+                    },
+                    match_type: FileMatchType::Auto,
+                    confidence: breakdown.total / 100.0,
+                    quality: quality.clone(),
+                };
+                candidates.push((breakdown.total, breakdown, result));
+            }
+        }
+
+        // Sort by score descending and pick the best
+        candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        if let Some((score, breakdown, result)) = candidates.into_iter().next() {
+            if score >= AUTO_LINK_THRESHOLD {
+                if let FileMatchTarget::Movie { ref title, year, .. } = result.match_target {
                     debug!(
-                        movie = %movie.title,
-                        year = ?movie.year,
-                        similarity = total_confidence,
-                        "Matched movie"
+                        movie = %title,
+                        year = ?year,
+                        score = score,
+                        breakdown = %breakdown.summary(),
+                        "Matched movie by filename scoring"
                     );
-
-                    return Ok(Some(FileMatchResult {
-                        file_path: file.path.clone(),
-                        file_size: file.size,
-                        file_index: file.file_index,
-                        match_target: FileMatchTarget::Movie {
-                            movie_id: movie.id,
-                            title: movie.title.clone(),
-                            year: movie.year,
-                            library_id: library.id,
-                        },
-                        match_type: FileMatchType::Auto,
-                        confidence: total_confidence.min(1.0),
-                        quality: quality.clone(),
-                    }));
                 }
+                return Ok(Some(result));
             }
         }
 
@@ -2183,7 +2413,10 @@ impl FileMatcher {
     // Audio Matching (Music Tracks & Audiobook Chapters)
     // =========================================================================
 
-    async fn match_audio_file(
+    /// Match an audio file to music tracks or audiobook chapters in the given libraries.
+    /// 
+    /// This is public for use by the scanner which already has library context.
+    pub async fn match_audio_file(
         &self,
         file: &FileInfo,
         file_name: &str,
@@ -2275,8 +2508,8 @@ impl FileMatcher {
 
     /// Match a track using embedded metadata (ID3/Vorbis tags)
     ///
-    /// This is the highest-confidence matching method when tags are available.
-    /// Matches by: album name fuzzy match + track title fuzzy match + optional artist match
+    /// Uses weighted scoring: Artist (30), Album (25), Track Title (25), Track Number (15), Year (5)
+    /// Collects ALL candidates and picks the best match.
     async fn try_match_track_by_metadata(
         &self,
         file: &FileInfo,
@@ -2284,72 +2517,59 @@ impl FileMatcher {
         quality: &ParsedQuality,
         library: &LibraryRecord,
     ) -> Result<Option<FileMatchResult>> {
+        use super::match_scorer::{self, parse_track_info, score_music_match, AUTO_LINK_THRESHOLD};
+        
         let albums = self.db.albums().list_by_library(library.id).await?;
 
         // Get metadata values
-        let meta_album = match &metadata.album {
-            Some(a) if !a.trim().is_empty() => a.trim(),
-            _ => return Ok(None), // Need album tag to match
-        };
-        let meta_title = match &metadata.title {
-            Some(t) if !t.trim().is_empty() => t.trim(),
-            _ => return Ok(None), // Need title tag to match
-        };
+        let meta_album = metadata.album.as_deref();
+        let meta_title = metadata.title.as_deref();
         let meta_artist = metadata.artist.as_deref();
+        let meta_track = metadata.track_number;
+        let meta_year = metadata.year;
+        
+        // Parse filename for fallback info
+        let filename = std::path::Path::new(&file.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&file.path);
+        let file_info = parse_track_info(filename);
+        
+        // Collect all candidates with scores
+        let mut candidates: Vec<(f64, match_scorer::ScoreBreakdown, FileMatchResult)> = Vec::new();
 
         for album in albums {
-            // Fuzzy match album name
-            let album_similarity = filename_parser::show_name_similarity(&album.name, meta_album);
-            if album_similarity < 0.7 {
-                continue;
-            }
-
-            // Note: Could boost confidence if artist matches, but would need to load artist record
-            // For now, we rely on album + track title matching
-            let _ = meta_artist; // Silence unused warning
+            // Get artist name for this album
+            let artist = self.db.albums().get_artist_by_id(album.artist_id).await?;
+            let artist_name = artist.map(|a| a.name).unwrap_or_default();
 
             // Get tracks for this album
             let tracks = self.db.tracks().list_by_album(album.id).await?;
 
             for track in tracks {
-                // Check if track is wanted
-                if track.status != "wanted" && track.status != "missing" && track.status != "downloading" {
+                // Skip tracks that already have a media file (status would be "downloaded")
+                if track.media_file_id.is_some() {
                     continue;
                 }
 
-                // Fuzzy match track title
-                let title_similarity = filename_parser::show_name_similarity(&track.title, meta_title);
-                if title_similarity < 0.7 {
-                    continue;
-                }
+                // Calculate weighted score
+                let breakdown = score_music_match(
+                    meta_artist,
+                    meta_album,
+                    meta_title,
+                    meta_track,
+                    meta_year,
+                    &file_info,
+                    &artist_name,
+                    &album.name,
+                    &track.title,
+                    track.track_number,
+                    album.year,
+                );
 
-                // Also check track number if available
-                let track_number_match = if let Some(meta_track) = metadata.track_number {
-                    meta_track as i32 == track.track_number
-                } else {
-                    false
-                };
-
-                // Calculate final confidence
-                // Album match + title match + optional track number boost
-                let mut confidence = (album_similarity * 0.45) + (title_similarity * 0.5);
-                if track_number_match {
-                    confidence += 0.05;
-                }
-                confidence = confidence.min(1.0);
-
-                // High confidence threshold for metadata matches
-                if confidence >= 0.85 {
-                    debug!(
-                        track = %track.title,
-                        album = %album.name,
-                        meta_album = %meta_album,
-                        meta_title = %meta_title,
-                        confidence = confidence,
-                        "Matched track by embedded metadata"
-                    );
-
-                    return Ok(Some(FileMatchResult {
+                // Only consider candidates above minimum threshold
+                if breakdown.total >= match_scorer::SUGGEST_THRESHOLD {
+                    let result = FileMatchResult {
                         file_path: file.path.clone(),
                         file_size: file.size,
                         file_index: file.file_index,
@@ -2361,10 +2581,37 @@ impl FileMatcher {
                             library_id: library.id,
                         },
                         match_type: FileMatchType::Auto,
-                        confidence,
+                        confidence: breakdown.total / 100.0, // Normalize to 0-1
                         quality: quality.clone(),
-                    }));
+                    };
+                    candidates.push((breakdown.total, breakdown, result));
                 }
+            }
+        }
+
+        // Sort by score descending and pick the best
+        candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        if let Some((score, breakdown, result)) = candidates.into_iter().next() {
+            // Only auto-link if above threshold
+            if score >= AUTO_LINK_THRESHOLD {
+                if let FileMatchTarget::Track { ref title, .. } = result.match_target {
+                    debug!(
+                        track = %title,
+                        score = score,
+                        breakdown = %breakdown.summary(),
+                        file = %filename,
+                        "Matched track by weighted scoring"
+                    );
+                }
+                return Ok(Some(result));
+            } else {
+                debug!(
+                    score = score,
+                    threshold = AUTO_LINK_THRESHOLD,
+                    file = %filename,
+                    "Best match below auto-link threshold"
+                );
             }
         }
 
@@ -2372,6 +2619,8 @@ impl FileMatcher {
     }
 
     /// Match an audiobook chapter using embedded metadata
+    ///
+    /// Uses weighted scoring: Author (30), Book (30), Chapter Title (25), Chapter Number (15)
     async fn try_match_chapter_by_metadata(
         &self,
         file: &FileInfo,
@@ -2379,55 +2628,60 @@ impl FileMatcher {
         quality: &ParsedQuality,
         library: &LibraryRecord,
     ) -> Result<Option<FileMatchResult>> {
+        use super::match_scorer::{self, parse_track_info, score_audiobook_match, AUTO_LINK_THRESHOLD};
+        
         let audiobooks = self.db.audiobooks().list_by_library(library.id).await?;
 
-        // Get metadata values - for audiobooks, album = book title, title = chapter title
-        let meta_book = match &metadata.album {
-            Some(a) if !a.trim().is_empty() => a.trim(),
-            _ => return Ok(None),
-        };
+        // Get metadata values - for audiobooks: artist = author, album = book title, title = chapter title
+        let meta_author = metadata.artist.as_deref();
+        let meta_book = metadata.album.as_deref();
         let meta_chapter_title = metadata.title.as_deref();
         let meta_track = metadata.track_number;
+        
+        // Parse filename for fallback info
+        let filename = std::path::Path::new(&file.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&file.path);
+        let file_info = parse_track_info(filename);
+        
+        // Collect all candidates with scores
+        let mut candidates: Vec<(f64, match_scorer::ScoreBreakdown, FileMatchResult)> = Vec::new();
 
         for audiobook in audiobooks {
-            // Fuzzy match book title
-            let book_similarity = filename_parser::show_name_similarity(&audiobook.title, meta_book);
-            if book_similarity < 0.7 {
-                continue;
-            }
-
+            // Get author name for this audiobook
+            let author_name = if let Some(author_id) = audiobook.author_id {
+                self.db.audiobooks().get_author_by_id(author_id).await?
+                    .map(|a| a.name)
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            
             let chapters = self.db.chapters().list_by_audiobook(audiobook.id).await?;
 
             for chapter in chapters {
-                if chapter.status != "wanted" && chapter.status != "missing" && chapter.status != "downloading" {
+                // Skip chapters that already have a media file
+                if chapter.media_file_id.is_some() {
                     continue;
                 }
 
-                // Try to match by track number (chapter number)
-                let number_match = if let Some(track_num) = meta_track {
-                    track_num as i32 == chapter.chapter_number
-                } else {
-                    false
-                };
+                // Calculate weighted score
+                let breakdown = score_audiobook_match(
+                    meta_author,
+                    meta_book,
+                    meta_chapter_title,
+                    meta_track,
+                    &file_info,
+                    file.source_name.as_deref(),
+                    &author_name,
+                    &audiobook.title,
+                    chapter.title.as_deref(),
+                    chapter.chapter_number,
+                );
 
-                // Or match by chapter title if available
-                let title_match = if let (Some(meta_title), Some(ch_title)) = (meta_chapter_title, &chapter.title) {
-                    filename_parser::show_name_similarity(ch_title, meta_title) >= 0.7
-                } else {
-                    false
-                };
-
-                if number_match || title_match {
-                    let confidence = if number_match { 0.95 } else { 0.85 };
-
-                    debug!(
-                        chapter = chapter.chapter_number,
-                        audiobook = %audiobook.title,
-                        confidence = confidence,
-                        "Matched chapter by embedded metadata"
-                    );
-
-                    return Ok(Some(FileMatchResult {
+                if breakdown.total >= match_scorer::SUGGEST_THRESHOLD {
+                    let result = FileMatchResult {
                         file_path: file.path.clone(),
                         file_size: file.size,
                         file_index: file.file_index,
@@ -2438,16 +2692,38 @@ impl FileMatcher {
                             library_id: library.id,
                         },
                         match_type: FileMatchType::Auto,
-                        confidence,
+                        confidence: breakdown.total / 100.0,
                         quality: quality.clone(),
-                    }));
+                    };
+                    candidates.push((breakdown.total, breakdown, result));
                 }
+            }
+        }
+
+        // Sort by score descending and pick the best
+        candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        if let Some((score, breakdown, result)) = candidates.into_iter().next() {
+            if score >= AUTO_LINK_THRESHOLD {
+                if let FileMatchTarget::Chapter { chapter_number, .. } = result.match_target {
+                    debug!(
+                        chapter = chapter_number,
+                        score = score,
+                        breakdown = %breakdown.summary(),
+                        "Matched chapter by weighted scoring"
+                    );
+                }
+                return Ok(Some(result));
             }
         }
 
         Ok(None)
     }
 
+    /// Match a track using filename parsing (when metadata is unavailable)
+    ///
+    /// Uses weighted scoring with source context for album matching.
+    /// Collects ALL candidates and picks the best match.
     async fn try_match_track(
         &self,
         file: &FileInfo,
@@ -2455,46 +2731,50 @@ impl FileMatcher {
         quality: &ParsedQuality,
         library: &LibraryRecord,
     ) -> Result<Option<FileMatchResult>> {
+        use super::match_scorer::{self, parse_track_info, score_music_match, AUTO_LINK_THRESHOLD};
+        
         // Get all albums in this library
         let all_albums = self.db.albums().list_by_library(library.id).await?;
 
-        // If we have source context (torrent name), try to narrow down to matching albums first
-        // This prevents cross-album mismatches when track names are similar
-        let (priority_albums, other_albums): (Vec<&crate::db::albums::AlbumRecord>, Vec<&crate::db::albums::AlbumRecord>) = 
-            if let Some(ref source_name) = file.source_name {
-                self.filter_albums_by_source(source_name, &all_albums)
-            } else {
-                // No source context - treat all albums equally
-                (all_albums.iter().collect(), vec![])
-            };
+        // Parse filename for track number and cleaned title
+        let file_info = parse_track_info(file_name);
+        
+        // Collect all candidates with scores
+        let mut candidates: Vec<(f64, match_scorer::ScoreBreakdown, FileMatchResult)> = Vec::new();
 
-        // Try priority albums first (matched by source name)
-        for album in &priority_albums {
+        for album in &all_albums {
+            // Get artist name for this album
+            let artist = self.db.albums().get_artist_by_id(album.artist_id).await?;
+            let artist_name = artist.map(|a| a.name).unwrap_or_default();
+
+            // Get tracks for this album
             let tracks = self.db.tracks().list_by_album(album.id).await?;
 
             for track in tracks {
-                if track.status != "wanted" && track.status != "missing" && track.status != "downloading" {
+                // Skip tracks that already have a media file
+                if track.media_file_id.is_some() {
                     continue;
                 }
 
-                let similarity = self.calculate_track_similarity(file_name, &track.title);
+                // Calculate weighted score using filename info only
+                // When matching by filename, we don't have metadata, so use source_name for album matching
+                let breakdown = score_music_match(
+                    None, // No metadata artist
+                    file.source_name.as_deref(), // Use source name as pseudo-album
+                    None, // No metadata title - use file_info.cleaned_title
+                    None, // No metadata track number - use file_info.number
+                    None, // No metadata year
+                    &file_info,
+                    &artist_name,
+                    &album.name,
+                    &track.title,
+                    track.track_number,
+                    album.year,
+                );
 
-                // Higher threshold when we have source context match
-                if similarity >= 0.5 {
-                    // Boost confidence when source context matches
-                    let boosted_confidence = (similarity + 0.2).min(1.0);
-
-                    debug!(
-                        track = %track.title,
-                        album = %album.name,
-                        source_name = ?file.source_name,
-                        similarity = similarity,
-                        boosted_confidence = boosted_confidence,
-                        file = %file_name,
-                        "Matched track (source-context prioritized)"
-                    );
-
-                    return Ok(Some(FileMatchResult {
+                // Only consider candidates above minimum threshold
+                if breakdown.total >= match_scorer::SUGGEST_THRESHOLD {
+                    let result = FileMatchResult {
                         file_path: file.path.clone(),
                         file_size: file.size,
                         file_index: file.file_index,
@@ -2506,49 +2786,36 @@ impl FileMatcher {
                             library_id: library.id,
                         },
                         match_type: FileMatchType::Auto,
-                        confidence: boosted_confidence,
+                        confidence: breakdown.total / 100.0,
                         quality: quality.clone(),
-                    }));
+                    };
+                    candidates.push((breakdown.total, breakdown, result));
                 }
             }
         }
 
-        // Fall back to other albums if no match in priority albums
-        for album in &other_albums {
-            let tracks = self.db.tracks().list_by_album(album.id).await?;
+        // Sort by score descending and pick the best
+        candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-            for track in tracks {
-                if track.status != "wanted" && track.status != "missing" && track.status != "downloading" {
-                    continue;
-                }
-
-                let similarity = self.calculate_track_similarity(file_name, &track.title);
-
-                if similarity >= 0.6 {
+        if let Some((score, breakdown, result)) = candidates.into_iter().next() {
+            if score >= AUTO_LINK_THRESHOLD {
+                if let FileMatchTarget::Track { ref title, .. } = result.match_target {
                     debug!(
-                        track = %track.title,
-                        album = %album.name,
-                        similarity = similarity,
+                        track = %title,
+                        score = score,
+                        breakdown = %breakdown.summary(),
                         file = %file_name,
-                        "Matched track"
+                        "Matched track by filename scoring"
                     );
-
-                    return Ok(Some(FileMatchResult {
-                        file_path: file.path.clone(),
-                        file_size: file.size,
-                        file_index: file.file_index,
-                        match_target: FileMatchTarget::Track {
-                            track_id: track.id,
-                            album_id: album.id,
-                            title: track.title.clone(),
-                            track_number: track.track_number,
-                            library_id: library.id,
-                        },
-                        match_type: FileMatchType::Auto,
-                        confidence: similarity,
-                        quality: quality.clone(),
-                    }));
                 }
+                return Ok(Some(result));
+            } else {
+                debug!(
+                    score = score,
+                    threshold = AUTO_LINK_THRESHOLD,
+                    file = %file_name,
+                    "Best filename match below auto-link threshold"
+                );
             }
         }
 
@@ -2644,8 +2911,8 @@ impl FileMatcher {
             let chapters = self.db.chapters().list_by_audiobook(audiobook.id).await?;
 
             for chapter in chapters {
-                // Check if chapter is wanted
-                if chapter.status != "wanted" && chapter.status != "missing" && chapter.status != "downloading" {
+                // Skip chapters that already have a media file
+                if chapter.media_file_id.is_some() {
                     continue;
                 }
 
@@ -2808,52 +3075,9 @@ impl FileMatcher {
         None
     }
 
-    /// Update item status to "downloading" and set active_download_id
-    async fn update_item_status_downloading(
-        &self,
-        target: &FileMatchTarget,
-        pending_match_id: Uuid,
-    ) -> Result<()> {
-        match target {
-            FileMatchTarget::Episode { episode_id, .. } => {
-                sqlx::query(
-                    "UPDATE episodes SET status = 'downloading', active_download_id = $2 WHERE id = $1",
-                )
-                .bind(episode_id)
-                .bind(pending_match_id)
-                .execute(self.db.pool())
-                .await?;
-            }
-            FileMatchTarget::Movie { movie_id, .. } => {
-                sqlx::query(
-                    "UPDATE movies SET download_status = 'downloading', active_download_id = $2 WHERE id = $1",
-                )
-                .bind(movie_id)
-                .bind(pending_match_id)
-                .execute(self.db.pool())
-                .await?;
-            }
-            FileMatchTarget::Track { track_id, .. } => {
-                sqlx::query(
-                    "UPDATE tracks SET status = 'downloading', active_download_id = $2 WHERE id = $1",
-                )
-                .bind(track_id)
-                .bind(pending_match_id)
-                .execute(self.db.pool())
-                .await?;
-            }
-            FileMatchTarget::Chapter { chapter_id, .. } => {
-                sqlx::query(
-                    "UPDATE chapters SET status = 'downloading', active_download_id = $2 WHERE id = $1",
-                )
-                .bind(chapter_id)
-                .bind(pending_match_id)
-                .execute(self.db.pool())
-                .await?;
-            }
-            _ => {}
-        }
-
-        Ok(())
-    }
+    // NOTE: Status updates are no longer needed on items.
+    // Status is now derived from:
+    // - media_file_id IS NOT NULL → downloaded
+    // - Entry in pending_file_matches with copied_at IS NULL → downloading
+    // - Otherwise → missing/wanted
 }

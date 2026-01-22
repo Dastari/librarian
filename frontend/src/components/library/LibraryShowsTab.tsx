@@ -17,6 +17,7 @@ import { TV_SHOWS_CONNECTION_QUERY, type TvShow } from '../../lib/graphql'
 import type { Connection } from '../../lib/graphql/types'
 import { IconPlus, IconTrash, IconEye, IconDeviceTv } from '@tabler/icons-react'
 import { TvShowCard } from './TvShowCard'
+import { MediaCardSkeleton } from './MediaCardSkeleton'
 import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 // ============================================================================
@@ -25,6 +26,8 @@ import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 interface LibraryShowsTabProps {
   libraryId: string
+  /** Parent loading state (e.g., library context still loading) */
+  loading?: boolean
   onDeleteShow: (showId: string, showName: string) => void
   onAddShow: () => void
 }
@@ -49,7 +52,7 @@ const SORT_FIELD_MAP: Record<string, string> = {
   episodes: 'EPISODE_COUNT',
 }
 
-export function LibraryShowsTab({ libraryId, onDeleteShow, onAddShow }: LibraryShowsTabProps) {
+export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteShow, onAddShow }: LibraryShowsTabProps) {
   // URL-persisted state via nuqs (clean URLs when using defaults)
   const [selectedLetter, setSelectedLetter] = useQueryState('letter', parseAsString.withDefault(''))
   const [searchTerm, setSearchTerm] = useQueryState('q', parseAsString.withDefault(''))
@@ -184,19 +187,20 @@ export function LibraryShowsTab({ libraryId, onDeleteShow, onAddShow }: LibraryS
         },
       },
       {
-        key: 'status',
-        label: 'STATUS',
-        width: 120,
+        key: 'progress',
+        label: 'PROGRESS',
+        width: 80,
         sortable: false,
-        render: (show) => (
-          <Chip
-            size="sm"
-            color={show.monitored ? 'success' : 'default'}
-            variant="flat"
-          >
-            {show.monitored ? 'Monitored' : 'Unmonitored'}
-          </Chip>
-        ),
+        render: (show) => {
+          const downloaded = show.episodeFileCount ?? 0
+          const total = show.episodeCount ?? 0
+          const isComplete = total > 0 && downloaded >= total
+          return (
+            <span className={isComplete ? 'text-success font-medium' : 'text-warning font-medium'}>
+              {downloaded}/{total}
+            </span>
+          )
+        },
       },
     ],
     []
@@ -252,6 +256,8 @@ export function LibraryShowsTab({ libraryId, onDeleteShow, onAddShow }: LibraryS
           showViewModeToggle
           defaultViewMode="cards"
           cardRenderer={cardRenderer}
+          cardSkeleton={() => <MediaCardSkeleton />}
+          skeletonCardCount={12}
           cardGridClassName="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
           rowActions={rowActions}
           showItemCount
@@ -263,7 +269,7 @@ export function LibraryShowsTab({ libraryId, onDeleteShow, onAddShow }: LibraryS
           paginationMode="infinite"
           hasMore={hasMore}
           onLoadMore={loadMore}
-          isLoading={isLoading}
+          isLoading={parentLoading || isLoading}
           isLoadingMore={isLoadingMore}
           headerContent={
             <AlphabetFilter

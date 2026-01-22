@@ -4,7 +4,8 @@ import { Button } from '@heroui/button'
 import { Card, CardBody } from '@heroui/card'
 import { Chip } from '@heroui/chip'
 import { Image } from '@heroui/image'
-import { Skeleton } from '@heroui/skeleton'
+import { ShimmerLoader } from '../../components/shared/ShimmerLoader'
+import { audiobookTemplate, libraryTemplate } from '../../lib/template-data'
 import { Breadcrumbs, BreadcrumbItem } from '@heroui/breadcrumbs'
 import { Progress } from '@heroui/progress'
 import { useDisclosure } from '@heroui/modal'
@@ -22,7 +23,6 @@ import type {
   AudiobookWithChapters,
   AudiobookChapter,
   Library,
-  ChapterStatus,
 } from '../../lib/graphql'
 import { DataTable, type DataTableColumn, type RowAction } from '../../components/data-table'
 import {
@@ -36,6 +36,7 @@ import {
 } from '@tabler/icons-react'
 import { ChapterStatusChip, PlayPauseIndicator } from '../../components/shared'
 import { usePlaybackContext } from '../../contexts/PlaybackContext'
+import { useDataReactivity } from '../../hooks/useSubscription'
 
 export const Route = createFileRoute('/audiobooks/$audiobookId')({
   beforeLoad: ({ context, location }) => {
@@ -89,9 +90,14 @@ const chapterColumns: DataTableColumn<AudiobookChapter>[] = [
   {
     key: 'status',
     label: 'Status',
-    width: 110,
+    width: 140,
     sortable: true,
-    render: (ch) => <ChapterStatusChip status={ch.status as ChapterStatus} />,
+    render: (ch) => (
+      <ChapterStatusChip
+        mediaFileId={ch.mediaFileId}
+        downloadProgress={ch.downloadProgress}
+      />
+    ),
   },
 ]
 
@@ -105,12 +111,12 @@ interface ChapterTableProps {
 function ChapterTable({ chapters, audiobookId, onPlay, onSearch }: ChapterTableProps) {
   // Get session and updatePlayback directly from context for reliable updates
   const { session, updatePlayback } = usePlaybackContext()
-  
+
   // Handle pause directly using context
   const handlePause = useCallback(() => {
     updatePlayback({ isPlaying: false })
   }, [updatePlayback])
-  
+
   // Compute playing state from session
   // Find chapter by matching mediaFileId since session doesn't have chapterId
   const currentlyPlayingChapterId = session?.audiobookId === audiobookId
@@ -244,6 +250,14 @@ function AudiobookDetailPage() {
     fetchAudiobook()
   }, [fetchAudiobook])
 
+  // Keep data fresh with periodic updates and torrent completion events
+  // This ensures download progress is updated in real-time
+  useDataReactivity(fetchAudiobook, {
+    onTorrentComplete: true,
+    periodicInterval: 10000, // Refresh every 10 seconds to match backend sync interval
+    onFocus: true,
+  })
+
   // Handle delete
   const handleDelete = useCallback(async () => {
     if (!audiobookData) return
@@ -313,23 +327,8 @@ function AudiobookDetailPage() {
     })
   }, [audiobookData, navigate])
 
-  if (isLoading) {
-    return (
-      <div className="container mx-auto p-4">
-        <Skeleton className="h-8 w-64 mb-4" />
-        <div className="flex gap-6">
-          <Skeleton className="w-64 h-64 rounded-lg" />
-          <div className="flex-1 space-y-4">
-            <Skeleton className="h-8 w-96" />
-            <Skeleton className="h-4 w-48" />
-            <Skeleton className="h-4 w-64" />
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (error || !audiobookData) {
+  // Show error state only after loading is complete
+  if (!isLoading && (error || !audiobookData)) {
     return (
       <div className="container mx-auto p-4">
         <Card>
@@ -346,228 +345,233 @@ function AudiobookDetailPage() {
     )
   }
 
-  const { audiobook, chapters, author } = audiobookData
+  // Use template data during loading, real data when available
+  const displayAudiobookData = audiobookData ?? audiobookTemplate
+  const displayLibrary = library ?? libraryTemplate
+  const { audiobook, chapters, author } = displayAudiobookData
 
   return (
-    <div className="container mx-auto p-4  mb-20">
-      {/* Breadcrumbs */}
-      <Breadcrumbs className="mb-4">
-        <BreadcrumbItem>
-          <Link to="/libraries">Libraries</Link>
-        </BreadcrumbItem>
-        {library && (
+    <ShimmerLoader loading={isLoading} templateProps={{ audiobookData: audiobookTemplate }}>
+      <div className="container mx-auto p-4  mb-20">
+        {/* Breadcrumbs */}
+        <Breadcrumbs className="mb-4">
           <BreadcrumbItem>
-            <Link to="/libraries/$libraryId" params={{ libraryId: library.id }}>
-              {library.name}
+            <Link to="/libraries">Libraries</Link>
+          </BreadcrumbItem>
+          <BreadcrumbItem>
+            <Link to="/libraries/$libraryId" params={{ libraryId: displayLibrary.id }}>
+              {displayLibrary.name}
             </Link>
           </BreadcrumbItem>
-        )}
-        <BreadcrumbItem>{audiobook.title}</BreadcrumbItem>
-      </Breadcrumbs>
+          <BreadcrumbItem>{audiobook.title}</BreadcrumbItem>
+        </Breadcrumbs>
 
-      {/* Audiobook Header */}
-      <div className="flex flex-col md:flex-row gap-6 mb-6">
-        {/* Cover Art */}
-        <div className="w-64 shrink-0">
-          {audiobook.coverUrl ? (
-            <Image
-              src={audiobook.coverUrl}
-              alt={audiobook.title}
-              classNames={{
-                wrapper: 'w-64 h-64',
-                img: 'w-full h-full object-cover rounded-lg',
-              }}
-            />
-          ) : (
-            <div className="w-64 h-64 bg-content2 rounded-lg flex items-center justify-center">
-              <IconBook size={64} className="text-default-400" />
-            </div>
-          )}
-        </div>
-
-        {/* Audiobook Info */}
-        <div className="flex-1">
-          <h1 className="text-3xl font-bold mb-1">{audiobook.title}</h1>
-          {audiobook.subtitle && (
-            <p className="text-lg text-default-500 mb-2">{audiobook.subtitle}</p>
-          )}
-
-          {/* Author */}
-          {author && (
-            <div className="flex items-center gap-2 text-default-600 mb-3">
-              <IconUser size={16} />
-              <span>by {author.name}</span>
-            </div>
-          )}
-
-          {/* Tags */}
-          <div className="flex flex-wrap items-center gap-2 mb-4">
-            {audiobook.seriesName && (
-              <Chip size="sm" variant="flat" color="secondary">
-                {audiobook.seriesName}
-              </Chip>
-            )}
-            {audiobook.language && (
-              <Chip size="sm" variant="flat">
-                {audiobook.language.toUpperCase()}
-              </Chip>
-            )}
-            {audiobook.publisher && (
-              <Chip size="sm" variant="flat">
-                {audiobook.publisher}
-              </Chip>
+        {/* Audiobook Header */}
+        <div className="flex flex-col md:flex-row gap-6 mb-6">
+          {/* Cover Art */}
+          <div className="w-64 shrink-0">
+            {audiobook.coverUrl ? (
+              <Image
+                src={audiobook.coverUrl}
+                alt={audiobook.title}
+                classNames={{
+                  wrapper: 'w-64 h-64',
+                  img: 'w-full h-full object-cover rounded-lg',
+                }}
+              />
+            ) : (
+              <div className="w-64 h-64 bg-content2 rounded-lg flex items-center justify-center">
+                <IconBook size={64} className="text-default-400" />
+              </div>
             )}
           </div>
 
-          {/* Description */}
-          {audiobook.description && (
-            <p className="text-default-600 mb-4 line-clamp-3">{audiobook.description}</p>
-          )}
+          {/* Audiobook Info */}
+          <div className="flex-1">
+            <h1 className="text-3xl font-bold mb-1">{audiobook.title}</h1>
+            {audiobook.subtitle && (
+              <p className="text-lg text-default-500 mb-2">{audiobook.subtitle}</p>
+            )}
 
-          {/* Narrators */}
-          {audiobook.narrators && audiobook.narrators.length > 0 && (
+            {/* Author */}
+            {author && (
+              <div className="flex items-center gap-2 text-default-600 mb-3">
+                <IconUser size={16} />
+                <span>by {author.name}</span>
+              </div>
+            )}
+
+            {/* Tags */}
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              {audiobook.seriesName && (
+                <Chip size="sm" variant="flat" color="secondary">
+                  {audiobook.seriesName}
+                </Chip>
+              )}
+              {audiobook.language && (
+                <Chip size="sm" variant="flat">
+                  {audiobook.language.toUpperCase()}
+                </Chip>
+              )}
+              {audiobook.publisher && (
+                <Chip size="sm" variant="flat">
+                  {audiobook.publisher}
+                </Chip>
+              )}
+            </div>
+
+            {/* Description */}
+            {audiobook.description && (
+              <p className="text-default-600 mb-4 line-clamp-3">{audiobook.description}</p>
+            )}
+
+            {/* Narrators */}
+            {audiobook.narrators && audiobook.narrators.length > 0 && (
+              <div className="mb-4">
+                <p className="text-sm text-default-400">
+                  Narrated by: <span className="text-default-600">{audiobook.narrators.join(', ')}</span>
+                </p>
+              </div>
+            )}
+
+            {/* Completion Progress */}
             <div className="mb-4">
-              <p className="text-sm text-default-400">
-                Narrated by: <span className="text-default-600">{audiobook.narrators.join(', ')}</span>
-              </p>
+              <div className="flex items-center justify-between text-sm mb-1">
+                <span className="text-default-500">
+                  {displayAudiobookData.chaptersWithFiles} of {displayAudiobookData.chapterCount} chapters
+                </span>
+                <span className="font-medium">
+                  {displayAudiobookData.completionPercent.toFixed(0)}%
+                </span>
+              </div>
+              <Progress
+                aria-label="Audiobook completion"
+                value={displayAudiobookData.completionPercent}
+                color={displayAudiobookData.completionPercent === 100 ? 'success' : 'primary'}
+                size="sm"
+              />
+              {displayAudiobookData.missingChapters > 0 && (
+                <p className="text-sm text-warning mt-1">
+                  {displayAudiobookData.missingChapters} chapter{displayAudiobookData.missingChapters !== 1 ? 's' : ''} missing
+                </p>
+              )}
             </div>
-          )}
 
-          {/* Completion Progress */}
-          <div className="mb-4">
-            <div className="flex items-center justify-between text-sm mb-1">
-              <span className="text-default-500">
-                {audiobookData.chaptersWithFiles} of {audiobookData.chapterCount} chapters
-              </span>
-              <span className="font-medium">
-                {audiobookData.completionPercent.toFixed(0)}%
-              </span>
+            {/* Stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+              <div>
+                <p className="text-xs text-default-400">Chapters</p>
+                <p className="text-lg font-semibold">{displayAudiobookData.chapterCount}</p>
+              </div>
+              <div>
+                <p className="text-xs text-default-400">Duration</p>
+                <p className="text-lg font-semibold">
+                  {audiobook.durationSecs ? formatDuration(audiobook.durationSecs) : '-'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-default-400">Size</p>
+                <p className="text-lg font-semibold">
+                  {audiobook.sizeBytes ? formatBytes(audiobook.sizeBytes) : '-'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-default-400">ISBN</p>
+                <p className="text-lg font-semibold">
+                  {audiobook.isbn || '-'}
+                </p>
+              </div>
             </div>
-            <Progress
-              aria-label="Audiobook completion"
-              value={audiobookData.completionPercent}
-              color={audiobookData.completionPercent === 100 ? 'success' : 'primary'}
-              size="sm"
-            />
-            {audiobookData.missingChapters > 0 && (
-              <p className="text-sm text-warning mt-1">
-                {audiobookData.missingChapters} chapter{audiobookData.missingChapters !== 1 ? 's' : ''} missing
-              </p>
-            )}
-          </div>
 
-          {/* Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <div>
-              <p className="text-xs text-default-400">Chapters</p>
-              <p className="text-lg font-semibold">{audiobookData.chapterCount}</p>
-            </div>
-            <div>
-              <p className="text-xs text-default-400">Duration</p>
-              <p className="text-lg font-semibold">
-                {audiobook.durationSecs ? formatDuration(audiobook.durationSecs) : '-'}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-default-400">Size</p>
-              <p className="text-lg font-semibold">
-                {audiobook.sizeBytes ? formatBytes(audiobook.sizeBytes) : '-'}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-default-400">ISBN</p>
-              <p className="text-lg font-semibold">
-                {audiobook.isbn || '-'}
-              </p>
-            </div>
-          </div>
-
-          {/* Actions */}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              color="primary"
-              startContent={<IconSearch size={16} />}
-              onPress={handleManualHunt}
-            >
-              Hunt for Audiobook
-            </Button>
-            <Button
-              variant="flat"
-              startContent={<IconRefresh size={16} />}
-              onPress={fetchAudiobook}
-            >
-              Refresh
-            </Button>
-            <Button
-              variant="flat"
-              color="danger"
-              startContent={<IconTrash size={16} />}
-              onPress={onDeleteOpen}
-            >
-              Delete
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* Chapter List */}
-      <Card>
-        <CardBody className="p-0">
-          <div className="p-4 border-b border-default-200">
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <IconHeadphones size={20} className="text-orange-400" />
-              Chapters
-            </h2>
-          </div>
-
-          {chapters.length === 0 ? (
-            <div className="p-8 text-center">
-              <IconHeadphones size={48} className="mx-auto mb-4 text-default-400" />
-              <h3 className="text-lg font-semibold mb-2">No Chapters</h3>
-              <p className="text-default-500 mb-4">
-                Chapter information hasn't been fetched yet.
-              </p>
-              <Button variant="flat" onPress={fetchAudiobook}>
-                Refresh Audiobook
+            {/* Actions */}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                color="primary"
+                startContent={<IconSearch size={16} />}
+                onPress={handleManualHunt}
+              >
+                Hunt for Audiobook
+              </Button>
+              <Button
+                variant="flat"
+                startContent={<IconRefresh size={16} />}
+                onPress={fetchAudiobook}
+              >
+                Refresh
+              </Button>
+              <Button
+                variant="flat"
+                color="danger"
+                startContent={<IconTrash size={16} />}
+                onPress={onDeleteOpen}
+              >
+                Delete
               </Button>
             </div>
-          ) : (
-            <ChapterTable
-              chapters={chapters}
-              audiobookId={audiobookData.audiobook.id}
-              onPlay={handlePlayChapter}
-              onSearch={handleSearchChapter}
-            />
-          )}
-        </CardBody>
-      </Card>
+          </div>
+        </div>
 
-      {/* Delete Confirmation Modal */}
-      <Modal isOpen={isDeleteOpen} onClose={onDeleteClose}>
-        <ModalContent>
-          <ModalHeader>Delete Audiobook</ModalHeader>
-          <ModalBody>
-            <p>
-              Are you sure you want to delete <strong>{audiobook.title}</strong>?
-            </p>
-            <p className="text-sm text-default-500 mt-2">
-              This will remove the audiobook from the library. Associated files will not be deleted.
-            </p>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={onDeleteClose}>
-              Cancel
-            </Button>
-            <Button
-              color="danger"
-              onPress={handleDelete}
-              isLoading={isDeleting}
-            >
-              Delete
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-    </div>
+        {/* Chapter List */}
+        <Card>
+          <CardBody className="p-0">
+            <div className="p-4 border-b border-default-200">
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <IconHeadphones size={20} className="text-orange-400" />
+                Chapters
+              </h2>
+            </div>
+
+            {chapters.length === 0 ? (
+              <div className="p-8 text-center">
+                <IconHeadphones size={48} className="mx-auto mb-4 text-default-400" />
+                <h3 className="text-lg font-semibold mb-2">No Chapters</h3>
+                <p className="text-default-500 mb-4">
+                  Chapter information hasn't been fetched yet.
+                </p>
+                <Button variant="flat" onPress={fetchAudiobook}>
+                  Refresh Audiobook
+                </Button>
+              </div>
+            ) : (
+              <ChapterTable
+                chapters={chapters}
+                audiobookId={displayAudiobookData.audiobook.id}
+                onPlay={handlePlayChapter}
+                onSearch={handleSearchChapter}
+              />
+            )}
+          </CardBody>
+        </Card>
+
+        {/* Delete Confirmation Modal */}
+        {audiobookData && (
+          <Modal isOpen={isDeleteOpen} onClose={onDeleteClose}>
+            <ModalContent>
+              <ModalHeader>Delete Audiobook</ModalHeader>
+              <ModalBody>
+                <p>
+                  Are you sure you want to delete <strong>{audiobookData.audiobook.title}</strong>?
+                </p>
+                <p className="text-sm text-default-500 mt-2">
+                  This will remove the audiobook from the library. Associated files will not be deleted.
+                </p>
+              </ModalBody>
+              <ModalFooter>
+                <Button variant="flat" onPress={onDeleteClose}>
+                  Cancel
+                </Button>
+                <Button
+                  color="danger"
+                  onPress={handleDelete}
+                  isLoading={isDeleting}
+                >
+                  Delete
+                </Button>
+              </ModalFooter>
+            </ModalContent>
+          </Modal>
+        )}
+      </div>
+    </ShimmerLoader>
   )
 }

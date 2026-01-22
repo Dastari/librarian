@@ -59,7 +59,6 @@ export type {
   // TV Show
   TvShowStatus,
   MonitorType,
-  EpisodeStatus,
   TvShow,
   TvShowSearchResult,
   Episode,
@@ -166,6 +165,20 @@ export type {
   OllamaConnectionResult,
   FilenameParseResult,
   TestFilenameParserResult,
+  // Notification Types
+  NotificationType,
+  NotificationCategory,
+  NotificationActionType,
+  NotificationResolution,
+  NotificationEventType,
+  Notification,
+  PaginatedNotifications,
+  NotificationCounts,
+  NotificationFilterInput,
+  ResolveNotificationInput,
+  NotificationResult,
+  MarkAllReadResult,
+  NotificationEvent,
 } from './types';
 
 // Constants
@@ -245,6 +258,11 @@ export {
   INDEXER_CONFIGS_QUERY,
   // LLM Parser Queries
   LLM_PARSER_SETTINGS_QUERY,
+  // Notification Queries
+  NOTIFICATIONS_QUERY,
+  RECENT_NOTIFICATIONS_QUERY,
+  NOTIFICATION_COUNTS_QUERY,
+  UNREAD_NOTIFICATION_COUNT_QUERY,
 } from './queries';
 
 // Mutations
@@ -320,6 +338,11 @@ export {
   UPDATE_PLAYBACK_SETTINGS_MUTATION,
   // Auto-Hunt Mutations
   TRIGGER_AUTO_HUNT_MUTATION,
+  // Notification Mutations
+  MARK_NOTIFICATION_READ_MUTATION,
+  MARK_ALL_NOTIFICATIONS_READ_MUTATION,
+  RESOLVE_NOTIFICATION_MUTATION,
+  DELETE_NOTIFICATION_MUTATION,
 } from './mutations';
 
 // Subscriptions
@@ -337,6 +360,9 @@ export {
   MEDIA_FILE_UPDATED_SUBSCRIPTION,
   // Filesystem Subscriptions
   DIRECTORY_CONTENTS_CHANGED_SUBSCRIPTION,
+  // Notification Subscriptions
+  NOTIFICATION_RECEIVED_SUBSCRIPTION,
+  NOTIFICATION_COUNTS_SUBSCRIPTION,
 } from './subscriptions';
 
 // GraphQL-based filesystem functions (replaces REST API)

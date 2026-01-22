@@ -1,7 +1,6 @@
 import { useMemo, useState, useCallback, useEffect } from 'react'
 import { useQueryState, parseAsString, parseAsStringLiteral } from 'nuqs'
 import { Button } from '@heroui/button'
-import { Chip } from '@heroui/chip'
 import { Image } from '@heroui/image'
 import { Card, CardBody } from '@heroui/card'
 import { Link } from '@tanstack/react-router'
@@ -23,6 +22,7 @@ import {
 import type { Connection } from '../../lib/graphql/types'
 import { IconPlus, IconTrash, IconEye, IconHeadphones, IconUser } from '@tabler/icons-react'
 import { AudiobookCard } from './AudiobookCard'
+import { MediaCardSkeleton } from './MediaCardSkeleton'
 import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 // ============================================================================
@@ -31,6 +31,8 @@ import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 interface LibraryAudiobooksTabProps {
   libraryId: string
+  /** Parent loading state (e.g., library context still loading) */
+  loading?: boolean
   onDeleteAudiobook?: (audiobookId: string, audiobookTitle: string) => void
   onAddAudiobook?: () => void
 }
@@ -49,6 +51,7 @@ interface AudiobooksConnectionResponse {
 
 export function LibraryAudiobooksTab({
   libraryId,
+  loading: parentLoading,
   onDeleteAudiobook,
   onAddAudiobook,
 }: LibraryAudiobooksTabProps) {
@@ -226,19 +229,20 @@ export function LibraryAudiobooksTab({
         render: (audiobook) => <span>{audiobook.seriesName || '—'}</span>,
       },
       {
-        key: 'status',
-        label: 'STATUS',
-        width: 120,
+        key: 'progress',
+        label: 'PROGRESS',
+        width: 80,
         sortable: false,
-        render: (audiobook) => (
-          <Chip
-            size="sm"
-            color={audiobook.hasFiles ? 'success' : 'warning'}
-            variant="flat"
-          >
-            {audiobook.hasFiles ? 'Downloaded' : 'Wanted'}
-          </Chip>
-        ),
+        render: (audiobook) => {
+          const downloaded = audiobook.downloadedChapterCount ?? 0
+          const total = audiobook.chapterCount ?? 0
+          const isComplete = total > 0 && downloaded >= total
+          return (
+            <span className={isComplete ? 'text-success font-medium' : 'text-warning font-medium'}>
+              {downloaded}/{total}
+            </span>
+          )
+        },
       },
     ],
     [authorMap]
@@ -299,6 +303,8 @@ export function LibraryAudiobooksTab({
           showViewModeToggle
           defaultViewMode="cards"
           cardRenderer={cardRenderer}
+          cardSkeleton={() => <MediaCardSkeleton />}
+          skeletonCardCount={12}
           cardGridClassName="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
           rowActions={rowActions}
           showItemCount
@@ -310,7 +316,7 @@ export function LibraryAudiobooksTab({
           paginationMode="infinite"
           hasMore={hasMore}
           onLoadMore={loadMore}
-          isLoading={isLoading}
+          isLoading={parentLoading || isLoading}
           isLoadingMore={isLoadingMore}
           headerContent={
             <AlphabetFilter

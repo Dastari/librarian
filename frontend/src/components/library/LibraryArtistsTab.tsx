@@ -11,6 +11,7 @@ import {
 import { graphqlClient, ARTISTS_CONNECTION_QUERY, ALBUMS_QUERY, type Artist, type Album } from '../../lib/graphql'
 import type { Connection } from '../../lib/graphql/types'
 import { IconUser, IconDisc, IconMicrophone } from '@tabler/icons-react'
+import { SquareCardSkeleton } from './MediaCardSkeleton'
 import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 // ============================================================================
@@ -19,6 +20,8 @@ import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 interface LibraryArtistsTabProps {
   libraryId: string
+  /** Parent loading state (e.g., library context still loading) */
+  loading?: boolean
   onSelectArtist?: (artistId: string) => void
 }
 
@@ -85,6 +88,7 @@ function ArtistCard({ artist, albumCount, onSelect }: ArtistCardProps) {
 
 export function LibraryArtistsTab({
   libraryId,
+  loading: parentLoading,
   onSelectArtist,
 }: LibraryArtistsTabProps) {
   // URL-persisted state via nuqs
@@ -267,6 +271,8 @@ export function LibraryArtistsTab({
           showViewModeToggle
           defaultViewMode="cards"
           cardRenderer={cardRenderer}
+          cardSkeleton={() => <SquareCardSkeleton />}
+          skeletonCardCount={12}
           cardGridClassName="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
           showItemCount
           ariaLabel="Artists table"
@@ -277,7 +283,7 @@ export function LibraryArtistsTab({
           paginationMode="infinite"
           hasMore={hasMore}
           onLoadMore={loadMore}
-          isLoading={isLoading}
+          isLoading={parentLoading || isLoading}
           isLoadingMore={isLoadingMore}
           headerContent={
             <AlphabetFilter

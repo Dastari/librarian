@@ -84,30 +84,32 @@ impl UpcomingQueries {
 
         Ok(records
             .into_iter()
-            .map(|r| LibraryUpcomingEpisode {
-                id: r.id.to_string(),
-                tvmaze_id: r.episode_tvmaze_id,
-                name: r.episode_title,
-                season: r.season,
-                episode: r.episode,
-                air_date: r.air_date.map(|d| d.to_string()).unwrap_or_default(),
-                status: match r.status.as_str() {
-                    "missing" => EpisodeStatus::Missing,
-                    "wanted" => EpisodeStatus::Wanted,
-                    "available" => EpisodeStatus::Available,
-                    "downloading" => EpisodeStatus::Downloading,
-                    "downloaded" => EpisodeStatus::Downloaded,
-                    "ignored" => EpisodeStatus::Ignored,
-                    _ => EpisodeStatus::Missing,
-                },
-                show: LibraryUpcomingShow {
-                    id: r.show_id.to_string(),
-                    name: r.show_name,
-                    year: r.show_year,
-                    network: r.show_network,
-                    poster_url: r.show_poster_url,
-                    library_id: r.library_id.to_string(),
-                },
+            .map(|r| {
+                // Derive status from media_file_id presence
+                let status = if r.media_file_id.is_some() {
+                    EpisodeStatus::Downloaded
+                } else {
+                    // For upcoming episodes (air_date in future), status is Missing
+                    EpisodeStatus::Missing
+                };
+                
+                LibraryUpcomingEpisode {
+                    id: r.id.to_string(),
+                    tvmaze_id: r.episode_tvmaze_id,
+                    name: r.episode_title,
+                    season: r.season,
+                    episode: r.episode,
+                    air_date: r.air_date.map(|d| d.to_string()).unwrap_or_default(),
+                    status,
+                    show: LibraryUpcomingShow {
+                        id: r.show_id.to_string(),
+                        name: r.show_name,
+                        year: r.show_year,
+                        network: r.show_network,
+                        poster_url: r.show_poster_url,
+                        library_id: r.library_id.to_string(),
+                    },
+                }
             })
             .collect())
     }

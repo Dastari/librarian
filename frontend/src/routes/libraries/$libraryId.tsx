@@ -3,7 +3,8 @@ import { useState, useEffect, useCallback, useRef, createContext, useContext } f
 import { Button } from '@heroui/button'
 import { Card, CardBody } from '@heroui/card'
 import { useDisclosure } from '@heroui/modal'
-import { Skeleton } from '@heroui/skeleton'
+import { ShimmerLoader } from '../../components/shared/ShimmerLoader'
+import { libraryTemplate } from '../../lib/template-data'
 import {
   AutoDownloadBadge,
   AutoHuntBadge,
@@ -40,6 +41,7 @@ import { formatBytes } from '../../lib/format'
 // Context for sharing library data with subroutes
 export interface LibraryContextValue {
   library: Library
+  loading: boolean
   tvShows: TvShow[]
   fetchData: (isBackgroundRefresh?: boolean) => Promise<void>
   actionLoading: boolean
@@ -48,7 +50,19 @@ export interface LibraryContextValue {
   onOpenAddShow: () => void
 }
 
-export const LibraryContext = createContext<LibraryContextValue | null>(null)
+// Default context with loading state - used when context not yet initialized
+const defaultContextValue: LibraryContextValue = {
+  library: libraryTemplate,
+  loading: true,
+  tvShows: [],
+  fetchData: async () => {},
+  actionLoading: false,
+  handleDeleteShowClick: () => {},
+  handleUpdateLibrary: async () => {},
+  onOpenAddShow: () => {},
+}
+
+export const LibraryContext = createContext<LibraryContextValue>(defaultContextValue)
 
 export function useLibraryContext() {
   return useContext(LibraryContext)
@@ -355,52 +369,8 @@ function LibraryDetailLayout() {
   }, [library?.id, library?.name, fetchData])
 
 
-  // Loading skeleton for library detail page
-  if (loading) {
-    return (
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col grow">
-        {/* Header Skeleton */}
-        <div className="mb-6">
-          <Skeleton className="w-48 h-4 rounded mb-4" />
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-4">
-              <Skeleton className="w-12 h-12 rounded" />
-              <div>
-                <Skeleton className="w-48 h-7 rounded mb-2" />
-                <div className="flex gap-2">
-                  <Skeleton className="w-20 h-4 rounded" />
-                  <Skeleton className="w-16 h-4 rounded" />
-                  <Skeleton className="w-32 h-4 rounded" />
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Skeleton className="w-16 h-6 rounded-full" />
-              <Skeleton className="w-20 h-6 rounded-full" />
-              <Skeleton className="w-24 h-9 rounded-lg" />
-            </div>
-          </div>
-        </div>
-
-        {/* Tabs Skeleton */}
-        <div className="flex gap-2 mb-6">
-          <Skeleton className="w-20 h-9 rounded-lg" />
-          <Skeleton className="w-28 h-9 rounded-lg" />
-          <Skeleton className="w-20 h-9 rounded-lg" />
-          <Skeleton className="w-24 h-9 rounded-lg" />
-        </div>
-
-        {/* Content Skeleton */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <Skeleton key={i} className="aspect-[2/3] rounded-lg" />
-          ))}
-        </div>
-      </div>
-    )
-  }
-
-  if (!library) {
+  // Show not found state only after loading is complete
+  if (!loading && !library) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-8">
         <Card className="bg-content1">
@@ -415,10 +385,14 @@ function LibraryDetailLayout() {
     )
   }
 
-  const typeInfo = getLibraryTypeInfo(library.libraryType)
+  // Use template data during loading, real data when available
+  const displayLibrary = library ?? libraryTemplate
+  const typeInfo = getLibraryTypeInfo(displayLibrary.libraryType)
 
+  // Always provide context with loading state so subroutes can show shimmer
   const contextValue: LibraryContextValue = {
-    library,
+    library: displayLibrary,
+    loading,
     tvShows,
     fetchData,
     actionLoading,
@@ -431,64 +405,66 @@ function LibraryDetailLayout() {
     <LibraryContext.Provider value={contextValue}>
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col grow">
         {/* Header */}
-        <div className="mb-6">
-          {/* Breadcrumb */}
-          <Breadcrumbs className="mb-2">
-            <BreadcrumbItem href="/libraries">Libraries</BreadcrumbItem>
-            <BreadcrumbItem isCurrent>{library.name}</BreadcrumbItem>
-          </Breadcrumbs>
+        <ShimmerLoader loading={loading} templateProps={{ library: libraryTemplate }}>
+          <div className="mb-6">
+            {/* Breadcrumb */}
+            <Breadcrumbs className="mb-2">
+              <BreadcrumbItem href="/libraries">Libraries</BreadcrumbItem>
+              <BreadcrumbItem isCurrent>{displayLibrary.name}</BreadcrumbItem>
+            </Breadcrumbs>
 
-          {/* Title and Stats */}
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-4">
-              <typeInfo.Icon className="w-10 h-10" />
-              <div>
-                <h1 className="text-2xl font-bold">{library.name}</h1>
-                <div className="flex items-center gap-3 text-sm text-default-500 mt-1">
-                  <span>
-                    {library.libraryType === 'TV'
-                      ? `${library.showCount} shows`
-                      : library.libraryType === 'MOVIES'
-                        ? `${library.movieCount} movies`
-                        : `${library.itemCount} items`}
-                  </span>
-                  <span>•</span>
-                  <span>{formatBytes(library.totalSizeBytes)}</span>
-                  <span>•</span>
-                  <span className="font-mono text-xs">{library.path}</span>
+            {/* Title and Stats */}
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-4">
+                <typeInfo.Icon className="w-10 h-10" />
+                <div>
+                  <h1 className="text-2xl font-bold">{displayLibrary.name}</h1>
+                  <div className="flex items-center gap-3 text-sm text-default-500 mt-1">
+                    <span>
+                      {displayLibrary.libraryType === 'TV'
+                        ? `${displayLibrary.showCount} shows`
+                        : displayLibrary.libraryType === 'MOVIES'
+                          ? `${displayLibrary.movieCount} movies`
+                          : `${displayLibrary.itemCount} items`}
+                    </span>
+                    <span>•</span>
+                    <span>{formatBytes(displayLibrary.totalSizeBytes)}</span>
+                    <span>•</span>
+                    <span className="font-mono text-xs">{displayLibrary.path}</span>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="flex items-center gap-2">
-              {/* Setting Badges */}
-              <AutoDownloadBadge isEnabled={library.autoDownload} />
-              <AutoHuntBadge isEnabled={library.autoHunt} />
-              <FileOrganizationBadge isEnabled={library.organizeFiles} />
-              <QualityFilterBadge
-                resolutions={library.allowedResolutions || []}
-                codecs={library.allowedVideoCodecs || []}
-                requireHdr={library.requireHdr || false}
-              />
-              <Button
-                color="primary"
-                variant="flat"
-                size="sm"
-                onPress={handleScanLibrary}
-                isLoading={isScanning || library.scanning}
-                isDisabled={isScanning || library.scanning}
-              >
-                {isScanning || library.scanning ? 'Scanning...' : 'Scan Now'}
-              </Button>
+              <div className="flex items-center gap-2">
+                {/* Setting Badges */}
+                <AutoDownloadBadge isEnabled={displayLibrary.autoDownload} />
+                <AutoHuntBadge isEnabled={displayLibrary.autoHunt} />
+                <FileOrganizationBadge isEnabled={displayLibrary.organizeFiles} />
+                <QualityFilterBadge
+                  resolutions={displayLibrary.allowedResolutions || []}
+                  codecs={displayLibrary.allowedVideoCodecs || []}
+                  requireHdr={displayLibrary.requireHdr || false}
+                />
+                <Button
+                  color="primary"
+                  variant="flat"
+                  size="sm"
+                  onPress={handleScanLibrary}
+                  isLoading={isScanning || displayLibrary.scanning}
+                  isDisabled={loading || isScanning || displayLibrary.scanning}
+                >
+                  {isScanning || displayLibrary.scanning ? 'Scanning...' : 'Scan Now'}
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
+        </ShimmerLoader>
 
         {/* Tabbed Content with Outlet for subroutes */}
         <LibraryLayout
           activeTab={getActiveTab()}
           libraryId={libraryId}
-          libraryType={library.libraryType}
+          libraryType={displayLibrary.libraryType}
         >
           <Outlet />
         </LibraryLayout>

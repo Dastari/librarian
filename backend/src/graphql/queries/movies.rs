@@ -1,5 +1,22 @@
 use super::prelude::*;
 
+/// Helper to populate download_progress for movies with status "downloading"
+async fn populate_movie_download_progress(db: &Database, movies: &mut [Movie]) {
+    let torrent_files_repo = db.torrent_files();
+    for movie in movies.iter_mut() {
+        if movie.download_status == DownloadStatus::Downloading {
+            if let Ok(movie_id) = Uuid::parse_str(&movie.id) {
+                if let Ok(Some(progress)) = torrent_files_repo
+                    .get_download_progress_for_movie(movie_id)
+                    .await
+                {
+                    movie.download_progress = Some(progress);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct MovieQueries;
 
@@ -18,7 +35,9 @@ impl MovieQueries {
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        Ok(records.into_iter().map(movie_record_to_graphql).collect())
+        let mut movies: Vec<Movie> = records.into_iter().map(movie_record_to_graphql).collect();
+        populate_movie_download_progress(db, &mut movies).await;
+        Ok(movies)
     }
 
     /// Get all movies in a library
@@ -34,7 +53,9 @@ impl MovieQueries {
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        Ok(records.into_iter().map(movie_record_to_graphql).collect())
+        let mut movies: Vec<Movie> = records.into_iter().map(movie_record_to_graphql).collect();
+        populate_movie_download_progress(db, &mut movies).await;
+        Ok(movies)
     }
 
     /// Get movies in a library with cursor-based pagination and filtering
@@ -84,6 +105,7 @@ impl MovieQueries {
             .unwrap_or(OrderDirection::Asc);
 
         // Get paginated movies from database
+        // Note: download_status is now derived from media_file_id, not stored
         let (records, total) = db
             .movies()
             .list_by_library_paginated(
@@ -94,14 +116,14 @@ impl MovieQueries {
                 year_filter,
                 monitored_filter,
                 has_file_filter,
-                download_status_filter.as_deref(),
                 &sort_field_to_column(sort_field),
                 sort_dir == OrderDirection::Asc,
             )
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        let movies: Vec<Movie> = records.into_iter().map(movie_record_to_graphql).collect();
+        let mut movies: Vec<Movie> = records.into_iter().map(movie_record_to_graphql).collect();
+        populate_movie_download_progress(db, &mut movies).await;
         let connection = Connection::from_items(movies, offset, limit, total);
 
         Ok(MovieConnection::from_connection(connection))
@@ -120,7 +142,22 @@ impl MovieQueries {
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        Ok(record.map(movie_record_to_graphql))
+        match record {
+            Some(r) => {
+                let mut movie = movie_record_to_graphql(r);
+                if movie.download_status == DownloadStatus::Downloading {
+                    if let Ok(Some(progress)) = db
+                        .torrent_files()
+                        .get_download_progress_for_movie(movie_id)
+                        .await
+                    {
+                        movie.download_progress = Some(progress);
+                    }
+                }
+                Ok(Some(movie))
+            }
+            None => Ok(None),
+        }
     }
 
     /// Search for movies on TMDB

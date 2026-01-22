@@ -8,6 +8,15 @@ use crate::graphql::types::{
 
 /// Convert a MovieRecord from the database to a GraphQL Movie type
 pub(crate) fn movie_record_to_graphql(r: MovieRecord) -> Movie {
+    // Compute download_status from media_file_id presence
+    let download_status = if r.media_file_id.is_some() {
+        DownloadStatus::Downloaded
+    } else if r.monitored {
+        DownloadStatus::Wanted
+    } else {
+        DownloadStatus::Missing
+    };
+
     Movie {
         id: r.id.to_string(),
         library_id: r.library_id.to_string(),
@@ -31,10 +40,8 @@ pub(crate) fn movie_record_to_graphql(r: MovieRecord) -> Movie {
         poster_url: r.poster_url,
         backdrop_url: r.backdrop_url,
         monitored: r.monitored,
-        has_file: r.has_file,
-        size_bytes: r.size_bytes.unwrap_or(0),
-        path: r.path,
-        download_status: DownloadStatus::from(r.download_status.as_str()),
+        media_file_id: r.media_file_id.map(|id| id.to_string()),
+        download_status,
         collection_id: r.collection_id,
         collection_name: r.collection_name,
         collection_poster_url: r.collection_poster_url,
@@ -44,14 +51,7 @@ pub(crate) fn movie_record_to_graphql(r: MovieRecord) -> Movie {
         tmdb_vote_count: r.tmdb_vote_count,
         certification: r.certification,
         release_date: r.release_date.map(|d| d.to_string()),
-        allowed_resolutions_override: r.allowed_resolutions_override,
-        allowed_video_codecs_override: r.allowed_video_codecs_override,
-        allowed_audio_formats_override: r.allowed_audio_formats_override,
-        require_hdr_override: r.require_hdr_override,
-        allowed_hdr_types_override: r.allowed_hdr_types_override,
-        allowed_sources_override: r.allowed_sources_override,
-        release_group_blacklist_override: r.release_group_blacklist_override,
-        release_group_whitelist_override: r.release_group_whitelist_override,
+        download_progress: None, // Populated by resolvers when download_status is 'downloading'
     }
 }
 

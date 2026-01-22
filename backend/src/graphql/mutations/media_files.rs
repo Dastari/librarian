@@ -190,14 +190,15 @@ impl MediaFileMutations {
     }
 
     /// Manually trigger download for an available episode
+    /// Note: This mutation is deprecated. Episodes no longer store torrent links directly.
+    /// Use the auto-hunt workflow or add torrents manually via the downloads page.
     async fn download_episode(
         &self,
         ctx: &Context<'_>,
         episode_id: String,
     ) -> Result<DownloadEpisodeResult> {
-        let user = ctx.auth_user()?;
+        let _user = ctx.auth_user()?;
         let db = ctx.data_unchecked::<Database>();
-        let torrent_service = ctx.data_unchecked::<Arc<TorrentService>>();
 
         let ep_id = Uuid::parse_str(&episode_id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid episode ID: {}", e)))?;
@@ -210,64 +211,13 @@ impl MediaFileMutations {
             .map_err(|e| async_graphql::Error::new(e.to_string()))?
             .ok_or_else(|| async_graphql::Error::new("Episode not found"))?;
 
-        // Check if it has a torrent link
-        let torrent_link = episode.torrent_link.clone().ok_or_else(|| {
-            async_graphql::Error::new("Episode has no torrent link - not available for download")
-        })?;
-
-        // Get show info for logging
-        let show = db
-            .tv_shows()
-            .get_by_id(episode.tv_show_id)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?
-            .ok_or_else(|| async_graphql::Error::new("Show not found"))?;
-
-        tracing::info!(
-            user_id = %user.user_id,
-            show_name = %show.name,
-            season = episode.season,
-            episode = episode.episode,
-            "User manually downloading {} S{:02}E{:02}",
-            show.name,
-            episode.season,
-            episode.episode
-        );
-
-        // Start the download
-        let add_result = if torrent_link.starts_with("magnet:") {
-            torrent_service.add_magnet(&torrent_link, None).await
-        } else {
-            torrent_service.add_torrent_url(&torrent_link, None).await
-        };
-
-        match add_result {
-            Ok(_torrent_info) => {
-                // Note: File-level matching happens automatically when torrent is processed
-                // via pending_file_matches table
-
-                // Update episode status
-                if let Err(e) = db.episodes().mark_downloading(episode.id).await {
-                    tracing::error!("Failed to update episode status: {:?}", e);
-                }
-
-                // Episode just started downloading - no media file yet
-                let mut ep = Episode::from_record(episode, None);
-                ep.status = EpisodeStatus::Downloading;
-                ep.torrent_link = Some(torrent_link);
-
-                Ok(DownloadEpisodeResult {
-                    success: true,
-                    episode: Some(ep),
-                    error: None,
-                })
-            }
-            Err(e) => Ok(DownloadEpisodeResult {
-                success: false,
-                episode: None,
-                error: Some(format!("Failed to start download: {}", e)),
-            }),
-        }
+        // Episodes no longer store torrent links - downloads are initiated via auto-hunt
+        // or by manually adding torrents and linking them to content
+        Ok(DownloadEpisodeResult {
+            success: false,
+            episode: Some(Episode::from_record(episode, None)),
+            error: Some("This mutation is deprecated. Use auto-hunt or add torrents manually.".to_string()),
+        })
     }
 
     /// Re-match a media file against its library using stored metadata
@@ -482,6 +432,7 @@ impl MediaFileMutations {
         match metadata {
             Some(meta) => {
                 // Store in database
+                // Note: For full album art/lyrics extraction, use the analysis queue
                 let embedded = crate::db::EmbeddedMetadata {
                     artist: meta.artist,
                     album: meta.album,
@@ -489,10 +440,13 @@ impl MediaFileMutations {
                     track_number: meta.track_number.map(|n| n as i32),
                     disc_number: meta.disc_number.map(|n| n as i32),
                     year: meta.year,
-                    genre: None, // lofty doesn't expose genre in MediaMetadata, extend if needed
+                    genre: None,
                     show_name: None,
                     season: meta.season,
                     episode: meta.episode,
+                    cover_art_base64: None, // Use analysis queue for full extraction
+                    cover_art_mime: None,
+                    lyrics: None,
                 };
 
                 db.media_files()
@@ -501,11 +455,11 @@ impl MediaFileMutations {
                     .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
                 tracing::info!(
-                    media_file_id = %media_file_id,
-                    artist = ?embedded.artist,
-                    album = ?embedded.album,
-                    title = ?embedded.title,
-                    "Extracted and stored embedded metadata"
+                    "Extracted metadata for file {}: Artist={:?}, Album={:?}, Title={:?}",
+                    media_file_id,
+                    embedded.artist,
+                    embedded.album,
+                    embedded.title
                 );
 
                 Ok(MutationResult {

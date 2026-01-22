@@ -1,0 +1,110 @@
+---
+description: Logging format and context requirements
+globs: backend/src/**/*.rs
+---
+
+# Logging Rules
+
+## Context-Rich Log Messages
+
+Every log message MUST include enough context that a single line tells you exactly what it's referring to. Never log generic actions without specifying the target.
+
+## Good Examples
+
+These logs are self-documenting - you know exactly what file/album/track/show is being processed:
+
+```
+Analyzed '17 - Some of Them.flac': 1280x1280 mjpeg | flac 2ch | 0 subs | 0 chapters
+Verifying: 02 - guns_n_roses-its_so_easy.flac (linked to: "Appetite for Destruction" - "It's So Easy")
+Searching for album with query: 'Appetite for Destruction'
+Found 63 media files to scan in 'Music'
+Searching MusicBrainz for album 'Guns N' Roses Appetite For Destruction (Super Deluxe)'
+ARTIST MISMATCH: 06 - Yo Hood Ain't No Harder.flac linked to "Appetite for Destruction" by "Xzibit" but tags say artist "Guns N' Roses"
+Matched track 'It's So Easy' (score: 95.5) [artist:30, album:25, title:25, track#:15]
+Read tags: 05 - Hood Life.flac | Artist: Guns N' Roses | Album: Appetite For Destruction | Title: Knockin' On Heaven's Door | Track: 11
+```
+
+## Bad Examples
+
+These logs are useless for debugging - you can't tell WHAT was processed:
+
+```
+Copied file to library
+Processed track file
+Failed to verify quality
+Finished processing source
+Extracted and stored embedded metadata
+Created file-level matches for album
+Track matching result
+Music download started (validated)
+```
+
+## Required Context by Log Type
+
+### File Operations
+Always include the filename:
+- BAD: `Copied file to library`
+- GOOD: `Copied '02 - Its So Easy.flac' to /data/media/Music/Guns N' Roses/Appetite for Destruction/`
+
+### Matching Operations
+Always include what was matched and to what:
+- BAD: `Track matching result`
+- GOOD: `Matched '02 - Its So Easy.flac' to track 'It's So Easy' on 'Appetite for Destruction' (confidence: 95%)`
+
+### Album/Track Operations
+Always include album name and optionally artist:
+- BAD: `Created file-level matches for album`
+- GOOD: `Created 12 file-level matches for album 'Appetite for Destruction' by 'Guns N' Roses'`
+
+### Search Operations
+Always include the search query:
+- BAD: `Searching for album`
+- GOOD: `Searching for album with query: 'Guns N' Roses Appetite for Destruction'`
+
+### Download Operations
+Always include what is being downloaded:
+- BAD: `Music download started`
+- GOOD: `Music download started: 'Appetite for Destruction' by 'Guns N' Roses' from IPTorrents`
+
+### Metadata Operations
+Always include the file and key metadata found:
+- BAD: `Extracted and stored embedded metadata`
+- GOOD: `Extracted metadata from '05 - Hood Life.flac': Artist='Guns N' Roses', Album='Appetite For Destruction', Track=11`
+
+## Structured Logging with tracing
+
+When using Rust's `tracing` crate, always include context fields:
+
+```rust
+// BAD
+info!("Processed track file");
+
+// GOOD
+info!(
+    file = %file_name,
+    album = %album.name,
+    artist = %artist_name,
+    track = %track.title,
+    "Matched track by weighted scoring"
+);
+```
+
+## Error Messages
+
+Errors MUST include:
+1. What was being attempted
+2. On what target
+3. Why it failed
+
+```rust
+// BAD
+error!("Failed to verify quality");
+
+// GOOD
+error!(
+    file = %file_path,
+    expected = %target_quality,
+    actual = %detected_quality,
+    "Quality verification failed: file is lower quality than target"
+);
+```

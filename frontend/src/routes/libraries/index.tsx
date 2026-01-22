@@ -3,7 +3,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@heroui/button'
 import { Card, CardBody } from '@heroui/card'
 import { useDisclosure } from '@heroui/modal'
-import { Skeleton } from '@heroui/skeleton'
+import { ShimmerLoader } from '../../components/shared/ShimmerLoader'
+import { librariesTemplate } from '../../lib/template-data'
 import { Tooltip } from '@heroui/tooltip'
 import { addToast } from '@heroui/toast'
 import { ConfirmModal } from '../../components/ConfirmModal'
@@ -218,14 +219,6 @@ function LibrariesPage() {
     return () => subscription.unsubscribe()
   }, [])
 
-  // Skeleton card for loading state
-  const SkeletonLibraryCard = () => (
-    <Card className="aspect-[2/3] bg-content1">
-      <CardBody className="p-0 overflow-hidden">
-        <Skeleton className="w-full h-full" />
-      </CardBody>
-    </Card>
-  )
 
   const handleAddLibrary = async (input: CreateLibraryInput) => {
     try {
@@ -352,13 +345,7 @@ function LibrariesPage() {
       </div>
 
       {/* Content */}
-      {loading ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <SkeletonLibraryCard key={i} />
-          ))}
-        </div>
-      ) : libraries.length === 0 ? (
+      {!loading && libraries.length === 0 ? (
         <Card className="bg-content1/50 border-default-300 border-dashed border-2">
           <CardBody className="py-16 text-center">
             <div className="mx-auto w-20 h-20 rounded-full bg-default-100 flex items-center justify-center mb-6">
@@ -375,20 +362,22 @@ function LibrariesPage() {
           </CardBody>
         </Card>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {libraries.map((library) => (
-            <LibraryGridCard
-              key={library.id}
-              library={library}
-              shows={showsByLibrary[library.id] || []}
-              movies={moviesByLibrary[library.id] || []}
-              albums={albumsByLibrary[library.id] || []}
-              audiobooks={audiobooksByLibrary[library.id] || []}
-              onScan={() => handleScan(library.id, library.name)}
-              onDelete={() => handleDeleteClick(library.id, library.name)}
-            />
-          ))}
-        </div>
+        <ShimmerLoader loading={loading} templateProps={{ libraries: librariesTemplate }}>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            {(loading ? librariesTemplate : libraries).map((library) => (
+              <LibraryGridCard
+                key={library.id}
+                library={library}
+                shows={showsByLibrary[library.id] || []}
+                movies={moviesByLibrary[library.id] || []}
+                albums={albumsByLibrary[library.id] || []}
+                audiobooks={audiobooksByLibrary[library.id] || []}
+                onScan={() => handleScan(library.id, library.name)}
+                onDelete={() => handleDeleteClick(library.id, library.name)}
+              />
+            ))}
+          </div>
+        </ShimmerLoader>
       )}
 
       {/* Confirm Delete Modal */}

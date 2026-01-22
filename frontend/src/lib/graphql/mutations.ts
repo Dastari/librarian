@@ -382,8 +382,7 @@ export const ADD_MOVIE_MUTATION = `
         posterUrl
         backdropUrl
         monitored
-        hasFile
-        sizeBytes
+        mediaFileId
       }
       error
     }
@@ -401,17 +400,7 @@ export const UPDATE_MOVIE_MUTATION = `
         year
         status
         monitored
-        hasFile
-        sizeBytes
-        path
-        allowedResolutionsOverride
-        allowedVideoCodecsOverride
-        allowedAudioFormatsOverride
-        requireHdrOverride
-        allowedHdrTypesOverride
-        allowedSourcesOverride
-        releaseGroupBlacklistOverride
-        releaseGroupWhitelistOverride
+        mediaFileId
       }
       error
     }
@@ -511,12 +500,10 @@ export const DOWNLOAD_EPISODE_MUTATION = `
         overview
         airDate
         runtime
-        status
         tvmazeId
         tmdbId
         tvdbId
-        torrentLink
-        torrentLinkAddedAt
+        mediaFileId
       }
       error
     }
@@ -986,6 +973,56 @@ export const TRIGGER_AUTO_HUNT_MUTATION = `
       downloaded
       skipped
       failed
+    }
+  }
+`;
+
+// ============================================================================
+// Notification Mutations
+// ============================================================================
+
+export const MARK_NOTIFICATION_READ_MUTATION = `
+  mutation MarkNotificationRead($id: String!) {
+    markNotificationRead(id: $id) {
+      success
+      error
+      notification {
+        id
+        readAt
+      }
+    }
+  }
+`;
+
+export const MARK_ALL_NOTIFICATIONS_READ_MUTATION = `
+  mutation MarkAllNotificationsRead {
+    markAllNotificationsRead {
+      success
+      count
+      error
+    }
+  }
+`;
+
+export const RESOLVE_NOTIFICATION_MUTATION = `
+  mutation ResolveNotification($input: ResolveNotificationInput!) {
+    resolveNotification(input: $input) {
+      success
+      error
+      notification {
+        id
+        resolvedAt
+        resolution
+      }
+    }
+  }
+`;
+
+export const DELETE_NOTIFICATION_MUTATION = `
+  mutation DeleteNotification($id: String!) {
+    deleteNotification(id: $id) {
+      success
+      error
     }
   }
 `;

@@ -46,21 +46,8 @@ pub struct MovieRecord {
     // Status
     pub status: Option<String>,
     pub monitored: bool,
-    // Quality overrides
-    pub allowed_resolutions_override: Option<Vec<String>>,
-    pub allowed_video_codecs_override: Option<Vec<String>>,
-    pub allowed_audio_formats_override: Option<Vec<String>>,
-    pub require_hdr_override: Option<bool>,
-    pub allowed_hdr_types_override: Option<Vec<String>>,
-    pub allowed_sources_override: Option<Vec<String>>,
-    pub release_group_blacklist_override: Option<Vec<String>>,
-    pub release_group_whitelist_override: Option<Vec<String>>,
-    // File status
-    pub has_file: bool,
-    pub size_bytes: Option<i64>,
-    pub path: Option<String>,
-    /// Download status (missing, wanted, downloading, downloaded, suboptimal, ignored)
-    pub download_status: String,
+    // Media file link
+    pub media_file_id: Option<Uuid>,
     // Timestamps
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -96,7 +83,6 @@ pub struct CreateMovie {
     pub certification: Option<String>,
     pub status: Option<String>,
     pub monitored: bool,
-    pub path: Option<String>,
 }
 
 /// Input for updating a movie
@@ -114,16 +100,6 @@ pub struct UpdateMovie {
     pub poster_url: Option<String>,
     pub backdrop_url: Option<String>,
     pub monitored: Option<bool>,
-    pub path: Option<String>,
-    // Quality overrides
-    pub allowed_resolutions_override: Option<Vec<String>>,
-    pub allowed_video_codecs_override: Option<Vec<String>>,
-    pub allowed_audio_formats_override: Option<Vec<String>>,
-    pub require_hdr_override: Option<bool>,
-    pub allowed_hdr_types_override: Option<Vec<String>>,
-    pub allowed_sources_override: Option<Vec<String>>,
-    pub release_group_blacklist_override: Option<Vec<String>>,
-    pub release_group_whitelist_override: Option<Vec<String>>,
 }
 
 /// Movie collection record
@@ -161,11 +137,7 @@ impl MovieRepository {
                    tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                    collection_id, collection_name, collection_poster_url,
                    release_date, certification, status, monitored,
-                   allowed_resolutions_override, allowed_video_codecs_override,
-                   allowed_audio_formats_override, require_hdr_override,
-                   allowed_hdr_types_override, allowed_sources_override,
-                   release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, download_status, created_at, updated_at
+                   media_file_id, created_at, updated_at
             FROM movies
             WHERE library_id = $1
             ORDER BY COALESCE(sort_title, title)
@@ -191,7 +163,6 @@ impl MovieRepository {
         year_filter: Option<i32>,
         monitored_filter: Option<bool>,
         has_file_filter: Option<bool>,
-        download_status_filter: Option<&str>,
         sort_column: &str,
         sort_asc: bool,
     ) -> Result<(Vec<MovieRecord>, i64)> {
@@ -211,14 +182,15 @@ impl MovieRepository {
             conditions.push(format!("monitored = ${}", param_idx));
             param_idx += 1;
         }
-        if has_file_filter.is_some() {
-            conditions.push(format!("has_file = ${}", param_idx));
-            param_idx += 1;
+        if let Some(has_file) = has_file_filter {
+            // has_file is now derived from media_file_id presence
+            if has_file {
+                conditions.push("media_file_id IS NOT NULL".to_string());
+            } else {
+                conditions.push("media_file_id IS NULL".to_string());
+            }
         }
-        if download_status_filter.is_some() {
-            conditions.push(format!("download_status = ${}", param_idx));
-            // param_idx += 1; // Not needed after last
-        }
+        let _ = param_idx; // Suppress unused warning
 
         let where_clause = conditions.join(" AND ");
 
@@ -247,11 +219,7 @@ impl MovieRepository {
                    tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                    collection_id, collection_name, collection_poster_url,
                    release_date, certification, status, monitored,
-                   allowed_resolutions_override, allowed_video_codecs_override,
-                   allowed_audio_formats_override, require_hdr_override,
-                   allowed_hdr_types_override, allowed_sources_override,
-                   release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, download_status, created_at, updated_at
+                   media_file_id, created_at, updated_at
             FROM movies
             WHERE {}
             {}
@@ -271,12 +239,6 @@ impl MovieRepository {
         if let Some(monitored) = monitored_filter {
             count_builder = count_builder.bind(monitored);
         }
-        if let Some(has_file) = has_file_filter {
-            count_builder = count_builder.bind(has_file);
-        }
-        if let Some(download_status) = download_status_filter {
-            count_builder = count_builder.bind(download_status);
-        }
 
         let total: i64 = count_builder.fetch_one(&self.pool).await?;
 
@@ -290,12 +252,6 @@ impl MovieRepository {
         }
         if let Some(monitored) = monitored_filter {
             data_builder = data_builder.bind(monitored);
-        }
-        if let Some(has_file) = has_file_filter {
-            data_builder = data_builder.bind(has_file);
-        }
-        if let Some(download_status) = download_status_filter {
-            data_builder = data_builder.bind(download_status);
         }
 
         let records = data_builder.fetch_all(&self.pool).await?;
@@ -313,11 +269,7 @@ impl MovieRepository {
                    tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                    collection_id, collection_name, collection_poster_url,
                    release_date, certification, status, monitored,
-                   allowed_resolutions_override, allowed_video_codecs_override,
-                   allowed_audio_formats_override, require_hdr_override,
-                   allowed_hdr_types_override, allowed_sources_override,
-                   release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, download_status, created_at, updated_at
+                   media_file_id, created_at, updated_at
             FROM movies
             WHERE user_id = $1
             ORDER BY COALESCE(sort_title, title)
@@ -340,11 +292,7 @@ impl MovieRepository {
                    tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                    collection_id, collection_name, collection_poster_url,
                    release_date, certification, status, monitored,
-                   allowed_resolutions_override, allowed_video_codecs_override,
-                   allowed_audio_formats_override, require_hdr_override,
-                   allowed_hdr_types_override, allowed_sources_override,
-                   release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, download_status, created_at, updated_at
+                   media_file_id, created_at, updated_at
             FROM movies
             WHERE id = $1
             "#,
@@ -370,11 +318,7 @@ impl MovieRepository {
                    tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                    collection_id, collection_name, collection_poster_url,
                    release_date, certification, status, monitored,
-                   allowed_resolutions_override, allowed_video_codecs_override,
-                   allowed_audio_formats_override, require_hdr_override,
-                   allowed_hdr_types_override, allowed_sources_override,
-                   release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, download_status, created_at, updated_at
+                   media_file_id, created_at, updated_at
             FROM movies
             WHERE library_id = $1 AND tmdb_id = $2
             "#,
@@ -397,21 +341,17 @@ impl MovieRepository {
                 production_countries, spoken_languages, director, cast_names,
                 tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                 collection_id, collection_name, collection_poster_url,
-                release_date, certification, status, monitored, path
+                release_date, certification, status, monitored
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                    $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+                    $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
             RETURNING id, library_id, user_id, title, sort_title, original_title, year,
                       tmdb_id, imdb_id, overview, tagline, runtime, genres,
                       production_countries, spoken_languages, director, cast_names,
                       tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                       collection_id, collection_name, collection_poster_url,
                       release_date, certification, status, monitored,
-                      allowed_resolutions_override, allowed_video_codecs_override,
-                      allowed_audio_formats_override, require_hdr_override,
-                      allowed_hdr_types_override, allowed_sources_override,
-                      release_group_blacklist_override, release_group_whitelist_override,
-                      has_file, size_bytes, path, download_status, created_at, updated_at
+                      media_file_id, created_at, updated_at
             "#,
         )
         .bind(input.library_id)
@@ -441,7 +381,6 @@ impl MovieRepository {
         .bind(&input.certification)
         .bind(&input.status)
         .bind(input.monitored)
-        .bind(&input.path)
         .fetch_one(&self.pool)
         .await?;
 
@@ -465,15 +404,6 @@ impl MovieRepository {
                 poster_url = COALESCE($11, poster_url),
                 backdrop_url = COALESCE($12, backdrop_url),
                 monitored = COALESCE($13, monitored),
-                path = COALESCE($14, path),
-                allowed_resolutions_override = COALESCE($15, allowed_resolutions_override),
-                allowed_video_codecs_override = COALESCE($16, allowed_video_codecs_override),
-                allowed_audio_formats_override = COALESCE($17, allowed_audio_formats_override),
-                require_hdr_override = COALESCE($18, require_hdr_override),
-                allowed_hdr_types_override = COALESCE($19, allowed_hdr_types_override),
-                allowed_sources_override = COALESCE($20, allowed_sources_override),
-                release_group_blacklist_override = COALESCE($21, release_group_blacklist_override),
-                release_group_whitelist_override = COALESCE($22, release_group_whitelist_override),
                 updated_at = NOW()
             WHERE id = $1
             RETURNING id, library_id, user_id, title, sort_title, original_title, year,
@@ -482,11 +412,7 @@ impl MovieRepository {
                       tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                       collection_id, collection_name, collection_poster_url,
                       release_date, certification, status, monitored,
-                      allowed_resolutions_override, allowed_video_codecs_override,
-                      allowed_audio_formats_override, require_hdr_override,
-                      allowed_hdr_types_override, allowed_sources_override,
-                      release_group_blacklist_override, release_group_whitelist_override,
-                      has_file, size_bytes, path, download_status, created_at, updated_at
+                      media_file_id, created_at, updated_at
             "#,
         )
         .bind(id)
@@ -502,15 +428,6 @@ impl MovieRepository {
         .bind(&input.poster_url)
         .bind(&input.backdrop_url)
         .bind(input.monitored)
-        .bind(&input.path)
-        .bind(&input.allowed_resolutions_override)
-        .bind(&input.allowed_video_codecs_override)
-        .bind(&input.allowed_audio_formats_override)
-        .bind(input.require_hdr_override)
-        .bind(&input.allowed_hdr_types_override)
-        .bind(&input.allowed_sources_override)
-        .bind(&input.release_group_blacklist_override)
-        .bind(&input.release_group_whitelist_override)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -527,37 +444,22 @@ impl MovieRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Update movie file status
-    pub async fn update_file_status(
-        &self,
-        id: Uuid,
-        has_file: bool,
-        size_bytes: Option<i64>,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE movies 
-            SET has_file = $2, size_bytes = $3, updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .bind(has_file)
-        .bind(size_bytes)
-        .execute(&self.pool)
-        .await?;
-
+    /// Link a movie to a media file
+    pub async fn set_media_file(&self, movie_id: Uuid, media_file_id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE movies SET media_file_id = $2, updated_at = NOW() WHERE id = $1")
+            .bind(movie_id)
+            .bind(media_file_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
-    /// Update movie has_file flag
-    pub async fn update_has_file(&self, id: Uuid, has_file: bool) -> Result<()> {
-        sqlx::query("UPDATE movies SET has_file = $2, updated_at = NOW() WHERE id = $1")
-            .bind(id)
-            .bind(has_file)
+    /// Clear the media file link from a movie
+    pub async fn clear_media_file(&self, movie_id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE movies SET media_file_id = NULL, updated_at = NOW() WHERE id = $1")
+            .bind(movie_id)
             .execute(&self.pool)
             .await?;
-
         Ok(())
     }
 
@@ -571,18 +473,6 @@ impl MovieRepository {
         Ok(count)
     }
 
-    /// Get total size for a library's movies
-    pub async fn total_size_by_library(&self, library_id: Uuid) -> Result<i64> {
-        let size: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(size_bytes), 0)::BIGINT FROM movies WHERE library_id = $1",
-        )
-        .bind(library_id)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(size)
-    }
-
     /// List movies in a collection
     pub async fn list_by_collection(&self, collection_id: i32) -> Result<Vec<MovieRecord>> {
         let records = sqlx::query_as::<_, MovieRecord>(
@@ -593,11 +483,7 @@ impl MovieRepository {
                    tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                    collection_id, collection_name, collection_poster_url,
                    release_date, certification, status, monitored,
-                   allowed_resolutions_override, allowed_video_codecs_override,
-                   allowed_audio_formats_override, require_hdr_override,
-                   allowed_hdr_types_override, allowed_sources_override,
-                   release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, download_status, created_at, updated_at
+                   media_file_id, created_at, updated_at
             FROM movies
             WHERE collection_id = $1
             ORDER BY release_date
@@ -621,11 +507,7 @@ impl MovieRepository {
                    tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                    collection_id, collection_name, collection_poster_url,
                    release_date, certification, status, monitored,
-                   allowed_resolutions_override, allowed_video_codecs_override,
-                   allowed_audio_formats_override, require_hdr_override,
-                   allowed_hdr_types_override, allowed_sources_override,
-                   release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, download_status, created_at, updated_at
+                   media_file_id, created_at, updated_at
             FROM movies
             WHERE library_id = $1 AND (
                 LOWER(title) LIKE $2 OR
@@ -669,11 +551,7 @@ impl MovieRepository {
                        tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                        collection_id, collection_name, collection_poster_url,
                        release_date, certification, status, monitored,
-                       allowed_resolutions_override, allowed_video_codecs_override,
-                       allowed_audio_formats_override, require_hdr_override,
-                       allowed_hdr_types_override, allowed_sources_override,
-                       release_group_blacklist_override, release_group_whitelist_override,
-                       has_file, size_bytes, path, download_status, created_at, updated_at
+                       media_file_id, created_at, updated_at
                 FROM movies
                 WHERE library_id = $1 AND year = $2 AND (
                     LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(title, '''', ''), ':', ''), '-', ''), '.', ''), '_', '')) = $3 OR
@@ -701,11 +579,7 @@ impl MovieRepository {
                        tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                        collection_id, collection_name, collection_poster_url,
                        release_date, certification, status, monitored,
-                       allowed_resolutions_override, allowed_video_codecs_override,
-                       allowed_audio_formats_override, require_hdr_override,
-                       allowed_hdr_types_override, allowed_sources_override,
-                       release_group_blacklist_override, release_group_whitelist_override,
-                       has_file, size_bytes, path, download_status, created_at, updated_at
+                       media_file_id, created_at, updated_at
                 FROM movies
                 WHERE library_id = $1 AND year BETWEEN $2 AND $3 AND (
                     LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(title, '''', ''), ':', ''), '-', ''), '.', ''), '_', '')) = $4 OR
@@ -737,11 +611,7 @@ impl MovieRepository {
                    tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                    collection_id, collection_name, collection_poster_url,
                    release_date, certification, status, monitored,
-                   allowed_resolutions_override, allowed_video_codecs_override,
-                   allowed_audio_formats_override, require_hdr_override,
-                   allowed_hdr_types_override, allowed_sources_override,
-                   release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, download_status, created_at, updated_at
+                   media_file_id, created_at, updated_at
             FROM movies
             WHERE library_id = $1 AND (
                 LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(title, '''', ''), ':', ''), '-', ''), '.', ''), '_', '')) = $2 OR
@@ -768,13 +638,9 @@ impl MovieRepository {
                    tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                    collection_id, collection_name, collection_poster_url,
                    release_date, certification, status, monitored,
-                   allowed_resolutions_override, allowed_video_codecs_override,
-                   allowed_audio_formats_override, require_hdr_override,
-                   allowed_hdr_types_override, allowed_sources_override,
-                   release_group_blacklist_override, release_group_whitelist_override,
-                   has_file, size_bytes, path, download_status, created_at, updated_at
+                   media_file_id, created_at, updated_at
             FROM movies
-            WHERE library_id = $1 AND monitored = true AND has_file = false
+            WHERE library_id = $1 AND monitored = true AND media_file_id IS NULL
             ORDER BY COALESCE(sort_title, title)
             "#,
         )

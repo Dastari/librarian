@@ -206,10 +206,26 @@ impl MusicQueries {
             0.0
         };
 
+        // Convert tracks and populate download_progress for "downloading" status
+        let mut tracks: Vec<crate::graphql::types::TrackWithStatus> = tracks_with_status.into_iter().map(|t| t.into()).collect();
+        let torrent_files_repo = db.torrent_files();
+        for track_status in &mut tracks {
+            if track_status.track.status == "downloading" {
+                if let Ok(track_id) = Uuid::parse_str(&track_status.track.id) {
+                    if let Ok(Some(progress)) = torrent_files_repo
+                        .get_download_progress_for_track(track_id)
+                        .await
+                    {
+                        track_status.track.download_progress = Some(progress);
+                    }
+                }
+            }
+        }
+
         Ok(Some(AlbumWithTracks {
             album: album_record.into(),
             artist_name,
-            tracks: tracks_with_status.into_iter().map(|t| t.into()).collect(),
+            tracks,
             track_count,
             tracks_with_files,
             missing_tracks,
@@ -230,7 +246,24 @@ impl MusicQueries {
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        Ok(records.into_iter().map(Track::from).collect())
+        let mut tracks: Vec<Track> = records.into_iter().map(Track::from).collect();
+
+        // Populate download_progress for tracks with status "downloading"
+        let torrent_files_repo = db.torrent_files();
+        for track in &mut tracks {
+            if track.status == "downloading" {
+                if let Ok(track_id) = Uuid::parse_str(&track.id) {
+                    if let Ok(Some(progress)) = torrent_files_repo
+                        .get_download_progress_for_track(track_id)
+                        .await
+                    {
+                        track.download_progress = Some(progress);
+                    }
+                }
+            }
+        }
+
+        Ok(tracks)
     }
 
     /// Get tracks in a library with cursor-based pagination and filtering
@@ -257,9 +290,6 @@ impl MusicQueries {
         let has_file_filter = r#where
             .as_ref()
             .and_then(|w| w.has_file.as_ref().and_then(|f| f.eq));
-        let status_filter = r#where
-            .as_ref()
-            .and_then(|w| w.status.as_ref().and_then(|f| f.eq.clone()));
 
         let sort_field = order_by
             .as_ref()
@@ -278,7 +308,6 @@ impl MusicQueries {
                 limit,
                 title_filter.as_deref(),
                 has_file_filter,
-                status_filter.as_deref(),
                 &track_sort_field_to_column(sort_field),
                 sort_dir == OrderDirection::Asc,
             )
@@ -286,6 +315,7 @@ impl MusicQueries {
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         let tracks: Vec<Track> = records.into_iter().map(Track::from).collect();
+
         let connection = Connection::from_items(tracks, offset, limit, total);
 
         Ok(TrackConnection::from_connection(connection))

@@ -19,9 +19,11 @@ pub mod filesystem;
 pub mod hunt;
 pub mod job_queue;
 pub mod logging;
+pub mod match_scorer;
 pub mod metadata;
 pub mod metrics;
 pub mod musicbrainz;
+pub mod notifications;
 pub mod ollama;
 pub mod opensubtitles;
 pub mod organizer;
@@ -70,6 +72,10 @@ pub use metadata::{
 pub use metrics::{
     DatabaseSnapshot, MetricsCollector, SharedMetrics, SystemSnapshot, create_metrics_collector,
     format_bytes_short, format_uptime,
+};
+pub use notifications::{
+    NotificationCountEvent, NotificationEvent, NotificationEventType, NotificationService,
+    NotificationServiceConfig, create_notification_service,
 };
 pub use ollama::{LlmParseResult, OllamaConfig, OllamaService};
 pub use opensubtitles::{
