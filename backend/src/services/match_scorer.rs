@@ -17,6 +17,8 @@ use super::filename_parser;
 pub struct ParsedFileInfo {
     /// Track/chapter/episode number extracted from filename (e.g., "02 - Title.flac" → 2)
     pub number: Option<u32>,
+    /// Disc number extracted from filename (e.g., "CD2/01 - Title.flac" → 2)
+    pub disc_number: Option<u32>,
     /// Season number for TV (e.g., "S01E05" → 1)
     pub season: Option<u32>,
     /// Episode number for TV (e.g., "S01E05" → 5)
@@ -119,6 +121,7 @@ pub mod audiobook_weights {
 ///
 /// Extracts:
 /// - Track/chapter number from prefix (e.g., "02 - Title.flac" → 2)
+/// - Disc number from prefix or path (e.g., "CD2/01 - Title.flac" → disc 2)
 /// - Cleaned title without the number prefix
 ///
 /// # Examples
@@ -126,6 +129,10 @@ pub mod audiobook_weights {
 /// let info = parse_track_info("02 - It's So Easy.flac");
 /// assert_eq!(info.number, Some(2));
 /// assert_eq!(info.cleaned_title, "It's So Easy");
+///
+/// let info2 = parse_track_info("2-01 - Track Title.flac");
+/// assert_eq!(info2.disc_number, Some(2));
+/// assert_eq!(info2.number, Some(1));
 /// ```
 pub fn parse_track_info(filename: &str) -> ParsedFileInfo {
     let original = filename.to_string();
@@ -137,10 +144,50 @@ pub fn parse_track_info(filename: &str) -> ParsedFileInfo {
         filename
     };
     
+    // Extract disc number from filename
+    let disc_number = extract_disc_number(filename);
+    
+    // Try disc-track format first: "1-01 - Title" or "2-05. Title"
+    let disc_track_re = regex::Regex::new(
+        r"^(\d)-(\d{2})[\s\-._]+(.*)$"
+    ).unwrap();
+    
+    if let Some(caps) = disc_track_re.captures(name_without_ext) {
+        let disc = caps.get(1).and_then(|m| m.as_str().parse().ok());
+        let track = caps.get(2).and_then(|m| m.as_str().parse().ok());
+        let title = caps.get(3).map(|m| m.as_str().trim().to_string()).unwrap_or_default();
+        
+        return ParsedFileInfo {
+            number: track,
+            disc_number: disc.or(disc_number),
+            cleaned_title: title,
+            original,
+            ..Default::default()
+        };
+    }
+    
+    // Try "CD1 - 05 - Title" or "Disc 2 - 03 - Title" format
+    let cd_track_re = regex::Regex::new(
+        r"(?i)^(?:cd|disc|disk)\s*\d[\s\-._]+(\d{1,3})[\s\-._]+(.*)$"
+    ).unwrap();
+    
+    if let Some(caps) = cd_track_re.captures(name_without_ext) {
+        let track = caps.get(1).and_then(|m| m.as_str().parse().ok());
+        let title = caps.get(2).map(|m| m.as_str().trim().to_string()).unwrap_or_default();
+        
+        return ParsedFileInfo {
+            number: track,
+            disc_number, // Already extracted via extract_disc_number
+            cleaned_title: title,
+            original,
+            ..Default::default()
+        };
+    }
+    
     // Try to extract leading track number
     // Patterns: "01 - Title", "01. Title", "01-Title", "01_Title", "Track 01 - Title"
     let track_number_re = regex::Regex::new(
-        r"^(?:(?:Track|Disc|Chapter)\s*)?(\d{1,3})[\s\-._]+(.*)$"
+        r"^(?:Track\s*)?(\d{1,3})[\s\-._]+(.*)$"
     ).unwrap();
     
     if let Some(caps) = track_number_re.captures(name_without_ext) {
@@ -149,6 +196,7 @@ pub fn parse_track_info(filename: &str) -> ParsedFileInfo {
         
         return ParsedFileInfo {
             number,
+            disc_number,
             cleaned_title: title,
             original,
             ..Default::default()
@@ -158,10 +206,41 @@ pub fn parse_track_info(filename: &str) -> ParsedFileInfo {
     // No track number found - just clean the title
     ParsedFileInfo {
         number: None,
+        disc_number,
         cleaned_title: name_without_ext.to_string(),
         original,
         ..Default::default()
     }
+}
+
+/// Extract disc number from a filename
+///
+/// Handles formats like:
+/// - "CD1/01 - Track.flac" (from path)
+/// - "1-01 - Track.flac" (disc-track format)
+/// - "Disc 2 - 01 - Track.flac"
+fn extract_disc_number(filename: &str) -> Option<u32> {
+    // Pattern 1: "CD1", "Disc 1", "Disk1"
+    let disc_re = regex::Regex::new(r"(?i)(?:cd|disc|disk)\s*(\d)").unwrap();
+    if let Some(caps) = disc_re.captures(filename) {
+        if let Some(num) = caps.get(1) {
+            if let Ok(n) = num.as_str().parse::<u32>() {
+                return Some(n);
+            }
+        }
+    }
+
+    // Pattern 2: Disc-Track format "1-01" at the start
+    let disc_track_re = regex::Regex::new(r"^(\d)-\d{2}[\s._-]").unwrap();
+    if let Some(caps) = disc_track_re.captures(filename) {
+        if let Some(num) = caps.get(1) {
+            if let Ok(n) = num.as_str().parse::<u32>() {
+                return Some(n);
+            }
+        }
+    }
+
+    None
 }
 
 /// Parse TV episode info from a filename
@@ -342,24 +421,28 @@ pub fn year_match(file_year: Option<i32>, db_year: Option<i32>) -> f64 {
 /// * `meta_album` - Album from file metadata  
 /// * `meta_title` - Title from file metadata
 /// * `meta_track` - Track number from metadata
+/// * `meta_disc` - Disc number from metadata
 /// * `meta_year` - Year from metadata
 /// * `file_info` - Parsed info from filename
 /// * `db_artist` - Artist name from database
 /// * `db_album` - Album name from database
 /// * `db_track_title` - Track title from database
 /// * `db_track_number` - Track number from database
+/// * `db_disc_number` - Disc number from database
 /// * `db_year` - Year from database
 pub fn score_music_match(
     meta_artist: Option<&str>,
     meta_album: Option<&str>,
     meta_title: Option<&str>,
     meta_track: Option<u32>,
+    meta_disc: Option<u32>,
     meta_year: Option<i32>,
     file_info: &ParsedFileInfo,
     db_artist: &str,
     db_album: &str,
     db_track_title: &str,
     db_track_number: i32,
+    db_disc_number: i32,
     db_year: Option<i32>,
 ) -> ScoreBreakdown {
     let mut breakdown = ScoreBreakdown::default();
@@ -389,13 +472,26 @@ pub fn score_music_match(
         breakdown.total += score;
     }
     
-    // Track number comparison (prefer metadata, fall back to filename)
+    // Disc number comparison (prefer metadata, fall back to filename)
+    // We get the file's disc number for use in track number comparison
+    let file_disc = meta_disc.or(file_info.disc_number);
+    
+    // Track number comparison - ONLY award points if disc numbers match
+    // This prevents CD2 Track 1 from matching CD1 Track 1
     let track_num = meta_track.or(file_info.number);
-    let sim = number_match(track_num, db_track_number);
-    if sim > 0.0 {
-        let score = sim * music_weights::TRACK_NUMBER;
-        breakdown.number = Some((sim, score));
-        breakdown.total += score;
+    let disc_matches = disc_number_matches(file_disc, db_disc_number);
+    
+    if disc_matches {
+        let sim = number_match(track_num, db_track_number);
+        if sim > 0.0 {
+            let score = sim * music_weights::TRACK_NUMBER;
+            breakdown.number = Some((sim, score));
+            breakdown.total += score;
+        }
+    } else {
+        // Disc number mismatch - record as 0 points for track number
+        // This is important: file has explicit disc 2 but DB track is disc 1 (or vice versa)
+        breakdown.number = Some((0.0, 0.0));
     }
     
     // Year comparison
@@ -407,6 +503,22 @@ pub fn score_music_match(
     }
     
     breakdown
+}
+
+/// Check if disc numbers match for track number scoring purposes
+///
+/// Returns true if:
+/// - Both disc numbers are equal
+/// - File has no disc number (treat as disc 1 or "any disc")
+/// - DB track is disc 1 and file has no disc info (common single-disc albums)
+fn disc_number_matches(file_disc: Option<u32>, db_disc: i32) -> bool {
+    match file_disc {
+        // File explicitly specifies a disc number - must match exactly
+        Some(fd) => fd as i32 == db_disc,
+        // File has no disc info - only match disc 1 (or allow if db also has no disc info, i.e., disc 1)
+        // This handles the common case of single-disc albums where disc number isn't specified
+        None => db_disc == 1,
+    }
 }
 
 /// Score a TV episode match
@@ -650,22 +762,153 @@ mod tests {
     fn test_score_music_match() {
         let file_info = parse_track_info("02 - It's So Easy.flac");
         
-        // Test matching against correct track
+        // Test matching against correct track (disc 1)
         let score = score_music_match(
             Some("Guns N' Roses"),
             Some("Appetite for Destruction"),
             Some("It's So Easy"),
             Some(2),
+            Some(1), // disc 1
             Some(1987),
             &file_info,
             "Guns N' Roses",
             "Appetite for Destruction",
             "It's So Easy",
             2,
+            1, // db disc 1
             Some(1987),
         );
         
         // Should be a very high score (near 100)
         assert!(score.total > 90.0, "Expected > 90, got {}", score.total);
+    }
+    
+    #[test]
+    fn test_disc_number_mismatch_prevents_track_number_score() {
+        // File from CD2 should NOT match track on CD1
+        let file_info = parse_track_info("2-01 - Some Song.flac");
+        assert_eq!(file_info.disc_number, Some(2));
+        assert_eq!(file_info.number, Some(1));
+        
+        // Try to match against track 1 from disc 1 - should get 0 for track number
+        let score = score_music_match(
+            Some("Artist"),
+            Some("Album"),
+            None, // different title
+            Some(1), // meta track 1
+            Some(2), // meta disc 2
+            None,
+            &file_info,
+            "Artist",
+            "Album",
+            "Completely Different Song", // different track title
+            1, // db track 1
+            1, // db disc 1 - MISMATCH
+            None,
+        );
+        
+        // Should NOT get track number points due to disc mismatch
+        assert_eq!(score.number, Some((0.0, 0.0)), "Disc mismatch should yield 0 track number points");
+    }
+    
+    #[test]
+    fn test_disc_number_match_awards_track_number_score() {
+        // File from CD2 should match track on CD2
+        let file_info = parse_track_info("2-01 - Some Song.flac");
+        
+        let score = score_music_match(
+            Some("Artist"),
+            Some("Album"),
+            Some("Some Song"),
+            Some(1), // meta track 1
+            Some(2), // meta disc 2
+            None,
+            &file_info,
+            "Artist",
+            "Album",
+            "Some Song",
+            1, // db track 1
+            2, // db disc 2 - MATCH
+            None,
+        );
+        
+        // Should get track number points since disc matches
+        assert!(score.number.is_some());
+        let (sim, points) = score.number.unwrap();
+        assert_eq!(sim, 1.0, "Track number should match");
+        assert!(points > 0.0, "Should get track number points when disc matches");
+    }
+    
+    #[test]
+    fn test_no_disc_info_matches_disc_1() {
+        // File with no disc info should match disc 1 tracks
+        let file_info = parse_track_info("01 - Welcome to the Jungle.flac");
+        assert_eq!(file_info.disc_number, None);
+        
+        let score = score_music_match(
+            None,
+            None,
+            Some("Welcome to the Jungle"),
+            Some(1),
+            None, // no disc in metadata
+            None,
+            &file_info,
+            "Guns N' Roses",
+            "Appetite for Destruction",
+            "Welcome to the Jungle",
+            1, // track 1
+            1, // disc 1
+            None,
+        );
+        
+        // Should get track number points (file with no disc info defaults to disc 1)
+        assert!(score.number.is_some());
+        let (sim, points) = score.number.unwrap();
+        assert_eq!(sim, 1.0, "Track number should match");
+        assert!(points > 0.0, "Should get track number points when no disc info matches disc 1");
+    }
+    
+    #[test]
+    fn test_no_disc_info_does_not_match_disc_2() {
+        // File with no disc info should NOT match disc 2 tracks
+        let file_info = parse_track_info("01 - Welcome to the Jungle.flac");
+        assert_eq!(file_info.disc_number, None);
+        
+        let score = score_music_match(
+            None,
+            None,
+            Some("Some Bonus Track"),
+            Some(1),
+            None, // no disc in metadata
+            None,
+            &file_info,
+            "Guns N' Roses",
+            "Appetite for Destruction",
+            "Some Bonus Track",
+            1, // track 1
+            2, // disc 2 - file has no disc, so shouldn't match disc 2
+            None,
+        );
+        
+        // Should NOT get track number points (file has no disc info but db track is disc 2)
+        assert_eq!(score.number, Some((0.0, 0.0)), "No disc info should not match disc 2");
+    }
+    
+    #[test]
+    fn test_parse_track_info_with_disc() {
+        // Test disc-track format
+        let info = parse_track_info("2-01 - Track Title.flac");
+        assert_eq!(info.disc_number, Some(2));
+        assert_eq!(info.number, Some(1));
+        assert_eq!(info.cleaned_title, "Track Title");
+        
+        // Test CD prefix format
+        let info2 = parse_track_info("CD1 - 05 - Another Track.mp3");
+        assert_eq!(info2.disc_number, Some(1));
+        assert_eq!(info2.number, Some(5));
+        
+        // Test Disc prefix format
+        let info3 = parse_track_info("Disc 2 - 03 - Track.flac");
+        assert_eq!(info3.disc_number, Some(2));
     }
 }
