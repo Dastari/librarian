@@ -11,6 +11,13 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 3000,
+    proxy: {
+      // Proxy API requests to the backend during development
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+    },
   },
   plugins: [
     devtools(),
@@ -33,10 +40,6 @@ export default defineConfig({
         manualChunks: (id) => {
           if (!id.includes('node_modules/')) return
           
-          // Supabase - independent, used for auth
-          if (id.includes('@supabase/')) {
-            return 'vendor-supabase'
-          }
           // GraphQL/Apollo - independent data layer
           if (id.includes('/graphql') || id.includes('@apollo/')) {
             return 'vendor-graphql'

@@ -18,8 +18,16 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(feature = "postgres")]
 use sqlx::PgPool;
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+use sqlx::SqlitePool;
 use tokio_cron_scheduler::{Job, JobScheduler};
+
+#[cfg(feature = "postgres")]
+type DbPool = PgPool;
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+type DbPool = SqlitePool;
 use tracing::{error, info, warn};
 
 use crate::indexer::manager::IndexerManager;
@@ -161,7 +169,7 @@ macro_rules! job_with_retry {
 pub async fn start_scheduler(
     scanner_service: Arc<ScannerService>,
     torrent_service: Arc<TorrentService>,
-    pool: PgPool,
+    pool: DbPool,
     analysis_queue: Option<Arc<crate::services::MediaAnalysisQueue>>,
     metadata_service: Option<Arc<crate::services::MetadataService>>,
     indexer_manager: Option<Arc<IndexerManager>>,

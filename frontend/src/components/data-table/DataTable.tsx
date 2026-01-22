@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState, type Key, type ReactNode } from 'react'
+import { useMemo, useCallback, useState, useEffect, type Key, type ReactNode } from 'react'
 import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, type SortDescriptor } from '@heroui/table'
 import { Button, ButtonGroup } from '@heroui/button'
 import { Input } from '@heroui/input'
@@ -244,6 +244,7 @@ export function DataTable<T>({
   getRowKey,
   isLoading = false,
   skeletonRowCount = 5,
+  skeletonDelay = 0,
   enableSkeletonTesting = false,
   emptyContent,
   isPinned,
@@ -344,6 +345,29 @@ export function DataTable<T>({
 
   // Skeleton testing state
   const [isSkeletonTesting, setIsSkeletonTesting] = useState(false)
+
+  // Skeleton delay state - prevents flash for fast loads
+  const [showSkeleton, setShowSkeleton] = useState(skeletonDelay === 0)
+
+  useEffect(() => {
+    if (!isLoading) {
+      // Reset when loading stops
+      setShowSkeleton(skeletonDelay === 0)
+      return
+    }
+
+    if (skeletonDelay === 0) {
+      setShowSkeleton(true)
+      return
+    }
+
+    // Start timer to show skeleton after delay
+    const timer = setTimeout(() => {
+      setShowSkeleton(true)
+    }, skeletonDelay)
+
+    return () => clearTimeout(timer)
+  }, [isLoading, skeletonDelay])
 
   // Use controlled state or internal state
   const sortColumn = controlledSortColumn ?? tableState.sortColumn
@@ -866,9 +890,14 @@ export function DataTable<T>({
                   return Array.from({ length: skeletonRowCount }).map((_, i) => ({ _skeletonId: i }) as unknown as T)
                 }
 
-                if (isLoading && data.length === 0) {
-                  // Show skeleton rows during initial loading
+                if (isLoading && data.length === 0 && showSkeleton) {
+                  // Show skeleton rows during initial loading (after delay)
                   return Array.from({ length: skeletonRowCount }).map((_, i) => ({ _skeletonId: i }) as unknown as T)
+                }
+                
+                // If loading but delay hasn't passed, show empty array (no flash)
+                if (isLoading && data.length === 0 && !showSkeleton) {
+                  return []
                 }
 
                 const items: T[] = [...paginatedData]
@@ -1029,8 +1058,8 @@ export function DataTable<T>({
       {/* Card View - Ungrouped */}
       {viewMode === 'cards' && cardRenderer && !groupBy && (
         <div className={`${fillHeight ? 'flex-1 min-h-0 overflow-y-auto' : ''}`}>
-          {/* Show skeleton cards during loading */}
-          {isLoading && paginatedData.length === 0 && cardSkeleton ? (
+          {/* Show skeleton cards during loading (after delay) */}
+          {isLoading && paginatedData.length === 0 && cardSkeleton && showSkeleton ? (
             <div className={`${cardGridClassName} ${fillHeight ? 'pb-4' : ''}`}>
               {Array.from({ length: skeletonCardCount }).map((_, index) => (
                 <div key={`skeleton-card-${index}`}>
@@ -1038,6 +1067,9 @@ export function DataTable<T>({
                 </div>
               ))}
             </div>
+          ) : isLoading && paginatedData.length === 0 && !showSkeleton ? (
+            // Loading but delay hasn't passed - show nothing (no flash)
+            null
           ) : paginatedData.length === 0 ? (
             <div className="py-8 text-center">
               {emptyContent ?? (
@@ -1118,8 +1150,8 @@ export function DataTable<T>({
       {/* Card View - Grouped */}
       {viewMode === 'cards' && cardRenderer && groupBy && (
         <div className={`${fillHeight ? 'flex-1 min-h-0 overflow-y-auto' : ''}`}>
-          {/* Show skeleton cards during loading */}
-          {isLoading && groupedData.length === 0 && cardSkeleton ? (
+          {/* Show skeleton cards during loading (after delay) */}
+          {isLoading && groupedData.length === 0 && cardSkeleton && showSkeleton ? (
             <div className={`${cardGridClassName} ${fillHeight ? 'pb-4' : ''}`}>
               {Array.from({ length: skeletonCardCount }).map((_, index) => (
                 <div key={`skeleton-card-${index}`}>
@@ -1127,6 +1159,9 @@ export function DataTable<T>({
                 </div>
               ))}
             </div>
+          ) : isLoading && groupedData.length === 0 && !showSkeleton ? (
+            // Loading but delay hasn't passed - show nothing (no flash)
+            null
           ) : groupedData.length === 0 ? (
             <div className="py-8 text-center">
               {emptyContent ?? (

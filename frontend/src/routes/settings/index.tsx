@@ -37,12 +37,16 @@ function GeneralSettingsPage() {
           setSyncInterval(result.data.playbackSettings.syncIntervalSeconds)
         }
       } catch (err) {
-        console.error('Failed to load settings:', err)
-        addToast({
-          title: 'Error',
-          description: 'Failed to load playback settings',
-          color: 'danger',
-        })
+        // Silently ignore auth errors - they can happen during login race conditions
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        if (!errorMsg.toLowerCase().includes('authentication')) {
+          console.error('Failed to load settings:', err)
+          addToast({
+            title: 'Error',
+            description: 'Failed to load playback settings',
+            color: 'danger',
+          })
+        }
       } finally {
         setLoading(false)
       }

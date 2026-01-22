@@ -357,7 +357,7 @@ function RssSettingsPage() {
       {/* Feeds Table */}
       <Card>
         <CardBody className="p-0">
-          <ShimmerLoader loading={isLoading} templateProps={{ feeds: rssFeedsTemplate }}>
+          <ShimmerLoader loading={isLoading} delay={500} templateProps={{ feeds: rssFeedsTemplate }}>
           <Table aria-label="RSS Feeds" removeWrapper>
             <TableHeader>
               <TableColumn>NAME</TableColumn>

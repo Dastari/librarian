@@ -10,8 +10,16 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+#[cfg(feature = "postgres")]
 use sqlx::PgPool;
+#[cfg(feature = "sqlite")]
+use sqlx::SqlitePool;
 use time::OffsetDateTime;
+
+#[cfg(feature = "postgres")]
+type DbPool = PgPool;
+#[cfg(feature = "sqlite")]
+type DbPool = SqlitePool;
 use tokio::sync::{RwLock, broadcast, mpsc};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
@@ -66,7 +74,7 @@ pub struct LoggingService {
 
 impl LoggingService {
     /// Create a new logging service
-    pub fn new(pool: PgPool, config: DatabaseLoggerConfig) -> Self {
+    pub fn new(pool: DbPool, config: DatabaseLoggerConfig) -> Self {
         let (broadcast_tx, _) = broadcast::channel(config.broadcast_capacity);
         let (db_tx, db_rx) = mpsc::channel::<CreateLog>(config.batch_size * 10);
 
@@ -292,7 +300,7 @@ static LOGGING_SERVICE: std::sync::OnceLock<SharedLoggingService> = std::sync::O
 /// Initialize the global logging service - for future global access pattern
 #[allow(dead_code)]
 pub fn init_logging_service(
-    pool: PgPool,
+    pool: DbPool,
     config: DatabaseLoggerConfig,
 ) -> &'static SharedLoggingService {
     LOGGING_SERVICE.get_or_init(|| {
@@ -310,7 +318,7 @@ pub fn get_logging_service() -> Option<&'static SharedLoggingService> {
 /// Create a database logging layer for use with tracing_subscriber
 /// Returns (layer, broadcast_sender) - the sender is needed for GraphQL subscriptions
 pub fn create_database_layer(
-    pool: PgPool,
+    pool: DbPool,
     config: DatabaseLoggerConfig,
 ) -> (DatabaseLoggingLayer, broadcast::Sender<LogEvent>) {
     let min_level = config.min_level;

@@ -12,8 +12,16 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+#[cfg(feature = "postgres")]
 use sqlx::PgPool;
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+use sqlx::SqlitePool;
 use tracing::{debug, info, warn};
+
+#[cfg(feature = "postgres")]
+type DbPool = PgPool;
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+type DbPool = SqlitePool;
 
 use crate::db::Database;
 use crate::services::file_matcher::{FileInfo, FileMatcher};
@@ -27,13 +35,26 @@ use crate::services::usenet::UsenetService;
 /// Called every minute by the job scheduler. Uses the FileProcessor
 /// to process all torrents that have pending file matches.
 pub async fn process_completed_torrents(
-    pool: PgPool,
+    pool: DbPool,
     torrent_service: Arc<TorrentService>,
     analysis_queue: Option<Arc<MediaAnalysisQueue>>,
 ) -> Result<()> {
     let db = Database::new(pool);
 
     // Get all torrents that are complete and have uncopied matches
+    #[cfg(feature = "postgres")]
+    let completed_torrents: Vec<crate::db::TorrentRecord> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT t.* FROM torrents t
+        INNER JOIN pending_file_matches pfm ON pfm.source_id = t.id AND pfm.source_type = 'torrent'
+        WHERE pfm.copied_at IS NULL
+        AND t.state IN ('completed', 'seeding')
+        "#,
+    )
+    .fetch_all(db.pool())
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let completed_torrents: Vec<crate::db::TorrentRecord> = sqlx::query_as(
         r#"
         SELECT DISTINCT t.* FROM torrents t
@@ -96,13 +117,14 @@ pub async fn process_completed_torrents(
 /// Called once on startup to retry matching for torrents that previously
 /// failed to match (e.g., because the show wasn't in the library yet).
 pub async fn process_unmatched_on_startup(
-    pool: PgPool,
+    pool: DbPool,
     torrent_service: Arc<TorrentService>,
     _analysis_queue: Option<Arc<MediaAnalysisQueue>>,
 ) -> Result<()> {
     let db = Database::new(pool);
 
     // Get torrents that have no pending matches but are complete
+    #[cfg(feature = "postgres")]
     let unmatched_torrents: Vec<crate::db::TorrentRecord> = sqlx::query_as(
         r#"
         SELECT t.* FROM torrents t
@@ -112,6 +134,21 @@ pub async fn process_unmatched_on_startup(
             WHERE pfm.source_id = t.id AND pfm.source_type = 'torrent'
         )
         AND t.created_at > NOW() - INTERVAL '7 days'
+        "#,
+    )
+    .fetch_all(db.pool())
+    .await?;
+
+    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+    let unmatched_torrents: Vec<crate::db::TorrentRecord> = sqlx::query_as(
+        r#"
+        SELECT t.* FROM torrents t
+        WHERE t.state IN ('completed', 'seeding')
+        AND NOT EXISTS (
+            SELECT 1 FROM pending_file_matches pfm 
+            WHERE pfm.source_id = t.id AND pfm.source_type = 'torrent'
+        )
+        AND t.created_at > datetime('now', '-7 days')
         "#,
     )
     .fetch_all(db.pool())
@@ -208,7 +245,7 @@ pub async fn process_unmatched_on_startup(
 /// Called every minute by the job scheduler. Checks for usenet downloads
 /// that have completed and need post-processing.
 pub async fn process_completed_usenet_downloads(
-    pool: PgPool,
+    pool: DbPool,
     usenet_service: Arc<UsenetService>,
     analysis_queue: Option<Arc<MediaAnalysisQueue>>,
 ) -> Result<()> {
@@ -272,7 +309,7 @@ pub async fn process_completed_usenet_downloads(
 ///
 /// Convenience function that processes both types of downloads in sequence.
 pub async fn process_all_completed_downloads(
-    pool: PgPool,
+    pool: DbPool,
     torrent_service: Arc<TorrentService>,
     usenet_service: Option<Arc<UsenetService>>,
     analysis_queue: Option<Arc<MediaAnalysisQueue>>,

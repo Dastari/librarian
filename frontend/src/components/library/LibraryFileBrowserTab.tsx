@@ -480,6 +480,7 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
       <div className="flex-1 min-h-0 flex flex-col">
         <DataTable
           stateKey={`file-browser-${libraryPath}`}
+          skeletonDelay={500}
           data={sortedEntries}
           columns={columns}
           getRowKey={(entry) => entry.path}

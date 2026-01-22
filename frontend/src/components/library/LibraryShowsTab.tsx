@@ -65,6 +65,9 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
   // Normalize selectedLetter: empty string becomes null for the filter logic
   const normalizedLetter = selectedLetter === '' ? null : selectedLetter
 
+  // Check if we should skip queries (loading or template ID)
+  const shouldSkipQueries = parentLoading || libraryId.startsWith('template')
+
   // Handle sort change from DataTable
   const handleSortChange = useCallback((column: string, direction: 'asc' | 'desc') => {
     setSortColumn(column)
@@ -105,6 +108,7 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
     variables: queryVariables,
     getConnection: (data) => data.tvShowsConnection,
     batchSize: 50,
+    enabled: !shouldSkipQueries,
     deps: [libraryId, searchTerm],
   })
 
@@ -246,6 +250,7 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
       <div className="flex-1 min-h-0">
         <DataTable
           stateKey="library-shows"
+          skeletonDelay={500}
           data={filteredShows}
           columns={columns}
           getRowKey={(show) => show.id}

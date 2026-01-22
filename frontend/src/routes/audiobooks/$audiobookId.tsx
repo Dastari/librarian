@@ -171,6 +171,7 @@ function ChapterTable({ chapters, audiobookId, onPlay, onSearch }: ChapterTableP
   return (
     <DataTable
       key={tableKey}
+      skeletonDelay={500}
       data={chapters}
       columns={chapterColumns}
       getRowKey={(ch) => ch.id}
@@ -351,7 +352,7 @@ function AudiobookDetailPage() {
   const { audiobook, chapters, author } = displayAudiobookData
 
   return (
-    <ShimmerLoader loading={isLoading} templateProps={{ audiobookData: audiobookTemplate }}>
+    <ShimmerLoader loading={isLoading} delay={500} templateProps={{ audiobookData: audiobookTemplate }}>
       <div className="container mx-auto p-4  mb-20">
         {/* Breadcrumbs */}
         <Breadcrumbs className="mb-4">

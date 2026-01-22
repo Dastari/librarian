@@ -433,6 +433,7 @@ export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModa
                     )}
                   </div>
                   <DataTable
+                    skeletonDelay={500}
                     data={details.files}
                     columns={createFileColumns(matchesByIndex, handleRemoveMatch)}
                     getRowKey={(file) => file.index}

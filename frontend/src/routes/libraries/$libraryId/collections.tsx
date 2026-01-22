@@ -12,7 +12,7 @@ function CollectionsPage() {
   const { library, loading } = useLibraryContext()
 
   return (
-    <ShimmerLoader loading={loading}>
+    <ShimmerLoader loading={loading} delay={500}>
       <div className="flex flex-col w-full h-full overflow-hidden">
         {/* Toolbar */}
         <div className="flex items-center justify-between gap-4 mb-4 shrink-0">

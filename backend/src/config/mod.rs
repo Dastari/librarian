@@ -13,17 +13,18 @@ pub struct Config {
     /// Server port
     pub port: u16,
 
-    /// PostgreSQL database URL
+    /// Database URL (PostgreSQL) or path (SQLite)
+    /// For SQLite: use DATABASE_PATH or DATABASE_URL with sqlite:// prefix
     pub database_url: String,
 
-    /// Supabase API URL
-    pub supabase_url: String,
+    /// Supabase API URL (only required for postgres feature)
+    pub supabase_url: Option<String>,
 
-    /// Supabase anonymous key (for JWT verification)
-    pub supabase_anon_key: String,
+    /// Supabase anonymous key (only required for postgres feature)
+    pub supabase_anon_key: Option<String>,
 
-    /// Supabase service role key (for admin operations)
-    pub supabase_service_key: String,
+    /// Supabase service role key (only required for postgres feature)
+    pub supabase_service_key: Option<String>,
 
     /// JWT secret for token verification
     pub jwt_secret: String,
@@ -59,6 +60,41 @@ pub struct Config {
 impl Config {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self> {
+        // For SQLite, prefer DATABASE_PATH, fall back to DATABASE_URL
+        #[cfg(feature = "sqlite")]
+        let database_url = env::var("DATABASE_PATH")
+            .or_else(|_| env::var("DATABASE_URL"))
+            .unwrap_or_else(|_| "./data/librarian.db".to_string());
+
+        #[cfg(feature = "postgres")]
+        let database_url = env::var("DATABASE_URL").context("DATABASE_URL is required")?;
+
+        // Supabase config is only required for postgres feature
+        #[cfg(feature = "postgres")]
+        let (supabase_url, supabase_anon_key, supabase_service_key) = (
+            Some(env::var("SUPABASE_URL").context("SUPABASE_URL is required")?),
+            Some(env::var("SUPABASE_ANON_KEY").context("SUPABASE_ANON_KEY is required")?),
+            Some(env::var("SUPABASE_SERVICE_KEY").context("SUPABASE_SERVICE_KEY is required")?),
+        );
+
+        #[cfg(not(feature = "postgres"))]
+        let (supabase_url, supabase_anon_key, supabase_service_key) = (
+            env::var("SUPABASE_URL").ok(),
+            env::var("SUPABASE_ANON_KEY").ok(),
+            env::var("SUPABASE_SERVICE_KEY").ok(),
+        );
+
+        // JWT_SECRET is always required - generate a random one if not provided in dev
+        let jwt_secret = env::var("JWT_SECRET").unwrap_or_else(|_| {
+            // In production, this should be set explicitly
+            // For development, generate a random secret
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            std::time::SystemTime::now().hash(&mut hasher);
+            format!("dev-secret-{}", hasher.finish())
+        });
+
         Ok(Self {
             host: env::var("HOST").ok(),
 
@@ -67,30 +103,26 @@ impl Config {
                 .parse()
                 .context("Invalid PORT")?,
 
-            database_url: env::var("DATABASE_URL").context("DATABASE_URL is required")?,
+            database_url,
 
-            supabase_url: env::var("SUPABASE_URL").context("SUPABASE_URL is required")?,
+            supabase_url,
+            supabase_anon_key,
+            supabase_service_key,
 
-            supabase_anon_key: env::var("SUPABASE_ANON_KEY")
-                .context("SUPABASE_ANON_KEY is required")?,
-
-            supabase_service_key: env::var("SUPABASE_SERVICE_KEY")
-                .context("SUPABASE_SERVICE_KEY is required")?,
-
-            jwt_secret: env::var("JWT_SECRET").context("JWT_SECRET is required")?,
+            jwt_secret,
 
             tvdb_api_key: env::var("TVDB_API_KEY").ok(),
 
             tmdb_api_key: env::var("TMDB_API_KEY").ok(),
 
-            media_path: env::var("MEDIA_PATH").unwrap_or_else(|_| "/data/media".to_string()),
+            media_path: env::var("MEDIA_PATH").unwrap_or_else(|_| "./data/media".to_string()),
 
             downloads_path: env::var("DOWNLOADS_PATH")
-                .unwrap_or_else(|_| "/data/downloads".to_string()),
+                .unwrap_or_else(|_| "./data/downloads".to_string()),
 
-            cache_path: env::var("CACHE_PATH").unwrap_or_else(|_| "/data/cache".to_string()),
+            cache_path: env::var("CACHE_PATH").unwrap_or_else(|_| "./data/cache".to_string()),
 
-            session_path: env::var("SESSION_PATH").unwrap_or_else(|_| "/data/session".to_string()),
+            session_path: env::var("SESSION_PATH").unwrap_or_else(|_| "./data/session".to_string()),
 
             torrent_enable_dht: env::var("TORRENT_ENABLE_DHT")
                 .map(|v| v == "true" || v == "1")

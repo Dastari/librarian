@@ -190,32 +190,4 @@ Filename: {filename}
 
         Ok(record.map(NamingPattern::from_record))
     }
-
-    /// Get security settings
-    async fn security_settings(&self, ctx: &Context<'_>) -> Result<SecuritySettings> {
-        let _user = ctx.auth_user()?;
-        let db = ctx.data_unchecked::<Database>();
-
-        let key = db
-            .settings()
-            .get_indexer_encryption_key()
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-
-        let (encryption_key_set, encryption_key_preview) = match &key {
-            Some(k) if k.len() >= 8 => {
-                // Show first 4 and last 4 characters
-                let preview = format!("{}...{}", &k[..4], &k[k.len() - 4..]);
-                (true, Some(preview))
-            }
-            Some(_) => (true, Some("****".to_string())),
-            None => (false, None),
-        };
-
-        Ok(SecuritySettings {
-            encryption_key_set,
-            encryption_key_preview,
-            encryption_key_last_modified: None, // TODO: Track this if needed
-        })
-    }
 }

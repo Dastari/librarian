@@ -66,8 +66,17 @@ export function FolderBrowserInput({
       setQuickPaths(result.quickPaths || [])
       return true
     } catch (e) {
-      console.error('Browse error:', e)
-      setBrowseError(sanitizeError(e))
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      const isAuthError = errorMsg.toLowerCase().includes('authentication');
+      
+      // Don't log auth errors to console (they're expected during login race conditions)
+      // But still show them in the UI so the user knows what happened
+      if (!isAuthError) {
+        console.error('Browse error:', e)
+      }
+      
+      // Show error in modal UI (including auth errors, so user knows to log in)
+      setBrowseError(isAuthError ? 'Please sign in to browse folders' : sanitizeError(e))
       return false
     } finally {
       setIsBrowsing(false)
@@ -78,11 +87,12 @@ export function FolderBrowserInput({
     // Start browsing from current value, or root if empty
     // If the current value fails (invalid path), fall back to root
     const initialPath = value || '/'
-    const success = await browse(initialPath)
+    let success = await browse(initialPath)
     if (!success && initialPath !== '/') {
-      // If browsing the initial path fails, start from root
-      await browse('/')
+      // If browsing the initial path fails, try starting from root
+      success = await browse('/')
     }
+    // Always open modal - if browse failed, it will show the error message
     onOpen()
   }
 
@@ -104,10 +114,14 @@ export function FolderBrowserInput({
         setShowNewFolder(false)
         await browse(newPath)
       } else {
-        setBrowseError(sanitizeError(result.error || 'Failed to create folder'))
+        const errorMsg = result.error || 'Failed to create folder';
+        const isAuthError = errorMsg.toLowerCase().includes('authentication');
+        setBrowseError(isAuthError ? 'Please sign in to create folders' : sanitizeError(errorMsg))
       }
     } catch (e) {
-      setBrowseError(sanitizeError(e))
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      const isAuthError = errorMsg.toLowerCase().includes('authentication');
+      setBrowseError(isAuthError ? 'Please sign in to create folders' : sanitizeError(e))
     } finally {
       setIsCreatingFolder(false)
     }

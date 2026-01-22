@@ -123,12 +123,16 @@ function MetadataSettingsPage() {
       // Set a separate copy for initial comparison
       setInitialSettings({ ...newSettings })
     } catch (err) {
-      console.error('Failed to fetch settings:', err)
-      addToast({
-        title: 'Error',
-        description: 'Failed to load metadata settings',
-        color: 'danger',
-      })
+      // Silently ignore auth errors - they can happen during login race conditions
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      if (!errorMsg.toLowerCase().includes('authentication')) {
+        console.error('Failed to fetch settings:', err)
+        addToast({
+          title: 'Error',
+          description: 'Failed to load metadata settings',
+          color: 'danger',
+        })
+      }
       // Still set initial settings to allow editing even on error
       setInitialSettings({ ...settings })
     } finally {

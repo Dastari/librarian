@@ -11,7 +11,6 @@ import { Input, Textarea } from '@heroui/input'
 import { Select, SelectItem } from '@heroui/select'
 import { Tooltip } from '@heroui/tooltip'
 import { addToast } from '@heroui/toast'
-import { Checkbox } from '@heroui/checkbox'
 import {
   IconPlus,
   IconTrash,
@@ -23,17 +22,8 @@ import {
   IconTestPipe,
   IconDownload,
   IconUsers,
-  IconKey,
-  IconRefresh,
 } from '@tabler/icons-react'
-import {
-  graphqlClient,
-  SECURITY_SETTINGS_QUERY,
-  INITIALIZE_ENCRYPTION_KEY_MUTATION,
-  REGENERATE_ENCRYPTION_KEY_MUTATION,
-  type SecuritySettings,
-  type SecuritySettingsResult,
-} from '../../lib/graphql'
+import { graphqlClient } from '../../lib/graphql'
 import { formatBytes, sanitizeError } from '../../lib/format'
 import { DataTable, type DataTableColumn, type CardRendererProps, type RowAction } from '../../components/data-table'
 import { InlineError } from '../../components/shared'
@@ -239,7 +229,11 @@ function IndexersSettingsPage() {
         setIndexers(result.data.indexers)
       }
     } catch (e) {
-      console.error('Failed to fetch indexers:', e)
+      // Silently ignore auth errors - they can happen during login race conditions
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (!errorMsg.toLowerCase().includes('authentication')) {
+        console.error('Failed to fetch indexers:', e)
+      }
     } finally {
       setIsLoading(false)
     }
@@ -253,7 +247,11 @@ function IndexersSettingsPage() {
         setAvailableTypes(result.data.availableIndexerTypes)
       }
     } catch (e) {
-      console.error('Failed to fetch available types:', e)
+      // Silently ignore auth errors - they can happen during login race conditions
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      if (!errorMsg.toLowerCase().includes('authentication')) {
+        console.error('Failed to fetch available types:', e)
+      }
     }
   }
 
@@ -549,6 +547,7 @@ function IndexersSettingsPage() {
 
       {/* Indexer List */}
       <DataTable<IndexerConfig>
+        skeletonDelay={500}
         data={indexers}
         columns={indexerColumns}
         getRowKey={(indexer) => indexer.id}
@@ -584,8 +583,6 @@ function IndexersSettingsPage() {
         }
       />
 
-      {/* Security & Encryption */}
-      <SecuritySettingsCard />
 
       {/* Add Indexer Modal */}
       <AddIndexerModal
@@ -1410,6 +1407,7 @@ function SearchResultsCard({ results, onClose }: SearchResultsCardProps) {
 
         <div className="p-4">
           <DataTable<FlattenedRelease>
+            skeletonDelay={500}
             data={allReleases}
             columns={searchResultColumns}
             getRowKey={(release) => release._uniqueKey}
@@ -1438,244 +1436,3 @@ function SearchResultsCard({ results, onClose }: SearchResultsCardProps) {
   )
 }
 
-// Security Settings Card Component
-function SecuritySettingsCard() {
-  const [settings, setSettings] = useState<SecuritySettings | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-  const [isInitializing, setIsInitializing] = useState(false)
-  const [isRegenerating, setIsRegenerating] = useState(false)
-  const [confirmRegenerate, setConfirmRegenerate] = useState(false)
-  
-  const { isOpen, onOpen, onClose } = useDisclosure()
-
-  const fetchSecuritySettings = useCallback(async () => {
-    try {
-      const result = await graphqlClient
-        .query<{ securitySettings: SecuritySettings }>(SECURITY_SETTINGS_QUERY, {})
-        .toPromise()
-      if (result.data?.securitySettings) {
-        setSettings(result.data.securitySettings)
-      }
-    } catch (e) {
-      console.error('Failed to fetch security settings:', e)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchSecuritySettings()
-  }, [fetchSecuritySettings])
-
-  const handleInitialize = async () => {
-    setIsInitializing(true)
-    try {
-      const result = await graphqlClient
-        .mutation<{ initializeEncryptionKey: SecuritySettingsResult }>(
-          INITIALIZE_ENCRYPTION_KEY_MUTATION,
-          {}
-        )
-        .toPromise()
-
-      if (result.data?.initializeEncryptionKey.success) {
-        setSettings(result.data.initializeEncryptionKey.settings)
-        addToast({
-          title: 'Encryption Key Initialized',
-          description: 'The encryption key has been created.',
-          color: 'success',
-        })
-      } else {
-        addToast({
-          title: 'Error',
-          description: sanitizeError(result.data?.initializeEncryptionKey.error || 'Failed to initialize key'),
-          color: 'danger',
-        })
-      }
-    } catch (e) {
-      addToast({
-        title: 'Error',
-        description: sanitizeError(e),
-        color: 'danger',
-      })
-    } finally {
-      setIsInitializing(false)
-    }
-  }
-
-  const handleRegenerate = async () => {
-    if (!confirmRegenerate) {
-      addToast({
-        title: 'Confirmation Required',
-        description: 'You must confirm that you understand the consequences.',
-        color: 'warning',
-      })
-      return
-    }
-
-    setIsRegenerating(true)
-    try {
-      const result = await graphqlClient
-        .mutation<{ regenerateEncryptionKey: SecuritySettingsResult }>(
-          REGENERATE_ENCRYPTION_KEY_MUTATION,
-          { input: { confirmInvalidation: true } }
-        )
-        .toPromise()
-
-      if (result.data?.regenerateEncryptionKey.success) {
-        setSettings(result.data.regenerateEncryptionKey.settings)
-        onClose()
-        setConfirmRegenerate(false)
-        addToast({
-          title: 'Encryption Key Regenerated',
-          description: 'All existing indexer credentials are now invalid. Please re-enter them.',
-          color: 'warning',
-        })
-      } else {
-        addToast({
-          title: 'Error',
-          description: sanitizeError(result.data?.regenerateEncryptionKey.error || 'Failed to regenerate key'),
-          color: 'danger',
-        })
-      }
-    } catch (e) {
-      addToast({
-        title: 'Error',
-        description: sanitizeError(e),
-        color: 'danger',
-      })
-    } finally {
-      setIsRegenerating(false)
-    }
-  }
-
-  if (isLoading) {
-    return (
-      <Card>
-        <CardBody className="flex items-center justify-center py-8">
-          <Spinner size="sm" />
-        </CardBody>
-      </Card>
-    )
-  }
-
-  return (
-    <>
-      <Card>
-        <CardHeader>
-          <p className="font-semibold">Security & Encryption</p>
-        </CardHeader>
-        <Divider />
-        <CardBody className="gap-4">
-          {/* Encryption Key Status */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <IconKey size={20} className="text-default-400" />
-              <div>
-                <p className="font-medium">Indexer Encryption Key</p>
-                <p className="text-xs text-default-400">
-                  Used to encrypt indexer credentials (cookies, API keys)
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              {settings?.encryptionKeySet ? (
-                <>
-                  <Chip color="success" variant="flat" size="sm">
-                    Active
-                  </Chip>
-                  <code className="text-xs bg-default-100 px-2 py-1 rounded font-mono">
-                    {settings.encryptionKeyPreview}
-                  </code>
-                </>
-              ) : (
-                <Chip color="warning" variant="flat" size="sm">
-                  Not Set
-                </Chip>
-              )}
-            </div>
-          </div>
-
-          <Divider />
-
-          {/* Actions */}
-          <div className="flex gap-3">
-            {!settings?.encryptionKeySet && (
-              <Button
-                color="primary"
-                startContent={<IconKey size={16} />}
-                onPress={handleInitialize}
-                isLoading={isInitializing}
-              >
-                Initialize Key
-              </Button>
-            )}
-            {settings?.encryptionKeySet && (
-              <Button
-                color="danger"
-                variant="flat"
-                startContent={<IconRefresh size={16} />}
-                onPress={onOpen}
-              >
-                Regenerate Key
-              </Button>
-            )}
-          </div>
-
-          {/* Warning */}
-          <div className="bg-warning-50 dark:bg-warning-900/20 px-4 py-3 rounded-lg">
-            <div className="flex items-start gap-2">
-              <IconAlertTriangle size={18} className="text-warning-600 mt-0.5 shrink-0" />
-              <div className="text-sm text-warning-700 dark:text-warning-400">
-                <p className="font-medium mb-1">Important</p>
-                <p>
-                  The encryption key is used to secure sensitive indexer credentials stored in the
-                  database. If you regenerate this key, <strong>all existing indexer credentials
-                  will become invalid</strong> and you will need to re-enter them.
-                </p>
-              </div>
-            </div>
-          </div>
-        </CardBody>
-      </Card>
-
-      {/* Regenerate Confirmation Modal */}
-      <Modal isOpen={isOpen} onClose={onClose}>
-        <ModalContent>
-          <ModalHeader className="flex items-center gap-2 text-danger">
-            <IconAlertTriangle size={20} />
-            Regenerate Encryption Key
-          </ModalHeader>
-          <ModalBody>
-            <p className="text-default-600">
-              This action will generate a new encryption key. All existing indexer credentials
-              will be invalidated and you will need to re-enter cookies, API keys, and other
-              credentials for all configured indexers.
-            </p>
-            <div className="mt-4">
-              <Checkbox
-                isSelected={confirmRegenerate}
-                onValueChange={setConfirmRegenerate}
-                color="danger"
-              >
-                I understand that all indexer credentials will be invalidated
-              </Checkbox>
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={onClose}>
-              Cancel
-            </Button>
-            <Button
-              color="danger"
-              onPress={handleRegenerate}
-              isLoading={isRegenerating}
-              isDisabled={!confirmRegenerate}
-            >
-              Regenerate Key
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-    </>
-  )
-}

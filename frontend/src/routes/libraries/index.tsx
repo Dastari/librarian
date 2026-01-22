@@ -74,13 +74,17 @@ function LibrariesPage() {
         .toPromise()
 
       if (error) {
-        console.error('Failed to fetch libraries:', error)
-        if (!isBackgroundRefresh) {
-          addToast({
-            title: 'Error',
-            description: 'Failed to load libraries',
-            color: 'danger',
-          })
+        // Silently ignore auth errors - they can happen during login race conditions
+        const isAuthError = error.message?.toLowerCase().includes('authentication');
+        if (!isAuthError) {
+          console.error('Failed to fetch libraries:', error)
+          if (!isBackgroundRefresh) {
+            addToast({
+              title: 'Error',
+              description: 'Failed to load libraries',
+              color: 'danger',
+            })
+          }
         }
         return
       }
@@ -362,7 +366,7 @@ function LibrariesPage() {
           </CardBody>
         </Card>
       ) : (
-        <ShimmerLoader loading={loading} templateProps={{ libraries: librariesTemplate }}>
+        <ShimmerLoader loading={loading} delay={500} templateProps={{ libraries: librariesTemplate }}>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
             {(loading ? librariesTemplate : libraries).map((library) => (
               <LibraryGridCard

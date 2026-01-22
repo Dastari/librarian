@@ -423,6 +423,7 @@ export function TorrentTable({
     <>
     <DataTable
       stateKey="torrents"
+      skeletonDelay={500}
       data={filteredTorrents}
       columns={columns}
       getRowKey={(torrent) => torrent.id}

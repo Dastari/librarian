@@ -8,16 +8,19 @@ import {
   type DocumentNode,
   type OperationVariables,
   type TypedDocumentNode,
-} from '@apollo/client';
-import { onError } from '@apollo/client/link/error';
-import { setContext } from '@apollo/client/link/context';
-import { GraphQLWsLink } from '@apollo/client/link/subscriptions';
-import { getMainDefinition } from '@apollo/client/utilities';
-import { createClient as createWSClient } from 'graphql-ws';
-import { supabase } from '../supabase';
+} from "@apollo/client";
+import { onError } from "@apollo/client/link/error";
+import { setContext } from "@apollo/client/link/context";
+import { GraphQLWsLink } from "@apollo/client/link/subscriptions";
+import { getMainDefinition } from "@apollo/client/utilities";
+import { createClient as createWSClient } from "graphql-ws";
+import { getAuthHeader, getAuthHeaderSync } from "../auth";
 
 // Error event emitter for components to subscribe to
-type GraphQLErrorHandler = (error: { message: string; isNetworkError: boolean }) => void;
+type GraphQLErrorHandler = (error: {
+  message: string;
+  isNetworkError: boolean;
+}) => void;
 const errorHandlers: Set<GraphQLErrorHandler> = new Set();
 
 /** Subscribe to GraphQL errors for displaying toasts/alerts */
@@ -27,61 +30,21 @@ export function onGraphQLError(handler: GraphQLErrorHandler): () => void {
 }
 
 function notifyError(message: string, isNetworkError: boolean) {
-  errorHandlers.forEach(handler => handler({ message, isNetworkError }));
+  errorHandlers.forEach((handler) => handler({ message, isNetworkError }));
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
-const WS_URL = API_URL.replace(/^http/, 'ws');
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
+const WS_URL = API_URL.replace(/^http/, "ws");
 
-// Helper to get auth token from Supabase session
+// Helper to get auth token from localStorage
 async function getAuthTokenAsync(): Promise<string> {
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.access_token) {
-      return `Bearer ${session.access_token}`;
-    }
-  } catch (e) {
-    console.error('[GraphQL] Error getting auth token:', e);
-  }
-  return '';
+  // This is already synchronous, but kept async for API compatibility
+  return getAuthHeader();
 }
 
-// Synchronous version that reads from localStorage (for WebSocket connection params)
+// Synchronous version for WebSocket connection params
 function getAuthTokenSync(): string {
-  try {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'http://localhost:54321';
-    // Try multiple storage key patterns
-    const patterns = [
-      `sb-${new URL(supabaseUrl).hostname.split('.')[0]}-auth-token`,
-      `sb-127-auth-token`,
-      `sb-localhost-auth-token`,
-    ];
-    
-    for (const key of patterns) {
-      const stored = localStorage.getItem(key);
-      if (stored) {
-        const session = JSON.parse(stored);
-        if (session?.access_token) {
-          return `Bearer ${session.access_token}`;
-        }
-      }
-    }
-    
-    // Also try to find any Supabase auth token key
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.startsWith('sb-') && key?.endsWith('-auth-token')) {
-        const stored = localStorage.getItem(key);
-        if (stored) {
-          const session = JSON.parse(stored);
-          if (session?.access_token) {
-            return `Bearer ${session.access_token}`;
-          }
-        }
-      }
-    }
-  } catch { /* ignore */ }
-  return '';
+  return getAuthHeaderSync();
 }
 
 // HTTP link for queries and mutations
@@ -90,8 +53,20 @@ const httpLink = new HttpLink({
 });
 
 // Auth context link - adds Authorization header to every request
-const authLink = setContext(async (_, { headers }) => {
+const authLink = setContext(async (operation, { headers }) => {
   const token = await getAuthTokenAsync();
+  
+  // Debug logging in development - use warn for no token so it's visible
+  if (import.meta.env.DEV) {
+    const opName = operation.operationName || 'unknown';
+    if (!token) {
+      console.warn(`[GraphQL] ⚠️ No auth token for operation: ${opName} - request will fail if auth required`);
+    } else {
+      // Log that we're sending a token (truncated for security)
+      console.debug(`[GraphQL] Sending auth token for ${opName}: ${token.substring(0, 20)}...`);
+    }
+  }
+  
   return {
     headers: {
       ...headers,
@@ -100,50 +75,70 @@ const authLink = setContext(async (_, { headers }) => {
   };
 });
 
-// WebSocket link for subscriptions
-const wsLink = new GraphQLWsLink(
-  createWSClient({
-    url: `${WS_URL}/graphql/ws`,
-    connectionParams: () => ({
-      Authorization: getAuthTokenSync(),
-    }),
-  })
-);
+// WebSocket client for subscriptions - lazy mode so it reconnects with fresh auth
+const wsClient = createWSClient({
+  url: `${WS_URL}/graphql/ws`,
+  connectionParams: () => ({
+    Authorization: getAuthTokenSync(),
+  }),
+  lazy: true, // Only connect when needed
+  retryAttempts: 5,
+  shouldRetry: () => true,
+});
+
+const wsLink = new GraphQLWsLink(wsClient);
+
+// Function to restart WebSocket connection (called after auth changes)
+export function restartWebSocket(): void {
+  // Terminate existing connection so it reconnects with new auth
+  wsClient.terminate();
+}
 
 // Error link to handle GraphQL and network errors gracefully
 // Apollo Client v4 uses a unified error interface
-import { CombinedGraphQLErrors } from '@apollo/client/errors';
+import { CombinedGraphQLErrors } from "@apollo/client/errors";
 
 const errorLink = onError(({ error, operation }) => {
-  const operationName = operation.operationName || 'Unknown operation';
-  
+  const operationName = operation.operationName || "Unknown operation";
+
   // Check if it's a GraphQL error (has errors array)
   if (CombinedGraphQLErrors.is(error)) {
     error.errors.forEach((err) => {
       const message = err.message;
-      
-      console.error(
-        `[GraphQL error]: Message: ${message}, Operation: ${operationName}`
-      );
-      
-      // Don't notify for auth errors (handled separately)
-      const isAuthError = message.toLowerCase().includes('not authenticated') || 
-                         message.toLowerCase().includes('unauthorized');
-      
-      // Notify subscribers about the error
-      if (!isAuthError) {
+
+      // Check if it's an auth error (expected when not logged in)
+      const isAuthError =
+        message.toLowerCase().includes("not authenticated") ||
+        message.toLowerCase().includes("unauthorized") ||
+        message.toLowerCase().includes("authentication required");
+
+      // Only log non-auth errors as errors, auth errors are expected when not logged in
+      if (isAuthError) {
+        // Silently ignore auth errors - they're expected when not logged in
+        if (import.meta.env.DEV) {
+          console.debug(
+            `[GraphQL] Auth required for ${operationName} (user not logged in)`,
+          );
+        }
+      } else {
+        console.error(
+          `[GraphQL error]: Message: ${message}, Operation: ${operationName}`,
+        );
+        // Notify subscribers about the error
         notifyError(message, false);
       }
     });
   } else if (error) {
     // Network or other error
-    console.error(`[Network error]: ${error.message}, Operation: ${operationName}`);
-    
+    console.error(
+      `[Network error]: ${error.message}, Operation: ${operationName}`,
+    );
+
     // Notify subscribers about network error
-    const errorMessage = error.message.includes('Failed to fetch')
-      ? 'Unable to connect to server. Please check your connection.'
+    const errorMessage = error.message.includes("Failed to fetch")
+      ? "Unable to connect to server. Please check your connection."
       : error.message;
-    
+
     notifyError(errorMessage, true);
   }
 });
@@ -156,12 +151,12 @@ const splitLink = split(
   ({ query }) => {
     const definition = getMainDefinition(query);
     return (
-      definition.kind === 'OperationDefinition' &&
-      definition.operation === 'subscription'
+      definition.kind === "OperationDefinition" &&
+      definition.operation === "subscription"
     );
   },
   wsLink,
-  authedHttpLink
+  authedHttpLink,
 );
 
 // Create Apollo Client
@@ -170,24 +165,34 @@ export const apolloClient = new ApolloClient({
   cache: new InMemoryCache(),
   defaultOptions: {
     watchQuery: {
-      fetchPolicy: 'cache-and-network',
+      fetchPolicy: "cache-and-network",
     },
     query: {
-      fetchPolicy: 'network-only',
+      fetchPolicy: "network-only",
     },
   },
 });
 
+// Reset Apollo cache after login/logout to clear any stale auth state
+export function resetApolloCache(): void {
+  apolloClient.resetStore().catch((err) => {
+    console.warn("[Apollo] Cache reset failed:", err);
+  });
+}
+
 // Legacy wrapper for compatibility with existing code that uses urql-style API
 export const graphqlClient = {
-  query: <T = unknown>(query: string | DocumentNode, variables?: OperationVariables) => ({
+  query: <T = unknown>(
+    query: string | DocumentNode,
+    variables?: OperationVariables,
+  ) => ({
     toPromise: async (): Promise<{ data?: T; error?: Error }> => {
       try {
-        const doc = typeof query === 'string' ? gql(query) : query;
+        const doc = typeof query === "string" ? gql(query) : query;
         const result = await apolloClient.query<T>({
           query: doc as TypedDocumentNode<T>,
           variables,
-          fetchPolicy: 'network-only',
+          fetchPolicy: "network-only",
         });
         return { data: result.data };
       } catch (error) {
@@ -196,10 +201,13 @@ export const graphqlClient = {
     },
   }),
 
-  mutation: <T = unknown>(mutation: string | DocumentNode, variables?: OperationVariables) => ({
+  mutation: <T = unknown>(
+    mutation: string | DocumentNode,
+    variables?: OperationVariables,
+  ) => ({
     toPromise: async (): Promise<{ data?: T; error?: Error }> => {
       try {
-        const doc = typeof mutation === 'string' ? gql(mutation) : mutation;
+        const doc = typeof mutation === "string" ? gql(mutation) : mutation;
         const result = await apolloClient.mutate<T>({
           mutation: doc as TypedDocumentNode<T>,
           variables,
@@ -211,8 +219,12 @@ export const graphqlClient = {
     },
   }),
 
-  subscription: <T = unknown>(subscription: string | DocumentNode, variables?: OperationVariables) => {
-    const doc = typeof subscription === 'string' ? gql(subscription) : subscription;
+  subscription: <T = unknown>(
+    subscription: string | DocumentNode,
+    variables?: OperationVariables,
+  ) => {
+    const doc =
+      typeof subscription === "string" ? gql(subscription) : subscription;
     return apolloClient.subscribe<T>({
       query: doc as TypedDocumentNode<T>,
       variables,

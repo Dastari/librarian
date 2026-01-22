@@ -254,6 +254,9 @@ export interface DataTableProps<T> {
   /** Number of skeleton rows to show during initial loading (default: 5) */
   skeletonRowCount?: number
 
+  /** Delay in ms before showing skeletons (avoids flash for fast loads, default: 0) */
+  skeletonDelay?: number
+
   /** Whether to enable skeleton testing mode (adds a toggle to show/hide skeletons) */
   enableSkeletonTesting?: boolean
 

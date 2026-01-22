@@ -54,7 +54,22 @@ impl AuthToken {
     }
 }
 
+/// Claims structure for new custom auth tokens
+#[derive(Debug, Deserialize)]
+struct AccessTokenClaims {
+    sub: String,
+    username: String,
+    role: String,
+    email: Option<String>,
+    token_type: String,
+    #[allow(dead_code)]
+    exp: i64,
+    #[allow(dead_code)]
+    iat: i64,
+}
+
 /// Verify a JWT token and extract user info
+/// Supports both new custom auth format and legacy Supabase format
 pub fn verify_token(token: &str) -> Result<AuthUser> {
     let jwt_secret = std::env::var("JWT_SECRET")
         .map_err(|_| async_graphql::Error::new("JWT_SECRET not configured"))?;
@@ -67,10 +82,23 @@ pub fn verify_token(token: &str) -> Result<AuthUser> {
 
     let mut validation = Validation::new(Algorithm::HS256);
     validation.validate_exp = true;
-    // Supabase tokens have aud="authenticated", disable audience validation
-    // or set it explicitly
     validation.validate_aud = false;
 
+    // Try to decode as new custom auth format first
+    if let Ok(token_data) = decode::<AccessTokenClaims>(
+        token,
+        &DecodingKey::from_secret(jwt_secret.as_bytes()),
+        &validation,
+    ) {
+        tracing::debug!("JWT verified for user: {:?} (custom auth)", token_data.claims.email);
+        return Ok(AuthUser {
+            user_id: token_data.claims.sub,
+            email: token_data.claims.email,
+            role: Some(token_data.claims.role),
+        });
+    }
+
+    // Fall back to legacy Supabase format
     let token_data = decode::<SupabaseClaims>(
         token,
         &DecodingKey::from_secret(jwt_secret.as_bytes()),
@@ -82,7 +110,7 @@ pub fn verify_token(token: &str) -> Result<AuthUser> {
             .extend_with(|_, e| e.set("code", "UNAUTHORIZED"))
     })?;
 
-    tracing::debug!("JWT verified for user: {:?}", token_data.claims.email);
+    tracing::debug!("JWT verified for user: {:?} (legacy)", token_data.claims.email);
 
     Ok(AuthUser {
         user_id: token_data.claims.sub,

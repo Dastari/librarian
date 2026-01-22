@@ -14,8 +14,16 @@
 use anyhow::Result;
 use chrono::Datelike;
 use regex::Regex;
+#[cfg(feature = "postgres")]
 use sqlx::PgPool;
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+use sqlx::SqlitePool;
 use std::sync::Arc;
+
+#[cfg(feature = "postgres")]
+type DbPool = PgPool;
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+type DbPool = SqlitePool;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
@@ -42,11 +50,17 @@ pub async fn poll_feeds() -> Result<()> {
     
     info!("Starting RSS feed poll job (fetch-only mode)");
 
-    // Get database pool from environment
+    // Get database path/URL from environment
+    #[cfg(feature = "sqlite")]
+    let database_url = std::env::var("DATABASE_PATH")
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .unwrap_or_else(|_| "./data/librarian.db".to_string());
+
+    #[cfg(feature = "postgres")]
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://localhost/librarian".to_string());
 
-    let pool = PgPool::connect(&database_url).await?;
+    let pool = DbPool::connect(&database_url).await?;
     let db = Database::new(pool);
 
     poll_feeds_with_db(&db).await

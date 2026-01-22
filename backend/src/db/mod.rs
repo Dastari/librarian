@@ -1,10 +1,15 @@
 //! Database connection and operations
 //!
+//! This module supports both PostgreSQL and SQLite backends via feature flags.
+//! - `postgres` feature: Uses PostgreSQL (original backend)
+//! - `sqlite` feature: Uses SQLite (for self-hosted deployment)
+//!
 //! Re-exports are provided for convenience, even if not all are used within the crate.
 
 #![allow(unused_imports)]
 
 pub mod albums;
+pub mod artwork;
 pub mod audiobooks;
 pub mod cast;
 pub mod episodes;
@@ -21,6 +26,7 @@ pub mod priority_rules;
 pub mod rss_feeds;
 pub mod schedule;
 pub mod settings;
+pub mod sqlite_helpers;
 pub mod subtitles;
 pub mod torrent_files;
 pub mod torrents;
@@ -28,13 +34,28 @@ pub mod tracks;
 pub mod tv_shows;
 pub mod usenet_downloads;
 pub mod usenet_servers;
+pub mod users;
 pub mod watch_progress;
 
 use anyhow::Result;
-use sqlx::PgPool;
-use sqlx::postgres::PgPoolOptions;
+
+// Database pool type aliases based on feature flags
+// postgres takes precedence when both features are enabled
+#[cfg(feature = "postgres")]
+pub type DbPool = sqlx::PgPool;
+#[cfg(feature = "postgres")]
+use sqlx::postgres::PgPoolOptions as DbPoolOptions;
+
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+pub type DbPool = sqlx::SqlitePool;
+#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+use sqlx::sqlite::SqlitePoolOptions as DbPoolOptions;
+
+// Re-export the pool type for external use
+pub use DbPool as Pool;
 
 pub use albums::{AlbumRecord, AlbumRepository, ArtistRecord};
+pub use artwork::{ArtworkRecord, ArtworkRepository, ArtworkWithData, UpsertArtwork};
 pub use audiobooks::{
     AudiobookAuthorRecord, AudiobookChapterRecord, AudiobookChapterRepository, AudiobookRecord,
     AudiobookRepository, CreateAudiobook, CreateAudiobookChapter,
@@ -88,16 +109,20 @@ pub use usenet_servers::{
 pub use usenet_downloads::{
     CreateUsenetDownload, UpdateUsenetDownload, UsenetDownloadRecord, UsenetDownloadsRepository,
 };
+pub use users::{
+    CreateUser, InviteTokenRecord, RefreshTokenRecord, UpdateUser, UserLibraryAccessRecord,
+    UserRecord, UserRestrictionRecord, UsersRepository,
+};
 
 /// Database wrapper providing connection pool access
 #[derive(Clone)]
 pub struct Database {
-    pool: PgPool,
+    pool: DbPool,
 }
 
 impl Database {
     /// Create a new database wrapper from an existing pool
-    pub fn new(pool: PgPool) -> Self {
+    pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
 
@@ -110,9 +135,10 @@ impl Database {
     }
 
     /// Create a new database connection pool
+    #[cfg(feature = "postgres")]
     pub async fn connect(url: &str) -> Result<Self> {
         let max_connections = Self::get_max_connections();
-        let pool = PgPoolOptions::new()
+        let pool = DbPoolOptions::new()
             .max_connections(max_connections)
             .connect(url)
             .await?;
@@ -120,12 +146,50 @@ impl Database {
         Ok(Self { pool })
     }
 
+    /// Create a new database connection pool for SQLite
+    #[cfg(feature = "sqlite")]
+    pub async fn connect(url: &str) -> Result<Self> {
+        use anyhow::Context;
+        use sqlx::sqlite::SqliteConnectOptions;
+        use std::str::FromStr;
+        use std::path::Path;
+
+        // Ensure parent directory exists for the SQLite file
+        // Handle both "sqlite://path" URLs and plain file paths
+        let db_path = url.strip_prefix("sqlite://").unwrap_or(url);
+        if let Some(parent) = Path::new(db_path).parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create database directory: {:?}", parent))?;
+            }
+        }
+
+        // Parse the URL and enable WAL mode for better concurrency
+        let options = SqliteConnectOptions::from_str(url)?
+            .create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .busy_timeout(std::time::Duration::from_secs(30));
+
+        let pool = DbPoolOptions::new()
+            .max_connections(Self::get_max_connections())
+            .connect_with(options)
+            .await?;
+
+        // Enable foreign keys
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await?;
+
+        Ok(Self { pool })
+    }
+
     /// Create a new database connection pool with retry logic
     /// Retries every `retry_interval` until successful
+    #[cfg(feature = "postgres")]
     pub async fn connect_with_retry(url: &str, retry_interval: std::time::Duration) -> Self {
         let max_connections = Self::get_max_connections();
         loop {
-            match PgPoolOptions::new()
+            match DbPoolOptions::new()
                 .max_connections(max_connections)
                 .acquire_timeout(std::time::Duration::from_secs(10))
                 .connect(url)
@@ -146,8 +210,26 @@ impl Database {
         }
     }
 
+    /// Create a new database connection pool with retry logic for SQLite
+    #[cfg(feature = "sqlite")]
+    pub async fn connect_with_retry(url: &str, retry_interval: std::time::Duration) -> Self {
+        loop {
+            match Self::connect(url).await {
+                Ok(db) => return db,
+                Err(e) => {
+                    eprintln!(
+                        "Database connection failed: {}. Retrying in {} seconds...",
+                        e,
+                        retry_interval.as_secs()
+                    );
+                    tokio::time::sleep(retry_interval).await;
+                }
+            }
+        }
+    }
+
     /// Get the connection pool
-    pub fn pool(&self) -> &PgPool {
+    pub fn pool(&self) -> &DbPool {
         &self.pool
     }
 
@@ -286,9 +368,57 @@ impl Database {
         NotificationRepository::new(self.pool.clone())
     }
 
-    /// Run database migrations
+    /// Get a users repository
+    pub fn users(&self) -> UsersRepository {
+        UsersRepository::new(self.pool.clone())
+    }
+
+    /// Get an artwork repository
+    pub fn artwork(&self) -> ArtworkRepository {
+        ArtworkRepository::new(self.pool.clone())
+    }
+
+    /// Run database migrations (PostgreSQL)
+    #[cfg(feature = "postgres")]
     pub async fn migrate(&self) -> Result<()> {
         sqlx::migrate!("./migrations").run(&self.pool).await?;
         Ok(())
+    }
+
+    /// Run database migrations (SQLite)
+    /// 
+    /// For a self-contained application, we handle checksum mismatches gracefully:
+    /// if a migration was already applied but the file changed (e.g., due to version updates),
+    /// we update the checksum rather than failing.
+    #[cfg(feature = "sqlite")]
+    pub async fn migrate(&self) -> Result<()> {
+        let migrator = sqlx::migrate!("./migrations_sqlite");
+        
+        match migrator.run(&self.pool).await {
+            Ok(()) => Ok(()),
+            Err(sqlx::migrate::MigrateError::VersionMismatch(version)) => {
+                // A migration was modified after being applied
+                // For a standalone app, update the checksum and continue
+                tracing::warn!(
+                    "Migration {} was modified since last run, updating checksum",
+                    version
+                );
+                
+                // Get the expected checksum from the migrator
+                if let Some(migration) = migrator.migrations.iter().find(|m| m.version == version) {
+                    let checksum_bytes = migration.checksum.as_ref();
+                    sqlx::query("UPDATE _sqlx_migrations SET checksum = ?1 WHERE version = ?2")
+                        .bind(checksum_bytes)
+                        .bind(version)
+                        .execute(&self.pool)
+                        .await?;
+                    
+                    // Try running migrations again
+                    migrator.run(&self.pool).await?;
+                }
+                Ok(())
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 }

@@ -5,6 +5,7 @@
 #![allow(unused_imports)]
 
 pub mod artwork;
+pub mod auth;
 pub mod audible;
 pub mod cache;
 pub mod cast;
@@ -43,6 +44,10 @@ pub mod tvmaze;
 pub mod usenet;
 
 pub use artwork::ArtworkService;
+pub use auth::{
+    AccessTokenClaims, AuthConfig, AuthService, AuthTokens, AuthenticatedUser, LoginResult,
+    RefreshTokenClaims, RegisterInput, verify_token as verify_auth_token,
+};
 pub use cast::{
     CastDevicesEvent, CastPlayerState, CastService, CastServiceConfig, CastSessionEvent,
 };

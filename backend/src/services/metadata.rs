@@ -592,7 +592,7 @@ impl MetadataService {
         // Cache artwork to Supabase storage if artwork service is available
         let (cached_poster_url, cached_backdrop_url) =
             if let Some(ref artwork_service) = self.artwork_service {
-                let entity_id = format!("movie_{}_{}", options.provider_id, options.library_id);
+                let entity_id = format!("{}_{}", options.provider_id, options.library_id);
 
                 let poster_url = artwork_service
                     .cache_image_optional(

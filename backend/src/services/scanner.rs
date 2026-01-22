@@ -465,6 +465,7 @@ impl ScannerService {
             true
         } else if library.library_type.to_lowercase() == "tv" {
             // Check for any TV shows with auto_hunt_override = true
+            #[cfg(feature = "postgres")]
             let has_override: bool = sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM tv_shows WHERE library_id = $1 AND auto_hunt_override = true AND monitored = true)"
             )
@@ -472,6 +473,20 @@ impl ScannerService {
             .fetch_one(self.db.pool())
             .await
             .unwrap_or(false);
+            
+            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+            let has_override: bool = {
+                use crate::db::sqlite_helpers::uuid_to_str;
+                let result: Option<i32> = sqlx::query_scalar(
+                    "SELECT 1 FROM tv_shows WHERE library_id = ?1 AND auto_hunt_override = 1 AND monitored = 1 LIMIT 1"
+                )
+                .bind(uuid_to_str(library_id))
+                .fetch_optional(self.db.pool())
+                .await
+                .unwrap_or(None);
+                result.is_some()
+            };
+            
             has_override
         } else {
             false

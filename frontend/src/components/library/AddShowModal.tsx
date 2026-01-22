@@ -257,7 +257,11 @@ export function AddShowModal({
               <Select
                 label="Monitor Type"
                 selectedKeys={[monitorType]}
-                onChange={(e) => setMonitorType(e.target.value as MonitorType)}
+                onChange={(e) => {
+                  const value = e.target.value as MonitorType
+                  if (value) setMonitorType(value)
+                }}
+                disallowEmptySelection
                 description="Which episodes to track for download"
               >
                 <SelectItem key="ALL" textValue="All Episodes">

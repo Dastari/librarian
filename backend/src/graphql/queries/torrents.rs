@@ -21,12 +21,7 @@ impl TorrentQueries {
             // Create a map of info_hash -> added_at
             let added_at_map: HashMap<String, String> = records
                 .into_iter()
-                .filter_map(|r| {
-                    r.added_at
-                        .format(&time::format_description::well_known::Rfc3339)
-                        .ok()
-                        .map(|ts| (r.info_hash, ts))
-                })
+                .map(|r| (r.info_hash, r.added_at.to_rfc3339()))
                 .collect();
 
             // Merge added_at into the result

@@ -1,4 +1,26 @@
 // ============================================================================
+// Auth Queries
+// ============================================================================
+
+/** Check if the system needs first-time setup (no users exist) */
+export const CHECK_SETUP_STATUS_QUERY = `
+  query NeedsSetup {
+    needsSetup
+  }
+`;
+
+/** Get the current user (requires authentication) */
+export const ME_QUERY = `
+  query Me {
+    me {
+      id
+      email
+      role
+    }
+  }
+`;
+
+// ============================================================================
 // Torrent Queries
 // ============================================================================
 
@@ -116,7 +138,7 @@ export const PENDING_FILE_MATCHES_QUERY = `
 
 /**
  * Lightweight query to get the active download count
- * 
+ *
  * Use this to initialize the navbar badge before subscribing to updates.
  */
 export const ACTIVE_DOWNLOAD_COUNT_QUERY = `
@@ -1217,7 +1239,7 @@ export const LIBRARY_UPCOMING_EPISODES_QUERY = `
       season
       episode
       airDate
-      mediaFileId
+      status
       show {
         id
         name
@@ -1410,19 +1432,6 @@ export const MEDIA_FILE_DETAILS_QUERY = `
 `;
 
 // ============================================================================
-// Security Settings Queries
-// ============================================================================
-
-export const SECURITY_SETTINGS_QUERY = `
-  query SecuritySettings {
-    securitySettings {
-      encryptionKeySet
-      encryptionKeyPreview
-      encryptionKeyLastModified
-    }
-  }
-`;
-
 // ============================================================================
 // Cast Queries
 // ============================================================================
