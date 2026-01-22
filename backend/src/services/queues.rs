@@ -301,8 +301,8 @@ async fn store_media_analysis(
     let analysis_json = serde_json::to_value(analysis)?;
 
     // Update media_files record
-    sqlx::query(
-        r#"
+    #[cfg(feature = "postgres")]
+    let query = r#"
         UPDATE media_files SET
             duration = COALESCE($2, duration),
             bitrate = COALESCE($3, bitrate),
@@ -324,8 +324,34 @@ async fn store_media_analysis(
             analyzed_at = NOW(),
             modified_at = NOW()
         WHERE id = $1
-        "#,
-    )
+        "#;
+
+    #[cfg(feature = "sqlite")]
+    let query = r#"
+        UPDATE media_files SET
+            duration = COALESCE($2, duration),
+            bitrate = COALESCE($3, bitrate),
+            width = COALESCE($4, width),
+            height = COALESCE($5, height),
+            video_codec = COALESCE($6, video_codec),
+            audio_codec = COALESCE($7, audio_codec),
+            audio_channels = COALESCE($8, audio_channels),
+            audio_language = COALESCE($9, audio_language),
+            container_format = $10,
+            frame_rate = $11,
+            pixel_format = $12,
+            hdr_type = $13,
+            bit_depth = $14,
+            resolution = COALESCE($15, resolution),
+            sample_rate = $16,
+            chapter_count = $17,
+            analysis_data = $18,
+            analyzed_at = datetime('now'),
+            modified_at = datetime('now')
+        WHERE id = $1
+        "#;
+
+    sqlx::query(query)
     .bind(media_file_id)
     .bind(duration)
     .bind(bitrate)
@@ -681,9 +707,12 @@ async fn extract_and_store_embedded_metadata(
         );
     } else {
         // Mark as extracted even if no metadata found (to prevent re-extraction)
-        sqlx::query(
-            "UPDATE media_files SET metadata_extracted_at = NOW() WHERE id = $1"
-        )
+        #[cfg(feature = "postgres")]
+        let query = "UPDATE media_files SET metadata_extracted_at = NOW() WHERE id = $1";
+        #[cfg(feature = "sqlite")]
+        let query = "UPDATE media_files SET metadata_extracted_at = datetime('now') WHERE id = $1";
+
+        sqlx::query(query)
         .bind(media_file_id)
         .execute(db.pool())
         .await?;

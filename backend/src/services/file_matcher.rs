@@ -868,12 +868,14 @@ impl FileMatcher {
                     meta_album,
                     meta.title.as_deref(),
                     meta.track_number.map(|n| n as u32),
+                    meta.disc_number.map(|n| n as u32),
                     meta.year,
                     &file_info,
                     &artist_name,
                     &album.name,
                     &track.title,
                     track.track_number,
+                    track.disc_number,
                     album.year,
                 );
 
@@ -2526,6 +2528,7 @@ impl FileMatcher {
         let meta_title = metadata.title.as_deref();
         let meta_artist = metadata.artist.as_deref();
         let meta_track = metadata.track_number;
+        let meta_disc = metadata.disc_number;
         let meta_year = metadata.year;
         
         // Parse filename for fallback info
@@ -2558,12 +2561,14 @@ impl FileMatcher {
                     meta_album,
                     meta_title,
                     meta_track,
+                    meta_disc,
                     meta_year,
                     &file_info,
                     &artist_name,
                     &album.name,
                     &track.title,
                     track.track_number,
+                    track.disc_number,
                     album.year,
                 );
 
@@ -2763,12 +2768,14 @@ impl FileMatcher {
                     file.source_name.as_deref(), // Use source name as pseudo-album
                     None, // No metadata title - use file_info.cleaned_title
                     None, // No metadata track number - use file_info.number
+                    None, // No metadata disc number - use file_info.disc_number
                     None, // No metadata year
                     &file_info,
                     &artist_name,
                     &album.name,
                     &track.title,
                     track.track_number,
+                    track.disc_number,
                     album.year,
                 );
 
