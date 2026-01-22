@@ -18,24 +18,25 @@ impl MediaFileMutations {
             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
 
         // Update library subtitle settings
-        #[cfg(feature = "postgres")]
-        {
-            sqlx::query(
-                r#"
-                UPDATE libraries SET
-                    auto_download_subtitles = COALESCE($2, auto_download_subtitles),
-                    preferred_subtitle_languages = COALESCE($3, preferred_subtitle_languages),
-                    updated_at = NOW()
-                WHERE id = $1
-                "#,
-            )
-            .bind(lib_id)
-            .bind(input.auto_download)
-            .bind(input.languages.as_ref())
-            .execute(db.pool())
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        }
+        // NOTE: PostgreSQL implementation commented out - keeping for reference
+        // #[cfg(feature = "postgres")]
+        // {
+        //     sqlx::query(
+        //         r#"
+        //         UPDATE libraries SET
+        //             auto_download_subtitles = COALESCE($2, auto_download_subtitles),
+        //             preferred_subtitle_languages = COALESCE($3, preferred_subtitle_languages),
+        //             updated_at = NOW()
+        //         WHERE id = $1
+        //         "#,
+        //     )
+        //     .bind(lib_id)
+        //     .bind(input.auto_download)
+        //     .bind(input.languages.as_ref())
+        //     .execute(db.pool())
+        //     .await
+        //     .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        // }
 
         #[cfg(feature = "sqlite")]
         {
@@ -84,22 +85,23 @@ impl MediaFileMutations {
             "languages": input.languages,
         });
 
-        #[cfg(feature = "postgres")]
-        {
-            sqlx::query(
-                r#"
-                UPDATE tv_shows SET
-                    subtitle_settings_override = $2,
-                    updated_at = NOW()
-                WHERE id = $1
-                "#,
-            )
-            .bind(show_uuid)
-            .bind(&override_json)
-            .execute(db.pool())
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        }
+        // NOTE: PostgreSQL implementation commented out - keeping for reference
+        // #[cfg(feature = "postgres")]
+        // {
+        //     sqlx::query(
+        //         r#"
+        //         UPDATE tv_shows SET
+        //             subtitle_settings_override = $2,
+        //             updated_at = NOW()
+        //         WHERE id = $1
+        //         "#,
+        //     )
+        //     .bind(show_uuid)
+        //     .bind(&override_json)
+        //     .execute(db.pool())
+        //     .await
+        //     .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        // }
 
         #[cfg(feature = "sqlite")]
         {
