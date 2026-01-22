@@ -625,6 +625,7 @@ async fn verify_and_update_quality(
 async fn update_quality_status(db: &Database, media_file_id: Uuid, status: &str) -> Result<()> {
     sqlx::query("UPDATE media_files SET quality_status = $1 WHERE id = $2")
         .bind(status)
+        .bind(media_file_id)
         .execute(db.pool())
         .await?;
 
