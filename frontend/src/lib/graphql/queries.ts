@@ -165,6 +165,30 @@ export const TORRENT_SETTINGS_QUERY = `
   }
 `;
 
+export const UPnP_STATUS_QUERY = `
+  query UpnpStatus {
+    upnpStatus {
+      success
+      tcpForwarded
+      udpForwarded
+      localIp
+      externalIp
+      error
+    }
+  }
+`;
+
+export const TEST_PORT_ACCESSIBILITY_QUERY = `
+  query TestPortAccessibility($port: Int) {
+    testPortAccessibility(port: $port) {
+      success
+      portOpen
+      externalIp
+      error
+    }
+  }
+`;
+
 export const LLM_PARSER_SETTINGS_QUERY = `
   query LlmParserSettings {
     llmParserSettings {
