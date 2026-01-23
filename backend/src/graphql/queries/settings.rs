@@ -190,4 +190,51 @@ Filename: {filename}
 
         Ok(record.map(NamingPattern::from_record))
     }
+
+    /// Get the current UPnP port forwarding status
+    async fn upnp_status(&self, ctx: &Context<'_>) -> Result<Option<UpnpResult>> {
+        let _user = ctx.auth_user()?;
+        let torrent_service = ctx.data_unchecked::<Arc<crate::services::TorrentService>>();
+
+        Ok(torrent_service.get_upnp_result().map(|r| UpnpResult {
+            success: r.success,
+            tcp_forwarded: r.tcp_forwarded,
+            udp_forwarded: r.udp_forwarded,
+            local_ip: r.local_ip,
+            external_ip: r.external_ip,
+            error: r.error,
+        }))
+    }
+
+    /// Test if the torrent port is accessible from the internet
+    async fn test_port_accessibility(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(desc = "Port to test (defaults to current torrent listen port)")]
+        port: Option<i32>,
+    ) -> Result<PortTestResult> {
+        let _user = ctx.auth_user()?;
+        let torrent_service = ctx.data_unchecked::<Arc<crate::services::TorrentService>>();
+
+        // Get the port to test - use provided port or current torrent listen port
+        let test_port = if let Some(p) = port {
+            p as u16
+        } else {
+            let settings = ctx.data_unchecked::<Database>().settings();
+            settings
+                .get_or_default("torrent.listen_port", 6881)
+                .await
+                .unwrap_or(6881) as u16
+        };
+
+        let result = torrent_service.test_port_accessibility(test_port).await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(PortTestResult {
+            success: result.success,
+            port_open: result.port_open,
+            external_ip: result.external_ip,
+            error: result.error,
+        })
+    }
 }

@@ -290,6 +290,26 @@ export interface SettingsResult {
 }
 
 // ============================================================================
+// UPnP and Port Testing Types
+// ============================================================================
+
+export interface UpnpResult {
+  success: boolean;
+  tcpForwarded: boolean;
+  udpForwarded: boolean;
+  localIp: string | null;
+  externalIp: string | null;
+  error: string | null;
+}
+
+export interface PortTestResult {
+  success: boolean;
+  portOpen: boolean;
+  externalIp: string | null;
+  error: string | null;
+}
+
+// ============================================================================
 // LLM Parser Types
 // ============================================================================
 
