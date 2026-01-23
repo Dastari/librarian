@@ -199,6 +199,19 @@ export const UPDATE_TORRENT_SETTINGS_MUTATION = `
   }
 `;
 
+export const ATTEMPT_UPNP_PORT_FORWARDING_MUTATION = `
+  mutation AttemptUpnpPortForwarding {
+    attemptUpnpPortForwarding {
+      success
+      tcpForwarded
+      udpForwarded
+      localIp
+      externalIp
+      error
+    }
+  }
+`;
+
 // ============================================================================
 // Library Mutations
 // ============================================================================

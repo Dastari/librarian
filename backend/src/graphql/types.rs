@@ -1224,6 +1224,40 @@ pub struct SettingsResult {
 }
 
 // ============================================================================
+// UPnP and Port Testing
+// ============================================================================
+
+/// Result of UPnP port forwarding attempt
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct UpnpResult {
+    /// Whether the overall operation was successful
+    pub success: bool,
+    /// Whether TCP port forwarding succeeded
+    pub tcp_forwarded: bool,
+    /// Whether UDP port forwarding succeeded
+    pub udp_forwarded: bool,
+    /// Local IP address of the gateway
+    pub local_ip: Option<String>,
+    /// External IP address
+    pub external_ip: Option<String>,
+    /// Error message if operation failed
+    pub error: Option<String>,
+}
+
+/// Result of port accessibility test
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct PortTestResult {
+    /// Whether the test operation was successful
+    pub success: bool,
+    /// Whether the port is accessible from the internet
+    pub port_open: bool,
+    /// External IP address used for testing
+    pub external_ip: Option<String>,
+    /// Error message if test failed
+    pub error: Option<String>,
+}
+
+// ============================================================================
 // LLM Parser Settings
 // ============================================================================
 

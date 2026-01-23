@@ -3,18 +3,24 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Input } from '@heroui/input'
 import { Switch } from '@heroui/switch'
 import { Accordion, AccordionItem } from '@heroui/accordion'
+import { Button } from '@heroui/button'
 import { addToast } from '@heroui/toast'
 import {
   graphqlClient,
   TORRENT_SETTINGS_QUERY,
   UPDATE_TORRENT_SETTINGS_MUTATION,
+  UPnP_STATUS_QUERY,
+  TEST_PORT_ACCESSIBILITY_QUERY,
+  ATTEMPT_UPNP_PORT_FORWARDING_MUTATION,
   type TorrentSettings,
   type SettingsResult,
+  type UpnpResult,
+  type PortTestResult,
 } from '../../lib/graphql'
 import { FolderBrowserInput } from '../../components/FolderBrowserInput'
 import { SettingsHeader } from '../../components/shared'
 import { sanitizeError } from '../../lib/format'
-import { IconFolder, IconNetwork, IconGauge } from '@tabler/icons-react'
+import { IconFolder, IconNetwork, IconGauge, IconTestPipe, IconAlertTriangle, IconCheck, IconX } from '@tabler/icons-react'
 
 export const Route = createFileRoute('/settings/torrent')({
   component: TorrentSettingsPage,
@@ -33,6 +39,12 @@ function TorrentSettingsPage() {
   const [maxConcurrent, setMaxConcurrent] = useState(5)
   const [uploadLimit, setUploadLimit] = useState(0)
   const [downloadLimit, setDownloadLimit] = useState(0)
+
+  // UPnP and port testing state
+  const [upnpStatus, setUpnpStatus] = useState<UpnpResult | null>(null)
+  const [portTestResult, setPortTestResult] = useState<PortTestResult | null>(null)
+  const [isTestingPort, setIsTestingPort] = useState(false)
+  const [isAttemptingUpnp, setIsAttemptingUpnp] = useState(false)
 
   // Track changes
   const hasChanges = useMemo(() => {
@@ -92,6 +104,80 @@ function TorrentSettingsPage() {
   useEffect(() => {
     fetchSettings()
   }, [fetchSettings])
+
+  const fetchUpnpStatus = useCallback(async () => {
+    try {
+      const result = await graphqlClient.query<{ upnpStatus: UpnpResult | null }>(UPnP_STATUS_QUERY, {}).toPromise()
+      if (result.data?.upnpStatus) {
+        setUpnpStatus(result.data.upnpStatus)
+      }
+    } catch (e) {
+      // Silently ignore errors for UPnP status
+      console.warn('Failed to fetch UPnP status:', e)
+    }
+  }, [])
+
+  const testPortAccessibility = useCallback(async () => {
+    setIsTestingPort(true)
+    try {
+      const result = await graphqlClient.query<{ testPortAccessibility: PortTestResult }>(TEST_PORT_ACCESSIBILITY_QUERY, {
+        port: listenPort
+      }).toPromise()
+      if (result.data?.testPortAccessibility) {
+        setPortTestResult(result.data.testPortAccessibility)
+        addToast({
+          title: result.data.testPortAccessibility.portOpen ? 'Port Test Successful' : 'Port Test Failed',
+          description: result.data.testPortAccessibility.portOpen
+            ? `Port ${listenPort} is accessible from the internet`
+            : `Port ${listenPort} is not accessible from the internet`,
+          color: result.data.testPortAccessibility.portOpen ? 'success' : 'warning',
+        })
+      }
+    } catch (e) {
+      addToast({
+        title: 'Port Test Error',
+        description: sanitizeError(e),
+        color: 'danger',
+      })
+    } finally {
+      setIsTestingPort(false)
+    }
+  }, [listenPort])
+
+  const attemptUpnpForwarding = useCallback(async () => {
+    setIsAttemptingUpnp(true)
+    try {
+      const result = await graphqlClient
+        .mutation<{ attemptUpnpPortForwarding: UpnpResult }>(ATTEMPT_UPNP_PORT_FORWARDING_MUTATION, {})
+        .toPromise()
+
+      if (result.data?.attemptUpnpPortForwarding) {
+        const upnpResult = result.data.attemptUpnpPortForwarding
+        setUpnpStatus(upnpResult)
+
+        addToast({
+          title: upnpResult.success ? 'UPnP Port Forwarding Successful' : 'UPnP Port Forwarding Failed',
+          description: upnpResult.success
+            ? `Successfully forwarded port ${listenPort} via UPnP`
+            : `Failed to forward port ${listenPort} via UPnP: ${upnpResult.error || 'Unknown error'}`,
+          color: upnpResult.success ? 'success' : 'warning',
+        })
+      }
+    } catch (e) {
+      addToast({
+        title: 'UPnP Error',
+        description: sanitizeError(e),
+        color: 'danger',
+      })
+    } finally {
+      setIsAttemptingUpnp(false)
+    }
+  }, [listenPort])
+
+  // Fetch UPnP status on mount
+  useEffect(() => {
+    fetchUpnpStatus()
+  }, [fetchUpnpStatus])
 
   const handleSave = async () => {
     setIsSaving(true)
@@ -263,6 +349,103 @@ function TorrentSettingsPage() {
                 label: 'text-sm font-medium text-primary!',
               }}
             />
+
+            {/* UPnP Port Forwarding Status */}
+            <div className="space-y-3 p-4 bg-content2 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-medium text-foreground">UPnP Port Forwarding</p>
+                  <p className="text-xs text-default-500">
+                    Automatic port forwarding via UPnP for better connectivity
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  {upnpStatus && (
+                    <div className="flex items-center gap-1 text-xs">
+                      {upnpStatus.tcpForwarded || upnpStatus.udpForwarded ? (
+                        <>
+                          <IconCheck size={14} className="text-green-400" />
+                          <span className="text-success">Active</span>
+                        </>
+                      ) : (
+                        <>
+                          <IconX size={14} className="text-red-400" />
+                          <span className="text-danger">Failed</span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="flat"
+                    color="primary"
+                    isLoading={isAttemptingUpnp}
+                    onPress={attemptUpnpForwarding}
+                    startContent={<IconTestPipe size={14} />}
+                  >
+                    Test UPnP
+                  </Button>
+                </div>
+              </div>
+
+              {/* Alert Banner when UPnP fails */}
+              {upnpStatus && !upnpStatus.success && !isAttemptingUpnp && (
+                <div className="flex items-start gap-3 p-3 bg-warning-50 border border-warning-200 rounded-md">
+                  <IconAlertTriangle size={16} className="text-warning mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-warning-800">
+                      Port forwarding required
+                    </p>
+                    <p className="text-xs text-warning-700 mt-1">
+                      UPnP port forwarding failed. To improve torrent performance, create a port forwarding rule
+                      in your router for port {listenPort} (TCP and UDP) to your backend's local IP address.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Port Accessibility Test */}
+              <div className="flex items-center justify-between pt-2 border-t border-default-200">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Port Accessibility</p>
+                  <p className="text-xs text-default-500">
+                    Test if port {listenPort} is accessible from the internet
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="flat"
+                  color="secondary"
+                  isLoading={isTestingPort}
+                  onPress={testPortAccessibility}
+                  startContent={<IconTestPipe size={14} />}
+                >
+                  Test Port
+                </Button>
+              </div>
+
+              {portTestResult && (
+                <div className={`flex items-center gap-2 p-2 rounded text-xs ${
+                  portTestResult.portOpen
+                    ? 'bg-success-50 text-success-700'
+                    : 'bg-danger-50 text-danger-700'
+                }`}>
+                  {portTestResult.portOpen ? (
+                    <IconCheck size={14} />
+                  ) : (
+                    <IconX size={14} />
+                  )}
+                  <span>
+                    Port {listenPort} is {portTestResult.portOpen ? 'accessible' : 'not accessible'} from the internet
+                    {portTestResult.externalIp && (
+                      <span className="ml-1 text-default-500">
+                        (External IP: {portTestResult.externalIp})
+                      </span>
+                    )}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
         </AccordionItem>
 

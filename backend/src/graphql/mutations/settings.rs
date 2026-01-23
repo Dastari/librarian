@@ -463,4 +463,22 @@ impl SettingsMutations {
             }),
         }
     }
+
+    /// Attempt UPnP port forwarding for torrent port
+    async fn attempt_upnp_port_forwarding(&self, ctx: &Context<'_>) -> Result<UpnpResult> {
+        let _user = ctx.auth_user()?;
+        let torrent_service = ctx.data_unchecked::<Arc<crate::services::TorrentService>>();
+
+        let result = torrent_service.attempt_upnp_port_forwarding().await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(UpnpResult {
+            success: result.success,
+            tcp_forwarded: result.tcp_forwarded,
+            udp_forwarded: result.udp_forwarded,
+            local_ip: result.local_ip,
+            external_ip: result.external_ip,
+            error: result.error,
+        })
+    }
 }

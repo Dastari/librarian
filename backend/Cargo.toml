@@ -117,6 +117,9 @@ rust_cast = "0.21"
 # mDNS device discovery
 mdns-sd = "0.11"
 flume = "0.11"
+
+# UPnP port forwarding
+igd = "0.12"
 lofty = "0.22.4"
 serde_bencode = "0.2.4"
 native-tls = "0.2.14"

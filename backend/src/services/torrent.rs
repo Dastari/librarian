@@ -28,6 +28,26 @@ use uuid::Uuid;
 
 use crate::db::{CreateTorrent, Database, TorrentRepository, UpsertTorrentFile};
 
+/// UPnP port forwarding result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpnpResult {
+    pub success: bool,
+    pub tcp_forwarded: bool,
+    pub udp_forwarded: bool,
+    pub local_ip: Option<String>,
+    pub external_ip: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Port test result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortTestResult {
+    pub success: bool,
+    pub port_open: bool,
+    pub external_ip: Option<String>,
+    pub error: Option<String>,
+}
+
 /// Helper to get info hash as hex string from handle
 fn get_info_hash_hex<T: AsRef<librqbit::ManagedTorrent>>(handle: &T) -> String {
     // The info_hash() returns Id<20> which has a .0 field with [u8; 20]
@@ -193,6 +213,7 @@ pub struct TorrentService {
     db: Database,
     event_tx: broadcast::Sender<TorrentEvent>,
     completed: Arc<RwLock<std::collections::HashSet<String>>>,
+    upnp_result: Arc<RwLock<Option<UpnpResult>>>,
 }
 
 impl TorrentService {
@@ -312,6 +333,7 @@ impl TorrentService {
             db,
             event_tx,
             completed: Arc::new(RwLock::new(std::collections::HashSet::new())),
+            upnp_result: Arc::new(RwLock::new(None)),
         };
 
         // First, sync any torrents loaded from session files TO the database
@@ -328,6 +350,9 @@ impl TorrentService {
         // Start background monitors
         service.start_progress_monitor();
         service.start_db_sync();
+
+        // Attempt UPnP port forwarding
+        let _ = service.attempt_upnp_port_forwarding().await;
 
         info!("Torrent service initialized");
         Ok(service)
@@ -1210,5 +1235,212 @@ impl TorrentService {
                 }
             }
         });
+    }
+
+    /// Attempt UPnP port forwarding for the torrent listen port
+    pub async fn attempt_upnp_port_forwarding(&self) -> Result<UpnpResult> {
+        let port = self.config.listen_port;
+        if port == 0 {
+            return Ok(UpnpResult {
+                success: false,
+                tcp_forwarded: false,
+                udp_forwarded: false,
+                local_ip: None,
+                external_ip: None,
+                error: Some("Listen port is set to 0 (random)".to_string()),
+            });
+        }
+
+        let result = tokio::task::spawn_blocking(move || {
+            Self::perform_upnp_port_forwarding(port)
+        })
+        .await
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("UPnP task panicked")));
+
+        let upnp_result = match result {
+            Ok(r) => {
+                info!(
+                    port = %port,
+                    tcp_forwarded = %r.tcp_forwarded,
+                    udp_forwarded = %r.udp_forwarded,
+                    external_ip = ?r.external_ip,
+                    "UPnP port forwarding attempt completed"
+                );
+                r
+            }
+            Err(e) => {
+                warn!(port = %port, error = %e, "UPnP port forwarding failed");
+                UpnpResult {
+                    success: false,
+                    tcp_forwarded: false,
+                    udp_forwarded: false,
+                    local_ip: None,
+                    external_ip: None,
+                    error: Some(e.to_string()),
+                }
+            }
+        };
+
+        // Store the result
+        *self.upnp_result.write() = Some(upnp_result.clone());
+
+        Ok(upnp_result)
+    }
+
+    /// Perform the actual UPnP port forwarding (blocking operation)
+    fn perform_upnp_port_forwarding(port: u16) -> Result<UpnpResult> {
+        use igd::{search_gateway, PortMappingProtocol};
+
+        // Search for a gateway
+        let gateway = search_gateway(Default::default())
+            .map_err(|e| anyhow::anyhow!("Failed to find UPnP gateway: {}", e))?;
+
+        let local_ip = gateway
+            .get_external_ip()
+            .map_err(|e| anyhow::anyhow!("Failed to get external IP: {}", e))?;
+
+        let external_ip = gateway
+            .get_external_ip()
+            .map_err(|e| anyhow::anyhow!("Failed to get external IP: {}", e))?;
+
+        let mut tcp_forwarded = false;
+        let mut udp_forwarded = false;
+
+        // Try TCP port forwarding
+        match gateway.add_port(
+            PortMappingProtocol::TCP,
+            port,
+            std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, port),
+            300, // Lease duration in seconds
+            "Librarian Torrent Client",
+        ) {
+            Ok(_) => {
+                debug!(port = %port, "Successfully forwarded TCP port via UPnP");
+                tcp_forwarded = true;
+            }
+            Err(e) => {
+                warn!(port = %port, protocol = "TCP", error = %e, "Failed to forward TCP port via UPnP");
+            }
+        }
+
+        // Try UDP port forwarding
+        match gateway.add_port(
+            PortMappingProtocol::UDP,
+            port,
+            std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, port),
+            300, // Lease duration in seconds
+            "Librarian Torrent Client",
+        ) {
+            Ok(_) => {
+                debug!(port = %port, "Successfully forwarded UDP port via UPnP");
+                udp_forwarded = true;
+            }
+            Err(e) => {
+                warn!(port = %port, protocol = "UDP", error = %e, "Failed to forward UDP port via UPnP");
+            }
+        }
+
+        let success = tcp_forwarded || udp_forwarded;
+
+        Ok(UpnpResult {
+            success,
+            tcp_forwarded,
+            udp_forwarded,
+            local_ip: Some(local_ip.to_string()),
+            external_ip: Some(external_ip.to_string()),
+            error: if success {
+                None
+            } else {
+                Some("Failed to forward both TCP and UDP ports".to_string())
+            },
+        })
+    }
+
+    /// Test if a port is accessible from the internet
+    pub async fn test_port_accessibility(&self, port: u16) -> Result<PortTestResult> {
+        // First, get our external IP address
+        let external_ip = match self.get_external_ip().await {
+            Ok(ip) => ip,
+            Err(e) => {
+                return Ok(PortTestResult {
+                    success: false,
+                    port_open: false,
+                    external_ip: None,
+                    error: Some(format!("Failed to get external IP: {}", e)),
+                });
+            }
+        };
+
+        // Try to connect to our own port from the internet
+        // We'll use a timeout to avoid hanging
+        let timeout_duration = Duration::from_secs(10);
+
+        match tokio::time::timeout(
+            timeout_duration,
+            self.test_port_connection(external_ip.clone(), port),
+        )
+        .await
+        {
+            Ok(Ok(is_open)) => Ok(PortTestResult {
+                success: true,
+                port_open: is_open,
+                external_ip: Some(external_ip),
+                error: None,
+            }),
+            Ok(Err(e)) => Ok(PortTestResult {
+                success: false,
+                port_open: false,
+                external_ip: Some(external_ip),
+                error: Some(format!("Port test failed: {}", e)),
+            }),
+            Err(_) => Ok(PortTestResult {
+                success: false,
+                port_open: false,
+                external_ip: Some(external_ip),
+                error: Some("Port test timed out".to_string()),
+            }),
+        }
+    }
+
+    /// Get the current external IP address
+    async fn get_external_ip(&self) -> Result<String> {
+        let client = reqwest::Client::new();
+        let response = client
+            .get("https://api.ipify.org")
+            .send()
+            .await
+            .context("Failed to request external IP")?;
+
+        if !response.status().is_success() {
+            anyhow::bail!("External IP service returned status: {}", response.status());
+        }
+
+        let ip = response
+            .text()
+            .await
+            .context("Failed to read external IP response")?;
+
+        let ip = ip.trim();
+        if ip.is_empty() {
+            anyhow::bail!("External IP response was empty");
+        }
+
+        Ok(ip.to_string())
+    }
+
+    /// Test if we can connect to a specific IP and port
+    async fn test_port_connection(&self, ip: String, port: u16) -> Result<bool> {
+        use tokio::net::TcpStream;
+
+        match TcpStream::connect((ip.as_str(), port)).await {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Get the current UPnP result
+    pub fn get_upnp_result(&self) -> Option<UpnpResult> {
+        self.upnp_result.read().clone()
     }
 }
