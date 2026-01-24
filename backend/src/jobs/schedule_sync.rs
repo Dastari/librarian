@@ -4,16 +4,9 @@
 //! This reduces API calls and ensures fast schedule queries.
 
 use anyhow::Result;
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-use sqlx::SqlitePool;
 use tracing::{debug, error, info, warn};
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-type DbPool = SqlitePool;
+type DbPool = crate::db::Pool;
 
 use crate::db::schedule::{ScheduleRepository, UpsertScheduleEntry};
 use crate::services::tvmaze::TvMazeClient;

@@ -137,6 +137,51 @@ INSERT OR IGNORE INTO app_settings (id, key, value, description, category) VALUE
     (lower(hex(randomblob(16))), 'torrent.upload_limit', '0', 'Upload speed limit in bytes/sec (0 = unlimited)', 'torrent'),
     (lower(hex(randomblob(16))), 'torrent.download_limit', '0', 'Download speed limit in bytes/sec (0 = unlimited)', 'torrent');
 
+-- LLM Parser Settings
+INSERT OR IGNORE INTO app_settings (id, key, value, description, category) VALUES
+    (lower(hex(randomblob(16))), 'llm.enabled', 'false', 'Enable LLM-based filename parsing as fallback when regex parser fails or has low confidence', 'llm'),
+    (lower(hex(randomblob(16))), 'llm.ollama_url', '"http://localhost:11434"', 'URL of the Ollama API server', 'llm'),
+    (lower(hex(randomblob(16))), 'llm.ollama_model', '"qwen2.5-coder:7b"', 'Ollama model to use for parsing', 'llm'),
+    (lower(hex(randomblob(16))), 'llm.timeout_seconds', '30', 'Timeout in seconds for LLM API calls', 'llm'),
+    (lower(hex(randomblob(16))), 'llm.temperature', '0.1', 'Temperature for LLM generation (lower = more deterministic)', 'llm'),
+    (lower(hex(randomblob(16))), 'llm.prompt_template', 'null', 'Custom prompt template for LLM parsing (null = use default)', 'llm'),
+    (lower(hex(randomblob(16))), 'llm.max_retries', '2', 'Maximum number of retries for failed LLM calls', 'llm'),
+    (lower(hex(randomblob(16))), 'llm.use_for_ambiguous', 'true', 'Use LLM for ambiguous filenames even when regex succeeds with low confidence', 'llm');
+
+-- LLM Library Type Models
+INSERT OR IGNORE INTO app_settings (id, key, value, description, category) VALUES
+    (lower(hex(randomblob(16))), 'llm.model.movies', 'null', 'Ollama model for movie libraries (null = use default)', 'llm'),
+    (lower(hex(randomblob(16))), 'llm.model.tv', 'null', 'Ollama model for TV show libraries (null = use default)', 'llm'),
+    (lower(hex(randomblob(16))), 'llm.model.music', 'null', 'Ollama model for music libraries (null = use default)', 'llm'),
+    (lower(hex(randomblob(16))), 'llm.model.audiobooks', 'null', 'Ollama model for audiobook libraries (null = use default)', 'llm'),
+    (lower(hex(randomblob(16))), 'llm.prompt.movies', 'null', 'Prompt template for movie libraries (null = use default)', 'llm'),
+    (lower(hex(randomblob(16))), 'llm.prompt.tv', 'null', 'Prompt template for TV show libraries (null = use default)', 'llm'),
+    (lower(hex(randomblob(16))), 'llm.prompt.music', 'null', 'Prompt template for music libraries (null = use default)', 'llm'),
+    (lower(hex(randomblob(16))), 'llm.prompt.audiobooks', 'null', 'Prompt template for audiobook libraries (null = use default)', 'llm');
+
+-- Playback Settings
+INSERT OR IGNORE INTO app_settings (id, key, value, description, category) VALUES
+    (lower(hex(randomblob(16))), 'playback_sync_interval', '15', 'How often to sync watch progress to the database (in seconds)', 'playback');
+
+-- Metadata Provider Settings
+INSERT OR IGNORE INTO app_settings (id, key, value, description, category) VALUES
+    (lower(hex(randomblob(16))), 'metadata.tmdb_api_key', 'null', 'TMDB API key for movie/TV metadata', 'metadata'),
+    (lower(hex(randomblob(16))), 'metadata.tvdb_api_key', 'null', 'TVDB API key for TV show metadata', 'metadata'),
+    (lower(hex(randomblob(16))), 'metadata.auto_fetch', 'true', 'Automatically fetch metadata when adding new media', 'metadata'),
+    (lower(hex(randomblob(16))), 'metadata.preferred_language', '"en"', 'Preferred language for metadata', 'metadata');
+
+-- Subtitle Settings
+INSERT OR IGNORE INTO app_settings (id, key, value, description, category) VALUES
+    (lower(hex(randomblob(16))), 'subtitles.auto_download', 'false', 'Automatically download subtitles for new media', 'subtitles'),
+    (lower(hex(randomblob(16))), 'subtitles.preferred_languages', '["en"]', 'Preferred subtitle languages (JSON array)', 'subtitles'),
+    (lower(hex(randomblob(16))), 'subtitles.opensubtitles_api_key', 'null', 'OpenSubtitles API key', 'subtitles');
+
+-- Organization Settings
+INSERT OR IGNORE INTO app_settings (id, key, value, description, category) VALUES
+    (lower(hex(randomblob(16))), 'organize.auto_organize', 'false', 'Automatically organize files after download completes', 'organize'),
+    (lower(hex(randomblob(16))), 'organize.delete_empty_folders', 'true', 'Delete empty folders after organizing', 'organize'),
+    (lower(hex(randomblob(16))), 'organize.copy_mode', '"copy"', 'File operation mode: copy, move, or hardlink', 'organize');
+
 -- ============================================================================
 -- Application Logs
 -- ============================================================================
@@ -337,8 +382,8 @@ CREATE TABLE IF NOT EXISTS movies (
     -- Credits
     director TEXT,
     cast_names TEXT DEFAULT '[]',  -- JSON array
-    -- Ratings
-    tmdb_rating REAL,
+    -- Ratings (TEXT for Decimal storage in SQLite)
+    tmdb_rating TEXT,
     tmdb_vote_count INTEGER,
     -- Artwork URLs
     poster_url TEXT,
@@ -353,6 +398,9 @@ CREATE TABLE IF NOT EXISTS movies (
     -- Status/monitoring
     status TEXT DEFAULT 'unknown' CHECK (status IN ('released', 'upcoming', 'announced', 'in_production', 'unknown')),
     monitored INTEGER NOT NULL DEFAULT 1,
+    -- Download status
+    download_status TEXT DEFAULT 'wanted' CHECK (download_status IN ('wanted', 'downloading', 'downloaded', 'ignored')),
+    has_file INTEGER NOT NULL DEFAULT 0,
     -- Media file link (bidirectional)
     media_file_id TEXT REFERENCES media_files(id) ON DELETE SET NULL,
     -- Timestamps
@@ -370,6 +418,7 @@ CREATE INDEX idx_movies_imdb ON movies(imdb_id) WHERE imdb_id IS NOT NULL;
 CREATE INDEX idx_movies_year ON movies(year) WHERE year IS NOT NULL;
 CREATE INDEX idx_movies_media_file ON movies(media_file_id) WHERE media_file_id IS NOT NULL;
 CREATE INDEX idx_movies_certification ON movies(certification) WHERE certification IS NOT NULL;
+CREATE INDEX idx_movies_download_status ON movies(download_status);
 
 -- ============================================================================
 -- Artists (Music)
@@ -609,7 +658,32 @@ CREATE TABLE IF NOT EXISTS media_files (
     -- Organization tracking
     organized INTEGER NOT NULL DEFAULT 0,
     organized_at TEXT,
-    original_path TEXT
+    original_path TEXT,
+    organize_status TEXT DEFAULT 'pending',
+    organize_error TEXT,
+    -- Content classification
+    content_type TEXT DEFAULT 'video',
+    quality_status TEXT DEFAULT 'unknown',
+    -- Audio metadata
+    meta_artist TEXT,
+    meta_album TEXT,
+    meta_title TEXT,
+    meta_track_number INTEGER,
+    meta_disc_number INTEGER,
+    meta_year INTEGER,
+    meta_genre TEXT,
+    -- Video metadata
+    meta_show_name TEXT,
+    meta_season INTEGER,
+    meta_episode INTEGER,
+    -- Processing timestamps
+    ffprobe_analyzed_at TEXT,
+    metadata_extracted_at TEXT,
+    matched_at TEXT,
+    -- Embedded assets
+    cover_art_base64 TEXT,
+    cover_art_mime TEXT,
+    lyrics TEXT
 );
 
 CREATE INDEX idx_media_files_library ON media_files(library_id);
@@ -621,6 +695,12 @@ CREATE INDEX idx_media_files_audiobook ON media_files(audiobook_id) WHERE audiob
 CREATE INDEX idx_media_files_chapter ON media_files(chapter_id) WHERE chapter_id IS NOT NULL;
 CREATE INDEX idx_media_files_resolution ON media_files(resolution);
 CREATE INDEX idx_media_files_unorganized ON media_files(library_id, organized) WHERE organized = 0;
+CREATE INDEX idx_media_files_organize_status ON media_files(organize_status);
+CREATE INDEX idx_media_files_content_type ON media_files(content_type);
+CREATE INDEX idx_media_files_needs_ffprobe ON media_files(library_id) WHERE ffprobe_analyzed_at IS NULL;
+CREATE INDEX idx_media_files_needs_metadata ON media_files(library_id) WHERE metadata_extracted_at IS NULL;
+CREATE INDEX idx_media_files_unmatched ON media_files(library_id) WHERE episode_id IS NULL AND movie_id IS NULL AND track_id IS NULL AND audiobook_id IS NULL;
+CREATE INDEX idx_media_files_has_cover_art ON media_files(library_id) WHERE cover_art_base64 IS NOT NULL;
 
 -- ============================================================================
 -- Video Streams
@@ -752,26 +832,33 @@ CREATE TABLE IF NOT EXISTS torrents (
     save_path TEXT NOT NULL,
     download_path TEXT,
     source_url TEXT,
+    -- Source tracking
+    source_feed_id TEXT,
+    source_indexer_id TEXT,
     -- Library/content links
     library_id TEXT REFERENCES libraries(id) ON DELETE SET NULL,
     -- Post-processing
-    post_process_status TEXT DEFAULT 'pending' CHECK (post_process_status IN ('pending', 'processing', 'completed', 'failed', 'skipped')),
+    post_process_status TEXT DEFAULT 'pending' CHECK (post_process_status IN ('pending', 'processing', 'completed', 'failed', 'skipped', 'error', 'matched', 'unmatched', 'partial')),
     post_process_error TEXT,
     processed_at TEXT,
     -- Excluded files (JSON array of file indices)
     excluded_files TEXT DEFAULT '[]',
     -- Timestamps
     added_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
     completed_at TEXT,
     -- Unique constraint
-    UNIQUE(user_id, info_hash)
+    UNIQUE(info_hash)
 );
 
 CREATE INDEX idx_torrents_user ON torrents(user_id);
 CREATE INDEX idx_torrents_state ON torrents(state);
 CREATE INDEX idx_torrents_info_hash ON torrents(info_hash);
 CREATE INDEX idx_torrents_library ON torrents(library_id) WHERE library_id IS NOT NULL;
-CREATE INDEX idx_torrents_post_process ON torrents(post_process_status) WHERE post_process_status = 'pending';
+CREATE INDEX idx_torrents_post_process ON torrents(post_process_status);
+CREATE INDEX idx_torrents_source_feed ON torrents(source_feed_id);
+CREATE INDEX idx_torrents_source_indexer ON torrents(source_indexer_id);
+CREATE INDEX idx_torrents_created_at ON torrents(created_at);
 
 -- ============================================================================
 -- Torrent Files
@@ -781,23 +868,20 @@ CREATE TABLE IF NOT EXISTS torrent_files (
     id TEXT PRIMARY KEY,
     torrent_id TEXT NOT NULL REFERENCES torrents(id) ON DELETE CASCADE,
     file_index INTEGER NOT NULL,
-    path TEXT NOT NULL,
-    size_bytes INTEGER NOT NULL,
-    -- Download status
+    file_path TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
     downloaded_bytes INTEGER NOT NULL DEFAULT 0,
-    is_selected INTEGER NOT NULL DEFAULT 1,
-    -- Parsed metadata
-    parsed_show_name TEXT,
-    parsed_season INTEGER,
-    parsed_episode INTEGER,
-    parsed_resolution TEXT,
-    -- Timestamps
+    progress REAL NOT NULL DEFAULT 0,
+    media_file_id TEXT REFERENCES media_files(id) ON DELETE SET NULL,
+    is_excluded INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(torrent_id, file_index)
 );
 
 CREATE INDEX idx_torrent_files_torrent ON torrent_files(torrent_id);
+CREATE INDEX idx_torrent_files_media_file ON torrent_files(media_file_id);
 
 -- ============================================================================
 -- Pending File Matches
@@ -819,10 +903,14 @@ CREATE TABLE IF NOT EXISTS pending_file_matches (
     movie_id TEXT REFERENCES movies(id) ON DELETE CASCADE,
     track_id TEXT REFERENCES tracks(id) ON DELETE CASCADE,
     chapter_id TEXT REFERENCES chapters(id) ON DELETE CASCADE,
+    unmatched_reason TEXT,
     
     -- Match metadata
-    match_type TEXT DEFAULT 'auto',  -- 'auto', 'manual'
+    match_type TEXT DEFAULT 'auto',  -- 'auto', 'manual', 'unmatched'
     match_confidence REAL,
+    match_attempts INTEGER NOT NULL DEFAULT 1,
+    verification_status TEXT,
+    verification_reason TEXT,
     
     -- Parsed quality info (from filename)
     parsed_resolution TEXT,
@@ -833,6 +921,7 @@ CREATE TABLE IF NOT EXISTS pending_file_matches (
     -- Processing status
     copied_at TEXT,               -- null = not yet copied to library
     copy_error TEXT,              -- error message if copy failed
+    copy_attempts INTEGER NOT NULL DEFAULT 0,
     
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -860,6 +949,7 @@ CREATE TABLE IF NOT EXISTS rss_feeds (
     -- Settings
     enabled INTEGER NOT NULL DEFAULT 1,
     poll_interval_minutes INTEGER NOT NULL DEFAULT 15,
+    post_download_action TEXT,
     -- Tracking
     last_polled_at TEXT,
     last_successful_at TEXT,
@@ -923,6 +1013,7 @@ CREATE TABLE IF NOT EXISTS indexer_configs (
     name TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
     priority INTEGER NOT NULL DEFAULT 50,
+    post_download_action TEXT,
     -- Site configuration
     site_url TEXT,
     -- Torznab capabilities
@@ -1074,6 +1165,10 @@ CREATE TABLE IF NOT EXISTS playback_sessions (
     media_file_id TEXT REFERENCES media_files(id) ON DELETE CASCADE,
     tv_show_id TEXT REFERENCES tv_shows(id) ON DELETE CASCADE,
     movie_id TEXT REFERENCES movies(id) ON DELETE CASCADE,
+    track_id TEXT REFERENCES tracks(id) ON DELETE CASCADE,
+    audiobook_id TEXT REFERENCES audiobooks(id) ON DELETE CASCADE,
+    album_id TEXT REFERENCES albums(id) ON DELETE CASCADE,
+    content_type TEXT DEFAULT 'episode',
     -- Playback state
     current_position REAL NOT NULL DEFAULT 0,
     duration REAL,
@@ -1092,6 +1187,10 @@ CREATE TABLE IF NOT EXISTS playback_sessions (
 
 CREATE INDEX idx_playback_sessions_user ON playback_sessions(user_id);
 CREATE INDEX idx_playback_sessions_incomplete ON playback_sessions(user_id) WHERE completed_at IS NULL;
+CREATE INDEX idx_playback_sessions_track ON playback_sessions(track_id);
+CREATE INDEX idx_playback_sessions_audiobook ON playback_sessions(audiobook_id);
+CREATE INDEX idx_playback_sessions_album ON playback_sessions(album_id);
+CREATE INDEX idx_playback_sessions_content_type ON playback_sessions(content_type);
 
 -- ============================================================================
 -- Watch Progress
@@ -1101,21 +1200,20 @@ CREATE TABLE IF NOT EXISTS watch_progress (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     -- Content identification (only one should be set)
-    content_type TEXT NOT NULL CHECK (content_type IN ('episode', 'movie', 'track', 'chapter')),
+    content_type TEXT NOT NULL CHECK (content_type IN ('episode', 'movie', 'track', 'audiobook')),
     episode_id TEXT REFERENCES episodes(id) ON DELETE CASCADE,
     movie_id TEXT REFERENCES movies(id) ON DELETE CASCADE,
     track_id TEXT REFERENCES tracks(id) ON DELETE CASCADE,
-    chapter_id TEXT REFERENCES chapters(id) ON DELETE CASCADE,
+    audiobook_id TEXT REFERENCES audiobooks(id) ON DELETE CASCADE,
+    media_file_id TEXT REFERENCES media_files(id) ON DELETE SET NULL,
     -- Progress
-    position_secs REAL NOT NULL DEFAULT 0,
-    duration_secs REAL,
-    progress_percent REAL GENERATED ALWAYS AS (
-        CASE WHEN duration_secs > 0 THEN (position_secs / duration_secs) * 100 ELSE 0 END
-    ) STORED,
-    completed INTEGER NOT NULL DEFAULT 0,
+    current_position REAL NOT NULL DEFAULT 0,
+    duration REAL,
+    progress_percent REAL NOT NULL DEFAULT 0,
+    is_watched INTEGER NOT NULL DEFAULT 0,
+    watched_at TEXT,
     -- Timestamps
     last_watched_at TEXT NOT NULL DEFAULT (datetime('now')),
-    completed_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -1123,9 +1221,14 @@ CREATE TABLE IF NOT EXISTS watch_progress (
 CREATE INDEX idx_watch_progress_user ON watch_progress(user_id);
 CREATE INDEX idx_watch_progress_episode ON watch_progress(user_id, episode_id) WHERE episode_id IS NOT NULL;
 CREATE INDEX idx_watch_progress_movie ON watch_progress(user_id, movie_id) WHERE movie_id IS NOT NULL;
+CREATE INDEX idx_watch_progress_track ON watch_progress(user_id, track_id) WHERE track_id IS NOT NULL;
+CREATE INDEX idx_watch_progress_audiobook ON watch_progress(user_id, audiobook_id) WHERE audiobook_id IS NOT NULL;
+CREATE INDEX idx_watch_progress_content_type ON watch_progress(user_id, content_type);
 CREATE INDEX idx_watch_progress_recent ON watch_progress(user_id, last_watched_at DESC);
 CREATE UNIQUE INDEX idx_watch_progress_user_episode ON watch_progress(user_id, episode_id) WHERE content_type = 'episode';
 CREATE UNIQUE INDEX idx_watch_progress_user_movie ON watch_progress(user_id, movie_id) WHERE content_type = 'movie';
+CREATE UNIQUE INDEX idx_watch_progress_user_track ON watch_progress(user_id, track_id) WHERE content_type = 'track';
+CREATE UNIQUE INDEX idx_watch_progress_user_audiobook ON watch_progress(user_id, audiobook_id) WHERE content_type = 'audiobook';
 
 -- ============================================================================
 -- Schedule Cache (TVMaze)
@@ -1190,6 +1293,7 @@ CREATE TABLE IF NOT EXISTS naming_patterns (
     pattern TEXT NOT NULL,
     description TEXT,
     is_default INTEGER NOT NULL DEFAULT 0,
+    is_system INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -1198,24 +1302,82 @@ CREATE INDEX idx_naming_patterns_user ON naming_patterns(user_id);
 CREATE INDEX idx_naming_patterns_type ON naming_patterns(library_type);
 
 -- ============================================================================
--- Priority Rules
+-- Seed Default Naming Patterns
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS priority_rules (
+-- TV Show Naming Patterns
+INSERT OR IGNORE INTO naming_patterns (id, user_id, library_type, name, pattern, description, is_default, is_system, created_at, updated_at) VALUES
+('00000000-0000-0000-0000-000000000001', 'system', 'tv', 'Standard', '{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}', 'Show/Season 01/Show - S01E01 - Title.ext', 1, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000002', 'system', 'tv', 'Plex Style', '{show}/Season {season:02}/{show} - s{season:02}e{episode:02} - {title}.{ext}', 'Lowercase season/episode (Plex compatible)', 0, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000003', 'system', 'tv', 'Compact', '{show}/S{season:02}/{show}.S{season:02}E{episode:02}.{ext}', 'Compact format without episode title', 0, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000004', 'system', 'tv', 'Scene Style', '{show}/Season {season:02}/{show}.S{season:02}E{episode:02}.{title}.{ext}', 'Dots instead of spaces (scene style)', 0, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000005', 'system', 'tv', 'Jellyfin', '{show}/Season {season}/{show} S{season:02}E{episode:02} {title}.{ext}', 'Jellyfin recommended format', 0, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000006', 'system', 'tv', 'Simple', '{show}/Season {season:02}/{season:02}x{episode:02} - {title}.{ext}', 'Simple 01x01 format', 0, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000007', 'system', 'tv', 'Flat', '{show} - S{season:02}E{episode:02} - {title}.{ext}', 'All files in show folder (no season folders)', 0, 1, datetime('now'), datetime('now'));
+
+-- Movie Naming Patterns
+INSERT OR IGNORE INTO naming_patterns (id, user_id, library_type, name, pattern, description, is_default, is_system, created_at, updated_at) VALUES
+('00000000-0000-0000-0000-000000000011', 'system', 'movies', 'Movie Standard', '{title} ({year})/{title} ({year}).{ext}', 'Title (Year)/Title (Year).ext', 1, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000012', 'system', 'movies', 'Movie with Quality', '{title} ({year})/{title} ({year}) - {quality}.{ext}', 'Include quality in filename', 0, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000013', 'system', 'movies', 'Flat Movies', '{title} ({year}).{ext}', 'All movies in root folder', 0, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000014', 'system', 'movies', 'Plex Movie', '{title} ({year})/{title} ({year}) [{quality}].{ext}', 'Plex style with quality', 0, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000015', 'system', 'movies', 'Jellyfin Movie', '{title} ({year})/{title}.{ext}', 'Jellyfin recommended format', 0, 1, datetime('now'), datetime('now'));
+
+-- Music Naming Patterns
+INSERT OR IGNORE INTO naming_patterns (id, user_id, library_type, name, pattern, description, is_default, is_system, created_at, updated_at) VALUES
+('00000000-0000-0000-0000-000000000021', 'system', 'music', 'Music Standard', '{artist}/{album} ({year})/{track:02} - {title}.{ext}', 'Artist/Album (Year)/01 - Title.ext', 1, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000022', 'system', 'music', 'Music with Disc', '{artist}/{album} ({year})/Disc {disc}/{track:02} - {title}.{ext}', 'Include disc number folder', 0, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000023', 'system', 'music', 'Artist Only', '{artist}/{track:02} - {title}.{ext}', 'All tracks in artist folder', 0, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000024', 'system', 'music', 'Album Only', '{album} ({year})/{track:02} - {title}.{ext}', 'Albums in root, no artist folder', 0, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000025', 'system', 'music', 'Full Track Info', '{artist}/{album} ({year})/{track:02} - {artist} - {title}.{ext}', 'Include artist in track filename', 0, 1, datetime('now'), datetime('now'));
+
+-- Audiobook Naming Patterns
+INSERT OR IGNORE INTO naming_patterns (id, user_id, library_type, name, pattern, description, is_default, is_system, created_at, updated_at) VALUES
+('00000000-0000-0000-0000-000000000031', 'system', 'audiobooks', 'Audiobook Standard', '{author}/{title}/{chapter:02} - {chapter_title}.{ext}', 'Author/Title/01 - Chapter.ext', 1, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000032', 'system', 'audiobooks', 'Audiobook Series', '{author}/{series} {series_position} - {title}/{chapter:02} - {chapter_title}.{ext}', 'Include series info', 0, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000033', 'system', 'audiobooks', 'Audiobook Simple', '{author}/{title}/{chapter:02}.{ext}', 'Simple chapter numbering', 0, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000034', 'system', 'audiobooks', 'Audiobook Flat', '{author}/{title}.{ext}', 'Single file audiobooks', 0, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000035', 'system', 'audiobooks', 'Plex Audiobook', '{author}/{title}/{title} - Chapter {chapter:02}.{ext}', 'Plex audiobook format', 0, 1, datetime('now'), datetime('now'));
+
+-- Other/Generic Naming Patterns
+INSERT OR IGNORE INTO naming_patterns (id, user_id, library_type, name, pattern, description, is_default, is_system, created_at, updated_at) VALUES
+('00000000-0000-0000-0000-000000000041', 'system', 'other', 'Generic Preserve', '{name}.{ext}', 'Keep original filename', 1, 1, datetime('now'), datetime('now')),
+('00000000-0000-0000-0000-000000000042', 'system', 'other', 'Generic Folder', '{name}/{name}.{ext}', 'Each file in its own folder', 0, 1, datetime('now'), datetime('now'));
+
+-- ============================================================================
+-- Source Priority Rules
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS source_priority_rules (
     id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- Scope: NULL = user default, library_type = type-wide, library_id = specific library
     library_type TEXT,
     library_id TEXT REFERENCES libraries(id) ON DELETE CASCADE,
-    -- Rule definition
-    name TEXT NOT NULL,
-    priority_order TEXT NOT NULL DEFAULT '[]',  -- JSON array of source preferences
+    -- JSON array of source references: [{"source_type": "torrent_indexer", "id": "xxx"}, ...]
+    priority_order TEXT NOT NULL DEFAULT '[]',
+    -- Whether to search all sources or stop at first result
+    search_all_sources INTEGER NOT NULL DEFAULT 0,
+    -- Whether this rule is active
+    enabled INTEGER NOT NULL DEFAULT 1,
     -- Timestamps
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    -- Unique constraint on scope (user + type + library)
+    UNIQUE(user_id, library_type, library_id)
 );
 
-CREATE INDEX idx_priority_rules_user ON priority_rules(user_id);
-CREATE INDEX idx_priority_rules_library ON priority_rules(library_id);
+CREATE INDEX idx_source_priority_rules_user ON source_priority_rules(user_id);
+CREATE INDEX idx_source_priority_rules_type ON source_priority_rules(library_type);
+CREATE INDEX idx_source_priority_rules_library ON source_priority_rules(library_id);
+CREATE INDEX idx_source_priority_rules_enabled ON source_priority_rules(enabled);
+
+CREATE TRIGGER IF NOT EXISTS update_source_priority_rules_updated_at
+AFTER UPDATE ON source_priority_rules
+FOR EACH ROW
+BEGIN
+    UPDATE source_priority_rules SET updated_at = datetime('now') WHERE id = NEW.id;
+END;
 
 -- ============================================================================
 -- Usenet Servers
@@ -1229,10 +1391,11 @@ CREATE TABLE IF NOT EXISTS usenet_servers (
     port INTEGER NOT NULL DEFAULT 563,
     use_ssl INTEGER NOT NULL DEFAULT 1,
     username TEXT,
-    password_encrypted TEXT,
+    encrypted_password TEXT,
     password_nonce TEXT,
     connections INTEGER NOT NULL DEFAULT 10,
     priority INTEGER NOT NULL DEFAULT 50,
+    retention_days INTEGER DEFAULT 1200,
     enabled INTEGER NOT NULL DEFAULT 1,
     -- Health tracking
     last_error TEXT,
@@ -1254,31 +1417,45 @@ CREATE TABLE IF NOT EXISTS usenet_downloads (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     -- Download identification
-    name TEXT NOT NULL,
+    nzb_name TEXT NOT NULL,
+    nzb_hash TEXT,
     nzb_url TEXT,
     nzb_data TEXT,  -- Base64 encoded NZB content
     -- Status
     state TEXT NOT NULL DEFAULT 'queued',
-    progress REAL NOT NULL DEFAULT 0,
+    progress TEXT,
     -- Size info
-    total_bytes INTEGER NOT NULL DEFAULT 0,
-    downloaded_bytes INTEGER NOT NULL DEFAULT 0,
+    size_bytes INTEGER,
+    downloaded_bytes INTEGER,
+    download_speed INTEGER DEFAULT 0,
+    eta_seconds INTEGER,
+    error_message TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
     -- Path info
-    save_path TEXT NOT NULL,
     download_path TEXT,
     -- Library link
     library_id TEXT REFERENCES libraries(id) ON DELETE SET NULL,
+    episode_id TEXT REFERENCES episodes(id) ON DELETE SET NULL,
+    movie_id TEXT REFERENCES movies(id) ON DELETE SET NULL,
+    album_id TEXT REFERENCES albums(id) ON DELETE SET NULL,
+    audiobook_id TEXT REFERENCES audiobooks(id) ON DELETE SET NULL,
+    indexer_id TEXT REFERENCES indexer_configs(id) ON DELETE SET NULL,
     -- Post-processing
     post_process_status TEXT DEFAULT 'pending',
-    post_process_error TEXT,
     -- Timestamps
-    added_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     completed_at TEXT
 );
 
 CREATE INDEX idx_usenet_downloads_user ON usenet_downloads(user_id);
 CREATE INDEX idx_usenet_downloads_state ON usenet_downloads(state);
 CREATE INDEX idx_usenet_downloads_library ON usenet_downloads(library_id);
+CREATE INDEX idx_usenet_downloads_episode ON usenet_downloads(episode_id);
+CREATE INDEX idx_usenet_downloads_movie ON usenet_downloads(movie_id);
+CREATE INDEX idx_usenet_downloads_album ON usenet_downloads(album_id);
+CREATE INDEX idx_usenet_downloads_audiobook ON usenet_downloads(audiobook_id);
+CREATE INDEX idx_usenet_downloads_indexer ON usenet_downloads(indexer_id);
 
 -- ============================================================================
 -- Notifications
@@ -1293,26 +1470,27 @@ CREATE TABLE IF NOT EXISTS notifications (
     title TEXT NOT NULL,
     message TEXT NOT NULL,
     -- Related content
-    entity_type TEXT,
-    entity_id TEXT,
+    library_id TEXT REFERENCES libraries(id) ON DELETE SET NULL,
+    torrent_id TEXT REFERENCES torrents(id) ON DELETE SET NULL,
+    media_file_id TEXT REFERENCES media_files(id) ON DELETE SET NULL,
+    pending_match_id TEXT REFERENCES pending_file_matches(id) ON DELETE SET NULL,
     -- Action info (JSON object)
     action_type TEXT,
     action_data TEXT,
     -- Status
-    is_read INTEGER NOT NULL DEFAULT 0,
-    is_dismissed INTEGER NOT NULL DEFAULT 0,
-    -- Resolution
-    resolution TEXT,
+    read_at TEXT,
     resolved_at TEXT,
+    resolution TEXT,
     -- Timestamps
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    expires_at TEXT
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX idx_notifications_user ON notifications(user_id);
-CREATE INDEX idx_notifications_unread ON notifications(user_id, is_read) WHERE is_read = 0;
+CREATE INDEX idx_notifications_unread ON notifications(user_id, read_at) WHERE read_at IS NULL;
 CREATE INDEX idx_notifications_category ON notifications(user_id, category);
 CREATE INDEX idx_notifications_created ON notifications(created_at DESC);
+CREATE INDEX idx_notifications_read_at ON notifications(read_at);
 
 -- ============================================================================
 -- Artwork Cache (BLOB storage)
@@ -1323,7 +1501,7 @@ CREATE TABLE IF NOT EXISTS artwork_cache (
     -- Entity identification
     entity_type TEXT NOT NULL CHECK (entity_type IN ('show', 'movie', 'episode', 'album', 'artist', 'audiobook')),
     entity_id TEXT NOT NULL,
-    artwork_type TEXT NOT NULL CHECK (artwork_type IN ('poster', 'backdrop', 'thumbnail', 'banner', 'cover')),
+    artwork_type TEXT NOT NULL CHECK (artwork_type IN ('poster', 'posters', 'backdrop', 'backdrops', 'thumbnail', 'thumbnails', 'banner', 'banners', 'cover')),
     -- Image data
     content_hash TEXT NOT NULL,
     mime_type TEXT NOT NULL,

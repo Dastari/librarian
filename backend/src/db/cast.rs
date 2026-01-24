@@ -6,13 +6,9 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
 #[cfg(feature = "sqlite")]
 use sqlx::SqlitePool;
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
 #[cfg(feature = "sqlite")]
 type DbPool = SqlitePool;
 
@@ -39,25 +35,6 @@ pub struct CastDeviceRecord {
     pub updated_at: DateTime<Utc>,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for CastDeviceRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        Ok(Self {
-            id: row.try_get("id")?,
-            name: row.try_get("name")?,
-            address: row.try_get("address")?,
-            port: row.try_get("port")?,
-            model: row.try_get("model")?,
-            device_type: row.try_get("device_type")?,
-            is_favorite: row.try_get("is_favorite")?,
-            is_manual: row.try_get("is_manual")?,
-            last_seen_at: row.try_get("last_seen_at")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for CastDeviceRecord {
@@ -110,29 +87,6 @@ pub struct CastSessionRecord {
     pub updated_at: DateTime<Utc>,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for CastSessionRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        Ok(Self {
-            id: row.try_get("id")?,
-            device_id: row.try_get("device_id")?,
-            media_file_id: row.try_get("media_file_id")?,
-            episode_id: row.try_get("episode_id")?,
-            stream_url: row.try_get("stream_url")?,
-            player_state: row.try_get("player_state")?,
-            current_position: row.try_get("current_position")?,
-            duration: row.try_get("duration")?,
-            volume: row.try_get("volume")?,
-            is_muted: row.try_get("is_muted")?,
-            started_at: row.try_get("started_at")?,
-            ended_at: row.try_get("ended_at")?,
-            last_position: row.try_get("last_position")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for CastSessionRecord {
@@ -189,22 +143,6 @@ pub struct CastSettingsRecord {
     pub updated_at: DateTime<Utc>,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for CastSettingsRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        Ok(Self {
-            id: row.try_get("id")?,
-            auto_discovery_enabled: row.try_get("auto_discovery_enabled")?,
-            discovery_interval_seconds: row.try_get("discovery_interval_seconds")?,
-            default_volume: row.try_get("default_volume")?,
-            transcode_incompatible: row.try_get("transcode_incompatible")?,
-            preferred_quality: row.try_get("preferred_quality")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for CastSettingsRecord {
@@ -309,21 +247,6 @@ impl CastRepository {
     }
 
     /// Get a cast device by ID
-    #[cfg(feature = "postgres")]
-    pub async fn get_device(&self, id: Uuid) -> Result<Option<CastDeviceRecord>> {
-        let record = sqlx::query_as::<_, CastDeviceRecord>(
-            r#"
-            SELECT id, name, address, port, model, device_type, is_favorite, is_manual,
-                   last_seen_at, created_at, updated_at
-            FROM cast_devices
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_device(&self, id: Uuid) -> Result<Option<CastDeviceRecord>> {
@@ -342,21 +265,6 @@ impl CastRepository {
     }
 
     /// Get a cast device by address
-    #[cfg(feature = "postgres")]
-    pub async fn get_device_by_address(&self, address: &str) -> Result<Option<CastDeviceRecord>> {
-        let record = sqlx::query_as::<_, CastDeviceRecord>(
-            r#"
-            SELECT id, name, address, port, model, device_type, is_favorite, is_manual,
-                   last_seen_at, created_at, updated_at
-            FROM cast_devices
-            WHERE address = $1
-            "#,
-        )
-        .bind(address)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_device_by_address(&self, address: &str) -> Result<Option<CastDeviceRecord>> {
@@ -375,26 +283,6 @@ impl CastRepository {
     }
 
     /// Create a new cast device
-    #[cfg(feature = "postgres")]
-    pub async fn create_device(&self, input: CreateCastDevice) -> Result<CastDeviceRecord> {
-        let record = sqlx::query_as::<_, CastDeviceRecord>(
-            r#"
-            INSERT INTO cast_devices (name, address, port, model, device_type, is_manual, last_seen_at)
-            VALUES ($1, $2, $3, $4, $5, $6, NOW())
-            RETURNING id, name, address, port, model, device_type, is_favorite, is_manual,
-                      last_seen_at, created_at, updated_at
-            "#,
-        )
-        .bind(&input.name)
-        .bind(&input.address)
-        .bind(input.port)
-        .bind(&input.model)
-        .bind(&input.device_type)
-        .bind(input.is_manual)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn create_device(&self, input: CreateCastDevice) -> Result<CastDeviceRecord> {
@@ -423,33 +311,6 @@ impl CastRepository {
     }
 
     /// Upsert a cast device (update if exists by address, create if not)
-    #[cfg(feature = "postgres")]
-    pub async fn upsert_device(&self, input: CreateCastDevice) -> Result<CastDeviceRecord> {
-        let record = sqlx::query_as::<_, CastDeviceRecord>(
-            r#"
-            INSERT INTO cast_devices (name, address, port, model, device_type, is_manual, last_seen_at)
-            VALUES ($1, $2, $3, $4, $5, $6, NOW())
-            ON CONFLICT (address) DO UPDATE SET
-                name = EXCLUDED.name,
-                port = EXCLUDED.port,
-                model = EXCLUDED.model,
-                device_type = EXCLUDED.device_type,
-                last_seen_at = NOW(),
-                updated_at = NOW()
-            RETURNING id, name, address, port, model, device_type, is_favorite, is_manual,
-                      last_seen_at, created_at, updated_at
-            "#,
-        )
-        .bind(&input.name)
-        .bind(&input.address)
-        .bind(input.port)
-        .bind(&input.model)
-        .bind(&input.device_type)
-        .bind(input.is_manual)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn upsert_device(&self, input: CreateCastDevice) -> Result<CastDeviceRecord> {
@@ -485,30 +346,6 @@ impl CastRepository {
     }
 
     /// Update a cast device
-    #[cfg(feature = "postgres")]
-    pub async fn update_device(
-        &self,
-        id: Uuid,
-        input: UpdateCastDevice,
-    ) -> Result<Option<CastDeviceRecord>> {
-        let record = sqlx::query_as::<_, CastDeviceRecord>(
-            r#"
-            UPDATE cast_devices SET
-                name = COALESCE($2, name),
-                is_favorite = COALESCE($3, is_favorite),
-                updated_at = NOW()
-            WHERE id = $1
-            RETURNING id, name, address, port, model, device_type, is_favorite, is_manual,
-                      last_seen_at, created_at, updated_at
-            "#,
-        )
-        .bind(id)
-        .bind(input.name)
-        .bind(input.is_favorite)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn update_device(
@@ -555,14 +392,6 @@ impl CastRepository {
     }
 
     /// Update last seen timestamp for a device
-    #[cfg(feature = "postgres")]
-    pub async fn update_device_last_seen(&self, id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE cast_devices SET last_seen_at = NOW() WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn update_device_last_seen(&self, id: Uuid) -> Result<()> {
@@ -574,14 +403,6 @@ impl CastRepository {
     }
 
     /// Delete a cast device
-    #[cfg(feature = "postgres")]
-    pub async fn delete_device(&self, id: Uuid) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM cast_devices WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(result.rows_affected() > 0)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn delete_device(&self, id: Uuid) -> Result<bool> {
@@ -614,22 +435,6 @@ impl CastRepository {
     }
 
     /// Get a cast session by ID
-    #[cfg(feature = "postgres")]
-    pub async fn get_session(&self, id: Uuid) -> Result<Option<CastSessionRecord>> {
-        let record = sqlx::query_as::<_, CastSessionRecord>(
-            r#"
-            SELECT id, device_id, media_file_id, episode_id, stream_url, player_state,
-                   current_position, duration, volume, is_muted, started_at, ended_at,
-                   last_position, created_at, updated_at
-            FROM cast_sessions
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_session(&self, id: Uuid) -> Result<Option<CastSessionRecord>> {
@@ -649,27 +454,6 @@ impl CastRepository {
     }
 
     /// Get active session for a device
-    #[cfg(feature = "postgres")]
-    pub async fn get_active_session_for_device(
-        &self,
-        device_id: Uuid,
-    ) -> Result<Option<CastSessionRecord>> {
-        let record = sqlx::query_as::<_, CastSessionRecord>(
-            r#"
-            SELECT id, device_id, media_file_id, episode_id, stream_url, player_state,
-                   current_position, duration, volume, is_muted, started_at, ended_at,
-                   last_position, created_at, updated_at
-            FROM cast_sessions
-            WHERE device_id = $1 AND ended_at IS NULL
-            ORDER BY started_at DESC
-            LIMIT 1
-            "#,
-        )
-        .bind(device_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_active_session_for_device(
@@ -694,25 +478,6 @@ impl CastRepository {
     }
 
     /// Create a new cast session
-    #[cfg(feature = "postgres")]
-    pub async fn create_session(&self, input: CreateCastSession) -> Result<CastSessionRecord> {
-        let record = sqlx::query_as::<_, CastSessionRecord>(
-            r#"
-            INSERT INTO cast_sessions (device_id, media_file_id, episode_id, stream_url)
-            VALUES ($1, $2, $3, $4)
-            RETURNING id, device_id, media_file_id, episode_id, stream_url, player_state,
-                      current_position, duration, volume, is_muted, started_at, ended_at,
-                      last_position, created_at, updated_at
-            "#,
-        )
-        .bind(input.device_id)
-        .bind(input.media_file_id)
-        .bind(input.episode_id)
-        .bind(&input.stream_url)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn create_session(&self, input: CreateCastSession) -> Result<CastSessionRecord> {
@@ -741,38 +506,6 @@ impl CastRepository {
     }
 
     /// Update a cast session
-    #[cfg(feature = "postgres")]
-    pub async fn update_session(
-        &self,
-        id: Uuid,
-        input: UpdateCastSession,
-    ) -> Result<Option<CastSessionRecord>> {
-        let record = sqlx::query_as::<_, CastSessionRecord>(
-            r#"
-            UPDATE cast_sessions SET
-                player_state = COALESCE($2, player_state),
-                current_position = COALESCE($3, current_position),
-                duration = COALESCE($4, duration),
-                volume = COALESCE($5, volume),
-                is_muted = COALESCE($6, is_muted),
-                last_position = COALESCE($3, last_position),
-                updated_at = NOW()
-            WHERE id = $1
-            RETURNING id, device_id, media_file_id, episode_id, stream_url, player_state,
-                      current_position, duration, volume, is_muted, started_at, ended_at,
-                      last_position, created_at, updated_at
-            "#,
-        )
-        .bind(id)
-        .bind(input.player_state)
-        .bind(input.current_position)
-        .bind(input.duration)
-        .bind(input.volume)
-        .bind(input.is_muted)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn update_session(
@@ -840,25 +573,6 @@ impl CastRepository {
     }
 
     /// End a cast session
-    #[cfg(feature = "postgres")]
-    pub async fn end_session(&self, id: Uuid) -> Result<Option<CastSessionRecord>> {
-        let record = sqlx::query_as::<_, CastSessionRecord>(
-            r#"
-            UPDATE cast_sessions SET
-                ended_at = NOW(),
-                player_state = 'idle',
-                updated_at = NOW()
-            WHERE id = $1
-            RETURNING id, device_id, media_file_id, episode_id, stream_url, player_state,
-                      current_position, duration, volume, is_muted, started_at, ended_at,
-                      last_position, created_at, updated_at
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn end_session(&self, id: Uuid) -> Result<Option<CastSessionRecord>> {
@@ -885,22 +599,6 @@ impl CastRepository {
     }
 
     /// End all active sessions for a device
-    #[cfg(feature = "postgres")]
-    pub async fn end_sessions_for_device(&self, device_id: Uuid) -> Result<u64> {
-        let result = sqlx::query(
-            r#"
-            UPDATE cast_sessions SET
-                ended_at = NOW(),
-                player_state = 'idle',
-                updated_at = NOW()
-            WHERE device_id = $1 AND ended_at IS NULL
-            "#,
-        )
-        .bind(device_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(result.rows_affected())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn end_sessions_for_device(&self, device_id: Uuid) -> Result<u64> {
@@ -939,45 +637,6 @@ impl CastRepository {
     }
 
     /// Update cast settings
-    #[cfg(feature = "postgres")]
-    pub async fn update_settings(&self, input: UpdateCastSettings) -> Result<CastSettingsRecord> {
-        // First ensure settings exist
-        let existing = self.get_settings().await?;
-
-        if existing.is_none() {
-            // Create default settings if not exists
-            sqlx::query(
-                r#"
-                INSERT INTO cast_settings (auto_discovery_enabled, discovery_interval_seconds, default_volume, transcode_incompatible, preferred_quality)
-                VALUES (true, 30, 1.0, true, '1080p')
-                "#
-            )
-            .execute(&self.pool)
-            .await?;
-        }
-
-        let record = sqlx::query_as::<_, CastSettingsRecord>(
-            r#"
-            UPDATE cast_settings SET
-                auto_discovery_enabled = COALESCE($1, auto_discovery_enabled),
-                discovery_interval_seconds = COALESCE($2, discovery_interval_seconds),
-                default_volume = COALESCE($3, default_volume),
-                transcode_incompatible = COALESCE($4, transcode_incompatible),
-                preferred_quality = COALESCE($5, preferred_quality),
-                updated_at = NOW()
-            RETURNING id, auto_discovery_enabled, discovery_interval_seconds, default_volume,
-                      transcode_incompatible, preferred_quality, created_at, updated_at
-            "#,
-        )
-        .bind(input.auto_discovery_enabled)
-        .bind(input.discovery_interval_seconds)
-        .bind(input.default_volume)
-        .bind(input.transcode_incompatible)
-        .bind(input.preferred_quality)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn update_settings(&self, input: UpdateCastSettings) -> Result<CastSettingsRecord> {

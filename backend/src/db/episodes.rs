@@ -3,13 +3,9 @@
 use anyhow::Result;
 use uuid::Uuid;
 
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
 #[cfg(feature = "sqlite")]
 use sqlx::SqlitePool;
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
 #[cfg(feature = "sqlite")]
 type DbPool = SqlitePool;
 
@@ -33,38 +29,6 @@ pub struct EpisodeRecord {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for EpisodeRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        use time::OffsetDateTime;
-
-        fn offset_to_chrono(odt: OffsetDateTime) -> chrono::DateTime<chrono::Utc> {
-            chrono::DateTime::from_timestamp(odt.unix_timestamp(), odt.nanosecond()).unwrap_or_default()
-        }
-
-        let created_at: OffsetDateTime = row.try_get("created_at")?;
-        let updated_at: OffsetDateTime = row.try_get("updated_at")?;
-
-        Ok(Self {
-            id: row.try_get("id")?,
-            tv_show_id: row.try_get("tv_show_id")?,
-            season: row.try_get("season")?,
-            episode: row.try_get("episode")?,
-            absolute_number: row.try_get("absolute_number")?,
-            title: row.try_get("title")?,
-            overview: row.try_get("overview")?,
-            air_date: row.try_get("air_date")?,
-            runtime: row.try_get("runtime")?,
-            tvmaze_id: row.try_get("tvmaze_id")?,
-            tmdb_id: row.try_get("tmdb_id")?,
-            tvdb_id: row.try_get("tvdb_id")?,
-            media_file_id: row.try_get("media_file_id")?,
-            created_at: offset_to_chrono(created_at),
-            updated_at: offset_to_chrono(updated_at),
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for EpisodeRecord {
@@ -161,29 +125,6 @@ pub struct UpcomingEpisodeRecord {
     pub library_id: Uuid,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for UpcomingEpisodeRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-
-        Ok(Self {
-            id: row.try_get("id")?,
-            tv_show_id: row.try_get("tv_show_id")?,
-            season: row.try_get("season")?,
-            episode: row.try_get("episode")?,
-            episode_title: row.try_get("episode_title")?,
-            air_date: row.try_get("air_date")?,
-            episode_tvmaze_id: row.try_get("episode_tvmaze_id")?,
-            media_file_id: row.try_get("media_file_id")?,
-            show_id: row.try_get("show_id")?,
-            show_name: row.try_get("show_name")?,
-            show_year: row.try_get("show_year")?,
-            show_network: row.try_get("show_network")?,
-            show_poster_url: row.try_get("show_poster_url")?,
-            library_id: row.try_get("library_id")?,
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for UpcomingEpisodeRecord {
@@ -233,24 +174,6 @@ impl EpisodeRepository {
     }
 
     /// Get all episodes for a TV show
-    #[cfg(feature = "postgres")]
-    pub async fn list_by_show(&self, tv_show_id: Uuid) -> Result<Vec<EpisodeRecord>> {
-        let records = sqlx::query_as::<_, EpisodeRecord>(
-            r#"
-            SELECT id, tv_show_id, season, episode, absolute_number, title,
-                   overview, air_date, runtime, tvmaze_id, tmdb_id, tvdb_id,
-                   media_file_id, created_at, updated_at
-            FROM episodes
-            WHERE tv_show_id = $1
-            ORDER BY season, episode
-            "#,
-        )
-        .bind(tv_show_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_by_show(&self, tv_show_id: Uuid) -> Result<Vec<EpisodeRecord>> {
@@ -274,29 +197,6 @@ impl EpisodeRepository {
     }
 
     /// Get episodes for a specific season
-    #[cfg(feature = "postgres")]
-    pub async fn list_by_season(
-        &self,
-        tv_show_id: Uuid,
-        season: i32,
-    ) -> Result<Vec<EpisodeRecord>> {
-        let records = sqlx::query_as::<_, EpisodeRecord>(
-            r#"
-            SELECT id, tv_show_id, season, episode, absolute_number, title,
-                   overview, air_date, runtime, tvmaze_id, tmdb_id, tvdb_id,
-                   media_file_id, created_at, updated_at
-            FROM episodes
-            WHERE tv_show_id = $1 AND season = $2
-            ORDER BY episode
-            "#,
-        )
-        .bind(tv_show_id)
-        .bind(season)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_by_season(
@@ -325,28 +225,6 @@ impl EpisodeRepository {
     }
 
     /// Get wanted episodes (no media file linked) for a library
-    #[cfg(feature = "postgres")]
-    pub async fn list_wanted_by_library(&self, library_id: Uuid) -> Result<Vec<EpisodeRecord>> {
-        let records = sqlx::query_as::<_, EpisodeRecord>(
-            r#"
-            SELECT e.id, e.tv_show_id, e.season, e.episode, e.absolute_number, e.title,
-                   e.overview, e.air_date, e.runtime, e.tvmaze_id, e.tmdb_id, e.tvdb_id,
-                   e.media_file_id, e.created_at, e.updated_at
-            FROM episodes e
-            JOIN tv_shows ts ON ts.id = e.tv_show_id
-            WHERE ts.library_id = $1 
-              AND ts.monitored = true
-              AND e.media_file_id IS NULL
-              AND (e.air_date IS NULL OR e.air_date <= CURRENT_DATE)
-            ORDER BY e.air_date DESC NULLS LAST, ts.name, e.season, e.episode
-            "#,
-        )
-        .bind(library_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_wanted_by_library(&self, library_id: Uuid) -> Result<Vec<EpisodeRecord>> {
@@ -374,28 +252,6 @@ impl EpisodeRepository {
     }
 
     /// Get wanted episodes for a user across all libraries
-    #[cfg(feature = "postgres")]
-    pub async fn list_wanted_by_user(&self, user_id: Uuid) -> Result<Vec<EpisodeRecord>> {
-        let records = sqlx::query_as::<_, EpisodeRecord>(
-            r#"
-            SELECT e.id, e.tv_show_id, e.season, e.episode, e.absolute_number, e.title,
-                   e.overview, e.air_date, e.runtime, e.tvmaze_id, e.tmdb_id, e.tvdb_id,
-                   e.media_file_id, e.created_at, e.updated_at
-            FROM episodes e
-            JOIN tv_shows ts ON ts.id = e.tv_show_id
-            WHERE ts.user_id = $1 
-              AND ts.monitored = true
-              AND e.media_file_id IS NULL
-              AND (e.air_date IS NULL OR e.air_date <= CURRENT_DATE)
-            ORDER BY e.air_date DESC NULLS LAST, ts.name, e.season, e.episode
-            "#,
-        )
-        .bind(user_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_wanted_by_user(&self, user_id: Uuid) -> Result<Vec<EpisodeRecord>> {
@@ -423,23 +279,6 @@ impl EpisodeRepository {
     }
 
     /// Get an episode by ID
-    #[cfg(feature = "postgres")]
-    pub async fn get_by_id(&self, id: Uuid) -> Result<Option<EpisodeRecord>> {
-        let record = sqlx::query_as::<_, EpisodeRecord>(
-            r#"
-            SELECT id, tv_show_id, season, episode, absolute_number, title,
-                   overview, air_date, runtime, tvmaze_id, tmdb_id, tvdb_id,
-                   media_file_id, created_at, updated_at
-            FROM episodes
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_by_id(&self, id: Uuid) -> Result<Option<EpisodeRecord>> {
@@ -462,30 +301,6 @@ impl EpisodeRepository {
     }
 
     /// Get an episode by show, season, and episode number
-    #[cfg(feature = "postgres")]
-    pub async fn get_by_show_season_episode(
-        &self,
-        tv_show_id: Uuid,
-        season: i32,
-        episode: i32,
-    ) -> Result<Option<EpisodeRecord>> {
-        let record = sqlx::query_as::<_, EpisodeRecord>(
-            r#"
-            SELECT id, tv_show_id, season, episode, absolute_number, title,
-                   overview, air_date, runtime, tvmaze_id, tmdb_id, tvdb_id,
-                   media_file_id, created_at, updated_at
-            FROM episodes
-            WHERE tv_show_id = $1 AND season = $2 AND episode = $3
-            "#,
-        )
-        .bind(tv_show_id)
-        .bind(season)
-        .bind(episode)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_by_show_season_episode(
@@ -515,45 +330,6 @@ impl EpisodeRepository {
     }
 
     /// Create a new episode
-    #[cfg(feature = "postgres")]
-    pub async fn create(&self, input: CreateEpisode) -> Result<EpisodeRecord> {
-        let record = sqlx::query_as::<_, EpisodeRecord>(
-            r#"
-            INSERT INTO episodes (
-                tv_show_id, season, episode, absolute_number, title,
-                overview, air_date, runtime, tvmaze_id, tmdb_id, tvdb_id
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            ON CONFLICT (tv_show_id, season, episode) DO UPDATE SET
-                title = COALESCE(EXCLUDED.title, episodes.title),
-                overview = COALESCE(EXCLUDED.overview, episodes.overview),
-                air_date = COALESCE(EXCLUDED.air_date, episodes.air_date),
-                runtime = COALESCE(EXCLUDED.runtime, episodes.runtime),
-                tvmaze_id = COALESCE(EXCLUDED.tvmaze_id, episodes.tvmaze_id),
-                tmdb_id = COALESCE(EXCLUDED.tmdb_id, episodes.tmdb_id),
-                tvdb_id = COALESCE(EXCLUDED.tvdb_id, episodes.tvdb_id),
-                updated_at = NOW()
-            RETURNING id, tv_show_id, season, episode, absolute_number, title,
-                      overview, air_date, runtime, tvmaze_id, tmdb_id, tvdb_id,
-                      media_file_id, created_at, updated_at
-            "#,
-        )
-        .bind(input.tv_show_id)
-        .bind(input.season)
-        .bind(input.episode)
-        .bind(input.absolute_number)
-        .bind(&input.title)
-        .bind(&input.overview)
-        .bind(input.air_date)
-        .bind(input.runtime)
-        .bind(input.tvmaze_id)
-        .bind(input.tmdb_id)
-        .bind(input.tvdb_id)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn create(&self, input: CreateEpisode) -> Result<EpisodeRecord> {
@@ -655,15 +431,6 @@ impl EpisodeRepository {
     }
 
     /// Link an episode to a media file
-    #[cfg(feature = "postgres")]
-    pub async fn set_media_file(&self, episode_id: Uuid, media_file_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE episodes SET media_file_id = $2, updated_at = NOW() WHERE id = $1")
-            .bind(episode_id)
-            .bind(media_file_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn set_media_file(&self, episode_id: Uuid, media_file_id: Uuid) -> Result<()> {
@@ -678,14 +445,6 @@ impl EpisodeRepository {
     }
 
     /// Clear the media file link from an episode
-    #[cfg(feature = "postgres")]
-    pub async fn clear_media_file(&self, episode_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE episodes SET media_file_id = NULL, updated_at = NOW() WHERE id = $1")
-            .bind(episode_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn clear_media_file(&self, episode_id: Uuid) -> Result<()> {
@@ -699,15 +458,6 @@ impl EpisodeRepository {
     }
 
     /// Mark episode as downloaded by linking to a media file
-    #[cfg(feature = "postgres")]
-    pub async fn mark_downloaded(&self, episode_id: Uuid, media_file_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE episodes SET media_file_id = $2, updated_at = NOW() WHERE id = $1")
-            .bind(episode_id)
-            .bind(media_file_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn mark_downloaded(&self, episode_id: Uuid, media_file_id: Uuid) -> Result<()> {
@@ -722,22 +472,6 @@ impl EpisodeRepository {
     }
 
     /// Get distinct seasons for a show
-    #[cfg(feature = "postgres")]
-    pub async fn get_seasons(&self, tv_show_id: Uuid) -> Result<Vec<i32>> {
-        let seasons: Vec<(i32,)> = sqlx::query_as(
-            r#"
-            SELECT DISTINCT season
-            FROM episodes
-            WHERE tv_show_id = $1
-            ORDER BY season
-            "#,
-        )
-        .bind(tv_show_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(seasons.into_iter().map(|(s,)| s).collect())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_seasons(&self, tv_show_id: Uuid) -> Result<Vec<i32>> {
@@ -759,15 +493,6 @@ impl EpisodeRepository {
     }
 
     /// Delete episodes for a show (used when refreshing metadata)
-    #[cfg(feature = "postgres")]
-    pub async fn delete_by_show(&self, tv_show_id: Uuid) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM episodes WHERE tv_show_id = $1")
-            .bind(tv_show_id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(result.rows_affected())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn delete_by_show(&self, tv_show_id: Uuid) -> Result<u64> {
@@ -785,47 +510,6 @@ impl EpisodeRepository {
     ///
     /// Returns episodes with air_date between today and today + days,
     /// ordered by air date ascending.
-    #[cfg(feature = "postgres")]
-    pub async fn list_upcoming_by_user(
-        &self,
-        user_id: Uuid,
-        days: i32,
-    ) -> Result<Vec<UpcomingEpisodeRecord>> {
-        let records = sqlx::query_as::<_, UpcomingEpisodeRecord>(
-            r#"
-            SELECT 
-                e.id,
-                e.tv_show_id,
-                e.season,
-                e.episode,
-                e.title as episode_title,
-                e.air_date,
-                e.tvmaze_id as episode_tvmaze_id,
-                e.media_file_id,
-                ts.id as show_id,
-                ts.name as show_name,
-                ts.year as show_year,
-                ts.network as show_network,
-                ts.poster_url as show_poster_url,
-                ts.library_id
-            FROM episodes e
-            JOIN tv_shows ts ON ts.id = e.tv_show_id
-            JOIN libraries l ON l.id = ts.library_id
-            WHERE l.user_id = $1 
-              AND ts.monitored = true
-              AND e.air_date >= CURRENT_DATE
-              AND e.air_date <= CURRENT_DATE + $2::int
-            ORDER BY e.air_date ASC, ts.name ASC, e.season ASC, e.episode ASC
-            LIMIT 50
-            "#,
-        )
-        .bind(user_id)
-        .bind(days)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_upcoming_by_user(

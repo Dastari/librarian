@@ -4,7 +4,7 @@
  */
 
 import type { TorrentState, LibraryType, TvShowStatus, MovieStatus } from './graphql'
-import type { DerivedEpisodeStatus } from '../components/shared/EpisodeStatusChip'
+import type { DerivedMediaStatus as DerivedEpisodeStatus } from '../components/shared'
 
 // ============================================================================
 // Chip Color Type (HeroUI compatible)
@@ -22,9 +22,9 @@ export interface StatusConfig {
 // ============================================================================
 
 export const EPISODE_STATUS_CONFIG: Record<DerivedEpisodeStatus, StatusConfig> = {
-  DOWNLOADED: { color: 'success', label: 'Downloaded' },
-  DOWNLOADING: { color: 'primary', label: 'Downloading' },
-  WANTED: { color: 'warning', label: 'Wanted' },
+  downloaded: { color: 'success', label: 'Downloaded' },
+  downloading: { color: 'primary', label: 'Downloading' },
+  wanted: { color: 'warning', label: 'Wanted' },
 }
 
 export function getEpisodeStatusConfig(status: DerivedEpisodeStatus): StatusConfig {

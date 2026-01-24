@@ -13,6 +13,7 @@ function UnmatchedPage() {
     <LibraryUnmatchedFilesTab
       libraryId={library.id}
       libraryPath={library.path}
+      libraryType={library.libraryType}
       loading={loading}
     />
   )

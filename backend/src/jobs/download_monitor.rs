@@ -12,16 +12,9 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-use sqlx::SqlitePool;
 use tracing::{debug, info, warn};
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-type DbPool = SqlitePool;
+type DbPool = crate::db::Pool;
 
 use crate::db::Database;
 use crate::services::file_matcher::{FileInfo, FileMatcher};
@@ -42,19 +35,6 @@ pub async fn process_completed_torrents(
     let db = Database::new(pool);
 
     // Get all torrents that are complete and have uncopied matches
-    #[cfg(feature = "postgres")]
-    let completed_torrents: Vec<crate::db::TorrentRecord> = sqlx::query_as(
-        r#"
-        SELECT DISTINCT t.* FROM torrents t
-        INNER JOIN pending_file_matches pfm ON pfm.source_id = t.id AND pfm.source_type = 'torrent'
-        WHERE pfm.copied_at IS NULL
-        AND t.state IN ('completed', 'seeding')
-        "#,
-    )
-    .fetch_all(db.pool())
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
     let completed_torrents: Vec<crate::db::TorrentRecord> = sqlx::query_as(
         r#"
         SELECT DISTINCT t.* FROM torrents t
@@ -124,29 +104,18 @@ pub async fn process_unmatched_on_startup(
     let db = Database::new(pool);
 
     // Get torrents that have no pending matches but are complete
-    #[cfg(feature = "postgres")]
     let unmatched_torrents: Vec<crate::db::TorrentRecord> = sqlx::query_as(
         r#"
         SELECT t.* FROM torrents t
         WHERE t.state IN ('completed', 'seeding')
         AND NOT EXISTS (
             SELECT 1 FROM pending_file_matches pfm 
-            WHERE pfm.source_id = t.id AND pfm.source_type = 'torrent'
-        )
-        AND t.created_at > NOW() - INTERVAL '7 days'
-        "#,
-    )
-    .fetch_all(db.pool())
-    .await?;
-
-    #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-    let unmatched_torrents: Vec<crate::db::TorrentRecord> = sqlx::query_as(
-        r#"
-        SELECT t.* FROM torrents t
-        WHERE t.state IN ('completed', 'seeding')
-        AND NOT EXISTS (
-            SELECT 1 FROM pending_file_matches pfm 
-            WHERE pfm.source_id = t.id AND pfm.source_type = 'torrent'
+            WHERE pfm.source_id = t.id
+              AND pfm.source_type = 'torrent'
+              AND (pfm.episode_id IS NOT NULL
+                   OR pfm.movie_id IS NOT NULL
+                   OR pfm.track_id IS NOT NULL
+                   OR pfm.chapter_id IS NOT NULL)
         )
         AND t.created_at > datetime('now', '-7 days')
         "#,

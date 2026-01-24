@@ -7,7 +7,13 @@
 
 import { graphqlClient } from './client';
 import { BROWSE_DIRECTORY_QUERY } from './queries';
-import { CREATE_DIRECTORY_MUTATION } from './mutations';
+import {
+  CREATE_DIRECTORY_MUTATION,
+  DELETE_FILES_MUTATION,
+  COPY_FILES_MUTATION,
+  MOVE_FILES_MUTATION,
+  RENAME_FILE_MUTATION,
+} from './mutations';
 import type { BrowseResponse, BrowseDirectoryResult, FileOperationResult } from './types';
 
 /**
@@ -95,4 +101,168 @@ export async function createDirectory(
     path: data.path || undefined,
     error: data.error || undefined,
   };
+}
+
+/**
+ * Delete files or directories
+ *
+ * @param paths - Array of paths to delete
+ * @param recursive - Whether to recursively delete directories (default: true)
+ * @returns Result with success status and affected count
+ */
+export async function deleteFiles(
+  paths: string[],
+  recursive = true
+): Promise<FileOperationResult> {
+  const result = await graphqlClient
+    .mutation<{ deleteFiles: FileOperationResult }>(DELETE_FILES_MUTATION, {
+      input: { paths, recursive },
+    })
+    .toPromise();
+
+  if (result.error) {
+    return {
+      success: false,
+      error: result.error.message,
+      affectedCount: 0,
+      messages: [],
+      path: null,
+    };
+  }
+
+  if (!result.data?.deleteFiles) {
+    return {
+      success: false,
+      error: 'Failed to delete files',
+      affectedCount: 0,
+      messages: [],
+      path: null,
+    };
+  }
+
+  return result.data.deleteFiles;
+}
+
+/**
+ * Copy files or directories to a destination
+ *
+ * @param sources - Array of source paths to copy
+ * @param destination - Destination directory path
+ * @param overwrite - Whether to overwrite existing files (default: false)
+ * @returns Result with success status and affected count
+ */
+export async function copyFiles(
+  sources: string[],
+  destination: string,
+  overwrite = false
+): Promise<FileOperationResult> {
+  const result = await graphqlClient
+    .mutation<{ copyFiles: FileOperationResult }>(COPY_FILES_MUTATION, {
+      input: { sources, destination, overwrite },
+    })
+    .toPromise();
+
+  if (result.error) {
+    return {
+      success: false,
+      error: result.error.message,
+      affectedCount: 0,
+      messages: [],
+      path: null,
+    };
+  }
+
+  if (!result.data?.copyFiles) {
+    return {
+      success: false,
+      error: 'Failed to copy files',
+      affectedCount: 0,
+      messages: [],
+      path: null,
+    };
+  }
+
+  return result.data.copyFiles;
+}
+
+/**
+ * Move files or directories to a destination
+ *
+ * @param sources - Array of source paths to move
+ * @param destination - Destination directory path
+ * @param overwrite - Whether to overwrite existing files (default: false)
+ * @returns Result with success status and affected count
+ */
+export async function moveFiles(
+  sources: string[],
+  destination: string,
+  overwrite = false
+): Promise<FileOperationResult> {
+  const result = await graphqlClient
+    .mutation<{ moveFiles: FileOperationResult }>(MOVE_FILES_MUTATION, {
+      input: { sources, destination, overwrite },
+    })
+    .toPromise();
+
+  if (result.error) {
+    return {
+      success: false,
+      error: result.error.message,
+      affectedCount: 0,
+      messages: [],
+      path: null,
+    };
+  }
+
+  if (!result.data?.moveFiles) {
+    return {
+      success: false,
+      error: 'Failed to move files',
+      affectedCount: 0,
+      messages: [],
+      path: null,
+    };
+  }
+
+  return result.data.moveFiles;
+}
+
+/**
+ * Rename a file or directory
+ *
+ * @param path - Path to the file or directory to rename
+ * @param newName - New name (not full path, just the name)
+ * @returns Result with success status and new path
+ */
+export async function renameFile(
+  path: string,
+  newName: string
+): Promise<FileOperationResult> {
+  const result = await graphqlClient
+    .mutation<{ renameFile: FileOperationResult }>(RENAME_FILE_MUTATION, {
+      input: { path, newName },
+    })
+    .toPromise();
+
+  if (result.error) {
+    return {
+      success: false,
+      error: result.error.message,
+      affectedCount: 0,
+      messages: [],
+      path: null,
+    };
+  }
+
+  if (!result.data?.renameFile) {
+    return {
+      success: false,
+      error: 'Failed to rename file',
+      affectedCount: 0,
+      messages: [],
+      path: null,
+    };
+  }
+
+  return result.data.renameFile;
 }

@@ -6,13 +6,9 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
 #[cfg(feature = "sqlite")]
 use sqlx::SqlitePool;
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
 #[cfg(feature = "sqlite")]
 type DbPool = SqlitePool;
 
@@ -45,32 +41,6 @@ pub struct UsenetServerRecord {
     pub updated_at: DateTime<Utc>,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for UsenetServerRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        Ok(Self {
-            id: row.try_get("id")?,
-            user_id: row.try_get("user_id")?,
-            name: row.try_get("name")?,
-            host: row.try_get("host")?,
-            port: row.try_get("port")?,
-            use_ssl: row.try_get("use_ssl")?,
-            username: row.try_get("username")?,
-            encrypted_password: row.try_get("encrypted_password")?,
-            password_nonce: row.try_get("password_nonce")?,
-            connections: row.try_get("connections")?,
-            priority: row.try_get("priority")?,
-            enabled: row.try_get("enabled")?,
-            retention_days: row.try_get("retention_days")?,
-            last_success_at: row.try_get("last_success_at")?,
-            last_error: row.try_get("last_error")?,
-            error_count: row.try_get("error_count")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for UsenetServerRecord {
@@ -155,24 +125,6 @@ impl UsenetServersRepository {
     }
 
     /// Get a usenet server by ID
-    #[cfg(feature = "postgres")]
-    pub async fn get(&self, id: Uuid) -> Result<Option<UsenetServerRecord>> {
-        let record = sqlx::query_as::<_, UsenetServerRecord>(
-            r#"
-            SELECT id, user_id, name, host, port, use_ssl, username,
-                   encrypted_password, password_nonce, connections, priority,
-                   enabled, retention_days, last_success_at, last_error,
-                   error_count, created_at, updated_at
-            FROM usenet_servers
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get(&self, id: Uuid) -> Result<Option<UsenetServerRecord>> {
@@ -194,25 +146,6 @@ impl UsenetServersRepository {
     }
 
     /// Get all usenet servers for a user
-    #[cfg(feature = "postgres")]
-    pub async fn list_by_user(&self, user_id: Uuid) -> Result<Vec<UsenetServerRecord>> {
-        let records = sqlx::query_as::<_, UsenetServerRecord>(
-            r#"
-            SELECT id, user_id, name, host, port, use_ssl, username,
-                   encrypted_password, password_nonce, connections, priority,
-                   enabled, retention_days, last_success_at, last_error,
-                   error_count, created_at, updated_at
-            FROM usenet_servers
-            WHERE user_id = $1
-            ORDER BY priority ASC, name ASC
-            "#,
-        )
-        .bind(user_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_by_user(&self, user_id: Uuid) -> Result<Vec<UsenetServerRecord>> {
@@ -235,25 +168,6 @@ impl UsenetServersRepository {
     }
 
     /// Get enabled usenet servers for a user, ordered by priority
-    #[cfg(feature = "postgres")]
-    pub async fn list_enabled_by_user(&self, user_id: Uuid) -> Result<Vec<UsenetServerRecord>> {
-        let records = sqlx::query_as::<_, UsenetServerRecord>(
-            r#"
-            SELECT id, user_id, name, host, port, use_ssl, username,
-                   encrypted_password, password_nonce, connections, priority,
-                   enabled, retention_days, last_success_at, last_error,
-                   error_count, created_at, updated_at
-            FROM usenet_servers
-            WHERE user_id = $1 AND enabled = true
-            ORDER BY priority ASC, name ASC
-            "#,
-        )
-        .bind(user_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_enabled_by_user(&self, user_id: Uuid) -> Result<Vec<UsenetServerRecord>> {
@@ -276,37 +190,6 @@ impl UsenetServersRepository {
     }
 
     /// Create a new usenet server
-    #[cfg(feature = "postgres")]
-    pub async fn create(&self, data: CreateUsenetServer) -> Result<UsenetServerRecord> {
-        let record = sqlx::query_as::<_, UsenetServerRecord>(
-            r#"
-            INSERT INTO usenet_servers (
-                user_id, name, host, port, use_ssl, username,
-                encrypted_password, password_nonce, connections, priority, retention_days
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            RETURNING id, user_id, name, host, port, use_ssl, username,
-                      encrypted_password, password_nonce, connections, priority,
-                      enabled, retention_days, last_success_at, last_error,
-                      error_count, created_at, updated_at
-            "#,
-        )
-        .bind(data.user_id)
-        .bind(&data.name)
-        .bind(&data.host)
-        .bind(data.port)
-        .bind(data.use_ssl)
-        .bind(&data.username)
-        .bind(&data.encrypted_password)
-        .bind(&data.password_nonce)
-        .bind(data.connections)
-        .bind(data.priority)
-        .bind(data.retention_days)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn create(&self, data: CreateUsenetServer) -> Result<UsenetServerRecord> {
@@ -344,47 +227,6 @@ impl UsenetServersRepository {
     }
 
     /// Update a usenet server
-    #[cfg(feature = "postgres")]
-    pub async fn update(&self, id: Uuid, data: UpdateUsenetServer) -> Result<UsenetServerRecord> {
-        let record = sqlx::query_as::<_, UsenetServerRecord>(
-            r#"
-            UPDATE usenet_servers
-            SET name = COALESCE($2, name),
-                host = COALESCE($3, host),
-                port = COALESCE($4, port),
-                use_ssl = COALESCE($5, use_ssl),
-                username = COALESCE($6, username),
-                encrypted_password = COALESCE($7, encrypted_password),
-                password_nonce = COALESCE($8, password_nonce),
-                connections = COALESCE($9, connections),
-                priority = COALESCE($10, priority),
-                enabled = COALESCE($11, enabled),
-                retention_days = COALESCE($12, retention_days),
-                updated_at = NOW()
-            WHERE id = $1
-            RETURNING id, user_id, name, host, port, use_ssl, username,
-                      encrypted_password, password_nonce, connections, priority,
-                      enabled, retention_days, last_success_at, last_error,
-                      error_count, created_at, updated_at
-            "#,
-        )
-        .bind(id)
-        .bind(&data.name)
-        .bind(&data.host)
-        .bind(data.port)
-        .bind(data.use_ssl)
-        .bind(&data.username)
-        .bind(&data.encrypted_password)
-        .bind(&data.password_nonce)
-        .bind(data.connections)
-        .bind(data.priority)
-        .bind(data.enabled)
-        .bind(data.retention_days)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn update(&self, id: Uuid, data: UpdateUsenetServer) -> Result<UsenetServerRecord> {
@@ -487,15 +329,6 @@ impl UsenetServersRepository {
     }
 
     /// Delete a usenet server
-    #[cfg(feature = "postgres")]
-    pub async fn delete(&self, id: Uuid) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM usenet_servers WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn delete(&self, id: Uuid) -> Result<bool> {
@@ -508,24 +341,6 @@ impl UsenetServersRepository {
     }
 
     /// Record a successful connection
-    #[cfg(feature = "postgres")]
-    pub async fn record_success(&self, id: Uuid) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE usenet_servers
-            SET last_success_at = NOW(),
-                error_count = 0,
-                last_error = NULL,
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn record_success(&self, id: Uuid) -> Result<()> {
@@ -547,24 +362,6 @@ impl UsenetServersRepository {
     }
 
     /// Record a connection error
-    #[cfg(feature = "postgres")]
-    pub async fn record_error(&self, id: Uuid, error: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE usenet_servers
-            SET last_error = $2,
-                error_count = error_count + 1,
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .bind(error)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn record_error(&self, id: Uuid, error: &str) -> Result<()> {
@@ -586,25 +383,6 @@ impl UsenetServersRepository {
     }
 
     /// Reorder servers by setting their priorities
-    #[cfg(feature = "postgres")]
-    pub async fn reorder(&self, user_id: Uuid, server_ids: &[Uuid]) -> Result<()> {
-        for (idx, server_id) in server_ids.iter().enumerate() {
-            sqlx::query(
-                r#"
-                UPDATE usenet_servers
-                SET priority = $3, updated_at = NOW()
-                WHERE id = $1 AND user_id = $2
-                "#,
-            )
-            .bind(server_id)
-            .bind(user_id)
-            .bind(idx as i32)
-            .execute(&self.pool)
-            .await?;
-        }
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn reorder(&self, user_id: Uuid, server_ids: &[Uuid]) -> Result<()> {

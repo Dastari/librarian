@@ -7,8 +7,6 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
 #[cfg(feature = "sqlite")]
 use sqlx::SqlitePool;
 
@@ -17,8 +15,6 @@ use crate::db::sqlite_helpers::{
     bool_to_int, int_to_bool, str_to_datetime, str_to_uuid, uuid_to_str,
 };
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
 #[cfg(feature = "sqlite")]
 type DbPool = SqlitePool;
 
@@ -41,7 +37,7 @@ pub struct IndexerConfigRecord {
     pub supports_imdb_search: Option<bool>,
     pub supports_tvdb_search: Option<bool>,
     pub capabilities: Option<serde_json::Value>,
-    /// Post-download action override (copy, move, hardlink) - NULL uses library setting
+    /// Post-download action override (copy-only today; future source rules) - NULL uses library setting
     pub post_download_action: Option<String>,
     pub last_error: Option<String>,
     pub error_count: i32,
@@ -51,52 +47,6 @@ pub struct IndexerConfigRecord {
     pub updated_at: DateTime<Utc>,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for IndexerConfigRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        use time::OffsetDateTime;
-
-        fn offset_to_chrono(odt: OffsetDateTime) -> DateTime<Utc> {
-            DateTime::from_timestamp(odt.unix_timestamp(), odt.nanosecond()).unwrap_or_default()
-        }
-
-        let last_success_at: Option<OffsetDateTime> = row.try_get("last_success_at")?;
-        let last_error_at: Option<OffsetDateTime> = row.try_get("last_error_at")?;
-        let created_at: OffsetDateTime = row.try_get("created_at")?;
-        let updated_at: OffsetDateTime = row.try_get("updated_at")?;
-
-        // Handle capabilities as Json<Value>
-        let capabilities: Option<sqlx::types::Json<serde_json::Value>> =
-            row.try_get("capabilities")?;
-
-        Ok(Self {
-            id: row.try_get("id")?,
-            user_id: row.try_get("user_id")?,
-            indexer_type: row.try_get("indexer_type")?,
-            definition_id: row.try_get("definition_id")?,
-            name: row.try_get("name")?,
-            enabled: row.try_get("enabled")?,
-            priority: row.try_get("priority")?,
-            site_url: row.try_get("site_url")?,
-            supports_search: row.try_get("supports_search")?,
-            supports_tv_search: row.try_get("supports_tv_search")?,
-            supports_movie_search: row.try_get("supports_movie_search")?,
-            supports_music_search: row.try_get("supports_music_search")?,
-            supports_book_search: row.try_get("supports_book_search")?,
-            supports_imdb_search: row.try_get("supports_imdb_search")?,
-            supports_tvdb_search: row.try_get("supports_tvdb_search")?,
-            capabilities: capabilities.map(|c| c.0),
-            post_download_action: row.try_get("post_download_action")?,
-            last_error: row.try_get("last_error")?,
-            error_count: row.try_get("error_count")?,
-            last_success_at: last_success_at.map(offset_to_chrono),
-            last_error_at: last_error_at.map(offset_to_chrono),
-            created_at: offset_to_chrono(created_at),
-            updated_at: offset_to_chrono(updated_at),
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for IndexerConfigRecord {
@@ -168,30 +118,6 @@ pub struct IndexerCredentialRecord {
     pub updated_at: DateTime<Utc>,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for IndexerCredentialRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        use time::OffsetDateTime;
-
-        fn offset_to_chrono(odt: OffsetDateTime) -> DateTime<Utc> {
-            DateTime::from_timestamp(odt.unix_timestamp(), odt.nanosecond()).unwrap_or_default()
-        }
-
-        let created_at: OffsetDateTime = row.try_get("created_at")?;
-        let updated_at: OffsetDateTime = row.try_get("updated_at")?;
-
-        Ok(Self {
-            id: row.try_get("id")?,
-            indexer_config_id: row.try_get("indexer_config_id")?,
-            credential_type: row.try_get("credential_type")?,
-            encrypted_value: row.try_get("encrypted_value")?,
-            nonce: row.try_get("nonce")?,
-            created_at: offset_to_chrono(created_at),
-            updated_at: offset_to_chrono(updated_at),
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for IndexerCredentialRecord {
@@ -229,29 +155,6 @@ pub struct IndexerSettingRecord {
     pub updated_at: DateTime<Utc>,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for IndexerSettingRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        use time::OffsetDateTime;
-
-        fn offset_to_chrono(odt: OffsetDateTime) -> DateTime<Utc> {
-            DateTime::from_timestamp(odt.unix_timestamp(), odt.nanosecond()).unwrap_or_default()
-        }
-
-        let created_at: OffsetDateTime = row.try_get("created_at")?;
-        let updated_at: OffsetDateTime = row.try_get("updated_at")?;
-
-        Ok(Self {
-            id: row.try_get("id")?,
-            indexer_config_id: row.try_get("indexer_config_id")?,
-            setting_key: row.try_get("setting_key")?,
-            setting_value: row.try_get("setting_value")?,
-            created_at: offset_to_chrono(created_at),
-            updated_at: offset_to_chrono(updated_at),
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for IndexerSettingRecord {
@@ -330,33 +233,6 @@ impl IndexerRepository {
     // ========== Config CRUD ==========
 
     /// Create a new indexer configuration
-    #[cfg(feature = "postgres")]
-    pub async fn create(&self, data: CreateIndexerConfig) -> Result<IndexerConfigRecord> {
-        let record = sqlx::query_as::<_, IndexerConfigRecord>(
-            r#"
-            INSERT INTO indexer_configs (
-                user_id, indexer_type, definition_id, name, site_url
-            )
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING 
-                id, user_id, indexer_type, definition_id, name, enabled, priority,
-                site_url, supports_search, supports_tv_search, supports_movie_search,
-                supports_music_search, supports_book_search, supports_imdb_search,
-                supports_tvdb_search, capabilities, post_download_action,
-                last_error, error_count, last_success_at, last_error_at,
-                created_at, updated_at
-            "#,
-        )
-        .bind(data.user_id)
-        .bind(&data.indexer_type)
-        .bind(&data.definition_id)
-        .bind(&data.name)
-        .bind(&data.site_url)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn create(&self, data: CreateIndexerConfig) -> Result<IndexerConfigRecord> {
@@ -388,27 +264,6 @@ impl IndexerRepository {
     }
 
     /// Get an indexer configuration by ID
-    #[cfg(feature = "postgres")]
-    pub async fn get(&self, id: Uuid) -> Result<Option<IndexerConfigRecord>> {
-        let record = sqlx::query_as::<_, IndexerConfigRecord>(
-            r#"
-            SELECT 
-                id, user_id, indexer_type, definition_id, name, enabled, priority,
-                site_url, supports_search, supports_tv_search, supports_movie_search,
-                supports_music_search, supports_book_search, supports_imdb_search,
-                supports_tvdb_search, capabilities, post_download_action,
-                last_error, error_count, last_success_at, last_error_at,
-                created_at, updated_at
-            FROM indexer_configs
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get(&self, id: Uuid) -> Result<Option<IndexerConfigRecord>> {
@@ -433,28 +288,6 @@ impl IndexerRepository {
     }
 
     /// List all indexer configurations for a user
-    #[cfg(feature = "postgres")]
-    pub async fn list_by_user(&self, user_id: Uuid) -> Result<Vec<IndexerConfigRecord>> {
-        let records = sqlx::query_as::<_, IndexerConfigRecord>(
-            r#"
-            SELECT 
-                id, user_id, indexer_type, definition_id, name, enabled, priority,
-                site_url, supports_search, supports_tv_search, supports_movie_search,
-                supports_music_search, supports_book_search, supports_imdb_search,
-                supports_tvdb_search, capabilities, post_download_action,
-                last_error, error_count, last_success_at, last_error_at,
-                created_at, updated_at
-            FROM indexer_configs
-            WHERE user_id = $1
-            ORDER BY priority DESC, name ASC
-            "#,
-        )
-        .bind(user_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_by_user(&self, user_id: Uuid) -> Result<Vec<IndexerConfigRecord>> {
@@ -480,28 +313,6 @@ impl IndexerRepository {
     }
 
     /// List enabled indexer configurations for a user
-    #[cfg(feature = "postgres")]
-    pub async fn list_enabled_by_user(&self, user_id: Uuid) -> Result<Vec<IndexerConfigRecord>> {
-        let records = sqlx::query_as::<_, IndexerConfigRecord>(
-            r#"
-            SELECT 
-                id, user_id, indexer_type, definition_id, name, enabled, priority,
-                site_url, supports_search, supports_tv_search, supports_movie_search,
-                supports_music_search, supports_book_search, supports_imdb_search,
-                supports_tvdb_search, capabilities, post_download_action,
-                last_error, error_count, last_success_at, last_error_at,
-                created_at, updated_at
-            FROM indexer_configs
-            WHERE user_id = $1 AND enabled = true
-            ORDER BY priority DESC, name ASC
-            "#,
-        )
-        .bind(user_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_enabled_by_user(&self, user_id: Uuid) -> Result<Vec<IndexerConfigRecord>> {
@@ -527,65 +338,6 @@ impl IndexerRepository {
     }
 
     /// Update an indexer configuration
-    #[cfg(feature = "postgres")]
-    pub async fn update(
-        &self,
-        id: Uuid,
-        data: UpdateIndexerConfig,
-    ) -> Result<Option<IndexerConfigRecord>> {
-        let record = sqlx::query_as::<_, IndexerConfigRecord>(
-            r#"
-            UPDATE indexer_configs
-            SET
-                name = COALESCE($2, name),
-                enabled = COALESCE($3, enabled),
-                priority = COALESCE($4, priority),
-                site_url = COALESCE($5, site_url),
-                supports_search = COALESCE($6, supports_search),
-                supports_tv_search = COALESCE($7, supports_tv_search),
-                supports_movie_search = COALESCE($8, supports_movie_search),
-                supports_music_search = COALESCE($9, supports_music_search),
-                supports_book_search = COALESCE($10, supports_book_search),
-                supports_imdb_search = COALESCE($11, supports_imdb_search),
-                supports_tvdb_search = COALESCE($12, supports_tvdb_search),
-                capabilities = COALESCE($13, capabilities),
-                last_error = COALESCE($14, last_error),
-                error_count = COALESCE($15, error_count),
-                last_success_at = COALESCE($16, last_success_at),
-                last_error_at = COALESCE($17, last_error_at),
-                updated_at = NOW()
-            WHERE id = $1
-            RETURNING 
-                id, user_id, indexer_type, definition_id, name, enabled, priority,
-                site_url, supports_search, supports_tv_search, supports_movie_search,
-                supports_music_search, supports_book_search, supports_imdb_search,
-                supports_tvdb_search, capabilities, post_download_action,
-                last_error, error_count, last_success_at, last_error_at,
-                created_at, updated_at
-            "#,
-        )
-        .bind(id)
-        .bind(&data.name)
-        .bind(data.enabled)
-        .bind(data.priority)
-        .bind(&data.site_url)
-        .bind(data.supports_search)
-        .bind(data.supports_tv_search)
-        .bind(data.supports_movie_search)
-        .bind(data.supports_music_search)
-        .bind(data.supports_book_search)
-        .bind(data.supports_imdb_search)
-        .bind(data.supports_tvdb_search)
-        .bind(&data.capabilities)
-        .bind(&data.last_error)
-        .bind(data.error_count)
-        .bind(data.last_success_at)
-        .bind(data.last_error_at)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn update(
@@ -663,15 +415,6 @@ impl IndexerRepository {
     }
 
     /// Delete an indexer configuration
-    #[cfg(feature = "postgres")]
-    pub async fn delete(&self, id: Uuid) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM indexer_configs WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn delete(&self, id: Uuid) -> Result<bool> {
@@ -684,25 +427,6 @@ impl IndexerRepository {
     }
 
     /// Record a successful search
-    #[cfg(feature = "postgres")]
-    pub async fn record_success(&self, id: Uuid) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE indexer_configs
-            SET 
-                error_count = 0,
-                last_error = NULL,
-                last_success_at = NOW(),
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn record_success(&self, id: Uuid) -> Result<()> {
@@ -725,26 +449,6 @@ impl IndexerRepository {
     }
 
     /// Record a failed search
-    #[cfg(feature = "postgres")]
-    pub async fn record_error(&self, id: Uuid, error: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE indexer_configs
-            SET 
-                error_count = error_count + 1,
-                last_error = $2,
-                last_error_at = NOW(),
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .bind(error)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn record_error(&self, id: Uuid, error: &str) -> Result<()> {
@@ -770,21 +474,6 @@ impl IndexerRepository {
     // ========== Credentials ==========
 
     /// Get all credentials for an indexer
-    #[cfg(feature = "postgres")]
-    pub async fn get_credentials(&self, indexer_id: Uuid) -> Result<Vec<IndexerCredentialRecord>> {
-        let records = sqlx::query_as::<_, IndexerCredentialRecord>(
-            r#"
-            SELECT id, indexer_config_id, credential_type, encrypted_value, nonce, created_at, updated_at
-            FROM indexer_credentials
-            WHERE indexer_config_id = $1
-            "#,
-        )
-        .bind(indexer_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_credentials(&self, indexer_id: Uuid) -> Result<Vec<IndexerCredentialRecord>> {
@@ -803,33 +492,6 @@ impl IndexerRepository {
     }
 
     /// Upsert a credential (insert or update)
-    #[cfg(feature = "postgres")]
-    pub async fn upsert_credential(
-        &self,
-        indexer_id: Uuid,
-        cred: UpsertCredential,
-    ) -> Result<IndexerCredentialRecord> {
-        let record = sqlx::query_as::<_, IndexerCredentialRecord>(
-            r#"
-            INSERT INTO indexer_credentials (indexer_config_id, credential_type, encrypted_value, nonce)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (indexer_config_id, credential_type)
-            DO UPDATE SET
-                encrypted_value = EXCLUDED.encrypted_value,
-                nonce = EXCLUDED.nonce,
-                updated_at = NOW()
-            RETURNING id, indexer_config_id, credential_type, encrypted_value, nonce, created_at, updated_at
-            "#,
-        )
-        .bind(indexer_id)
-        .bind(&cred.credential_type)
-        .bind(&cred.encrypted_value)
-        .bind(&cred.nonce)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn upsert_credential(
@@ -914,18 +576,6 @@ impl IndexerRepository {
     }
 
     /// Delete a specific credential
-    #[cfg(feature = "postgres")]
-    pub async fn delete_credential(&self, indexer_id: Uuid, credential_type: &str) -> Result<bool> {
-        let result = sqlx::query(
-            "DELETE FROM indexer_credentials WHERE indexer_config_id = $1 AND credential_type = $2",
-        )
-        .bind(indexer_id)
-        .bind(credential_type)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn delete_credential(&self, indexer_id: Uuid, credential_type: &str) -> Result<bool> {
@@ -943,21 +593,6 @@ impl IndexerRepository {
     // ========== Settings ==========
 
     /// Get all settings for an indexer
-    #[cfg(feature = "postgres")]
-    pub async fn get_settings(&self, indexer_id: Uuid) -> Result<Vec<IndexerSettingRecord>> {
-        let records = sqlx::query_as::<_, IndexerSettingRecord>(
-            r#"
-            SELECT id, indexer_config_id, setting_key, setting_value, created_at, updated_at
-            FROM indexer_settings
-            WHERE indexer_config_id = $1
-            "#,
-        )
-        .bind(indexer_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_settings(&self, indexer_id: Uuid) -> Result<Vec<IndexerSettingRecord>> {
@@ -976,32 +611,6 @@ impl IndexerRepository {
     }
 
     /// Upsert a setting (insert or update)
-    #[cfg(feature = "postgres")]
-    pub async fn upsert_setting(
-        &self,
-        indexer_id: Uuid,
-        key: &str,
-        value: &str,
-    ) -> Result<IndexerSettingRecord> {
-        let record = sqlx::query_as::<_, IndexerSettingRecord>(
-            r#"
-            INSERT INTO indexer_settings (indexer_config_id, setting_key, setting_value)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (indexer_config_id, setting_key)
-            DO UPDATE SET
-                setting_value = EXCLUDED.setting_value,
-                updated_at = NOW()
-            RETURNING id, indexer_config_id, setting_key, setting_value, created_at, updated_at
-            "#,
-        )
-        .bind(indexer_id)
-        .bind(key)
-        .bind(value)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn upsert_setting(
@@ -1085,18 +694,6 @@ impl IndexerRepository {
     }
 
     /// Delete a setting
-    #[cfg(feature = "postgres")]
-    pub async fn delete_setting(&self, indexer_id: Uuid, key: &str) -> Result<bool> {
-        let result = sqlx::query(
-            "DELETE FROM indexer_settings WHERE indexer_config_id = $1 AND setting_key = $2",
-        )
-        .bind(indexer_id)
-        .bind(key)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn delete_setting(&self, indexer_id: Uuid, key: &str) -> Result<bool> {
@@ -1126,14 +723,6 @@ impl IndexerRepository {
     // ========== Cache ==========
 
     /// Clean up expired cache entries
-    #[cfg(feature = "postgres")]
-    pub async fn cleanup_expired_cache(&self) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM indexer_search_cache WHERE expires_at < NOW()")
-            .execute(&self.pool)
-            .await?;
-
-        Ok(result.rows_affected())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn cleanup_expired_cache(&self) -> Result<u64> {

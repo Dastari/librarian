@@ -1,7 +1,23 @@
 use super::prelude::*;
+use tokio::sync::broadcast;
 
 #[derive(Default)]
 pub struct MovieMutations;
+
+/// Helper to broadcast library change events
+async fn broadcast_library_changed(ctx: &Context<'_>, library_id: Uuid) {
+    if let Ok(tx) = ctx.data::<broadcast::Sender<LibraryChangedEvent>>() {
+        let db = ctx.data_unchecked::<Database>();
+        if let Ok(Some(lib)) = db.libraries().get_by_id(library_id).await {
+            let _ = tx.send(LibraryChangedEvent {
+                change_type: LibraryChangeType::Updated,
+                library_id: library_id.to_string(),
+                library_name: Some(lib.name.clone()),
+                library: Some(Library::from_db(lib)),
+            });
+        }
+    }
+}
 
 #[Object]
 impl MovieMutations {
@@ -22,7 +38,7 @@ impl MovieMutations {
         let user_id = Uuid::parse_str(&user.user_id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
 
-        if !metadata.has_tmdb() {
+        if !metadata.has_tmdb().await {
             return Ok(MovieResult {
                 success: false,
                 movie: None,
@@ -51,6 +67,9 @@ impl MovieMutations {
                     "User added movie: {}",
                     record.title
                 );
+
+                // Broadcast library change event for UI reactivity
+                broadcast_library_changed(ctx, lib_id).await;
 
                 // Trigger immediate auto-hunt if the library has auto_hunt enabled and movie is monitored
                 if is_monitored {
@@ -218,11 +237,20 @@ impl MovieMutations {
         let movie_id = Uuid::parse_str(&id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid movie ID: {}", e)))?;
 
+        // Get the library_id before deleting so we can broadcast the change
+        let library_id = db.movies().get_by_id(movie_id).await.ok().flatten().map(|m| m.library_id);
+
         match db.movies().delete(movie_id).await {
-            Ok(true) => Ok(MutationResult {
-                success: true,
-                error: None,
-            }),
+            Ok(true) => {
+                // Broadcast library change event for UI reactivity
+                if let Some(lib_id) = library_id {
+                    broadcast_library_changed(ctx, lib_id).await;
+                }
+                Ok(MutationResult {
+                    success: true,
+                    error: None,
+                })
+            }
             Ok(false) => Ok(MutationResult {
                 success: false,
                 error: Some("Movie not found".to_string()),

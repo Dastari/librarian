@@ -1078,8 +1078,27 @@ export interface MediaFile {
   duration: number | null;
   bitrate: number | null;
   episodeId: string | null;
+  movieId: string | null;
+  trackId: string | null;
+  albumId: string | null;
+  audiobookId: string | null;
+  chapterId: string | null;
+  contentType: string | null;
   organized: boolean;
+  organizeStatus: string | null;
+  organizeError: string | null;
+  qualityStatus: QualityStatus;
+  matchType: string | null;
+  isManualMatch: boolean;
   addedAt: string;
+  matchedAt: string | null;
+}
+
+/** Result of a manual match operation */
+export interface ManualMatchResult {
+  success: boolean;
+  error: string | null;
+  mediaFile: MediaFile | null;
 }
 
 // ============================================================================
@@ -1944,7 +1963,8 @@ export type NotificationCategory =
   | "PROCESSING"
   | "QUALITY"
   | "STORAGE"
-  | "EXTRACTION";
+  | "EXTRACTION"
+  | "CONFIGURATION";
 export type NotificationActionType =
   | "CONFIRM_UPGRADE"
   | "MANUAL_MATCH"
@@ -2022,4 +2042,34 @@ export interface MarkAllReadResult {
 export interface NotificationEvent {
   notification: Notification;
   eventType: NotificationEventType;
+}
+
+// ============================================================================
+// Content Download Progress Types
+// ============================================================================
+
+/** Content type enum matching backend ContentType */
+export enum ContentDownloadType {
+  MOVIE = "MOVIE",
+  EPISODE = "EPISODE",
+  TRACK = "TRACK",
+  CHAPTER = "CHAPTER",
+}
+
+/** Content download progress event from subscription */
+export interface ContentDownloadProgressEvent {
+  /** Content type (movie, episode, track, chapter) */
+  contentType: ContentDownloadType;
+  /** Content item ID */
+  contentId: string;
+  /** Library ID */
+  libraryId: string;
+  /** Download progress (0.0 to 1.0) */
+  progress: number;
+  /** Download speed in bytes per second (optional) */
+  downloadSpeed: number | null;
+  /** Name of the content for display */
+  contentName: string | null;
+  /** Parent ID (show_id for episodes, album_id for tracks, audiobook_id for chapters) */
+  parentId: string | null;
 }

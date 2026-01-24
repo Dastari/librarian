@@ -6,13 +6,9 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
 #[cfg(feature = "sqlite")]
 use sqlx::SqlitePool;
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
 #[cfg(feature = "sqlite")]
 type DbPool = SqlitePool;
 
@@ -84,47 +80,6 @@ pub struct UsenetDownloadRecord {
     pub completed_at: Option<DateTime<Utc>>,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for UsenetDownloadRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        use time::OffsetDateTime;
-
-        fn offset_to_chrono(odt: OffsetDateTime) -> DateTime<Utc> {
-            DateTime::from_timestamp(odt.unix_timestamp(), odt.nanosecond()).unwrap_or_default()
-        }
-
-        let created_at: OffsetDateTime = row.try_get("created_at")?;
-        let updated_at: OffsetDateTime = row.try_get("updated_at")?;
-        let completed_at: Option<OffsetDateTime> = row.try_get("completed_at")?;
-
-        Ok(Self {
-            id: row.try_get("id")?,
-            user_id: row.try_get("user_id")?,
-            nzb_name: row.try_get("nzb_name")?,
-            nzb_hash: row.try_get("nzb_hash")?,
-            state: row.try_get("state")?,
-            progress: row.try_get("progress")?,
-            size_bytes: row.try_get("size_bytes")?,
-            downloaded_bytes: row.try_get("downloaded_bytes")?,
-            download_speed: row.try_get("download_speed")?,
-            eta_seconds: row.try_get("eta_seconds")?,
-            error_message: row.try_get("error_message")?,
-            retry_count: row.try_get("retry_count")?,
-            download_path: row.try_get("download_path")?,
-            library_id: row.try_get("library_id")?,
-            episode_id: row.try_get("episode_id")?,
-            movie_id: row.try_get("movie_id")?,
-            album_id: row.try_get("album_id")?,
-            audiobook_id: row.try_get("audiobook_id")?,
-            indexer_id: row.try_get("indexer_id")?,
-            post_process_status: row.try_get("post_process_status")?,
-            created_at: offset_to_chrono(created_at),
-            updated_at: offset_to_chrono(updated_at),
-            completed_at: completed_at.map(offset_to_chrono),
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for UsenetDownloadRecord {
@@ -241,25 +196,6 @@ impl UsenetDownloadsRepository {
     }
 
     /// Get a usenet download by ID
-    #[cfg(feature = "postgres")]
-    pub async fn get(&self, id: Uuid) -> Result<Option<UsenetDownloadRecord>> {
-        let record = sqlx::query_as::<_, UsenetDownloadRecord>(
-            r#"
-            SELECT id, user_id, nzb_name, nzb_hash, state, progress,
-                   size_bytes, downloaded_bytes, download_speed, eta_seconds,
-                   error_message, retry_count, download_path,
-                   library_id, episode_id, movie_id, album_id, audiobook_id,
-                   indexer_id, post_process_status, created_at, updated_at, completed_at
-            FROM usenet_downloads
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get(&self, id: Uuid) -> Result<Option<UsenetDownloadRecord>> {
@@ -284,25 +220,6 @@ impl UsenetDownloadsRepository {
     }
 
     /// Get a usenet download by NZB hash
-    #[cfg(feature = "postgres")]
-    pub async fn get_by_hash(&self, nzb_hash: &str) -> Result<Option<UsenetDownloadRecord>> {
-        let record = sqlx::query_as::<_, UsenetDownloadRecord>(
-            r#"
-            SELECT id, user_id, nzb_name, nzb_hash, state, progress,
-                   size_bytes, downloaded_bytes, download_speed, eta_seconds,
-                   error_message, retry_count, download_path,
-                   library_id, episode_id, movie_id, album_id, audiobook_id,
-                   indexer_id, post_process_status, created_at, updated_at, completed_at
-            FROM usenet_downloads
-            WHERE nzb_hash = $1
-            "#,
-        )
-        .bind(nzb_hash)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_by_hash(&self, nzb_hash: &str) -> Result<Option<UsenetDownloadRecord>> {
@@ -325,26 +242,6 @@ impl UsenetDownloadsRepository {
     }
 
     /// Get all usenet downloads for a user
-    #[cfg(feature = "postgres")]
-    pub async fn list_by_user(&self, user_id: Uuid) -> Result<Vec<UsenetDownloadRecord>> {
-        let records = sqlx::query_as::<_, UsenetDownloadRecord>(
-            r#"
-            SELECT id, user_id, nzb_name, nzb_hash, state, progress,
-                   size_bytes, downloaded_bytes, download_speed, eta_seconds,
-                   error_message, retry_count, download_path,
-                   library_id, episode_id, movie_id, album_id, audiobook_id,
-                   indexer_id, post_process_status, created_at, updated_at, completed_at
-            FROM usenet_downloads
-            WHERE user_id = $1 AND state != 'removed'
-            ORDER BY created_at DESC
-            "#,
-        )
-        .bind(user_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_by_user(&self, user_id: Uuid) -> Result<Vec<UsenetDownloadRecord>> {
@@ -370,26 +267,6 @@ impl UsenetDownloadsRepository {
     }
 
     /// Get active usenet downloads (downloading or queued)
-    #[cfg(feature = "postgres")]
-    pub async fn list_active(&self, user_id: Uuid) -> Result<Vec<UsenetDownloadRecord>> {
-        let records = sqlx::query_as::<_, UsenetDownloadRecord>(
-            r#"
-            SELECT id, user_id, nzb_name, nzb_hash, state, progress,
-                   size_bytes, downloaded_bytes, download_speed, eta_seconds,
-                   error_message, retry_count, download_path,
-                   library_id, episode_id, movie_id, album_id, audiobook_id,
-                   indexer_id, post_process_status, created_at, updated_at, completed_at
-            FROM usenet_downloads
-            WHERE user_id = $1 AND state IN ('queued', 'downloading')
-            ORDER BY created_at ASC
-            "#,
-        )
-        .bind(user_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_active(&self, user_id: Uuid) -> Result<Vec<UsenetDownloadRecord>> {
@@ -436,38 +313,6 @@ impl UsenetDownloadsRepository {
     }
 
     /// Create a new usenet download
-    #[cfg(feature = "postgres")]
-    pub async fn create(&self, data: CreateUsenetDownload) -> Result<UsenetDownloadRecord> {
-        let record = sqlx::query_as::<_, UsenetDownloadRecord>(
-            r#"
-            INSERT INTO usenet_downloads (
-                user_id, nzb_name, nzb_hash, size_bytes, download_path,
-                library_id, episode_id, movie_id, album_id, audiobook_id, indexer_id
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            RETURNING id, user_id, nzb_name, nzb_hash, state, progress,
-                      size_bytes, downloaded_bytes, download_speed, eta_seconds,
-                      error_message, retry_count, download_path,
-                      library_id, episode_id, movie_id, album_id, audiobook_id,
-                      indexer_id, post_process_status, created_at, updated_at, completed_at
-            "#,
-        )
-        .bind(data.user_id)
-        .bind(&data.nzb_name)
-        .bind(&data.nzb_hash)
-        .bind(data.size_bytes)
-        .bind(&data.download_path)
-        .bind(data.library_id)
-        .bind(data.episode_id)
-        .bind(data.movie_id)
-        .bind(data.album_id)
-        .bind(data.audiobook_id)
-        .bind(data.indexer_id)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn create(&self, data: CreateUsenetDownload) -> Result<UsenetDownloadRecord> {
@@ -507,37 +352,6 @@ impl UsenetDownloadsRepository {
     }
 
     /// Update download progress
-    #[cfg(feature = "postgres")]
-    pub async fn update_progress(
-        &self,
-        id: Uuid,
-        progress: f64,
-        downloaded_bytes: i64,
-        speed: i64,
-        eta: Option<i32>,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE usenet_downloads
-            SET progress = $2,
-                downloaded_bytes = $3,
-                download_speed = $4,
-                eta_seconds = $5,
-                state = CASE WHEN state = 'queued' THEN 'downloading' ELSE state END,
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .bind(progress)
-        .bind(downloaded_bytes)
-        .bind(speed)
-        .bind(eta)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn update_progress(
@@ -574,26 +388,6 @@ impl UsenetDownloadsRepository {
     }
 
     /// Mark download as completed
-    #[cfg(feature = "postgres")]
-    pub async fn mark_completed(&self, id: Uuid, download_path: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE usenet_downloads
-            SET state = 'completed',
-                progress = 100.0,
-                download_path = $2,
-                completed_at = NOW(),
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .bind(download_path)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn mark_completed(&self, id: Uuid, download_path: &str) -> Result<()> {
@@ -619,25 +413,6 @@ impl UsenetDownloadsRepository {
     }
 
     /// Mark download as failed
-    #[cfg(feature = "postgres")]
-    pub async fn mark_failed(&self, id: Uuid, error: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE usenet_downloads
-            SET state = 'failed',
-                error_message = $2,
-                retry_count = retry_count + 1,
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .bind(error)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn mark_failed(&self, id: Uuid, error: &str) -> Result<()> {
@@ -662,21 +437,6 @@ impl UsenetDownloadsRepository {
     }
 
     /// Pause a download
-    #[cfg(feature = "postgres")]
-    pub async fn pause(&self, id: Uuid) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE usenet_downloads
-            SET state = 'paused', updated_at = NOW()
-            WHERE id = $1 AND state IN ('queued', 'downloading')
-            "#,
-        )
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn pause(&self, id: Uuid) -> Result<()> {
@@ -697,21 +457,6 @@ impl UsenetDownloadsRepository {
     }
 
     /// Resume a paused download
-    #[cfg(feature = "postgres")]
-    pub async fn resume(&self, id: Uuid) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE usenet_downloads
-            SET state = 'queued', updated_at = NOW()
-            WHERE id = $1 AND state = 'paused'
-            "#,
-        )
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn resume(&self, id: Uuid) -> Result<()> {
@@ -732,21 +477,6 @@ impl UsenetDownloadsRepository {
     }
 
     /// Remove a download (soft delete)
-    #[cfg(feature = "postgres")]
-    pub async fn remove(&self, id: Uuid) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE usenet_downloads
-            SET state = 'removed', updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn remove(&self, id: Uuid) -> Result<()> {
@@ -767,15 +497,6 @@ impl UsenetDownloadsRepository {
     }
 
     /// Delete a download permanently
-    #[cfg(feature = "postgres")]
-    pub async fn delete(&self, id: Uuid) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM usenet_downloads WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn delete(&self, id: Uuid) -> Result<bool> {
@@ -790,22 +511,6 @@ impl UsenetDownloadsRepository {
     }
 
     /// Update post-processing status
-    #[cfg(feature = "postgres")]
-    pub async fn set_post_process_status(&self, id: Uuid, status: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE usenet_downloads
-            SET post_process_status = $2, updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .bind(status)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn set_post_process_status(&self, id: Uuid, status: &str) -> Result<()> {
@@ -827,39 +532,6 @@ impl UsenetDownloadsRepository {
     }
 
     /// Link download to library item
-    #[cfg(feature = "postgres")]
-    pub async fn link_to_library(
-        &self,
-        id: Uuid,
-        library_id: Option<Uuid>,
-        episode_id: Option<Uuid>,
-        movie_id: Option<Uuid>,
-        album_id: Option<Uuid>,
-        audiobook_id: Option<Uuid>,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE usenet_downloads
-            SET library_id = $2,
-                episode_id = $3,
-                movie_id = $4,
-                album_id = $5,
-                audiobook_id = $6,
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .bind(library_id)
-        .bind(episode_id)
-        .bind(movie_id)
-        .bind(album_id)
-        .bind(audiobook_id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn link_to_library(

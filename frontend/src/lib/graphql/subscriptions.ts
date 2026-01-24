@@ -197,3 +197,25 @@ export const NOTIFICATION_COUNTS_SUBSCRIPTION = `
     }
   }
 `;
+
+// ============================================================================
+// Content Download Progress Subscriptions
+// ============================================================================
+
+/**
+ * Subscribe to content download progress updates
+ * Use this to show real-time download progress on content detail pages
+ */
+export const CONTENT_DOWNLOAD_PROGRESS_SUBSCRIPTION = `
+  subscription ContentDownloadProgress($libraryId: String, $parentId: String) {
+    contentDownloadProgress(libraryId: $libraryId, parentId: $parentId) {
+      contentType
+      contentId
+      libraryId
+      progress
+      downloadSpeed
+      contentName
+      parentId
+    }
+  }
+`;

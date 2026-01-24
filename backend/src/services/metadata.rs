@@ -7,6 +7,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -247,10 +248,11 @@ pub struct AddTvShowOptions {
 /// Unified metadata service
 pub struct MetadataService {
     tvmaze: TvMazeClient,
-    tmdb: Option<TmdbClient>,
+    /// TMDB client - wrapped in RwLock to allow dynamic reloading when settings change
+    tmdb: RwLock<Option<TmdbClient>>,
     musicbrainz: MusicBrainzClient,
     openlibrary: AudiobookMetadataClient,
-    config: MetadataServiceConfig,
+    config: RwLock<MetadataServiceConfig>,
     db: Database,
     artwork_service: Option<Arc<ArtworkService>>,
     /// Cache for TVMaze schedule data (TTL: 30 minutes)
@@ -270,10 +272,10 @@ impl MetadataService {
 
         Self {
             tvmaze: TvMazeClient::new(),
-            tmdb,
+            tmdb: RwLock::new(tmdb),
             musicbrainz: MusicBrainzClient::new_default(),
             openlibrary: AudiobookMetadataClient::new(),
-            config,
+            config: RwLock::new(config),
             db,
             artwork_service: None,
             schedule_cache: create_cache(SCHEDULE_CACHE_TTL),
@@ -285,7 +287,7 @@ impl MetadataService {
         Self::new(db, MetadataServiceConfig::default())
     }
 
-    /// Create with artwork service for caching images to Supabase storage
+    /// Create with artwork service for caching images
     pub fn new_with_artwork(
         db: Database,
         config: MetadataServiceConfig,
@@ -299,19 +301,125 @@ impl MetadataService {
 
         Self {
             tvmaze: TvMazeClient::new(),
-            tmdb,
+            tmdb: RwLock::new(tmdb),
             musicbrainz: MusicBrainzClient::new_default(),
             openlibrary: AudiobookMetadataClient::new(),
-            config,
+            config: RwLock::new(config),
             db,
             artwork_service: Some(artwork_service),
             schedule_cache: create_cache(SCHEDULE_CACHE_TTL),
         }
     }
 
-    /// Check if TMDB is configured
-    pub fn has_tmdb(&self) -> bool {
-        self.tmdb.is_some()
+    /// Check if TMDB is configured (based on current state)
+    pub async fn has_tmdb(&self) -> bool {
+        self.tmdb.read().await.is_some()
+    }
+
+    /// Reload configuration from the database
+    /// 
+    /// This should be called when settings are updated via the UI to pick up
+    /// new API keys without requiring a server restart.
+    pub async fn reload_config(&self) -> Result<()> {
+        info!("Reloading metadata service configuration from database");
+
+        // Read TMDB API key from database
+        let tmdb_api_key = self
+            .db
+            .settings()
+            .get_value::<String>("metadata.tmdb_api_key")
+            .await
+            .ok()
+            .flatten()
+            .filter(|k| !k.is_empty());
+
+        // Read other API keys
+        let tvdb_api_key = self
+            .db
+            .settings()
+            .get_value::<String>("metadata.tvdb_api_key")
+            .await
+            .ok()
+            .flatten()
+            .filter(|k| !k.is_empty());
+
+        let openai_api_key = self
+            .db
+            .settings()
+            .get_value::<String>("metadata.openai_api_key")
+            .await
+            .ok()
+            .flatten()
+            .filter(|k| !k.is_empty());
+
+        // Update config
+        let new_config = MetadataServiceConfig {
+            tmdb_api_key: tmdb_api_key.clone(),
+            tvdb_api_key,
+            openai_api_key,
+        };
+
+        // Update TMDB client
+        let new_tmdb = tmdb_api_key.map(|k| TmdbClient::new(k));
+        
+        // Update both under write locks
+        {
+            let mut config_guard = self.config.write().await;
+            *config_guard = new_config;
+        }
+        {
+            let mut tmdb_guard = self.tmdb.write().await;
+            let had_tmdb = tmdb_guard.is_some();
+            let has_tmdb = new_tmdb.is_some();
+            *tmdb_guard = new_tmdb;
+
+            if !had_tmdb && has_tmdb {
+                info!("TMDB client enabled after config reload");
+            } else if had_tmdb && !has_tmdb {
+                warn!("TMDB client disabled after config reload (API key removed)");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get TMDB client, attempting to reload from database if not configured
+    /// 
+    /// This provides a fallback mechanism where if TMDB wasn't configured at startup
+    /// but was configured later via settings, we can pick it up on the next request.
+    async fn get_tmdb_client(&self) -> Result<TmdbClient> {
+        // First check if we have a client
+        {
+            let guard = self.tmdb.read().await;
+            if let Some(ref client) = *guard {
+                return Ok(client.clone());
+            }
+        }
+
+        // No client - try to reload config from database
+        debug!("TMDB client not configured, checking database for updated settings");
+        
+        let tmdb_api_key = self
+            .db
+            .settings()
+            .get_value::<String>("metadata.tmdb_api_key")
+            .await
+            .ok()
+            .flatten()
+            .filter(|k| !k.is_empty());
+
+        if let Some(key) = tmdb_api_key {
+            info!("Found TMDB API key in database, creating client");
+            let client = TmdbClient::new(key);
+            
+            // Update the stored client
+            let mut guard = self.tmdb.write().await;
+            *guard = Some(client.clone());
+            
+            return Ok(client);
+        }
+
+        anyhow::bail!("TMDB API key not configured. Add tmdb_api_key to settings.")
     }
 
     /// Get reference to artwork service if available
@@ -469,9 +577,7 @@ impl MetadataService {
             year.map(|y| format!(" ({})", y)).unwrap_or_default()
         );
 
-        let tmdb = self.tmdb.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("TMDB API key not configured. Add tmdb_api_key to settings.")
-        })?;
+        let tmdb = self.get_tmdb_client().await?;
 
         let movies = tmdb.search_movies(query, year).await?;
 
@@ -507,10 +613,7 @@ impl MetadataService {
     pub async fn get_movie(&self, tmdb_id: u32) -> Result<MovieDetails> {
         debug!("Fetching movie details from TMDB (ID: {})", tmdb_id);
 
-        let tmdb = self
-            .tmdb
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("TMDB API key not configured"))?;
+        let tmdb = self.get_tmdb_client().await?;
 
         // Fetch movie details
         let movie = tmdb.get_movie(tmdb_id as i32).await?;
@@ -589,7 +692,7 @@ impl MetadataService {
         // Get movie details from TMDB
         let movie_details = self.get_movie(options.provider_id).await?;
 
-        // Cache artwork to Supabase storage if artwork service is available
+        // Cache artwork if artwork service is available
         let (cached_poster_url, cached_backdrop_url) =
             if let Some(ref artwork_service) = self.artwork_service {
                 let entity_id = format!("{}_{}", options.provider_id, options.library_id);
@@ -1199,7 +1302,7 @@ impl MetadataService {
     /// It handles:
     /// 1. Checking if show already exists (returns existing if so)
     /// 2. Fetching show details from the provider
-    /// 3. Caching artwork to Supabase storage
+    /// 3. Caching artwork
     /// 4. Creating the TV show record with normalized status
     /// 5. Fetching and creating all episode records
     /// 6. Updating show statistics
@@ -1227,7 +1330,7 @@ impl MetadataService {
         // Get show details from provider
         let show_details = self.get_show(options.provider, options.provider_id).await?;
 
-        // Cache artwork to Supabase storage if artwork service is available
+        // Cache artwork if artwork service is available
         let (cached_poster_url, cached_backdrop_url) =
             if let Some(ref artwork_service) = self.artwork_service {
                 let entity_id = format!("{}_{}", options.provider_id, options.library_id);
@@ -1425,8 +1528,8 @@ impl MetadataService {
               AND parsed_episode IS NOT NULL
               AND (
                   LOWER(REPLACE(REPLACE(REPLACE(parsed_show_name, '.', ' '), '-', ' '), '_', ' '))
-                  LIKE '%' || $1 || '%'
-                  OR $1 LIKE '%' || LOWER(REPLACE(REPLACE(REPLACE(parsed_show_name, '.', ' '), '-', ' '), '_', ' ')) || '%'
+                  LIKE '%' || ?1 || '%'
+                  OR ?1 LIKE '%' || LOWER(REPLACE(REPLACE(REPLACE(parsed_show_name, '.', ' '), '-', ' '), '_', ' ')) || '%'
               )
             ORDER BY pub_date DESC
             "#,
@@ -1450,10 +1553,11 @@ impl MetadataService {
         );
 
         // Get all seasons for this show to handle year-based season mapping
+        use crate::db::sqlite_helpers::uuid_to_str;
         let seasons: Vec<(i32,)> = sqlx::query_as(
-            "SELECT DISTINCT season FROM episodes WHERE tv_show_id = $1 ORDER BY season",
+            "SELECT DISTINCT season FROM episodes WHERE tv_show_id = ?1 ORDER BY season",
         )
-        .bind(tv_show.id)
+        .bind(uuid_to_str(tv_show.id))
         .fetch_all(self.db.pool())
         .await?;
 
@@ -1482,11 +1586,11 @@ impl MetadataService {
                     let eps: Vec<EpisodeRecord> = sqlx::query_as(
                         r#"
                         SELECT * FROM episodes
-                        WHERE tv_show_id = $1 AND season = $2
+                        WHERE tv_show_id = ?1 AND season = ?2
                         ORDER BY episode
                         "#,
                     )
-                    .bind(tv_show.id)
+                    .bind(uuid_to_str(tv_show.id))
                     .bind(target_year_season)
                     .fetch_all(self.db.pool())
                     .await?;

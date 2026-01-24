@@ -26,7 +26,7 @@ pnpm exec tsc --noEmit
 - **Framework**: TanStack Router (file-based routing)
 - **UI**: HeroUI + Tailwind CSS v4
 - **GraphQL**: urql + graphql-ws for subscriptions
-- **Auth**: Supabase Auth
+- **Auth**: Local JWT auth
 
 ## Project Structure
 

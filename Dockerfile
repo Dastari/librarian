@@ -31,8 +31,6 @@ COPY frontend/ ./
 # Build arguments for environment variables
 # These are baked into the build - use empty string for relative URLs
 ARG VITE_API_URL=""
-ARG VITE_SUPABASE_URL=""
-ARG VITE_SUPABASE_ANON_KEY=""
 
 # Build the application
 RUN pnpm run build

@@ -8,6 +8,7 @@ import { addToast } from '@heroui/toast'
 import { useDisclosure } from '@heroui/modal'
 import { ConfirmModal } from '../ConfirmModal'
 import { FilePropertiesModal } from '../FilePropertiesModal'
+import { DestinationPickerModal } from '../DestinationPickerModal'
 import {
   DataTable,
   type DataTableColumn,
@@ -16,6 +17,9 @@ import {
 } from '../data-table'
 import {
   browseDirectory,
+  deleteFiles,
+  copyFiles,
+  moveFiles,
   graphqlClient,
   MEDIA_FILE_BY_PATH_QUERY,
   type FileEntry,
@@ -83,14 +87,21 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
   const [parentPath, setParentPath] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // Confirm modal state
+  // Confirm delete modal state
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
   const [pathsToDelete, setPathsToDelete] = useState<string[]>([])
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // File properties modal state
   const { isOpen: isPropertiesOpen, onOpen: onPropertiesOpen, onClose: onPropertiesClose } = useDisclosure()
   const [propertiesMediaFileId, setPropertiesMediaFileId] = useState<string | null>(null)
   const [propertiesFileName, setPropertiesFileName] = useState<string | null>(null)
+
+  // Destination picker modal state (for copy/move)
+  const { isOpen: isDestinationOpen, onOpen: onDestinationOpen, onClose: onDestinationClose } = useDisclosure()
+  const [destinationOperation, setDestinationOperation] = useState<'copy' | 'move'>('copy')
+  const [pathsToOperate, setPathsToOperate] = useState<string[]>([])
+  const [isOperating, setIsOperating] = useState(false)
 
   const fetchDirectory = useCallback(async (path: string) => {
     try {
@@ -156,19 +167,15 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
 
   // Action handlers
   const handleCopy = (paths: string[]) => {
-    addToast({
-      title: 'Copy',
-      description: `Copying ${paths.length} item(s)... (not implemented)`,
-      color: 'primary',
-    })
+    setPathsToOperate(paths)
+    setDestinationOperation('copy')
+    onDestinationOpen()
   }
 
   const handleMove = (paths: string[]) => {
-    addToast({
-      title: 'Move',
-      description: `Moving ${paths.length} item(s)... (not implemented)`,
-      color: 'primary',
-    })
+    setPathsToOperate(paths)
+    setDestinationOperation('move')
+    onDestinationOpen()
   }
 
   const handleDeleteClick = (paths: string[]) => {
@@ -176,13 +183,70 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
     onConfirmOpen()
   }
 
-  const handleDelete = () => {
-    addToast({
-      title: 'Delete',
-      description: `Deleting ${pathsToDelete.length} item(s)... (not implemented)`,
-      color: 'danger',
-    })
-    onConfirmClose()
+  const handleDelete = async () => {
+    setIsDeleting(true)
+    try {
+      const result = await deleteFiles(pathsToDelete, true)
+      if (result.success) {
+        addToast({
+          title: 'Deleted',
+          description: `Successfully deleted ${result.affectedCount} item(s)`,
+          color: 'success',
+        })
+        // Refresh the directory
+        fetchDirectory(currentPath)
+      } else {
+        addToast({
+          title: 'Delete Failed',
+          description: sanitizeError(result.error || 'Unknown error'),
+          color: 'danger',
+        })
+      }
+    } catch (err) {
+      addToast({
+        title: 'Delete Failed',
+        description: sanitizeError(err),
+        color: 'danger',
+      })
+    } finally {
+      setIsDeleting(false)
+      onConfirmClose()
+      setPathsToDelete([])
+    }
+  }
+
+  const handleDestinationSelect = async (destinationPath: string) => {
+    setIsOperating(true)
+    try {
+      const operationFn = destinationOperation === 'copy' ? copyFiles : moveFiles
+      const result = await operationFn(pathsToOperate, destinationPath, false)
+
+      if (result.success) {
+        addToast({
+          title: destinationOperation === 'copy' ? 'Copied' : 'Moved',
+          description: `Successfully ${destinationOperation === 'copy' ? 'copied' : 'moved'} ${result.affectedCount} item(s) to ${destinationPath}`,
+          color: 'success',
+        })
+        // Refresh the directory (especially important for move)
+        fetchDirectory(currentPath)
+      } else {
+        addToast({
+          title: `${destinationOperation === 'copy' ? 'Copy' : 'Move'} Failed`,
+          description: sanitizeError(result.error || 'Unknown error'),
+          color: 'danger',
+        })
+      }
+    } catch (err) {
+      addToast({
+        title: `${destinationOperation === 'copy' ? 'Copy' : 'Move'} Failed`,
+        description: sanitizeError(err),
+        color: 'danger',
+      })
+    } finally {
+      setIsOperating(false)
+      onDestinationClose()
+      setPathsToOperate([])
+    }
   }
 
   const handleMatch = (paths: string[]) => {
@@ -524,6 +588,22 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
         description="This action cannot be undone."
         confirmLabel="Delete"
         confirmColor="danger"
+        isLoading={isDeleting}
+      />
+
+      {/* Destination Picker Modal (for copy/move) */}
+      <DestinationPickerModal
+        isOpen={isDestinationOpen}
+        onClose={() => {
+          onDestinationClose()
+          setPathsToOperate([])
+        }}
+        onSelect={handleDestinationSelect}
+        title={destinationOperation === 'copy' ? 'Copy to...' : 'Move to...'}
+        description={`Select destination for ${pathsToOperate.length} item(s)`}
+        initialPath={currentPath}
+        confirmLabel={destinationOperation === 'copy' ? 'Copy Here' : 'Move Here'}
+        isLoading={isOperating}
       />
 
       {/* File Properties Modal */}

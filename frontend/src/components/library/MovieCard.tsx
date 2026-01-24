@@ -1,5 +1,4 @@
-import { useNavigate } from '@tanstack/react-router'
-import { useCallback } from 'react'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { Card } from '@heroui/card'
 import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
 import { Button } from '@heroui/button'
@@ -23,20 +22,16 @@ export interface MovieCardProps {
 export function MovieCard({ movie, onDelete }: MovieCardProps) {
   const navigate = useNavigate()
 
-  const handleCardClick = useCallback(() => {
-    navigate({ to: '/movies/$movieId', params: { movieId: movie.id } })
-  }, [navigate, movie.id])
-
   return (
     <div className="aspect-[2/3]">
       <Card
         className="relative overflow-hidden h-full w-full group border-none bg-content2"
       >
       {/* Clickable overlay for navigation - covers the entire card */}
-      <button
-        type="button"
+      <Link
+        to="/movies/$movieId"
+        params={{ movieId: movie.id }}
         className="absolute inset-0 z-20 w-full h-full cursor-pointer bg-transparent border-none outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-        onClick={handleCardClick}
         aria-label={`View ${movie.title}`}
       />
 
@@ -134,6 +129,7 @@ export function MovieCard({ movie, onDelete }: MovieCardProps) {
               size="sm"
               variant="flat"
               className="bg-black/50 backdrop-blur-sm text-white hover:bg-black/70 min-w-6 w-6 h-6"
+              aria-label="Movie actions"
             >
               <IconDotsVertical size={16} />
             </Button>

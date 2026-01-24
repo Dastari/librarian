@@ -351,8 +351,56 @@ impl TorrentService {
         service.start_progress_monitor();
         service.start_db_sync();
 
-        // Attempt UPnP port forwarding
-        let _ = service.attempt_upnp_port_forwarding().await;
+        // Attempt UPnP port forwarding in background (don't block startup)
+        {
+            let upnp_result = service.upnp_result.clone();
+            let port = service.config.listen_port;
+            tokio::spawn(async move {
+                if port == 0 {
+                    *upnp_result.write() = Some(UpnpResult {
+                        success: false,
+                        tcp_forwarded: false,
+                        udp_forwarded: false,
+                        local_ip: None,
+                        external_ip: None,
+                        error: Some("Listen port is set to 0 (random)".to_string()),
+                    });
+                    return;
+                }
+
+                let result = tokio::task::spawn_blocking(move || {
+                    Self::perform_upnp_port_forwarding(port)
+                })
+                .await
+                .unwrap_or_else(|_| Err(anyhow::anyhow!("UPnP task panicked")));
+
+                let result = match result {
+                    Ok(r) => {
+                        info!(
+                            port = %port,
+                            tcp_forwarded = %r.tcp_forwarded,
+                            udp_forwarded = %r.udp_forwarded,
+                            external_ip = ?r.external_ip,
+                            "UPnP port forwarding completed"
+                        );
+                        r
+                    }
+                    Err(e) => {
+                        warn!(port = %port, error = %e, "UPnP port forwarding failed");
+                        UpnpResult {
+                            success: false,
+                            tcp_forwarded: false,
+                            udp_forwarded: false,
+                            local_ip: None,
+                            external_ip: None,
+                            error: Some(e.to_string()),
+                        }
+                    }
+                };
+
+                *upnp_result.write() = Some(result);
+            });
+        }
 
         info!("Torrent service initialized");
         Ok(service)
@@ -953,6 +1001,18 @@ impl TorrentService {
         torrents
     }
 
+    /// List only active (downloading) torrents
+    ///
+    /// Returns torrents that are currently downloading (state == Downloading).
+    /// Used by content progress monitoring to avoid processing completed torrents.
+    pub async fn list_active_downloads(&self) -> Vec<TorrentInfo> {
+        self.list_torrents()
+            .await
+            .into_iter()
+            .filter(|t| matches!(t.state, TorrentState::Downloading | TorrentState::Checking))
+            .collect()
+    }
+
     pub async fn pause(&self, id: usize) -> Result<()> {
         let handle = self
             .session
@@ -1091,6 +1151,16 @@ impl TorrentService {
     }
     pub fn download_dir(&self) -> &PathBuf {
         &self.config.download_dir
+    }
+
+    /// Get the UPnP port forwarding result (if attempted)
+    pub fn upnp_result(&self) -> Option<UpnpResult> {
+        self.upnp_result.read().clone()
+    }
+
+    /// Get the listen port for incoming torrent connections
+    pub fn listen_port(&self) -> u16 {
+        self.config.listen_port
     }
 
     /// Start background task to sync torrent state to database periodically
@@ -1289,33 +1359,57 @@ impl TorrentService {
 
     /// Perform the actual UPnP port forwarding (blocking operation)
     fn perform_upnp_port_forwarding(port: u16) -> Result<UpnpResult> {
-        use igd::{search_gateway, PortMappingProtocol};
+        use igd::{search_gateway, PortMappingProtocol, SearchOptions};
+        use std::time::Duration;
 
-        // Search for a gateway
-        let gateway = search_gateway(Default::default())
+        // Search for a gateway with a reasonable timeout
+        let search_options = SearchOptions {
+            timeout: Some(Duration::from_secs(3)),
+            ..Default::default()
+        };
+
+        let gateway = search_gateway(search_options)
             .map_err(|e| anyhow::anyhow!("Failed to find UPnP gateway: {}", e))?;
 
-        let local_ip = gateway
-            .get_external_ip()
-            .map_err(|e| anyhow::anyhow!("Failed to get external IP: {}", e))?;
+        // Get the local IP address that can reach the gateway
+        // This is the IP we need to use for port forwarding
+        let local_ip = local_ip_address::local_ip()
+            .map_err(|e| anyhow::anyhow!("Failed to get local IP address: {}", e))?;
 
+        let local_ipv4 = match local_ip {
+            std::net::IpAddr::V4(ip) => ip,
+            std::net::IpAddr::V6(_) => {
+                return Err(anyhow::anyhow!("UPnP requires IPv4, but only IPv6 address found"));
+            }
+        };
+
+        // Get the external (public) IP from the gateway
         let external_ip = gateway
             .get_external_ip()
             .map_err(|e| anyhow::anyhow!("Failed to get external IP: {}", e))?;
 
+        debug!(
+            local_ip = %local_ipv4,
+            external_ip = %external_ip,
+            gateway = %gateway.addr,
+            "Found UPnP gateway"
+        );
+
         let mut tcp_forwarded = false;
         let mut udp_forwarded = false;
+
+        let local_addr = std::net::SocketAddrV4::new(local_ipv4, port);
 
         // Try TCP port forwarding
         match gateway.add_port(
             PortMappingProtocol::TCP,
             port,
-            std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, port),
-            300, // Lease duration in seconds
+            local_addr,
+            3600, // Lease duration: 1 hour (will be renewed by librqbit or on restart)
             "Librarian Torrent Client",
         ) {
             Ok(_) => {
-                debug!(port = %port, "Successfully forwarded TCP port via UPnP");
+                debug!(port = %port, local_addr = %local_addr, "Successfully forwarded TCP port via UPnP");
                 tcp_forwarded = true;
             }
             Err(e) => {
@@ -1327,12 +1421,12 @@ impl TorrentService {
         match gateway.add_port(
             PortMappingProtocol::UDP,
             port,
-            std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, port),
-            300, // Lease duration in seconds
+            local_addr,
+            3600, // Lease duration: 1 hour
             "Librarian Torrent Client",
         ) {
             Ok(_) => {
-                debug!(port = %port, "Successfully forwarded UDP port via UPnP");
+                debug!(port = %port, local_addr = %local_addr, "Successfully forwarded UDP port via UPnP");
                 udp_forwarded = true;
             }
             Err(e) => {
@@ -1346,7 +1440,7 @@ impl TorrentService {
             success,
             tcp_forwarded,
             udp_forwarded,
-            local_ip: Some(local_ip.to_string()),
+            local_ip: Some(local_ipv4.to_string()),
             external_ip: Some(external_ip.to_string()),
             error: if success {
                 None

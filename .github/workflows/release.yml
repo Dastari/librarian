@@ -57,8 +57,142 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64
 
+  build-distro-linux:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          pnpm install
+          pnpm run build
+
+      - name: Build backend
+        run: |
+          cd backend
+          cargo build --release --features embed-frontend
+
+      - name: Package Linux artifacts
+        id: package
+        run: |
+          VERSION=$(rg -n '^version\\s*=\\s*"' backend/Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\\1/')
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          mkdir -p dist/linux
+          cp backend/target/release/librarian dist/linux/librarian
+          tar -czf dist/librarian-${VERSION}-linux-x86_64.tar.gz -C dist/linux librarian
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: distro-linux
+          path: dist/*
+
+  build-distro-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install WiX and Inno Setup
+        shell: powershell
+        run: |
+          dotnet tool install --global wix
+          choco install innosetup -y
+          "$env:USERPROFILE\\.dotnet\\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build frontend
+        shell: bash
+        run: |
+          cd frontend
+          pnpm install
+          pnpm run build
+
+      - name: Build backend
+        shell: bash
+        run: |
+          cd backend
+          cargo build --release --features embed-frontend --target x86_64-pc-windows-msvc
+
+      - name: Package Windows artifacts
+        shell: powershell
+        run: |
+          $version = (Select-String -Path backend/Cargo.toml -Pattern '^version\\s*=\\s*"' | Select-Object -First 1).Line
+          $version = $version -replace '.*"([^"]+)".*','$1'
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $dist = Join-Path $PWD "dist"
+          New-Item -ItemType Directory -Force -Path "$dist\\windows\\x86_64" | Out-Null
+          Copy-Item "backend\\target\\x86_64-pc-windows-msvc\\release\\librarian.exe" "$dist\\windows\\x86_64\\librarian.exe"
+
+          $ffmpegZip = Join-Path $PWD "ffmpeg.zip"
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile $ffmpegZip
+          Expand-Archive -Path $ffmpegZip -DestinationPath "ffmpeg"
+          $ffprobe = Get-ChildItem -Path "ffmpeg" -Recurse -Filter "ffprobe.exe" | Select-Object -First 1
+          if ($null -ne $ffprobe) {
+            Copy-Item $ffprobe.FullName "$dist\\windows\\x86_64\\ffprobe.exe"
+          } else {
+            Write-Error "ffprobe.exe not found in downloaded archive."
+          }
+
+          Compress-Archive -Path "$dist\\windows\\x86_64\\librarian.exe","$dist\\windows\\x86_64\\ffprobe.exe" -DestinationPath "$dist\\librarian-$version-windows-x86_64.zip" -Force
+
+          $wxs = Join-Path $PWD "installer\\windows\\librarian.wxs"
+          $iss = Join-Path $PWD "installer\\windows\\librarian.iss"
+          & wix build -d Version=$version -d SourceDir="$dist\\windows\\x86_64" -o "$dist\\librarian-$version-windows-x86_64.msi" $wxs
+
+          Push-Location $dist
+          & iscc /DMyAppVersion=$version /DSourceDir="$dist\\windows\\x86_64" $iss
+          Pop-Location
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: distro-windows
+          path: dist/*
+
   create-release:
-    needs: build-and-push
+    needs: [build-and-push, build-distro-linux, build-distro-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -68,10 +202,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Verify version matches tag
+        run: |
+          VERSION=$(rg -n '^version\\s*=\\s*"' backend/Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\\1/')
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$VERSION" != "$TAG" ]; then
+            echo "Cargo version ($VERSION) does not match tag ($GITHUB_REF_NAME)"
+            exit 1
+          fi
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           generate_release_notes: true
+          files: |
+            dist/**
           body: |
             ## Docker Image
 
