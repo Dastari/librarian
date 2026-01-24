@@ -1,7 +1,23 @@
 use super::prelude::*;
+use tokio::sync::broadcast;
 
 #[derive(Default)]
 pub struct TvShowMutations;
+
+/// Helper to broadcast library change events
+async fn broadcast_library_changed(ctx: &Context<'_>, library_id: Uuid) {
+    if let Ok(tx) = ctx.data::<broadcast::Sender<LibraryChangedEvent>>() {
+        let db = ctx.data_unchecked::<Database>();
+        if let Ok(Some(lib)) = db.libraries().get_by_id(library_id).await {
+            let _ = tx.send(LibraryChangedEvent {
+                change_type: LibraryChangeType::Updated,
+                library_id: library_id.to_string(),
+                library_name: Some(lib.name.clone()),
+                library: Some(Library::from_db(lib)),
+            });
+        }
+    }
+}
 
 #[Object]
 impl TvShowMutations {
@@ -66,6 +82,9 @@ impl TvShowMutations {
             "User added TV show: {}",
             record.name
         );
+
+        // Broadcast library change event for UI reactivity
+        broadcast_library_changed(ctx, lib_id).await;
 
         // Trigger immediate downloads for available episodes if backfill is enabled
         if record.backfill_existing {
@@ -278,11 +297,21 @@ impl TvShowMutations {
         let show_id = Uuid::parse_str(&id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid show ID: {}", e)))?;
 
+        // Get the library_id before deleting so we can broadcast the change
+        let library_id = db.tv_shows().get_by_id(show_id).await.ok().flatten().map(|s| s.library_id);
+
         let deleted = db
             .tv_shows()
             .delete(show_id)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        if deleted {
+            // Broadcast library change event for UI reactivity
+            if let Some(lib_id) = library_id {
+                broadcast_library_changed(ctx, lib_id).await;
+            }
+        }
 
         Ok(MutationResult {
             success: deleted,

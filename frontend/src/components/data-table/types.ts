@@ -328,6 +328,8 @@ export interface DataTableProps<T> {
   bulkActions?: BulkAction<T>[]
   /** Row actions (shown in each row) */
   rowActions?: RowAction<T>[]
+  /** Row click handler (triggered when clicking anywhere on the row) */
+  onRowClick?: (item: T) => void
 
   // --- Pagination ---
   /** Pagination mode */

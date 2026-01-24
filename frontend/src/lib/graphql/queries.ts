@@ -1722,14 +1722,17 @@ export const NOTIFICATIONS_QUERY = `
 `;
 
 export const RECENT_NOTIFICATIONS_QUERY = `
-  query RecentNotifications($limit: Int) {
-    recentNotifications(limit: $limit) {
+  query RecentNotifications($limit: Int, $unreadOnly: Boolean) {
+    recentNotifications(limit: $limit, unreadOnly: $unreadOnly) {
       id
       title
       message
       notificationType
       category
       libraryId
+      torrentId
+      mediaFileId
+      pendingMatchId
       actionType
       actionData
       readAt

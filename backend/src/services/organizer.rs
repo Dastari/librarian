@@ -74,7 +74,7 @@ impl OrganizerService {
     /// Returns (organize_files, rename_style, post_download_action)
     /// - organize_files: Whether to organize files into folders
     /// - rename_style: How to rename files (None, Clean, PreserveInfo)
-    /// - post_download_action: What to do with files (copy, move, hardlink)
+    /// - post_download_action: Stored for future source-based rules; currently ignored (copy-only)
     pub async fn get_show_organize_settings(
         &self,
         show: &TvShowRecord,
@@ -232,7 +232,7 @@ impl OrganizerService {
     /// `action` specifies how to handle the file:
     /// - "copy": Copy file to new location, keep original (for seeding)
     /// - "move": Move file to new location, delete original
-    /// - "hardlink": Create hard link to new location, keep original
+    /// - "copy": Copy to new location, keep original (current behavior)
     pub async fn organize_file(
         &self,
         file: &MediaFileRecord,
@@ -453,64 +453,31 @@ impl OrganizerService {
 
         // Determine the effective action:
         // - If source is already in the library folder, use "move" (rename in-place)
-        // - If source is in downloads folder, use the specified action (hardlink/copy to preserve seeding)
+        // - If source is outside the library folder, always copy (download pipeline is copy-only)
         let source_in_library = source_path.starts_with(library_path);
         let effective_action = if source_in_library {
             // File is already in library - just rename it, don't create duplicates
             "move"
         } else {
-            // File is in downloads - use the specified action to preserve seeding capability
-            action
+            "copy"
         };
 
-        if source_in_library && effective_action != action {
+        if !source_in_library && action != "copy" {
             debug!(
                 file_id = %file.id,
                 original_action = %action,
                 effective_action = %effective_action,
-                "File is already in library, using move instead of {}", action
+                "Ignoring post_download_action; download pipeline is copy-only"
             );
         }
 
         // Perform file operation based on effective action
         let operation_result = match effective_action {
             "move" => {
-                // Try rename first (same filesystem), fall back to copy+delete
-                match tokio::fs::rename(source_path, &new_path).await {
-                    Ok(_) => Ok(()),
-                    Err(_) => {
-                        // Cross-filesystem: copy then delete
-                        tokio::fs::copy(source_path, &new_path).await?;
-                        tokio::fs::remove_file(source_path).await?;
-                        Ok(())
-                    }
-                }
-            }
-            "hardlink" => {
-                // Create hard link (keeps original for seeding)
-                #[cfg(unix)]
-                {
-                    match tokio::fs::hard_link(source_path, &new_path).await {
-                        Ok(_) => Ok(()),
-                        Err(e) => {
-                            warn!(
-                                file_id = %file.id,
-                                error = %e,
-                                "Hardlink failed, falling back to copy"
-                            );
-                            // Fall back to copy if hardlink fails
-                            tokio::fs::copy(source_path, &new_path).await.map(|_| ())
-                        }
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    // Windows: just copy
-                    tokio::fs::copy(source_path, &new_path).await.map(|_| ())
-                }
+                tokio::fs::rename(source_path, &new_path).await.map(|_| ())
             }
             _ => {
-                // Default: copy (preserves original for seeding)
+                // Default: copy (preserves original)
                 tokio::fs::copy(source_path, &new_path).await.map(|_| ())
             }
         };
@@ -608,7 +575,7 @@ impl OrganizerService {
     /// `action` specifies how to handle the file:
     /// - "copy": Copy file to new location, keep original (for seeding)
     /// - "move": Move file to new location, delete original
-    /// - "hardlink": Create hard link to new location, keep original
+    /// - "copy": Copy to new location, keep original (current behavior)
     pub async fn organize_movie_file(
         &self,
         file: &MediaFileRecord,
@@ -817,52 +784,22 @@ impl OrganizerService {
 
         // Determine the effective action:
         // - If source is already in the library folder, use "move" (rename in-place)
-        // - If source is in downloads folder, use the specified action
+        // - If source is outside the library folder, always copy (download pipeline is copy-only)
         let source_in_library = source_path.starts_with(library_path);
-        let effective_action = if source_in_library { "move" } else { action };
+        let effective_action = if source_in_library { "move" } else { "copy" };
 
-        if source_in_library && effective_action != action {
+        if !source_in_library && action != "copy" {
             debug!(
                 file_id = %file.id,
                 original_action = %action,
                 effective_action = %effective_action,
-                "Movie file is already in library, using move instead of {}", action
+                "Ignoring post_download_action; download pipeline is copy-only"
             );
         }
 
         // Perform file operation based on effective action
         let operation_result = match effective_action {
-            "move" => {
-                match tokio::fs::rename(source_path, &new_path).await {
-                    Ok(_) => Ok(()),
-                    Err(_) => {
-                        // Cross-filesystem: copy then delete
-                        tokio::fs::copy(source_path, &new_path).await?;
-                        tokio::fs::remove_file(source_path).await?;
-                        Ok(())
-                    }
-                }
-            }
-            "hardlink" => {
-                #[cfg(unix)]
-                {
-                    match tokio::fs::hard_link(source_path, &new_path).await {
-                        Ok(_) => Ok(()),
-                        Err(e) => {
-                            warn!(
-                                file_id = %file.id,
-                                error = %e,
-                                "Hardlink failed for movie, falling back to copy"
-                            );
-                            tokio::fs::copy(source_path, &new_path).await.map(|_| ())
-                        }
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    tokio::fs::copy(source_path, &new_path).await.map(|_| ())
-                }
-            }
+            "move" => tokio::fs::rename(source_path, &new_path).await.map(|_| ()),
             _ => {
                 // Default: copy
                 tokio::fs::copy(source_path, &new_path).await.map(|_| ())
@@ -1151,36 +1088,13 @@ impl OrganizerService {
             });
         }
 
-        // Determine effective action
+        // Determine effective action (copy-only for downloads)
         let source_in_library = source_path.starts_with(library_path);
-        let effective_action = if source_in_library { "move" } else { action };
+        let effective_action = if source_in_library { "move" } else { "copy" };
 
         // Perform file operation
         let operation_result = match effective_action {
-            "move" => match tokio::fs::rename(source_path, &new_path).await {
-                Ok(_) => Ok(()),
-                Err(_) => {
-                    tokio::fs::copy(source_path, &new_path).await?;
-                    tokio::fs::remove_file(source_path).await?;
-                    Ok(())
-                }
-            },
-            "hardlink" => {
-                #[cfg(unix)]
-                {
-                    match tokio::fs::hard_link(source_path, &new_path).await {
-                        Ok(_) => Ok(()),
-                        Err(e) => {
-                            warn!(file_id = %file.id, error = %e, "Hardlink failed for music, falling back to copy");
-                            tokio::fs::copy(source_path, &new_path).await.map(|_| ())
-                        }
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    tokio::fs::copy(source_path, &new_path).await.map(|_| ())
-                }
-            }
+            "move" => tokio::fs::rename(source_path, &new_path).await.map(|_| ()),
             _ => tokio::fs::copy(source_path, &new_path).await.map(|_| ()),
         };
 
@@ -1466,36 +1380,13 @@ impl OrganizerService {
             });
         }
 
-        // Determine effective action
+        // Determine effective action (copy-only for downloads)
         let source_in_library = source_path.starts_with(library_path);
-        let effective_action = if source_in_library { "move" } else { action };
+        let effective_action = if source_in_library { "move" } else { "copy" };
 
         // Perform file operation
         let operation_result = match effective_action {
-            "move" => match tokio::fs::rename(source_path, &new_path).await {
-                Ok(_) => Ok(()),
-                Err(_) => {
-                    tokio::fs::copy(source_path, &new_path).await?;
-                    tokio::fs::remove_file(source_path).await?;
-                    Ok(())
-                }
-            },
-            "hardlink" => {
-                #[cfg(unix)]
-                {
-                    match tokio::fs::hard_link(source_path, &new_path).await {
-                        Ok(_) => Ok(()),
-                        Err(e) => {
-                            warn!(file_id = %file.id, error = %e, "Hardlink failed for audiobook, falling back to copy");
-                            tokio::fs::copy(source_path, &new_path).await.map(|_| ())
-                        }
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    tokio::fs::copy(source_path, &new_path).await.map(|_| ())
-                }
-            }
+            "move" => tokio::fs::rename(source_path, &new_path).await.map(|_| ()),
             _ => tokio::fs::copy(source_path, &new_path).await.map(|_| ()),
         };
 
@@ -1753,8 +1644,8 @@ impl OrganizerService {
 
     /// Clean up orphan files - files on disk that aren't tracked in the database
     ///
-    /// This is useful after hardlinking, where the original file remains but the
-    /// database record is updated to point to the new location.
+    /// This is useful after legacy link-based organization runs, where the original
+    /// file remains but the database record points to the new location.
     pub async fn cleanup_orphan_files(&self, library_id: Uuid) -> Result<CleanupResult> {
         let library = self
             .db
@@ -1815,33 +1706,43 @@ impl OrganizerService {
                 continue;
             }
 
-            // This file is not tracked - check if it's a hardlink
+            // This file is not tracked - check if it has multiple links
+            #[cfg(unix)]
             if let Ok(metadata) = std::fs::metadata(path) {
                 use std::os::unix::fs::MetadataExt;
                 let nlink = metadata.nlink();
 
                 if nlink > 1 {
-                    // This is a hardlink - another file with the same content exists
+                    // Another link to this inode exists
                     // Safe to delete this orphan
                     info!(
                         path = %path_str,
-                        "Deleting orphan hardlink (not in database, has other hardlinks)"
+                        "Deleting orphan linked file (not in database, has other links)"
                     );
                     if let Err(e) = tokio::fs::remove_file(path).await {
-                        warn!(path = %path_str, error = %e, "Failed to delete orphan hardlink");
+                        warn!(path = %path_str, error = %e, "Failed to delete orphan linked file");
                         messages.push(format!("Failed to delete orphan: {}", path_str));
                     } else {
                         files_deleted += 1;
-                        messages.push(format!("Deleted orphan hardlink: {}", path_str));
+                        messages.push(format!("Deleted orphan linked file: {}", path_str));
                     }
                 } else {
                     // Single link - this file is unique, don't auto-delete
                     // Log it for review
                     debug!(
                         path = %path_str,
-                        "Found orphan file (not in database), but it's not a hardlink - skipping"
+                        "Found orphan file (not in database), skipping"
                     );
                 }
+            }
+
+            #[cfg(not(unix))]
+            {
+                // Windows doesn't expose inode link counts; keep orphans for manual review.
+                debug!(
+                    path = %path_str,
+                    "Found orphan file (not in database), skipping"
+                );
             }
         }
 

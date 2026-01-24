@@ -18,8 +18,7 @@ impl MediaFileMutations {
             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
 
         // Update library subtitle settings
-        // NOTE: PostgreSQL implementation commented out - keeping for reference
-        // #[cfg(feature = "postgres")]
+        // NOTE: Legacy implementation removed; SQLite handles this path.
         // {
         //     sqlx::query(
         //         r#"
@@ -85,8 +84,7 @@ impl MediaFileMutations {
             "languages": input.languages,
         });
 
-        // NOTE: PostgreSQL implementation commented out - keeping for reference
-        // #[cfg(feature = "postgres")]
+        // NOTE: Legacy implementation removed; SQLite handles this path.
         // {
         //     sqlx::query(
         //         r#"
@@ -129,6 +127,10 @@ impl MediaFileMutations {
     }
 
     /// Analyze a media file with FFmpeg to extract stream information
+    ///
+    /// Runs FFprobe on the file and stores all stream metadata (video, audio,
+    /// subtitles, chapters) in the database. This is the same analysis that
+    /// runs automatically during library scans.
     async fn analyze_media_file(
         &self,
         ctx: &Context<'_>,
@@ -147,11 +149,23 @@ impl MediaFileMutations {
             .map_err(|e| async_graphql::Error::new(e.to_string()))?
             .ok_or_else(|| async_graphql::Error::new("Media file not found"))?;
 
+        tracing::info!(
+            media_file_id = %media_file_id,
+            path = %file.path,
+            "Running FFprobe analysis on media file"
+        );
+
         // Run FFmpeg analysis
         let ffmpeg = crate::services::FfmpegService::new();
         let analysis = match ffmpeg.analyze(std::path::Path::new(&file.path)).await {
             Ok(a) => a,
             Err(e) => {
+                tracing::warn!(
+                    media_file_id = %media_file_id,
+                    path = %file.path,
+                    error = %e,
+                    "FFprobe analysis failed"
+                );
                 return Ok(AnalyzeMediaFileResult {
                     success: false,
                     error: Some(format!("FFmpeg analysis failed: {}", e)),
@@ -163,12 +177,29 @@ impl MediaFileMutations {
             }
         };
 
-        // Store the analysis results
-        // This is a simplified version - the full implementation is in queues.rs
+        // Get counts before storing
         let video_count = analysis.video_streams.len() as i32;
         let audio_count = analysis.audio_streams.len() as i32;
         let subtitle_count = analysis.subtitle_streams.len() as i32;
         let chapter_count = analysis.chapters.len() as i32;
+
+        // Store the analysis results using the same function as the background queue
+        if let Err(e) = crate::services::queues::store_media_analysis(db, file_id, &analysis).await
+        {
+            tracing::error!(
+                media_file_id = %media_file_id,
+                error = %e,
+                "Failed to store analysis results"
+            );
+            return Ok(AnalyzeMediaFileResult {
+                success: false,
+                error: Some(format!("Failed to store analysis: {}", e)),
+                video_stream_count: Some(video_count),
+                audio_stream_count: Some(audio_count),
+                subtitle_stream_count: Some(subtitle_count),
+                chapter_count: Some(chapter_count),
+            });
+        }
 
         tracing::info!(
             media_file_id = %media_file_id,
@@ -176,7 +207,7 @@ impl MediaFileMutations {
             audio_streams = audio_count,
             subtitle_streams = subtitle_count,
             chapters = chapter_count,
-            "Media file analyzed"
+            "Media file analyzed and stored"
         );
 
         Ok(AnalyzeMediaFileResult {
@@ -186,6 +217,81 @@ impl MediaFileMutations {
             audio_stream_count: Some(audio_count),
             subtitle_stream_count: Some(subtitle_count),
             chapter_count: Some(chapter_count),
+        })
+    }
+
+    /// Queue all unanalyzed media files in a library for FFprobe analysis
+    ///
+    /// Finds all media files that have no video_codec set (indicating they
+    /// haven't been analyzed) and queues them for analysis.
+    async fn analyze_unanalyzed_files(
+        &self,
+        ctx: &Context<'_>,
+        library_id: String,
+    ) -> Result<AnalyzeUnanalyzedResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let lib_id = Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+
+        // Get the analysis queue
+        let queue = ctx.data_opt::<std::sync::Arc<crate::services::queues::MediaAnalysisQueue>>();
+        if queue.is_none() {
+            return Ok(AnalyzeUnanalyzedResult {
+                success: false,
+                queued_count: 0,
+                error: Some("Analysis queue not available".to_string()),
+            });
+        }
+        let queue = queue.unwrap();
+
+        // Find files that haven't been analyzed (ffprobe_analyzed_at is null)
+        let unanalyzed_files = db
+            .media_files()
+            .list_needing_ffprobe(lib_id, 10000)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        let count = unanalyzed_files.len();
+
+        if count == 0 {
+            tracing::info!(library_id = %library_id, "No unanalyzed files found in library");
+            return Ok(AnalyzeUnanalyzedResult {
+                success: true,
+                queued_count: 0,
+                error: None,
+            });
+        }
+
+        tracing::info!(
+            library_id = %library_id,
+            file_count = count,
+            "Queueing unanalyzed files for FFprobe analysis"
+        );
+
+        // Queue each file for analysis
+        let mut queued = 0;
+        for file in unanalyzed_files {
+            let job = crate::services::queues::MediaAnalysisJob {
+                media_file_id: file.id,
+                path: std::path::PathBuf::from(&file.path),
+                check_subtitles: true,
+            };
+            if queue.submit(job).await.is_ok() {
+                queued += 1;
+            }
+        }
+
+        tracing::info!(
+            library_id = %library_id,
+            queued_count = queued,
+            "Queued files for analysis"
+        );
+
+        Ok(AnalyzeUnanalyzedResult {
+            success: true,
+            queued_count: queued as i32,
+            error: None,
         })
     }
 
@@ -493,6 +599,7 @@ impl MediaFileMutations {
                     cover_art_base64: None, // Use analysis queue for full extraction
                     cover_art_mime: None,
                     lyrics: None,
+                    ..Default::default()
                 };
 
                 db.media_files()
@@ -519,4 +626,181 @@ impl MediaFileMutations {
             }),
         }
     }
+
+    /// Manually match a media file to a library item
+    ///
+    /// Manual matches take precedence over automatic matches and will never be
+    /// overwritten by the scanner or automatic matching systems.
+    async fn manual_match(
+        &self,
+        ctx: &Context<'_>,
+        media_file_id: String,
+        #[graphql(desc = "Episode ID to match to")] episode_id: Option<String>,
+        #[graphql(desc = "Movie ID to match to")] movie_id: Option<String>,
+        #[graphql(desc = "Track ID to match to")] track_id: Option<String>,
+        #[graphql(desc = "Album ID to match to")] album_id: Option<String>,
+        #[graphql(desc = "Audiobook ID to match to")] audiobook_id: Option<String>,
+        #[graphql(desc = "Chapter ID to match to")] chapter_id: Option<String>,
+    ) -> Result<ManualMatchResult> {
+        let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let user_id = Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        let file_id = Uuid::parse_str(&media_file_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid media file ID: {}", e)))?;
+
+        // Parse target IDs
+        let episode_uuid = episode_id
+            .as_ref()
+            .map(|s| Uuid::parse_str(s))
+            .transpose()
+            .map_err(|e| async_graphql::Error::new(format!("Invalid episode ID: {}", e)))?;
+
+        let movie_uuid = movie_id
+            .as_ref()
+            .map(|s| Uuid::parse_str(s))
+            .transpose()
+            .map_err(|e| async_graphql::Error::new(format!("Invalid movie ID: {}", e)))?;
+
+        let track_uuid = track_id
+            .as_ref()
+            .map(|s| Uuid::parse_str(s))
+            .transpose()
+            .map_err(|e| async_graphql::Error::new(format!("Invalid track ID: {}", e)))?;
+
+        let album_uuid = album_id
+            .as_ref()
+            .map(|s| Uuid::parse_str(s))
+            .transpose()
+            .map_err(|e| async_graphql::Error::new(format!("Invalid album ID: {}", e)))?;
+
+        let audiobook_uuid = audiobook_id
+            .as_ref()
+            .map(|s| Uuid::parse_str(s))
+            .transpose()
+            .map_err(|e| async_graphql::Error::new(format!("Invalid audiobook ID: {}", e)))?;
+
+        let chapter_uuid = chapter_id
+            .as_ref()
+            .map(|s| Uuid::parse_str(s))
+            .transpose()
+            .map_err(|e| async_graphql::Error::new(format!("Invalid chapter ID: {}", e)))?;
+
+        // Ensure at least one target is specified
+        if episode_uuid.is_none()
+            && movie_uuid.is_none()
+            && track_uuid.is_none()
+            && audiobook_uuid.is_none()
+            && chapter_uuid.is_none()
+        {
+            return Ok(ManualMatchResult {
+                success: false,
+                error: Some("At least one target (episode, movie, track, audiobook, or chapter) must be specified".to_string()),
+                media_file: None,
+            });
+        }
+
+        // Verify the media file exists
+        let existing = db.media_files().get_by_id(file_id).await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        if existing.is_none() {
+            return Ok(ManualMatchResult {
+                success: false,
+                error: Some("Media file not found".to_string()),
+                media_file: None,
+            });
+        }
+
+        // Perform the manual match
+        match db.media_files().manual_match(
+            file_id,
+            user_id,
+            episode_uuid,
+            movie_uuid,
+            track_uuid,
+            album_uuid,
+            audiobook_uuid,
+            chapter_uuid,
+        ).await {
+            Ok(media_file) => {
+                tracing::info!(
+                    media_file_id = %media_file_id,
+                    user_id = %user.user_id,
+                    episode_id = ?episode_id,
+                    movie_id = ?movie_id,
+                    track_id = ?track_id,
+                    "Manual match applied"
+                );
+
+                Ok(ManualMatchResult {
+                    success: true,
+                    error: None,
+                    media_file: Some(MediaFile::from(media_file)),
+                })
+            }
+            Err(e) => Ok(ManualMatchResult {
+                success: false,
+                error: Some(e.to_string()),
+                media_file: None,
+            }),
+        }
+    }
+
+    /// Remove a match from a media file
+    ///
+    /// Clears any match (manual or automatic) and allows the file to be re-matched.
+    async fn unmatch_media_file(
+        &self,
+        ctx: &Context<'_>,
+        media_file_id: String,
+    ) -> Result<ManualMatchResult> {
+        let _user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+
+        let file_id = Uuid::parse_str(&media_file_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid media file ID: {}", e)))?;
+
+        // Verify the media file exists
+        let existing = db.media_files().get_by_id(file_id).await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        if existing.is_none() {
+            return Ok(ManualMatchResult {
+                success: false,
+                error: Some("Media file not found".to_string()),
+                media_file: None,
+            });
+        }
+
+        // Perform the unmatch
+        match db.media_files().unmatch(file_id).await {
+            Ok(media_file) => {
+                tracing::info!(
+                    media_file_id = %media_file_id,
+                    "Match removed from media file"
+                );
+
+                Ok(ManualMatchResult {
+                    success: true,
+                    error: None,
+                    media_file: Some(MediaFile::from(media_file)),
+                })
+            }
+            Err(e) => Ok(ManualMatchResult {
+                success: false,
+                error: Some(e.to_string()),
+                media_file: None,
+            }),
+        }
+    }
+}
+
+/// Result of a manual match operation
+#[derive(SimpleObject)]
+pub struct ManualMatchResult {
+    pub success: bool,
+    pub error: Option<String>,
+    pub media_file: Option<MediaFile>,
 }

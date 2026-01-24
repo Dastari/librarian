@@ -5,8 +5,7 @@
 #
 # Prerequisites:
 #   1. Copy .env.example to .env and fill in all values
-#   2. Ensure you have a PostgreSQL database (Supabase recommended)
-#   3. Configure your reverse proxy or use the included nginx
+#   2. Configure your reverse proxy or use the included nginx
 
 services:
   # Nginx Reverse Proxy
@@ -55,10 +54,7 @@ services:
     environment:
       - PORT=3001
       - RUST_LOG=${RUST_LOG:-info}
-      - DATABASE_URL=${DATABASE_URL}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
-      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - DATABASE_PATH=/data/db/librarian.db
       - JWT_SECRET=${JWT_SECRET}
       - TVDB_API_KEY=${TVDB_API_KEY:-}
       - TMDB_API_KEY=${TMDB_API_KEY:-}
@@ -74,6 +70,7 @@ services:
     volumes:
       - ${MEDIA_PATH:-./data/media}:/data/media
       - ${DOWNLOADS_PATH:-./data/downloads}:/data/downloads
+      - db_data:/data/db
       - cache_data:/data/cache
       - session_data:/data/session
     networks:
@@ -93,8 +90,6 @@ services:
       args:
         # These are baked into the build at build time
         VITE_API_URL: ${PUBLIC_URL:-http://localhost}
-        VITE_SUPABASE_URL: ${SUPABASE_URL}
-        VITE_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
     container_name: librarian-frontend
     restart: unless-stopped
     # In production, only expose to nginx (no host port mapping)
@@ -110,6 +105,8 @@ services:
       start_period: 10s
 
 volumes:
+  db_data:
+    driver: local
   cache_data:
     driver: local
   session_data:

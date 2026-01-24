@@ -170,7 +170,7 @@ impl MovieQueries {
         let _user = ctx.auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
-        if !metadata.has_tmdb() {
+        if !metadata.has_tmdb().await {
             return Err(async_graphql::Error::new(
                 "TMDB API key not configured. Add tmdb_api_key to settings.",
             ));

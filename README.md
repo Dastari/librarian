@@ -31,13 +31,13 @@ Librarian is a local-first, privacy-preserving media library that runs on a sing
 | Component | Technology |
 |-----------|------------|
 | **Frontend** | TanStack Start, TypeScript, HeroUI + Tailwind CSS, pnpm |
-| **Backend** | Rust (Axum + Tokio), `sqlx` (Postgres), job scheduling |
+| **Backend** | Rust (Axum + Tokio), `sqlx` (SQLite), job scheduling |
 | **API** | GraphQL with subscriptions (async-graphql) |
-| **Identity & DB** | Supabase (Auth, Postgres with RLS, Storage) - local Docker |
+| **Identity & DB** | Local auth + SQLite (sqlx) |
 | **Torrent Engine** | librqbit (native Rust, embedded) with DHT, PEX, magnet support |
 | **Indexers** | Prowlarr (recommended) or Jackett as Torznab aggregator |
 | **Transcoding** | FFmpeg/FFprobe → HLS playlists/segments |
-| **Storage** | Supabase Storage for posters/backdrops/thumbnails |
+| **Storage** | SQLite BLOBs for artwork; local filesystem for media |
 
 For a deeper dive into all components and APIs, see the design document:
 - [System Design](docs/design.md)
@@ -48,9 +48,6 @@ For a deeper dive into all components and APIs, see the design document:
 ```
 librarian/
 ├── docs/                      # Design docs and implementation plan
-├── infra/
-│   ├── supabase/              # Supabase CLI setup notes
-│   └── supabase-docker/       # Cloned Supabase Docker setup
 ├── backend/                   # Rust Axum API service
 │   ├── src/
 │   │   ├── api/               # REST endpoints (file upload, filesystem only)
@@ -67,7 +64,7 @@ librarian/
 │   └── src/
 │       ├── components/        # Reusable UI components
 │       ├── hooks/             # React hooks
-│       ├── lib/               # Supabase client, API client
+│       ├── lib/               # API client, utilities
 │       └── routes/            # File-based routes
 ├── docker-compose.yml         # Application services
 ├── Makefile                   # Development commands
@@ -81,7 +78,6 @@ librarian/
 - **Docker** and **Docker Compose**
 - **Rust toolchain** (1.75+): `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 - **Node.js** (20+): Use nvm or download from nodejs.org
-- **Supabase CLI**: `brew install supabase/tap/supabase` or download from releases
 
 ##### System Dependencies (for local development)
 
@@ -101,13 +97,7 @@ The backend requires these system packages for full functionality:
    cp .env.example .env
    ```
 
-2. **Start Supabase local stack**
-   ```bash
-   supabase start
-   ```
-   Copy the displayed keys into your `.env` file.
-
-3. **Start development servers**
+2. **Start development servers**
    ```bash
    # Terminal 1: Backend
    cd backend
@@ -119,17 +109,16 @@ The backend requires these system packages for full functionality:
    pnpm run dev
    ```
 
-4. **Access the app**
+3. **Access the app**
    - Frontend: http://localhost:3000
    - Backend API: http://localhost:3001
-   - Supabase Studio: http://localhost:54323
 
 #### Docker Deployment
 
 ##### Development (with hot reload)
 
 ```bash
-# Start all services (requires Supabase running separately)
+# Start all services
 make docker-up
 
 # With Prowlarr for indexer management
@@ -154,10 +143,7 @@ The production setup includes an nginx reverse proxy that handles:
 # 1. Configure environment
 cp .env.example .env
 # Edit .env with your production values:
-#   - DATABASE_URL: Your PostgreSQL connection string
-#   - SUPABASE_URL: Your Supabase project URL
-#   - SUPABASE_ANON_KEY: Your Supabase anon key
-#   - SUPABASE_SERVICE_KEY: Your Supabase service key
+#   - DATABASE_PATH: SQLite database file path
 #   - JWT_SECRET: Your JWT secret
 #   - INDEXER_ENCRYPTION_KEY: Generate with `openssl rand -base64 32`
 #   - PUBLIC_URL: Your public URL (e.g., https://librarian.example.com)
@@ -235,8 +221,6 @@ make help           # Show all available commands
 make dev            # Start full development environment
 make dev-backend    # Start only backend
 make dev-frontend   # Start only frontend
-make supabase-start # Start Supabase
-make supabase-status # Show Supabase keys
 make build          # Build all projects
 make test           # Run all tests
 make lint           # Run linters
@@ -250,10 +234,7 @@ See `.env.example` for a complete list with documentation. Key variables:
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `DATABASE_URL` | PostgreSQL connection URL | Yes |
-| `SUPABASE_URL` | Supabase API URL | Yes |
-| `SUPABASE_ANON_KEY` | Public anon key | Yes |
-| `SUPABASE_SERVICE_KEY` | Service role key (backend only) | Yes |
+| `DATABASE_PATH` | SQLite database file path | Yes |
 | `JWT_SECRET` | JWT signing secret | Yes |
 | `INDEXER_ENCRYPTION_KEY` | Encryption key for indexer credentials | Yes (prod) |
 | `PUBLIC_URL` | Public URL for the app (production) | Yes (prod) |
@@ -288,7 +269,7 @@ The backend exposes a single **GraphQL API** for all operations, with WebSocket 
 All GraphQL operations (except `health` and `version` queries) require authentication via JWT in the `Authorization` header:
 
 ```
-Authorization: Bearer <supabase_jwt_token>
+Authorization: Bearer <access_token>
 ```
 
 For WebSocket subscriptions, pass the token in connection parameters:
@@ -426,10 +407,8 @@ Visit the GraphQL playground at `http://localhost:3001/graphql` to explore the f
 
 ### Security
 
-- Verify Supabase JWTs via JWKS; cache keys in the backend
-- Enforce RLS for user-scoped tables; use service role only in worker/system tasks
 - Use short-lived, signed URLs for HLS segments/playlists and artwork
-- Keep the Supabase service role key strictly on the backend
+- Store JWT secrets securely and rotate in production
 
 ### Development
 
@@ -473,9 +452,9 @@ pnpm run lint
 
 We ship vertical slices that exercise the full stack end-to-end:
 
-1. ✅ Environment & scaffolding (Docker Compose, Supabase CLI), health endpoints
+1. ✅ Environment & scaffolding (Docker Compose), health endpoints
 2. ✅ Native torrent client (librqbit) with GraphQL subscriptions
-3. ✅ Auth (Supabase ↔ Frontend ↔ Rust) with JWT middleware
+3. ✅ Auth (Frontend ↔ Rust) with JWT middleware
 4. ✅ Libraries & basic scan (index files; simple UI to browse)
 5. ✅ Metadata fetch/normalize (TVMaze/TMDB, artwork in Storage)
 6. ✅ Organization & rename (TV/Movies schemes with naming patterns)

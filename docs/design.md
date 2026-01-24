@@ -17,7 +17,7 @@
 
 - **Frontend**: TanStack Start (React with TanStack Router)
 - **Backend**: Rust (Axum + Tokio), background workers, job queue
-- **Identity & DB**: Supabase (Postgres + Auth + Storage) running locally via Docker
+- **Identity & DB**: Local auth + SQLite database
 - **Torrent Engine**: `librqbit` (native Rust, embedded)
 - **Indexer Management**: Native indexer system (Jackett-like) + RSS feeds
 - **Transcoding/Packaging**: FFmpeg/FFprobe → HLS (m3u8 + TS/MP4 segments)
@@ -27,7 +27,7 @@
   - **Transcoding**: On-demand FFmpeg transcoding for incompatible formats
   - **AirPlay**: Native Safari AirPlay support on the `<video>` element
 - **File Watching / Library Scanner**: Rust watcher (inotify) + periodic full scan
-- **Object Storage**: Supabase Storage for posters/backdrops/fanart
+- **Object Storage**: SQLite artwork cache and local filesystem
 
 ---
 
@@ -163,7 +163,7 @@ Torrent Completes
 - **Language**: TypeScript across the stack
 - **UI**: HeroUI (formerly NextUI) + Tailwind CSS
 - **Package Manager**: pnpm
-- **Auth**: `@supabase/supabase-js` v2 with client helpers
+- **Auth**: custom JWT auth with GraphQL helpers
 - **Video Playback**: `hls.js` for HLS where needed
 - **Casting**:
   - Google Cast Web Sender SDK (loaded where casting is available)
@@ -173,8 +173,8 @@ Torrent Completes
 
 - **Web framework**: `axum` (async, router-first, tower-compatible)
 - **Async runtime**: `tokio`
-- **DB**: `sqlx` (Postgres) with compile‑time checked queries
-- **Auth/JWT**: verify Supabase JWTs via JWKS using `jsonwebtoken` or `josekit`; cache keys
+- **DB**: `sqlx` (SQLite) with compile‑time checked queries
+- **Auth/JWT**: validate locally issued JWTs with `jsonwebtoken`
 - **HTTP client**: `reqwest` for external APIs (TVMaze/TMDB/TVDB)
 - **Torrent control**: librqbit (native Rust, embedded)
 - **Scheduler / Jobs**: `tokio-cron-scheduler` for periodic tasks
@@ -261,7 +261,7 @@ Native Jackett-like indexer system built into the backend, supporting both torre
 - GraphQL API for all management (no REST for config)
 - Rate limiting and request throttling
 - Per-indexer download type (torrent vs usenet)
-- Per-indexer post-download action (copy/move/hardlink)
+- Per-indexer post-download action (copy-only today; source-based rules planned)
 
 **Database Tables:**
 - `indexer_configs`: Indexer instances (name, type, enabled, download_type)
@@ -415,7 +415,7 @@ libraries
 ├── auto_scan (BOOLEAN)
 ├── scan_interval_minutes (INTEGER) - how often to scan
 ├── watch_for_changes (BOOLEAN) - use inotify where supported
-├── post_download_action (ENUM) - copy|move|hardlink
+├── post_download_action (ENUM) - copy (move/hardlink deprecated; source rules planned)
 ├── organize_files (BOOLEAN) - automatically organize files
 ├── naming_pattern (TEXT) - e.g., "{show}/Season {season}/{show} - S{season}E{episode} - {title}.{ext}"
 ├── auto_add_discovered (BOOLEAN) - auto-create entries from downloaded content
@@ -845,7 +845,7 @@ Chicago Fire/Season 14/Chicago Fire - S14E08 - The One That Got Away.mkv
 - Scan interval
 - Watch for changes (inotify)
 - Auto-add discovered shows
-- Post-download action (copy/move)
+- Post-download action (copy-only today)
 - Auto-rename
 - Naming pattern
 
@@ -858,10 +858,8 @@ Chicago Fire/Season 14/Chicago Fire - S14E08 - The One That Got Away.mkv
 
 ## Security
 
-- Verify Supabase JWTs via JWKS and cache keys
 - Use short‑lived, signed URLs for HLS playlists/segments and artwork
-- Keep the Supabase service key only on the backend
-- RLS for user‑owned tables; policies like `user_id = auth.uid()`
+- Store JWT secrets securely and rotate in production
 - Sanitize all filenames before writing to filesystem
 - Validate paths don't escape library boundaries
 
@@ -871,7 +869,6 @@ Chicago Fire/Season 14/Chicago Fire - S14E08 - The One That Got Away.mkv
 
 ### Docker Compose (services to run together)
 
-- `supabase/*` stack (Auth, Postgres, Storage, PostgREST, Kong)
 - `librarian-backend` (Rust)
 - `librarian-frontend` (TanStack Start)
 - Prowlarr (optional, for advanced indexer management)
@@ -886,14 +883,11 @@ Chicago Fire/Season 14/Chicago Fire - S14E08 - The One That Got Away.mkv
 ### Environment (.env)
 
 ```bash
-# Supabase
-SUPABASE_URL=
-SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_KEY=
+# Auth
 JWT_SECRET=
 
 # Database
-DATABASE_URL=
+DATABASE_PATH=./data/librarian.db
 
 # Torrent
 DOWNLOADS_PATH=/data/downloads

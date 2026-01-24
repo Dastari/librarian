@@ -2,20 +2,11 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@heroui/button";
 import { Chip } from "@heroui/chip";
-import { Skeleton } from "@heroui/skeleton";
-import {
-  Modal,
-  ModalContent,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
-  useDisclosure,
-} from "@heroui/modal";
+import { Checkbox } from "@heroui/checkbox";
+import { useDisclosure } from "@heroui/modal";
 import { Tabs, Tab } from "@heroui/tabs";
 import { addToast } from "@heroui/toast";
 import {
-  IconCheck,
-  IconX,
   IconTrash,
   IconAlertTriangle,
   IconInfoCircle,
@@ -41,6 +32,7 @@ import {
   type DataTableColumn,
   type RowAction,
 } from "../components/data-table";
+import { NotificationDetailModal } from "../components/NotificationDetailModal";
 
 export const Route = createFileRoute("/notifications")({
   component: NotificationsPage,
@@ -73,6 +65,7 @@ const CATEGORY_LABELS: Record<NotificationCategory, string> = {
   QUALITY: "Quality",
   STORAGE: "Storage",
   EXTRACTION: "Extraction",
+  CONFIGURATION: "Configuration",
 };
 
 const getNotificationIcon = (type: NotificationType) => {
@@ -118,6 +111,7 @@ function NotificationsPage() {
   const [selectedNotification, setSelectedNotification] =
     useState<Notification | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const {
     isOpen: isDetailOpen,
@@ -272,10 +266,78 @@ function NotificationsPage() {
 
   const handleViewDetails = (notification: Notification) => {
     setSelectedNotification(notification);
+    // Mark as read when viewing
+    if (!notification.readAt) {
+      handleMarkRead(notification.id);
+    }
     onDetailOpen();
   };
 
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+
+    let deletedCount = 0;
+    for (const id of selectedIds) {
+      try {
+        await graphqlClient
+          .mutation(DELETE_NOTIFICATION_MUTATION, { id })
+          .toPromise();
+        deletedCount++;
+      } catch {
+        // Continue deleting others
+      }
+    }
+
+    setNotifications((prev) => prev.filter((n) => !selectedIds.has(n.id)));
+    setSelectedIds(new Set());
+
+    addToast({
+      title: "Deleted",
+      description: `Deleted ${deletedCount} notification${deletedCount !== 1 ? 's' : ''}`,
+      color: "success",
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedIds.size === notifications.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(notifications.map((n) => n.id)));
+    }
+  };
+
+  const handleSelectOne = (id: string, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return next;
+    });
+  };
+
   const columns: DataTableColumn<Notification>[] = [
+    {
+      key: "select",
+      label: (
+        <Checkbox
+          isSelected={selectedIds.size === notifications.length && notifications.length > 0}
+          isIndeterminate={selectedIds.size > 0 && selectedIds.size < notifications.length}
+          onValueChange={handleSelectAll}
+          aria-label="Select all"
+        />
+      ) as unknown as string,
+      width: 50,
+      render: (notification) => (
+        <Checkbox
+          isSelected={selectedIds.has(notification.id)}
+          onValueChange={(checked) => handleSelectOne(notification.id, checked)}
+          aria-label={`Select ${notification.title}`}
+        />
+      ),
+    },
     {
       key: "type",
       label: "Type",
@@ -389,191 +451,91 @@ function NotificationsPage() {
 
   const unreadCount = notifications.filter((n) => !n.readAt).length;
 
+  // Header content for the DataTable
+  const headerContent = (
+    <div className="flex items-center justify-between w-full">
+      <div>
+        <h1 className="text-2xl font-bold">Notifications</h1>
+        <p className="text-default-500">
+          {totalCount} total, {unreadCount} unread
+        </p>
+      </div>
+      <div className="flex gap-2">
+        {selectedIds.size > 0 && (
+          <Button
+            color="danger"
+            variant="flat"
+            startContent={<IconTrash size={16} />}
+            onPress={handleBulkDelete}
+            aria-label={`Delete ${selectedIds.size} selected notifications`}
+          >
+            Delete {selectedIds.size} selected
+          </Button>
+        )}
+        <Button
+          variant="flat"
+          startContent={<IconRefresh size={16} />}
+          onPress={fetchNotifications}
+          isLoading={isLoading}
+          aria-label="Refresh notifications"
+        >
+          Refresh
+        </Button>
+        {unreadCount > 0 && (
+          <Button color="primary" variant="flat" onPress={handleMarkAllRead}>
+            Mark All Read
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+
+  // Filter row content for tabs
+  const filterRowContent = (
+    <Tabs
+      selectedKey={activeTab}
+      onSelectionChange={(key) => setActiveTab(key as TabKey)}
+      size="sm"
+      variant="underlined"
+    >
+      <Tab key="all" title="All" />
+      <Tab key="unread" title="Unread" />
+      <Tab key="action_required" title="Action Required" />
+    </Tabs>
+  );
+
   return (
     <div className="container mx-auto p-6 max-w-6xl">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">Notifications</h1>
-          <p className="text-default-500">
-            {totalCount} total, {unreadCount} unread
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="flat"
-            startContent={<IconRefresh size={16} />}
-            onPress={fetchNotifications}
-            isLoading={isLoading}
-          >
-            Refresh
-          </Button>
-          {unreadCount > 0 && (
-            <Button color="primary" variant="flat" onPress={handleMarkAllRead}>
-              Mark All Read
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <Tabs
-        selectedKey={activeTab}
-        onSelectionChange={(key) => setActiveTab(key as TabKey)}
-        className="mb-4"
-        classNames={{
-          tabWrapper: "bg-red-500",
-          panel: "bg-blue-500",
-        }}
-      >
-        <Tab key="all" title="All" />
-        <Tab key="unread" title="Unread" />
-        <Tab key="action_required" title="Action Required" />
-      </Tabs>
-
-      {isLoading ? (
-        <div className="space-y-2">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-16 w-full rounded-lg" />
-          ))}
-        </div>
-      ) : (
-        <DataTable
-          skeletonDelay={500}
-          data={notifications}
-          columns={columns}
-          rowActions={rowActions}
-          emptyContent={
-            <div className="text-center text-default-500 py-8">
-              No notifications
-            </div>
-          }
-          getRowKey={(notification) => notification.id}
-        />
-      )}
+      <DataTable
+        stateKey="notifications"
+        data={notifications}
+        columns={columns}
+        rowActions={rowActions}
+        onRowClick={handleViewDetails}
+        isLoading={isLoading}
+        skeletonRowCount={5}
+        skeletonDelay={300}
+        headerContent={headerContent}
+        filterRowContent={filterRowContent}
+        hideToolbar
+        ariaLabel="Notifications list"
+        emptyContent={
+          <div className="text-center text-default-500 py-8">
+            No notifications
+          </div>
+        }
+        getRowKey={(notification) => notification.id}
+      />
 
       {/* Notification Detail Modal */}
-      <Modal isOpen={isDetailOpen} onClose={onDetailClose} size="lg">
-        <ModalContent>
-          {selectedNotification && (
-            <>
-              <ModalHeader className="flex items-center gap-3">
-                {getNotificationIcon(selectedNotification.notificationType)}
-                <span>{selectedNotification.title}</span>
-              </ModalHeader>
-              <ModalBody>
-                <div className="space-y-4">
-                  <div className="flex gap-2">
-                    <Chip
-                      size="sm"
-                      variant="flat"
-                      color={
-                        NOTIFICATION_TYPE_INFO[
-                          selectedNotification.notificationType
-                        ].color
-                      }
-                    >
-                      {
-                        NOTIFICATION_TYPE_INFO[
-                          selectedNotification.notificationType
-                        ].label
-                      }
-                    </Chip>
-                    <Chip size="sm" variant="flat">
-                      {CATEGORY_LABELS[selectedNotification.category]}
-                    </Chip>
-                  </div>
-
-                  <p className="text-default-700">
-                    {selectedNotification.message}
-                  </p>
-
-                  <div className="text-sm text-default-500">
-                    <p>
-                      Created:{" "}
-                      {new Date(
-                        selectedNotification.createdAt,
-                      ).toLocaleString()}
-                    </p>
-                    {selectedNotification.readAt && (
-                      <p>
-                        Read:{" "}
-                        {new Date(selectedNotification.readAt).toLocaleString()}
-                      </p>
-                    )}
-                    {selectedNotification.resolvedAt && (
-                      <p>
-                        Resolved:{" "}
-                        {new Date(
-                          selectedNotification.resolvedAt,
-                        ).toLocaleString()}{" "}
-                        (
-                        {selectedNotification.resolution
-                          ?.toLowerCase()
-                          .replace("_", " ")}
-                        )
-                      </p>
-                    )}
-                  </div>
-
-                  {selectedNotification.actionData && (
-                    <div className="bg-default-100 rounded-lg p-4">
-                      <p className="text-sm font-semibold mb-2">
-                        Action Details
-                      </p>
-                      <pre className="text-xs overflow-auto">
-                        {JSON.stringify(
-                          selectedNotification.actionData,
-                          null,
-                          2,
-                        )}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              </ModalBody>
-              <ModalFooter>
-                {selectedNotification.notificationType === "ACTION_REQUIRED" &&
-                  !selectedNotification.resolvedAt && (
-                    <>
-                      <Button
-                        color="success"
-                        startContent={<IconCheck size={16} />}
-                        onPress={() =>
-                          handleResolve(selectedNotification.id, "ACCEPTED")
-                        }
-                      >
-                        Accept
-                      </Button>
-                      <Button
-                        color="danger"
-                        variant="flat"
-                        startContent={<IconX size={16} />}
-                        onPress={() =>
-                          handleResolve(selectedNotification.id, "REJECTED")
-                        }
-                      >
-                        Reject
-                      </Button>
-                    </>
-                  )}
-                <Button
-                  color="danger"
-                  variant="light"
-                  startContent={<IconTrash size={16} />}
-                  onPress={() => {
-                    handleDelete(selectedNotification.id);
-                    onDetailClose();
-                  }}
-                >
-                  Delete
-                </Button>
-                <Button variant="flat" onPress={onDetailClose}>
-                  Close
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
+      <NotificationDetailModal
+        notification={selectedNotification}
+        isOpen={isDetailOpen}
+        onClose={onDetailClose}
+        onResolve={handleResolve}
+        onDelete={handleDelete}
+        onMarkRead={handleMarkRead}
+      />
     </div>
   );
 }

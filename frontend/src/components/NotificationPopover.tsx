@@ -7,7 +7,6 @@ import { Chip } from '@heroui/chip'
 import { ScrollShadow } from '@heroui/scroll-shadow'
 import {
   IconCheck,
-  IconX,
   IconAlertTriangle,
   IconInfoCircle,
   IconAlertCircle,
@@ -19,10 +18,12 @@ import {
   MARK_NOTIFICATION_READ_MUTATION,
   MARK_ALL_NOTIFICATIONS_READ_MUTATION,
   RESOLVE_NOTIFICATION_MUTATION,
+  DELETE_NOTIFICATION_MUTATION,
   type Notification,
   type NotificationType,
   type NotificationResolution,
 } from '../lib/graphql'
+import { NotificationDetailModal } from './NotificationDetailModal'
 
 interface NotificationPopoverProps {
   trigger: ReactNode
@@ -61,13 +62,18 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isOpen, setIsOpen] = useState(false)
+  const [selectedNotification, setSelectedNotification] = useState<Notification | null>(null)
+  const [isDetailOpen, setIsDetailOpen] = useState(false)
 
   useEffect(() => {
     if (!isOpen) return
 
     setIsLoading(true)
     graphqlClient
-      .query<{ recentNotifications: Notification[] }>(RECENT_NOTIFICATIONS_QUERY, { limit: 10 })
+      .query<{ recentNotifications: Notification[] }>(RECENT_NOTIFICATIONS_QUERY, { 
+        limit: 10,
+        unreadOnly: true  // Only show unread notifications in the navbar
+      })
       .toPromise()
       .then((result) => {
         if (result.data?.recentNotifications) {
@@ -111,6 +117,25 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
     )
   }
 
+  const handleDelete = async (id: string) => {
+    await graphqlClient
+      .mutation(DELETE_NOTIFICATION_MUTATION, { id })
+      .toPromise()
+
+    setNotifications((prev) => prev.filter((n) => n.id !== id))
+  }
+
+  const handleNotificationClick = (notification: Notification) => {
+    // Mark as read
+    if (!notification.readAt) {
+      handleMarkRead(notification.id)
+    }
+    // Close the popover and open the detail modal
+    setIsOpen(false)
+    setSelectedNotification(notification)
+    setIsDetailOpen(true)
+  }
+
   const handleViewAll = () => {
     setIsOpen(false)
     navigate({ to: '/notifications' })
@@ -119,6 +144,7 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
   const unreadCount = notifications.filter((n) => !n.readAt).length
 
   return (
+    <>
     <Popover
       isOpen={isOpen}
       onOpenChange={setIsOpen}
@@ -160,7 +186,7 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
                     className={`px-4 py-3 hover:bg-default-100 cursor-pointer transition-colors ${
                       !notification.readAt ? 'bg-primary-50/10' : ''
                     }`}
-                    onClick={() => !notification.readAt && handleMarkRead(notification.id)}
+                    onClick={() => handleNotificationClick(notification)}
                   >
                     <div className="flex gap-3">
                       <div className="flex-shrink-0 mt-0.5">
@@ -181,26 +207,9 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
 
                         {notification.notificationType === 'ACTION_REQUIRED' &&
                           !notification.resolvedAt && (
-                            <div className="flex gap-2 mt-2">
-                              <Button
-                                size="sm"
-                                color="success"
-                                variant="flat"
-                                startContent={<IconCheck size={14} />}
-                                onPress={() => handleResolve(notification.id, 'ACCEPTED')}
-                              >
-                                Accept
-                              </Button>
-                              <Button
-                                size="sm"
-                                color="danger"
-                                variant="flat"
-                                startContent={<IconX size={14} />}
-                                onPress={() => handleResolve(notification.id, 'REJECTED')}
-                              >
-                                Reject
-                              </Button>
-                            </div>
+                            <Chip size="sm" variant="flat" color="secondary" className="mt-2">
+                              Click to resolve
+                            </Chip>
                           )}
 
                         {notification.resolvedAt && notification.resolution && (
@@ -242,5 +251,19 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
         </div>
       </PopoverContent>
     </Popover>
+
+    {/* Notification Detail Modal - outside Popover to avoid z-index issues */}
+    <NotificationDetailModal
+      notification={selectedNotification}
+      isOpen={isDetailOpen}
+      onClose={() => {
+        setIsDetailOpen(false)
+        setSelectedNotification(null)
+      }}
+      onResolve={handleResolve}
+      onDelete={handleDelete}
+      onMarkRead={handleMarkRead}
+    />
+    </>
   )
 }

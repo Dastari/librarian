@@ -1,7 +1,23 @@
 use super::prelude::*;
+use tokio::sync::broadcast;
 
 #[derive(Default)]
 pub struct AudiobookMutations;
+
+/// Helper to broadcast library change events
+async fn broadcast_library_changed(ctx: &Context<'_>, library_id: Uuid) {
+    if let Ok(tx) = ctx.data::<broadcast::Sender<LibraryChangedEvent>>() {
+        let db = ctx.data_unchecked::<Database>();
+        if let Ok(Some(lib)) = db.libraries().get_by_id(library_id).await {
+            let _ = tx.send(LibraryChangedEvent {
+                change_type: LibraryChangeType::Updated,
+                library_id: library_id.to_string(),
+                library_name: Some(lib.name.clone()),
+                library: Some(Library::from_db(lib)),
+            });
+        }
+    }
+}
 
 #[Object]
 impl AudiobookMutations {
@@ -40,6 +56,9 @@ impl AudiobookMutations {
                     "User added audiobook: {}",
                     record.title
                 );
+
+                // Broadcast library change event for UI reactivity
+                broadcast_library_changed(ctx, library_id).await;
 
                 // Trigger immediate auto-hunt if the library has auto_hunt enabled
                 {
@@ -170,7 +189,7 @@ impl AudiobookMutations {
         let audiobook_id = Uuid::parse_str(&id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid audiobook ID: {}", e)))?;
 
-        // Verify audiobook exists
+        // Verify audiobook exists and get library_id for broadcast
         let audiobook =
             db.audiobooks().get_by_id(audiobook_id).await.map_err(|e| {
                 async_graphql::Error::new(format!("Failed to get audiobook: {}", e))
@@ -183,11 +202,17 @@ impl AudiobookMutations {
             });
         }
 
+        let library_id = audiobook.as_ref().map(|a| a.library_id);
+
         // Delete the audiobook and all associated data
         match db.audiobooks().delete(audiobook_id).await {
             Ok(deleted) => {
                 if deleted {
                     tracing::info!(audiobook_id = %audiobook_id, "Deleted audiobook");
+                    // Broadcast library change event for UI reactivity
+                    if let Some(lib_id) = library_id {
+                        broadcast_library_changed(ctx, lib_id).await;
+                    }
                     Ok(MutationResult {
                         success: true,
                         error: None,

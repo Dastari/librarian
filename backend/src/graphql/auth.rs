@@ -30,18 +30,6 @@ pub struct AuthUser {
     pub role: Option<String>,
 }
 
-/// JWT claims structure for Supabase tokens
-#[derive(Debug, Deserialize)]
-pub struct SupabaseClaims {
-    pub sub: String,
-    pub email: Option<String>,
-    pub role: Option<String>,
-    #[allow(dead_code)]
-    pub exp: usize,
-    #[allow(dead_code)]
-    pub iat: usize,
-}
-
 /// Authentication token passed via WebSocket or HTTP header (for future use)
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
@@ -69,7 +57,6 @@ struct AccessTokenClaims {
 }
 
 /// Verify a JWT token and extract user info
-/// Supports both new custom auth format and legacy Supabase format
 pub fn verify_token(token: &str) -> Result<AuthUser> {
     let jwt_secret = std::env::var("JWT_SECRET")
         .map_err(|_| async_graphql::Error::new("JWT_SECRET not configured"))?;
@@ -84,22 +71,7 @@ pub fn verify_token(token: &str) -> Result<AuthUser> {
     validation.validate_exp = true;
     validation.validate_aud = false;
 
-    // Try to decode as new custom auth format first
-    if let Ok(token_data) = decode::<AccessTokenClaims>(
-        token,
-        &DecodingKey::from_secret(jwt_secret.as_bytes()),
-        &validation,
-    ) {
-        tracing::debug!("JWT verified for user: {:?} (custom auth)", token_data.claims.email);
-        return Ok(AuthUser {
-            user_id: token_data.claims.sub,
-            email: token_data.claims.email,
-            role: Some(token_data.claims.role),
-        });
-    }
-
-    // Fall back to legacy Supabase format
-    let token_data = decode::<SupabaseClaims>(
+    let token_data = decode::<AccessTokenClaims>(
         token,
         &DecodingKey::from_secret(jwt_secret.as_bytes()),
         &validation,
@@ -110,12 +82,12 @@ pub fn verify_token(token: &str) -> Result<AuthUser> {
             .extend_with(|_, e| e.set("code", "UNAUTHORIZED"))
     })?;
 
-    tracing::debug!("JWT verified for user: {:?} (legacy)", token_data.claims.email);
+    tracing::debug!("JWT verified for user: {:?}", token_data.claims.email);
 
     Ok(AuthUser {
         user_id: token_data.claims.sub,
         email: token_data.claims.email,
-        role: token_data.claims.role,
+        role: Some(token_data.claims.role),
     })
 }
 

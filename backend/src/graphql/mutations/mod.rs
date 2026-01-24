@@ -39,7 +39,7 @@ pub use user::UserMutations;
 pub(crate) mod prelude {
     pub(crate) use std::sync::Arc;
 
-    pub(crate) use async_graphql::{Context, Object, Result};
+    pub(crate) use async_graphql::{Context, Object, Result, SimpleObject};
     pub(crate) use uuid::Uuid;
 
     pub(crate) use crate::db::*;

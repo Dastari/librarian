@@ -273,75 +273,67 @@ export function LibrarySettingsForm({
   const renderAutomationSection = () => {
     const libraryType = values.libraryType
 
-    // Get library-specific descriptions
-    const getAutoDownloadDescription = () => {
-      switch (libraryType) {
-        case 'TV':
-          return 'Automatically download episodes from RSS feeds when they match'
-        case 'MOVIES':
-          return 'Automatically download movies from RSS feeds when they match'
-        case 'MUSIC':
-          return 'Automatically download albums from RSS feeds when they match'
-        case 'AUDIOBOOKS':
-          return 'Automatically download audiobooks from RSS feeds when they match'
-        default:
-          return 'Automatically download content from RSS feeds when they match'
-      }
-    }
-
+    // Consolidated Auto Hunt description - covers both RSS matching and proactive searching
     const getAutoHuntDescription = () => {
       switch (libraryType) {
         case 'TV':
-          return 'Automatically search indexers for missing episodes'
+          return 'Automatically search and download missing episodes from indexers and RSS feeds'
         case 'MOVIES':
-          return 'Automatically search indexers for missing movies'
+          return 'Automatically search and download missing movies from indexers and RSS feeds'
         case 'MUSIC':
-          return 'Automatically search indexers for missing albums'
+          return 'Automatically search and download missing albums from indexers and RSS feeds'
         case 'AUDIOBOOKS':
-          return 'Automatically search indexers for missing audiobooks'
+          return 'Automatically search and download missing audiobooks from indexers and RSS feeds'
         default:
-          return 'Automatically search indexers for missing content'
+          return 'Automatically search and download missing content from indexers and RSS feeds'
       }
+    }
+
+    const getAutoAddDescription = () => {
+      switch (libraryType) {
+        case 'TV':
+          return 'Automatically add shows found during library scanning'
+        case 'MOVIES':
+          return 'Automatically add movies found during library scanning'
+        case 'MUSIC':
+          return 'Automatically add albums found during library scanning'
+        case 'AUDIOBOOKS':
+          return 'Automatically add audiobooks found during library scanning'
+        default:
+          return 'Automatically add content found during library scanning'
+      }
+    }
+
+    // Consolidated auto-hunt toggle - controls both autoDownload and autoHunt
+    const isAutoHuntEnabled = values.autoHunt || values.autoDownload
+    const handleAutoHuntChange = (enabled: boolean) => {
+      updateValue('autoHunt', enabled)
+      updateValue('autoDownload', enabled)
     }
 
     return (
       <>
         <SettingRow
-          label="Auto-download"
-          description={getAutoDownloadDescription()}
+          label="Auto Hunt"
+          description={getAutoHuntDescription()}
         >
           <Switch
-            isSelected={values.autoDownload}
-            onValueChange={(v) => updateValue('autoDownload', v)}
+            isSelected={isAutoHuntEnabled}
+            onValueChange={handleAutoHuntChange}
           />
         </SettingRow>
 
         <Divider />
 
         <SettingRow
-          label="Auto-hunt"
-          description={getAutoHuntDescription()}
+          label="Auto-add discovered"
+          description={getAutoAddDescription()}
         >
           <Switch
-            isSelected={values.autoHunt}
-            onValueChange={(v) => updateValue('autoHunt', v)}
+            isSelected={values.autoAddDiscovered}
+            onValueChange={(v) => updateValue('autoAddDiscovered', v)}
           />
         </SettingRow>
-
-        {libraryType === 'TV' && (
-          <>
-            <Divider />
-            <SettingRow
-              label="Auto-add discovered shows"
-              description="Automatically add shows found during scanning"
-            >
-              <Switch
-                isSelected={values.autoAddDiscovered}
-                onValueChange={(v) => updateValue('autoAddDiscovered', v)}
-              />
-            </SettingRow>
-          </>
-        )}
       </>
     )
   }
@@ -535,19 +527,9 @@ export function LibrarySettingsForm({
 
       {renderOrganizationSection()}
 
-      {mode === 'create' && (values.libraryType === 'TV' || values.libraryType === 'MOVIES') && (
-        <>
-          <SettingRow
-            label="Auto-add discovered shows"
-            description="Automatically add shows found during scanning"
-          >
-            <Switch
-              isSelected={values.autoAddDiscovered}
-              onValueChange={(v) => updateValue('autoAddDiscovered', v)}
-            />
-          </SettingRow>
-        </>
-      )}
+      <Divider />
+
+      {renderAutomationSection()}
 
       <Divider />
 

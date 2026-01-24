@@ -5,15 +5,15 @@
 - `frontend/`: TanStack Start app with `src/components/`, `src/hooks/`, `src/lib/graphql/`, and file-based routes in `src/routes/`.
 - `librarian-macros/`: internal Rust proc-macro crate used by the backend.
 - `docs/`: architecture, design, and workflow notes.
-- `supabase/`, `docker-compose*.yml`, `nginx/`: local stack and deployment assets.
+- `docker-compose*.yml`, `nginx/`: local stack and deployment assets.
 
 ## Build, Test, and Development Commands
-- `make dev`: start Supabase plus backend and frontend dev servers.
+- `make dev`: start backend and frontend dev servers.
 - `make dev-backend` / `make dev-frontend`: run one side only.
 - `make build`: build backend (`cargo build --release`) and frontend (`pnpm run build`).
 - `make test`: run `cargo test` and `pnpm test` (Vitest).
 - `make lint`: backend `cargo clippy` + `cargo fmt --check` and frontend `pnpm run lint`.
-- `make db-migrate`: run `sqlx` migrations against Supabase (`DATABASE_URL` defaults to localhost).
+- `make db-migrate`: run `sqlx` migrations against SQLite (`DATABASE_PATH` defaults to `./data/librarian.db`).
 - `make docker-up`: start the Docker dev stack; `make prod-up` for production compose.
 
 ## Coding Style & Naming Conventions
@@ -34,6 +34,6 @@
 - If you add migrations or env vars, mention them in the PR body and update `.env.example` when needed.
 
 ## Configuration & Security Notes
-- Copy `.env.example` to `.env` and use `supabase start` for local keys.
-- Never commit secrets; Supabase service keys stay backend-only.
+- Copy `.env.example` to `.env` and set `DATABASE_PATH` if you want a custom location.
+- Never commit secrets; keep `JWT_SECRET` and API keys in local envs.
 - For encryption or indexer changes, note key handling (see `README.md`).

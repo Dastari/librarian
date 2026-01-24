@@ -49,40 +49,18 @@ function getStatusIcon(isEnabled: boolean, isInherited: boolean) {
 }
 
 // ============================================================================
-// Auto Download Badge
+// Auto Download Badge (Deprecated - use AutoHuntBadge)
 // ============================================================================
 
 interface AutoDownloadBadgeProps extends BaseBadgeProps {}
 
 /**
- * Badge showing auto-download status.
- * When enabled, new episodes will be automatically downloaded from RSS feeds.
+ * @deprecated Use AutoHuntBadge instead. Auto Download and Auto Hunt are now consolidated.
+ * This badge is kept for backwards compatibility but renders the same as AutoHuntBadge.
  */
-export function AutoDownloadBadge({
-  isInherited = false,
-  isEnabled,
-  size = 'sm',
-  onClick,
-  isLoading = false,
-}: AutoDownloadBadgeProps) {
-  const tooltip = isEnabled
-    ? 'Episodes will be automatically downloaded from RSS feeds'
-    : 'Auto-download is disabled - episodes must be downloaded manually'
-
-  return (
-    <Tooltip content={tooltip}>
-      <Chip
-        size={size}
-        variant="flat"
-        color={isEnabled ? 'success' : 'default'}
-        className={onClick ? 'cursor-pointer' : ''}
-        onClick={onClick}
-        startContent={getStatusIcon(isEnabled, isInherited)}
-      >
-        {isLoading ? 'Updating...' : 'Auto Download'}
-      </Chip>
-    </Tooltip>
-  )
+export function AutoDownloadBadge(props: AutoDownloadBadgeProps) {
+  // Redirect to AutoHuntBadge since they're now consolidated
+  return <AutoHuntBadge {...props} />
 }
 
 // ============================================================================
@@ -152,18 +130,18 @@ export function MonitoredBadge({
 
   switch (monitorType) {
     case 'ALL':
-      label = 'Monitored'
-      tooltip = 'All episodes are matched against RSS feeds for available torrents'
+      label = 'All Episodes'
+      tooltip = 'All episodes are automatically searched and downloaded when available'
       color = 'success'
       break
     case 'FUTURE':
       label = 'Future Only'
-      tooltip = 'Only future episodes are matched - past episodes are ignored'
+      tooltip = 'Only episodes that air after the show was added will be searched and downloaded'
       color = 'primary'
       break
     case 'NONE':
       label = 'Not Monitored'
-      tooltip = 'Episodes are not matched against RSS feeds'
+      tooltip = 'No episodes will be automatically searched or downloaded'
       color = 'default'
       break
     default:
@@ -195,7 +173,8 @@ interface AutoHuntBadgeProps extends BaseBadgeProps {}
 
 /**
  * Badge showing auto-hunt status.
- * When enabled, the system will actively search indexers for missing episodes.
+ * When enabled, the system will automatically search indexers and RSS feeds
+ * for missing content and download the best matches.
  */
 export function AutoHuntBadge({
   isInherited = false,
@@ -205,8 +184,8 @@ export function AutoHuntBadge({
   isLoading = false,
 }: AutoHuntBadgeProps) {
   const tooltip = isEnabled
-    ? 'Missing episodes will be actively searched for using indexers'
-    : 'Auto-hunt is disabled - missing episodes will not be searched automatically'
+    ? 'Missing content will be automatically searched and downloaded from indexers and RSS feeds'
+    : 'Auto-hunt is disabled - content must be searched and downloaded manually'
 
   return (
     <Tooltip content={tooltip}>

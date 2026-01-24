@@ -1093,11 +1093,89 @@ export const RESOLVE_NOTIFICATION_MUTATION = `
   }
 `;
 
+export const RESOLVE_NOTIFICATION_WITH_ACTION_MUTATION = `
+  mutation ResolveNotificationWithAction($id: String!, $resolution: NotificationResolution!, $actionPerformed: String, $actionResult: String) {
+    resolveNotificationWithAction(id: $id, resolution: $resolution, actionPerformed: $actionPerformed, actionResult: $actionResult) {
+      success
+      error
+      notification {
+        id
+        resolvedAt
+        resolution
+      }
+    }
+  }
+`;
+
 export const DELETE_NOTIFICATION_MUTATION = `
   mutation DeleteNotification($id: String!) {
     deleteNotification(id: $id) {
       success
       error
+    }
+  }
+`;
+
+// ============================================================================
+// Manual Match Mutations
+// ============================================================================
+
+export const MANUAL_MATCH_MUTATION = `
+  mutation ManualMatch(
+    $mediaFileId: String!
+    $episodeId: String
+    $movieId: String
+    $trackId: String
+    $albumId: String
+    $audiobookId: String
+    $chapterId: String
+  ) {
+    manualMatch(
+      mediaFileId: $mediaFileId
+      episodeId: $episodeId
+      movieId: $movieId
+      trackId: $trackId
+      albumId: $albumId
+      audiobookId: $audiobookId
+      chapterId: $chapterId
+    ) {
+      success
+      error
+      mediaFile {
+        id
+        matchType
+        isManualMatch
+        contentType
+        episodeId
+        movieId
+        trackId
+        albumId
+        audiobookId
+        chapterId
+        matchedAt
+      }
+    }
+  }
+`;
+
+export const UNMATCH_MEDIA_FILE_MUTATION = `
+  mutation UnmatchMediaFile($mediaFileId: String!) {
+    unmatchMediaFile(mediaFileId: $mediaFileId) {
+      success
+      error
+      mediaFile {
+        id
+        matchType
+        isManualMatch
+        contentType
+        episodeId
+        movieId
+        trackId
+        albumId
+        audiobookId
+        chapterId
+        matchedAt
+      }
     }
   }
 `;

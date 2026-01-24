@@ -283,6 +283,7 @@ export function DataTable<T>({
   // Actions
   bulkActions = [],
   rowActions = [],
+  onRowClick,
 
   // Pagination
   paginationMode = 'none',
@@ -1045,7 +1046,11 @@ export function DataTable<T>({
                   )
                 }
                 return (
-                  <TableRow key={rowKey}>
+                  <TableRow 
+                    key={rowKey}
+                    className={onRowClick ? 'cursor-pointer hover:bg-default-100' : ''}
+                    onClick={() => onRowClick?.(item)}
+                  >
                     {cells}
                   </TableRow>
                 )

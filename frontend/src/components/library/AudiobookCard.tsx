@@ -135,12 +135,13 @@ export function AudiobookCard({ audiobook, authorName, onDelete }: AudiobookCard
                   size="sm"
                   variant="flat"
                   className="bg-black/50 backdrop-blur-sm text-white hover:bg-black/70 min-w-6 w-6 h-6"
+                  aria-label="Audiobook actions"
                 >
                   <IconDotsVertical size={16} />
                 </Button>
               </DropdownTrigger>
               <DropdownMenu
-                aria-label="Audiobook actions"
+                aria-label="Audiobook actions menu"
                 onAction={(key) => {
                   if (key === 'view') {
                     // View details when route is available

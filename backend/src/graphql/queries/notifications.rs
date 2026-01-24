@@ -60,20 +60,30 @@ impl NotificationQueries {
     }
 
     /// Get recent notifications for popover display
+    ///
+    /// When `unreadOnly` is true, only unread notifications are returned (for navbar badge).
     async fn recent_notifications(
         &self,
         ctx: &Context<'_>,
         #[graphql(default = 10, desc = "Number of recent notifications")] limit: i32,
+        #[graphql(default = false, desc = "Only return unread notifications")] unread_only: bool,
     ) -> Result<Vec<Notification>> {
         let user = ctx.auth_user()?;
         let service = ctx.data_unchecked::<Arc<NotificationService>>();
         let user_id = Uuid::parse_str(&user.user_id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
 
-        let notifications = service
-            .get_recent(user_id, limit as i64)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let notifications = if unread_only {
+            service
+                .get_recent_unread(user_id, limit as i64)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?
+        } else {
+            service
+                .get_recent(user_id, limit as i64)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?
+        };
 
         Ok(notifications.into_iter().map(Notification::from).collect())
     }

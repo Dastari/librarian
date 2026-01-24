@@ -7,13 +7,9 @@ use anyhow::Result;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
 #[cfg(feature = "sqlite")]
 use sqlx::SqlitePool;
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
 #[cfg(feature = "sqlite")]
 type DbPool = SqlitePool;
 
@@ -45,34 +41,6 @@ pub struct PlaybackSessionRecord {
     pub updated_at: OffsetDateTime,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for PlaybackSessionRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        Ok(Self {
-            id: row.try_get("id")?,
-            user_id: row.try_get("user_id")?,
-            episode_id: row.try_get("episode_id")?,
-            media_file_id: row.try_get("media_file_id")?,
-            tv_show_id: row.try_get("tv_show_id")?,
-            movie_id: row.try_get("movie_id")?,
-            track_id: row.try_get("track_id")?,
-            audiobook_id: row.try_get("audiobook_id")?,
-            album_id: row.try_get("album_id")?,
-            content_type: row.try_get("content_type")?,
-            current_position: row.try_get("current_position")?,
-            duration: row.try_get("duration")?,
-            volume: row.try_get("volume")?,
-            is_muted: row.try_get("is_muted")?,
-            is_playing: row.try_get("is_playing")?,
-            started_at: row.try_get("started_at")?,
-            last_updated_at: row.try_get("last_updated_at")?,
-            completed_at: row.try_get("completed_at")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for PlaybackSessionRecord {
@@ -233,26 +201,6 @@ impl PlaybackRepository {
     }
 
     /// Get the active playback session for a user
-    #[cfg(feature = "postgres")]
-    pub async fn get_active_session(&self, user_id: Uuid) -> Result<Option<PlaybackSessionRecord>> {
-        let record = sqlx::query_as::<_, PlaybackSessionRecord>(
-            r#"
-            SELECT id, user_id, episode_id, media_file_id, tv_show_id,
-                   movie_id, track_id, audiobook_id, album_id, content_type,
-                   current_position, duration, volume, is_muted, is_playing,
-                   started_at, last_updated_at, completed_at, created_at, updated_at
-            FROM playback_sessions
-            WHERE user_id = $1 AND completed_at IS NULL
-            ORDER BY last_updated_at DESC
-            LIMIT 1
-            "#,
-        )
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_active_session(&self, user_id: Uuid) -> Result<Option<PlaybackSessionRecord>> {
@@ -276,72 +224,6 @@ impl PlaybackRepository {
     }
 
     /// Create or update a playback session (upsert by user_id)
-    #[cfg(feature = "postgres")]
-    pub async fn upsert_session(
-        &self,
-        input: UpsertPlaybackSession,
-    ) -> Result<PlaybackSessionRecord> {
-        let record = sqlx::query_as::<_, PlaybackSessionRecord>(
-            r#"
-            INSERT INTO playback_sessions (
-                user_id, content_type, media_file_id,
-                episode_id, movie_id, track_id, audiobook_id,
-                tv_show_id, album_id,
-                current_position, duration, volume, is_muted, is_playing,
-                started_at, last_updated_at, completed_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW(), NULL)
-            ON CONFLICT (user_id) DO UPDATE SET
-                content_type = EXCLUDED.content_type,
-                media_file_id = EXCLUDED.media_file_id,
-                episode_id = EXCLUDED.episode_id,
-                movie_id = EXCLUDED.movie_id,
-                track_id = EXCLUDED.track_id,
-                audiobook_id = EXCLUDED.audiobook_id,
-                tv_show_id = EXCLUDED.tv_show_id,
-                album_id = EXCLUDED.album_id,
-                current_position = EXCLUDED.current_position,
-                duration = EXCLUDED.duration,
-                volume = EXCLUDED.volume,
-                is_muted = EXCLUDED.is_muted,
-                is_playing = EXCLUDED.is_playing,
-                started_at = CASE 
-                    WHEN playback_sessions.content_type != EXCLUDED.content_type 
-                         OR COALESCE(playback_sessions.episode_id, playback_sessions.movie_id, 
-                                     playback_sessions.track_id, playback_sessions.audiobook_id) 
-                            != COALESCE(EXCLUDED.episode_id, EXCLUDED.movie_id, 
-                                        EXCLUDED.track_id, EXCLUDED.audiobook_id)
-                    THEN NOW() 
-                    ELSE playback_sessions.started_at 
-                END,
-                last_updated_at = NOW(),
-                completed_at = NULL,
-                updated_at = NOW()
-            RETURNING id, user_id, episode_id, media_file_id, tv_show_id,
-                      movie_id, track_id, audiobook_id, album_id, content_type,
-                      current_position, duration, volume, is_muted, is_playing,
-                      started_at, last_updated_at, completed_at, created_at, updated_at
-            "#,
-        )
-        .bind(input.user_id)
-        .bind(&input.content_type)
-        .bind(input.media_file_id)
-        .bind(input.episode_id)
-        .bind(input.movie_id)
-        .bind(input.track_id)
-        .bind(input.audiobook_id)
-        .bind(input.tv_show_id)
-        .bind(input.album_id)
-        .bind(input.current_position)
-        .bind(input.duration)
-        .bind(input.volume)
-        .bind(input.is_muted)
-        .bind(input.is_playing)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn upsert_session(
@@ -476,40 +358,6 @@ impl PlaybackRepository {
     }
 
     /// Update playback position for a session
-    #[cfg(feature = "postgres")]
-    pub async fn update_position(
-        &self,
-        user_id: Uuid,
-        input: UpdatePlaybackPosition,
-    ) -> Result<Option<PlaybackSessionRecord>> {
-        let record = sqlx::query_as::<_, PlaybackSessionRecord>(
-            r#"
-            UPDATE playback_sessions SET
-                current_position = COALESCE($2, current_position),
-                duration = COALESCE($3, duration),
-                volume = COALESCE($4, volume),
-                is_muted = COALESCE($5, is_muted),
-                is_playing = COALESCE($6, is_playing),
-                last_updated_at = NOW(),
-                updated_at = NOW()
-            WHERE user_id = $1 AND completed_at IS NULL
-            RETURNING id, user_id, episode_id, media_file_id, tv_show_id,
-                      movie_id, track_id, audiobook_id, album_id, content_type,
-                      current_position, duration, volume, is_muted, is_playing,
-                      started_at, last_updated_at, completed_at, created_at, updated_at
-            "#,
-        )
-        .bind(user_id)
-        .bind(input.current_position)
-        .bind(input.duration)
-        .bind(input.volume)
-        .bind(input.is_muted)
-        .bind(input.is_playing)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn update_position(
@@ -551,27 +399,6 @@ impl PlaybackRepository {
     }
 
     /// Mark a session as completed (stopped watching)
-    #[cfg(feature = "postgres")]
-    pub async fn complete_session(&self, user_id: Uuid) -> Result<Option<PlaybackSessionRecord>> {
-        let record = sqlx::query_as::<_, PlaybackSessionRecord>(
-            r#"
-            UPDATE playback_sessions SET
-                is_playing = false,
-                completed_at = NOW(),
-                updated_at = NOW()
-            WHERE user_id = $1 AND completed_at IS NULL
-            RETURNING id, user_id, episode_id, media_file_id, tv_show_id,
-                      movie_id, track_id, audiobook_id, album_id, content_type,
-                      current_position, duration, volume, is_muted, is_playing,
-                      started_at, last_updated_at, completed_at, created_at, updated_at
-            "#,
-        )
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn complete_session(&self, user_id: Uuid) -> Result<Option<PlaybackSessionRecord>> {
@@ -607,21 +434,6 @@ impl PlaybackRepository {
     }
 
     /// Delete old completed sessions (cleanup)
-    #[cfg(feature = "postgres")]
-    pub async fn cleanup_old_sessions(&self, days_old: i32) -> Result<u64> {
-        let result = sqlx::query(
-            r#"
-            DELETE FROM playback_sessions
-            WHERE completed_at IS NOT NULL 
-              AND completed_at < NOW() - INTERVAL '1 day' * $1
-            "#,
-        )
-        .bind(days_old)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn cleanup_old_sessions(&self, days_old: i32) -> Result<u64> {

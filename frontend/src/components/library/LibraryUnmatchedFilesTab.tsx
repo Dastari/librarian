@@ -14,6 +14,7 @@ import {
 import { graphqlClient, UNMATCHED_FILES_QUERY, type MediaFile } from '../../lib/graphql'
 import { sanitizeError } from '../../lib/format'
 import { ErrorState } from '../shared'
+import { ManualMatchModal } from './ManualMatchModal'
 
 interface UnmatchedFilesResponse {
   unmatchedFiles: MediaFile[]
@@ -22,14 +23,17 @@ interface UnmatchedFilesResponse {
 interface LibraryUnmatchedFilesTabProps {
   libraryId: string
   libraryPath: string
+  libraryType: string
   /** Parent loading state (e.g., library context still loading) */
   loading?: boolean
 }
 
-export function LibraryUnmatchedFilesTab({ libraryId, libraryPath, loading: parentLoading }: LibraryUnmatchedFilesTabProps) {
+export function LibraryUnmatchedFilesTab({ libraryId, libraryPath, libraryType, loading: parentLoading }: LibraryUnmatchedFilesTabProps) {
   const [files, setFiles] = useState<MediaFile[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [matchModalOpen, setMatchModalOpen] = useState(false)
+  const [selectedFile, setSelectedFile] = useState<MediaFile | null>(null)
 
   const fetchUnmatchedFiles = async () => {
     setIsLoading(true)
@@ -166,9 +170,17 @@ export function LibraryUnmatchedFilesTab({ libraryId, libraryPath, loading: pare
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    <Tooltip content="Match to show (coming soon)">
-                      <Button isIconOnly size="sm" variant="light" isDisabled>
-                        <IconLink size={16} className="text-default-400" />
+                    <Tooltip content="Manually match file">
+                      <Button 
+                        isIconOnly 
+                        size="sm" 
+                        variant="light"
+                        onPress={() => {
+                          setSelectedFile(file)
+                          setMatchModalOpen(true)
+                        }}
+                      >
+                        <IconLink size={16} className="text-primary" />
                       </Button>
                     </Tooltip>
                     <Tooltip content="Remove from database (coming soon)">
@@ -183,6 +195,21 @@ export function LibraryUnmatchedFilesTab({ libraryId, libraryPath, loading: pare
           ))}
         </div>
       )}
+
+      {/* Manual Match Modal */}
+      <ManualMatchModal
+        isOpen={matchModalOpen}
+        onClose={() => {
+          setMatchModalOpen(false)
+          setSelectedFile(null)
+        }}
+        mediaFile={selectedFile}
+        libraryId={libraryId}
+        libraryType={libraryType}
+        onMatched={() => {
+          fetchUnmatchedFiles()
+        }}
+      />
     </div>
   )
 }

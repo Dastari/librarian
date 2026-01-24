@@ -1,19 +1,29 @@
 export { StatusChip, type StatusType } from './StatusChip'
-export { 
-  EpisodeStatusChip, 
-  getEpisodeStatusColor, 
-  getEpisodeStatusLabel 
-} from './EpisodeStatusChip'
-export { 
-  TrackStatusChip, 
-  getTrackStatusColor, 
-  getTrackStatusLabel 
-} from './TrackStatusChip'
-export { 
-  ChapterStatusChip, 
-  getChapterStatusColor, 
-  getChapterStatusLabel 
-} from './ChapterStatusChip'
+
+// Unified media item status chip (consolidates Episode/Track/Chapter status chips)
+export {
+  MediaItemStatusChip,
+  deriveMediaStatus,
+  getMediaStatusColor,
+  getMediaStatusLabel,
+  type DerivedMediaStatus,
+  // Backwards-compatible aliases (deprecated)
+  EpisodeStatusChip,
+  TrackStatusChip,
+  ChapterStatusChip,
+  deriveEpisodeStatus,
+  deriveTrackStatus,
+  deriveChapterStatus,
+  getEpisodeStatusColor,
+  getTrackStatusColor,
+  getChapterStatusColor,
+  getEpisodeStatusLabel,
+  getTrackStatusLabel,
+  getChapterStatusLabel,
+  type DerivedEpisodeStatus,
+  type DerivedTrackStatus,
+  type DerivedChapterStatus,
+} from './MediaItemStatusChip'
 export { QualityBadge } from './QualityBadge'
 export { 
   AutoDownloadBadge,

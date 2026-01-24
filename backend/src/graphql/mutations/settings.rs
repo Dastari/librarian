@@ -428,6 +428,17 @@ impl SettingsMutations {
 
         tracing::debug!(key = %key, "Updated app setting");
 
+        // If this is a metadata-related setting, reload the metadata service config
+        // so that new API keys take effect without requiring a server restart
+        if category == "metadata" {
+            let metadata_service = ctx.data_unchecked::<Arc<MetadataService>>();
+            if let Err(e) = metadata_service.reload_config().await {
+                tracing::warn!(error = %e, "Failed to reload metadata service config after setting update");
+            } else {
+                tracing::info!(key = %key, "Reloaded metadata service config after setting update");
+            }
+        }
+
         Ok(SettingsResult {
             success: true,
             error: None,

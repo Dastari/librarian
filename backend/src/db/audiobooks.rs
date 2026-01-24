@@ -3,13 +3,9 @@
 use anyhow::Result;
 use uuid::Uuid;
 
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
 #[cfg(feature = "sqlite")]
 use sqlx::SqlitePool;
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
 #[cfg(feature = "sqlite")]
 type DbPool = SqlitePool;
 
@@ -57,51 +53,14 @@ pub struct AudiobookRecord {
     pub chapter_count: Option<i32>,
     /// Number of chapters with media files
     pub downloaded_chapter_count: Option<i32>,
+    /// When true, auto-hunt searches for individual chapters instead of complete audiobooks
+    /// Set after a partial download completes
+    pub hunt_individual_items: bool,
     // Timestamps
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for AudiobookRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        Ok(Self {
-            id: row.try_get("id")?,
-            author_id: row.try_get("author_id")?,
-            library_id: row.try_get("library_id")?,
-            user_id: row.try_get("user_id")?,
-            title: row.try_get("title")?,
-            sort_title: row.try_get("sort_title")?,
-            subtitle: row.try_get("subtitle")?,
-            audible_id: row.try_get("audible_id")?,
-            asin: row.try_get("asin")?,
-            isbn: row.try_get("isbn")?,
-            openlibrary_id: row.try_get("openlibrary_id")?,
-            goodreads_id: row.try_get("goodreads_id")?,
-            description: row.try_get("description")?,
-            publisher: row.try_get("publisher")?,
-            publish_date: row.try_get("publish_date")?,
-            language: row.try_get("language")?,
-            narrators: row.try_get("narrators")?,
-            series_name: row.try_get("series_name")?,
-            series_position: row.try_get("series_position")?,
-            duration_secs: row.try_get("duration_secs")?,
-            audible_rating: row.try_get("audible_rating")?,
-            audible_rating_count: row.try_get("audible_rating_count")?,
-            cover_url: row.try_get("cover_url")?,
-            has_files: row.try_get("has_files")?,
-            size_bytes: row.try_get("size_bytes")?,
-            is_finished: row.try_get("is_finished")?,
-            last_played_at: row.try_get("last_played_at")?,
-            path: row.try_get("path")?,
-            chapter_count: row.try_get("chapter_count")?,
-            downloaded_chapter_count: row.try_get("downloaded_chapter_count")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for AudiobookRecord {
@@ -180,6 +139,10 @@ impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for AudiobookRecord {
             path: row.try_get("path")?,
             chapter_count: row.try_get("chapter_count")?,
             downloaded_chapter_count: row.try_get("downloaded_chapter_count")?,
+            hunt_individual_items: {
+                let v: i32 = row.try_get("hunt_individual_items").unwrap_or(0);
+                int_to_bool(v)
+            },
             created_at: str_to_datetime(&created_str).map_err(|e| sqlx::Error::Decode(e.into()))?,
             updated_at: str_to_datetime(&updated_str).map_err(|e| sqlx::Error::Decode(e.into()))?,
         })
@@ -197,20 +160,6 @@ pub struct AudiobookAuthorRecord {
     pub openlibrary_id: Option<String>,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for AudiobookAuthorRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        Ok(Self {
-            id: row.try_get("id")?,
-            library_id: row.try_get("library_id")?,
-            user_id: row.try_get("user_id")?,
-            name: row.try_get("name")?,
-            sort_name: row.try_get("sort_name")?,
-            openlibrary_id: row.try_get("openlibrary_id")?,
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for AudiobookAuthorRecord {
@@ -260,29 +209,6 @@ impl AudiobookRepository {
     }
 
     /// Get an audiobook by ID
-    #[cfg(feature = "postgres")]
-    pub async fn get_by_id(&self, id: Uuid) -> Result<Option<AudiobookRecord>> {
-        let record = sqlx::query_as::<_, AudiobookRecord>(
-            r#"
-            SELECT a.id, a.author_id, a.library_id, a.user_id, a.title, a.sort_title, a.subtitle,
-                   a.audible_id, a.asin, a.isbn, a.openlibrary_id, a.goodreads_id,
-                   a.description, a.publisher, a.publish_date, a.language, a.narrators,
-                   a.series_name, a.series_position, a.duration_secs,
-                   a.audible_rating, a.audible_rating_count, a.cover_url,
-                   a.has_files, a.size_bytes, a.is_finished, a.last_played_at, a.path,
-                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id) as chapter_count,
-                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id AND c.media_file_id IS NOT NULL) as downloaded_chapter_count,
-                   a.created_at, a.updated_at
-            FROM audiobooks a
-            WHERE a.id = $1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_by_id(&self, id: Uuid) -> Result<Option<AudiobookRecord>> {
@@ -311,34 +237,6 @@ impl AudiobookRepository {
     }
 
     /// Get an audiobook by OpenLibrary ID within a library
-    #[cfg(feature = "postgres")]
-    pub async fn get_by_openlibrary_id(
-        &self,
-        library_id: Uuid,
-        openlibrary_id: &str,
-    ) -> Result<Option<AudiobookRecord>> {
-        let record = sqlx::query_as::<_, AudiobookRecord>(
-            r#"
-            SELECT a.id, a.author_id, a.library_id, a.user_id, a.title, a.sort_title, a.subtitle,
-                   a.audible_id, a.asin, a.isbn, a.openlibrary_id, a.goodreads_id,
-                   a.description, a.publisher, a.publish_date, a.language, a.narrators,
-                   a.series_name, a.series_position, a.duration_secs,
-                   a.audible_rating, a.audible_rating_count, a.cover_url,
-                   a.has_files, a.size_bytes, a.is_finished, a.last_played_at, a.path,
-                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id) as chapter_count,
-                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id AND c.media_file_id IS NOT NULL) as downloaded_chapter_count,
-                   a.created_at, a.updated_at
-            FROM audiobooks a
-            WHERE a.library_id = $1 AND a.openlibrary_id = $2
-            "#,
-        )
-        .bind(library_id)
-        .bind(openlibrary_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_by_openlibrary_id(
@@ -372,21 +270,6 @@ impl AudiobookRepository {
     }
 
     /// Get an author by ID
-    #[cfg(feature = "postgres")]
-    pub async fn get_author_by_id(&self, id: Uuid) -> Result<Option<AudiobookAuthorRecord>> {
-        let record = sqlx::query_as::<_, AudiobookAuthorRecord>(
-            r#"
-            SELECT id, library_id, user_id, name, sort_name, openlibrary_id
-            FROM authors
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_author_by_id(&self, id: Uuid) -> Result<Option<AudiobookAuthorRecord>> {
@@ -407,67 +290,6 @@ impl AudiobookRepository {
     }
 
     /// Find or create an author by name
-    #[cfg(feature = "postgres")]
-    pub async fn find_or_create_author(
-        &self,
-        library_id: Uuid,
-        user_id: Uuid,
-        name: &str,
-        openlibrary_id: Option<&str>,
-    ) -> Result<AudiobookAuthorRecord> {
-        // First try to find by OpenLibrary ID if provided
-        if let Some(ol_id) = openlibrary_id {
-            let existing = sqlx::query_as::<_, AudiobookAuthorRecord>(
-                r#"
-                SELECT id, library_id, user_id, name, sort_name, openlibrary_id
-                FROM authors
-                WHERE library_id = $1 AND openlibrary_id = $2
-                "#,
-            )
-            .bind(library_id)
-            .bind(ol_id)
-            .fetch_optional(&self.pool)
-            .await?;
-
-            if let Some(author) = existing {
-                return Ok(author);
-            }
-        }
-
-        // Try to find by name
-        let existing = sqlx::query_as::<_, AudiobookAuthorRecord>(
-            r#"
-            SELECT id, library_id, user_id, name, sort_name, openlibrary_id
-            FROM authors
-            WHERE library_id = $1 AND LOWER(name) = LOWER($2)
-            "#,
-        )
-        .bind(library_id)
-        .bind(name)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(author) = existing {
-            return Ok(author);
-        }
-
-        // Create new author
-        let author = sqlx::query_as::<_, AudiobookAuthorRecord>(
-            r#"
-            INSERT INTO authors (library_id, user_id, name, openlibrary_id)
-            VALUES ($1, $2, $3, $4)
-            RETURNING id, library_id, user_id, name, sort_name, openlibrary_id
-            "#,
-        )
-        .bind(library_id)
-        .bind(user_id)
-        .bind(name)
-        .bind(openlibrary_id)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(author)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn find_or_create_author(
@@ -539,42 +361,6 @@ impl AudiobookRepository {
     }
 
     /// Create a new audiobook
-    #[cfg(feature = "postgres")]
-    pub async fn create(&self, input: CreateAudiobook) -> Result<AudiobookRecord> {
-        let record = sqlx::query_as::<_, AudiobookRecord>(
-            r#"
-            INSERT INTO audiobooks (
-                author_id, library_id, user_id, title, sort_title, subtitle,
-                openlibrary_id, isbn, description, publisher, language, cover_url
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            RETURNING id, author_id, library_id, user_id, title, sort_title, subtitle,
-                      audible_id, asin, isbn, openlibrary_id, goodreads_id,
-                      description, publisher, publish_date, language, narrators,
-                      series_name, series_position, duration_secs,
-                      audible_rating, audible_rating_count, cover_url,
-                      has_files, size_bytes, is_finished, last_played_at, path,
-                      0 as chapter_count, 0 as downloaded_chapter_count,
-                      created_at, updated_at
-            "#,
-        )
-        .bind(input.author_id)
-        .bind(input.library_id)
-        .bind(input.user_id)
-        .bind(&input.title)
-        .bind(&input.sort_title)
-        .bind(&input.subtitle)
-        .bind(&input.openlibrary_id)
-        .bind(&input.isbn)
-        .bind(&input.description)
-        .bind(&input.publisher)
-        .bind(&input.language)
-        .bind(&input.cover_url)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn create(&self, input: CreateAudiobook) -> Result<AudiobookRecord> {
@@ -616,30 +402,6 @@ impl AudiobookRepository {
     }
 
     /// List all audiobooks in a library
-    #[cfg(feature = "postgres")]
-    pub async fn list_by_library(&self, library_id: Uuid) -> Result<Vec<AudiobookRecord>> {
-        let records = sqlx::query_as::<_, AudiobookRecord>(
-            r#"
-            SELECT a.id, a.author_id, a.library_id, a.user_id, a.title, a.sort_title, a.subtitle,
-                   a.audible_id, a.asin, a.isbn, a.openlibrary_id, a.goodreads_id,
-                   a.description, a.publisher, a.publish_date, a.language, a.narrators,
-                   a.series_name, a.series_position, a.duration_secs,
-                   a.audible_rating, a.audible_rating_count, a.cover_url,
-                   a.has_files, a.size_bytes, a.is_finished, a.last_played_at, a.path,
-                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id) as chapter_count,
-                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id AND c.media_file_id IS NOT NULL) as downloaded_chapter_count,
-                   a.created_at, a.updated_at
-            FROM audiobooks a
-            WHERE a.library_id = $1
-            ORDER BY COALESCE(a.sort_title, a.title)
-            "#,
-        )
-        .bind(library_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_by_library(&self, library_id: Uuid) -> Result<Vec<AudiobookRecord>> {
@@ -670,42 +432,6 @@ impl AudiobookRepository {
 
     /// List audiobooks that need files (for auto-hunt)
     /// Returns audiobooks without has_files=true, excluding those with active downloads
-    #[cfg(feature = "postgres")]
-    pub async fn list_needing_files(
-        &self,
-        library_id: Uuid,
-        limit: i64,
-    ) -> Result<Vec<AudiobookRecord>> {
-        let records = sqlx::query_as::<_, AudiobookRecord>(
-            r#"
-            SELECT a.id, a.author_id, a.library_id, a.user_id, a.title, a.sort_title, a.subtitle,
-                   a.audible_id, a.asin, a.isbn, a.openlibrary_id, a.goodreads_id,
-                   a.description, a.publisher, a.publish_date, a.language, a.narrators,
-                   a.series_name, a.series_position, a.duration_secs,
-                   a.audible_rating, a.audible_rating_count, a.cover_url,
-                   a.has_files, a.size_bytes, a.is_finished, a.last_played_at, a.path,
-                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id) as chapter_count,
-                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id AND c.media_file_id IS NOT NULL) as downloaded_chapter_count,
-                   a.created_at, a.updated_at
-            FROM audiobooks a
-            WHERE a.library_id = $1
-              AND a.has_files = false
-              AND NOT EXISTS (
-                  SELECT 1 FROM pending_file_matches pfm
-                  WHERE pfm.chapter_id IN (SELECT id FROM chapters WHERE audiobook_id = a.id)
-                    AND pfm.copied_at IS NULL
-              )
-            ORDER BY a.created_at DESC
-            LIMIT $2
-            "#,
-        )
-        .bind(library_id)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_needing_files(
@@ -748,89 +474,6 @@ impl AudiobookRepository {
 
     /// List audiobooks in a library with pagination and filtering
     #[allow(clippy::too_many_arguments)]
-    #[cfg(feature = "postgres")]
-    pub async fn list_by_library_paginated(
-        &self,
-        library_id: Uuid,
-        offset: i64,
-        limit: i64,
-        title_filter: Option<&str>,
-        has_files_filter: Option<bool>,
-        sort_column: &str,
-        sort_asc: bool,
-    ) -> Result<(Vec<AudiobookRecord>, i64)> {
-        let mut conditions = vec!["library_id = $1".to_string()];
-        let mut param_idx = 2;
-
-        if title_filter.is_some() {
-            conditions.push(format!("LOWER(title) LIKE ${}", param_idx));
-            param_idx += 1;
-        }
-        if has_files_filter.is_some() {
-            conditions.push(format!("has_files = ${}", param_idx));
-        }
-        let _ = param_idx;
-
-        let where_clause = conditions.join(" AND ");
-
-        let valid_sort_columns = ["title", "sort_title", "created_at"];
-        let sort_col = if valid_sort_columns.contains(&sort_column) {
-            sort_column
-        } else {
-            "sort_title"
-        };
-        let order_dir = if sort_asc { "ASC" } else { "DESC" };
-        let order_clause = format!(
-            "ORDER BY COALESCE({}, title) {} NULLS LAST",
-            sort_col, order_dir
-        );
-
-        let count_query = format!("SELECT COUNT(*) FROM audiobooks WHERE {}", where_clause);
-        let data_query = format!(
-            r#"
-            SELECT a.id, a.author_id, a.library_id, a.user_id, a.title, a.sort_title, a.subtitle,
-                   a.audible_id, a.asin, a.isbn, a.openlibrary_id, a.goodreads_id,
-                   a.description, a.publisher, a.publish_date, a.language, a.narrators,
-                   a.series_name, a.series_position, a.duration_secs,
-                   a.audible_rating, a.audible_rating_count, a.cover_url,
-                   a.has_files, a.size_bytes, a.is_finished, a.last_played_at, a.path,
-                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id) as chapter_count,
-                   (SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id AND c.media_file_id IS NOT NULL) as downloaded_chapter_count,
-                   a.created_at, a.updated_at
-            FROM audiobooks a
-            WHERE {}
-            {}
-            LIMIT {} OFFSET {}
-            "#,
-            where_clause.replace("library_id", "a.library_id")
-                .replace("title", "a.title")
-                .replace("has_files", "a.has_files"),
-            order_clause.replace(sort_col, &format!("a.{}", sort_col)),
-            limit, offset
-        );
-
-        let mut count_builder = sqlx::query_scalar::<_, i64>(&count_query).bind(library_id);
-        if let Some(title) = title_filter {
-            count_builder = count_builder.bind(format!("%{}%", title.to_lowercase()));
-        }
-        if let Some(has_files) = has_files_filter {
-            count_builder = count_builder.bind(has_files);
-        }
-
-        let total: i64 = count_builder.fetch_one(&self.pool).await?;
-
-        let mut data_builder = sqlx::query_as::<_, AudiobookRecord>(&data_query).bind(library_id);
-        if let Some(title) = title_filter {
-            data_builder = data_builder.bind(format!("%{}%", title.to_lowercase()));
-        }
-        if let Some(has_files) = has_files_filter {
-            data_builder = data_builder.bind(has_files);
-        }
-
-        let records = data_builder.fetch_all(&self.pool).await?;
-
-        Ok((records, total))
-    }
 
     #[allow(clippy::too_many_arguments)]
     #[cfg(feature = "sqlite")]
@@ -923,25 +566,6 @@ impl AudiobookRepository {
     }
 
     /// List all authors in a library
-    #[cfg(feature = "postgres")]
-    pub async fn list_authors_by_library(
-        &self,
-        library_id: Uuid,
-    ) -> Result<Vec<AudiobookAuthorRecord>> {
-        let records = sqlx::query_as::<_, AudiobookAuthorRecord>(
-            r#"
-            SELECT id, library_id, user_id, name, sort_name, openlibrary_id
-            FROM authors
-            WHERE library_id = $1
-            ORDER BY COALESCE(sort_name, name)
-            "#,
-        )
-        .bind(library_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_authors_by_library(
@@ -966,65 +590,6 @@ impl AudiobookRepository {
     }
 
     /// List audiobook authors in a library with pagination and filtering
-    #[cfg(feature = "postgres")]
-    pub async fn list_authors_by_library_paginated(
-        &self,
-        library_id: Uuid,
-        offset: i64,
-        limit: i64,
-        name_filter: Option<&str>,
-        sort_column: &str,
-        sort_asc: bool,
-    ) -> Result<(Vec<AudiobookAuthorRecord>, i64)> {
-        let mut conditions = vec!["library_id = $1".to_string()];
-
-        if name_filter.is_some() {
-            conditions.push("LOWER(name) LIKE $2".to_string());
-        }
-
-        let where_clause = conditions.join(" AND ");
-
-        let valid_sort_columns = ["name", "sort_name"];
-        let sort_col = if valid_sort_columns.contains(&sort_column) {
-            sort_column
-        } else {
-            "name"
-        };
-        let order_dir = if sort_asc { "ASC" } else { "DESC" };
-        let order_clause = format!(
-            "ORDER BY COALESCE({}, name) {} NULLS LAST",
-            sort_col, order_dir
-        );
-
-        let count_query = format!("SELECT COUNT(*) FROM authors WHERE {}", where_clause);
-        let data_query = format!(
-            r#"
-            SELECT id, library_id, user_id, name, sort_name, openlibrary_id
-            FROM authors
-            WHERE {}
-            {}
-            LIMIT {} OFFSET {}
-            "#,
-            where_clause, order_clause, limit, offset
-        );
-
-        let mut count_builder = sqlx::query_scalar::<_, i64>(&count_query).bind(library_id);
-        if let Some(name) = name_filter {
-            count_builder = count_builder.bind(format!("%{}%", name.to_lowercase()));
-        }
-
-        let total: i64 = count_builder.fetch_one(&self.pool).await?;
-
-        let mut data_builder =
-            sqlx::query_as::<_, AudiobookAuthorRecord>(&data_query).bind(library_id);
-        if let Some(name) = name_filter {
-            data_builder = data_builder.bind(format!("%{}%", name.to_lowercase()));
-        }
-
-        let records = data_builder.fetch_all(&self.pool).await?;
-
-        Ok((records, total))
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_authors_by_library_paginated(
@@ -1092,16 +657,6 @@ impl AudiobookRepository {
     }
 
     /// Update audiobook has_files status
-    #[cfg(feature = "postgres")]
-    pub async fn update_has_files(&self, id: Uuid, has_files: bool) -> Result<()> {
-        sqlx::query("UPDATE audiobooks SET has_files = $2, updated_at = NOW() WHERE id = $1")
-            .bind(id)
-            .bind(has_files)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn update_has_files(&self, id: Uuid, has_files: bool) -> Result<()> {
@@ -1117,16 +672,6 @@ impl AudiobookRepository {
     }
 
     /// Update audiobook path
-    #[cfg(feature = "postgres")]
-    pub async fn update_path(&self, id: Uuid, path: &str) -> Result<()> {
-        sqlx::query("UPDATE audiobooks SET path = $2, updated_at = NOW() WHERE id = $1")
-            .bind(id)
-            .bind(path)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn update_path(&self, id: Uuid, path: &str) -> Result<()> {
@@ -1147,33 +692,6 @@ impl AudiobookRepository {
     /// - All media files linked to this audiobook
     /// - Torrent links to this audiobook
     /// - Watch progress for this audiobook
-    #[cfg(feature = "postgres")]
-    pub async fn delete(&self, id: Uuid) -> Result<bool> {
-        // Start a transaction to ensure all deletions are atomic
-        let mut tx = self.pool.begin().await?;
-
-        // Delete media files for this audiobook (pending_file_matches handles cleanup via ON DELETE CASCADE)
-        sqlx::query("DELETE FROM media_files WHERE audiobook_id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-
-        // Delete watch progress for this audiobook
-        sqlx::query("DELETE FROM watch_progress WHERE audiobook_id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-
-        // Delete the audiobook itself
-        let result = sqlx::query("DELETE FROM audiobooks WHERE id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-
-        tx.commit().await?;
-
-        Ok(result.rows_affected() > 0)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn delete(&self, id: Uuid) -> Result<bool> {
@@ -1206,6 +724,30 @@ impl AudiobookRepository {
 
         Ok(result.rows_affected() > 0)
     }
+
+    /// Set the hunt_individual_items flag for an audiobook
+    ///
+    /// When true, auto-hunt will search for individual chapters instead of complete audiobooks.
+    /// This is set after a partial audiobook download completes.
+    #[cfg(feature = "sqlite")]
+    pub async fn set_hunt_individual_items(&self, id: Uuid, value: bool) -> Result<()> {
+        use crate::db::sqlite_helpers::{bool_to_int, uuid_to_str};
+
+        sqlx::query(
+            r#"
+            UPDATE audiobooks SET 
+                hunt_individual_items = ?2,
+                updated_at = datetime('now')
+            WHERE id = ?1
+            "#,
+        )
+        .bind(uuid_to_str(id))
+        .bind(bool_to_int(value))
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -1226,23 +768,6 @@ pub struct AudiobookChapterRecord {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for AudiobookChapterRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        Ok(Self {
-            id: row.try_get("id")?,
-            audiobook_id: row.try_get("audiobook_id")?,
-            chapter_number: row.try_get("chapter_number")?,
-            title: row.try_get("title")?,
-            start_secs: row.try_get("start_secs")?,
-            end_secs: row.try_get("end_secs")?,
-            duration_secs: row.try_get("duration_secs")?,
-            media_file_id: row.try_get("media_file_id")?,
-            created_at: row.try_get("created_at")?,
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for AudiobookChapterRecord {
@@ -1292,22 +817,6 @@ impl AudiobookChapterRepository {
     }
 
     /// Get a chapter by ID
-    #[cfg(feature = "postgres")]
-    pub async fn get_by_id(&self, id: Uuid) -> Result<Option<AudiobookChapterRecord>> {
-        let record = sqlx::query_as::<_, AudiobookChapterRecord>(
-            r#"
-            SELECT id, audiobook_id, chapter_number, title, start_secs, end_secs,
-                   duration_secs, media_file_id, created_at
-            FROM chapters
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_by_id(&self, id: Uuid) -> Result<Option<AudiobookChapterRecord>> {
@@ -1329,26 +838,6 @@ impl AudiobookChapterRepository {
     }
 
     /// List all chapters for an audiobook
-    #[cfg(feature = "postgres")]
-    pub async fn list_by_audiobook(
-        &self,
-        audiobook_id: Uuid,
-    ) -> Result<Vec<AudiobookChapterRecord>> {
-        let records = sqlx::query_as::<_, AudiobookChapterRecord>(
-            r#"
-            SELECT id, audiobook_id, chapter_number, title, start_secs, end_secs,
-                   duration_secs, media_file_id, created_at
-            FROM chapters
-            WHERE audiobook_id = $1
-            ORDER BY chapter_number
-            "#,
-        )
-        .bind(audiobook_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_by_audiobook(
@@ -1378,59 +867,6 @@ impl AudiobookChapterRepository {
     /// `has_media_file_filter`: If Some(true), only chapters with media_file_id set.
     ///                          If Some(false), only chapters without media_file_id.
     #[allow(clippy::too_many_arguments)]
-    #[cfg(feature = "postgres")]
-    pub async fn list_by_audiobook_paginated(
-        &self,
-        audiobook_id: Uuid,
-        offset: i64,
-        limit: i64,
-        has_media_file_filter: Option<bool>,
-        sort_column: &str,
-        sort_asc: bool,
-    ) -> Result<(Vec<AudiobookChapterRecord>, i64)> {
-        let mut conditions = vec!["audiobook_id = $1".to_string()];
-
-        if let Some(has_file) = has_media_file_filter {
-            if has_file {
-                conditions.push("media_file_id IS NOT NULL".to_string());
-            } else {
-                conditions.push("media_file_id IS NULL".to_string());
-            }
-        }
-
-        let where_clause = conditions.join(" AND ");
-
-        let valid_sort_columns = ["chapter_number", "title", "created_at"];
-        let sort_col = if valid_sort_columns.contains(&sort_column) {
-            sort_column
-        } else {
-            "chapter_number"
-        };
-        let order_dir = if sort_asc { "ASC" } else { "DESC" };
-        let order_clause = format!("ORDER BY {} {} NULLS LAST", sort_col, order_dir);
-
-        let count_query = format!("SELECT COUNT(*) FROM chapters WHERE {}", where_clause);
-        let data_query = format!(
-            r#"
-            SELECT id, audiobook_id, chapter_number, title, start_secs, end_secs,
-                   duration_secs, media_file_id, created_at
-            FROM chapters
-            WHERE {}
-            {}
-            LIMIT {} OFFSET {}
-            "#,
-            where_clause, order_clause, limit, offset
-        );
-
-        let count_builder = sqlx::query_scalar::<_, i64>(&count_query).bind(audiobook_id);
-        let total: i64 = count_builder.fetch_one(&self.pool).await?;
-
-        let data_builder =
-            sqlx::query_as::<_, AudiobookChapterRecord>(&data_query).bind(audiobook_id);
-        let records = data_builder.fetch_all(&self.pool).await?;
-
-        Ok((records, total))
-    }
 
     #[allow(clippy::too_many_arguments)]
     #[cfg(feature = "sqlite")]
@@ -1496,26 +932,6 @@ impl AudiobookChapterRepository {
     }
 
     /// Create a new chapter
-    #[cfg(feature = "postgres")]
-    pub async fn create(&self, input: CreateAudiobookChapter) -> Result<AudiobookChapterRecord> {
-        let record = sqlx::query_as::<_, AudiobookChapterRecord>(
-            r#"
-            INSERT INTO chapters (audiobook_id, chapter_number, title, start_secs, end_secs)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id, audiobook_id, chapter_number, title, start_secs, end_secs,
-                      duration_secs, media_file_id, created_at
-            "#,
-        )
-        .bind(input.audiobook_id)
-        .bind(input.chapter_number)
-        .bind(&input.title)
-        .bind(input.start_secs)
-        .bind(input.end_secs)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn create(&self, input: CreateAudiobookChapter) -> Result<AudiobookChapterRecord> {
@@ -1543,16 +959,6 @@ impl AudiobookChapterRepository {
     }
 
     /// Link chapter to media file
-    #[cfg(feature = "postgres")]
-    pub async fn link_media_file(&self, id: Uuid, media_file_id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE chapters SET media_file_id = $2 WHERE id = $1")
-            .bind(id)
-            .bind(media_file_id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn link_media_file(&self, id: Uuid, media_file_id: Uuid) -> Result<()> {
@@ -1568,15 +974,6 @@ impl AudiobookChapterRepository {
     }
 
     /// Delete all chapters for an audiobook
-    #[cfg(feature = "postgres")]
-    pub async fn delete_by_audiobook(&self, audiobook_id: Uuid) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM chapters WHERE audiobook_id = $1")
-            .bind(audiobook_id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(result.rows_affected())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn delete_by_audiobook(&self, audiobook_id: Uuid) -> Result<u64> {
@@ -1593,47 +990,6 @@ impl AudiobookChapterRepository {
     /// Get or create a chapter by audiobook ID and chapter number
     ///
     /// Returns the existing chapter if it exists, or creates a new one if not.
-    #[cfg(feature = "postgres")]
-    pub async fn get_or_create_by_number(
-        &self,
-        audiobook_id: Uuid,
-        chapter_number: i32,
-    ) -> Result<AudiobookChapterRecord> {
-        // First try to find existing chapter
-        let existing = sqlx::query_as::<_, AudiobookChapterRecord>(
-            r#"
-            SELECT id, audiobook_id, chapter_number, title, start_secs, end_secs,
-                   duration_secs, media_file_id, created_at
-            FROM chapters
-            WHERE audiobook_id = $1 AND chapter_number = $2
-            "#,
-        )
-        .bind(audiobook_id)
-        .bind(chapter_number)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(chapter) = existing {
-            return Ok(chapter);
-        }
-
-        // Create new chapter
-        let record = sqlx::query_as::<_, AudiobookChapterRecord>(
-            r#"
-            INSERT INTO chapters (audiobook_id, chapter_number, title)
-            VALUES ($1, $2, $3)
-            RETURNING id, audiobook_id, chapter_number, title, start_secs, end_secs,
-                      duration_secs, media_file_id, created_at
-            "#,
-        )
-        .bind(audiobook_id)
-        .bind(chapter_number)
-        .bind(format!("Chapter {}", chapter_number))
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_or_create_by_number(

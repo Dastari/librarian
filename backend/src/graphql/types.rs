@@ -712,6 +712,36 @@ pub struct MediaFileUpdatedEvent {
     pub duration: Option<i32>,
 }
 
+/// Content type for download progress tracking
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Enum, Serialize, Deserialize)]
+#[graphql(rename_items = "SCREAMING_SNAKE_CASE")]
+pub enum ContentType {
+    Movie,
+    Episode,
+    Track,
+    Chapter,
+}
+
+/// Event for content item download progress
+/// Emitted when a torrent/usenet download linked to a content item makes progress
+#[derive(Debug, Clone, SimpleObject, Serialize, Deserialize)]
+pub struct ContentDownloadProgressEvent {
+    /// Content type (movie, episode, track, chapter)
+    pub content_type: ContentType,
+    /// Content item ID
+    pub content_id: String,
+    /// Library ID
+    pub library_id: String,
+    /// Download progress (0.0 to 1.0)
+    pub progress: f64,
+    /// Download speed in bytes per second (optional)
+    pub download_speed: Option<i64>,
+    /// Name of the content for display
+    pub content_name: Option<String>,
+    /// Parent ID (show_id for episodes, album_id for tracks, audiobook_id for chapters)
+    pub parent_id: Option<String>,
+}
+
 // ============================================================================
 // Media Types
 // ============================================================================
@@ -3487,6 +3517,18 @@ pub struct MediaFile {
     pub bitrate: Option<i32>,
     /// Episode ID if matched
     pub episode_id: Option<String>,
+    /// Movie ID if matched
+    pub movie_id: Option<String>,
+    /// Track ID if matched (for music)
+    pub track_id: Option<String>,
+    /// Album ID if matched (for music)
+    pub album_id: Option<String>,
+    /// Audiobook ID if matched
+    pub audiobook_id: Option<String>,
+    /// Chapter ID if matched (for audiobooks)
+    pub chapter_id: Option<String>,
+    /// Content type: episode, movie, track, chapter, audiobook
+    pub content_type: Option<String>,
     /// Whether the file has been organized
     pub organized: bool,
     /// Organization status: pending, organized, skipped, conflicted, error
@@ -3495,12 +3537,19 @@ pub struct MediaFile {
     pub organize_error: Option<String>,
     /// Quality status: unknown, optimal, suboptimal, exceeds
     pub quality_status: QualityStatus,
+    /// How the file was matched: automatic, manual, or null (unmatched)
+    pub match_type: Option<String>,
+    /// Whether this was a manual match (convenience field)
+    pub is_manual_match: bool,
     /// When the file was added
     pub added_at: String,
+    /// When the file was matched
+    pub matched_at: Option<String>,
 }
 
 impl MediaFile {
     pub fn from_record(record: crate::db::MediaFileRecord) -> Self {
+        let is_manual = record.match_type.as_deref() == Some("manual");
         Self {
             id: record.id.to_string(),
             library_id: record.library_id.to_string(),
@@ -3520,6 +3569,12 @@ impl MediaFile {
             duration: record.duration,
             bitrate: record.bitrate,
             episode_id: record.episode_id.map(|id| id.to_string()),
+            movie_id: record.movie_id.map(|id| id.to_string()),
+            track_id: record.track_id.map(|id| id.to_string()),
+            album_id: record.album_id.map(|id| id.to_string()),
+            audiobook_id: record.audiobook_id.map(|id| id.to_string()),
+            chapter_id: record.chapter_id.map(|id| id.to_string()),
+            content_type: record.content_type,
             organized: record.organized,
             organize_status: record.organize_status,
             organize_error: record.organize_error,
@@ -3528,8 +3583,17 @@ impl MediaFile {
                 .as_deref()
                 .map(QualityStatus::from)
                 .unwrap_or(QualityStatus::Unknown),
+            match_type: record.match_type,
+            is_manual_match: is_manual,
             added_at: record.added_at.to_rfc3339(),
+            matched_at: record.matched_at.map(|dt| dt.to_rfc3339()),
         }
+    }
+}
+
+impl From<crate::db::MediaFileRecord> for MediaFile {
+    fn from(record: crate::db::MediaFileRecord) -> Self {
+        MediaFile::from_record(record)
     }
 }
 
@@ -3891,6 +3955,15 @@ pub struct AnalyzeMediaFileResult {
     pub subtitle_stream_count: Option<i32>,
     /// Number of chapters found
     pub chapter_count: Option<i32>,
+}
+
+/// Result of queueing unanalyzed files for analysis
+#[derive(Debug, Clone, SimpleObject)]
+pub struct AnalyzeUnanalyzedResult {
+    pub success: bool,
+    /// Number of files queued for analysis
+    pub queued_count: i32,
+    pub error: Option<String>,
 }
 
 /// Result of rematching a media file against library items
@@ -4419,10 +4492,18 @@ pub struct PendingFileMatch {
     pub track_id: Option<String>,
     /// Chapter ID if matched to an audiobook chapter
     pub chapter_id: Option<String>,
+    /// Reason the file was unmatched (if no target)
+    pub unmatched_reason: Option<String>,
     /// How the match was determined (auto, manual)
     pub match_type: String,
     /// Confidence score of the match (0.0 - 1.0)
     pub match_confidence: Option<f64>,
+    /// Number of match attempts for this file
+    pub match_attempts: i32,
+    /// Verification status (flagged, corrected, etc.)
+    pub verification_status: Option<String>,
+    /// Reason for verification status
+    pub verification_reason: Option<String>,
     /// Parsed resolution from filename
     pub parsed_resolution: Option<String>,
     /// Parsed codec from filename
@@ -4437,6 +4518,8 @@ pub struct PendingFileMatch {
     pub copied_at: Option<String>,
     /// Error message if copying failed
     pub copy_error: Option<String>,
+    /// Number of copy attempts
+    pub copy_attempts: i32,
     /// When the match was created
     pub created_at: String,
 }
@@ -4454,10 +4537,14 @@ impl PendingFileMatch {
             movie_id: record.movie_id.map(|id| id.to_string()),
             track_id: record.track_id.map(|id| id.to_string()),
             chapter_id: record.chapter_id.map(|id| id.to_string()),
+            unmatched_reason: record.unmatched_reason,
             match_type: record.match_type,
             match_confidence: record
                 .match_confidence
                 .map(|d| d.to_string().parse().unwrap_or(0.0)),
+            match_attempts: record.match_attempts,
+            verification_status: record.verification_status,
+            verification_reason: record.verification_reason,
             parsed_resolution: record.parsed_resolution,
             parsed_codec: record.parsed_codec,
             parsed_source: record.parsed_source,
@@ -4465,6 +4552,7 @@ impl PendingFileMatch {
             copied: record.copied_at.is_some(),
             copied_at: record.copied_at.map(|d| d.to_string()),
             copy_error: record.copy_error,
+            copy_attempts: record.copy_attempts,
             created_at: record.created_at.to_string(),
         }
     }
@@ -4798,6 +4886,7 @@ pub enum NotificationCategory {
     Quality,
     Storage,
     Extraction,
+    Configuration,
 }
 
 impl From<crate::db::NotificationCategory> for NotificationCategory {
@@ -4808,6 +4897,7 @@ impl From<crate::db::NotificationCategory> for NotificationCategory {
             crate::db::NotificationCategory::Quality => NotificationCategory::Quality,
             crate::db::NotificationCategory::Storage => NotificationCategory::Storage,
             crate::db::NotificationCategory::Extraction => NotificationCategory::Extraction,
+            crate::db::NotificationCategory::Configuration => NotificationCategory::Configuration,
         }
     }
 }
@@ -4820,6 +4910,7 @@ impl From<NotificationCategory> for crate::db::NotificationCategory {
             NotificationCategory::Quality => crate::db::NotificationCategory::Quality,
             NotificationCategory::Storage => crate::db::NotificationCategory::Storage,
             NotificationCategory::Extraction => crate::db::NotificationCategory::Extraction,
+            NotificationCategory::Configuration => crate::db::NotificationCategory::Configuration,
         }
     }
 }

@@ -43,4 +43,4 @@ pub mod types;
 
 pub use auth::{AuthUser, verify_token};
 pub use schema::{LibrarianSchema, build_schema};
-pub use types::{Library, LibraryChangeType, LibraryChangedEvent, MediaFileUpdatedEvent};
+pub use types::{Library, LibraryChangeType, LibraryChangedEvent, MediaFileUpdatedEvent, ContentDownloadProgressEvent, ContentType};

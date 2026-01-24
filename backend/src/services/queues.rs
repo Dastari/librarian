@@ -18,6 +18,8 @@ use super::ffmpeg::{FfmpegService, MediaAnalysis};
 use super::job_queue::{JobQueueConfig, WorkQueue};
 use super::quality_evaluator::{EffectiveQualitySettings, QualityEvaluator, QualityStatus};
 use crate::db::Database;
+#[cfg(feature = "sqlite")]
+use crate::db::sqlite_helpers::uuid_to_str;
 use crate::graphql::types::MediaFileUpdatedEvent;
 
 /// Job payload for media file analysis
@@ -50,11 +52,25 @@ pub struct SubtitleDownloadJob {
     pub episode: Option<i32>,
 }
 
+/// Job payload for audio fingerprinting
+#[derive(Debug, Clone)]
+pub struct FingerprintJob {
+    /// ID of the media file in the database
+    pub media_file_id: Uuid,
+    /// Path to the media file
+    pub path: PathBuf,
+    /// Whether to look up the fingerprint in AcoustID
+    pub lookup_acoustid: bool,
+}
+
 /// Media analysis work queue
 pub type MediaAnalysisQueue = WorkQueue<MediaAnalysisJob>;
 
 /// Subtitle download work queue
 pub type SubtitleDownloadQueue = WorkQueue<SubtitleDownloadJob>;
+
+/// Audio fingerprint work queue
+pub type FingerprintQueue = WorkQueue<FingerprintJob>;
 
 /// Configuration for the media analysis queue
 pub fn media_analysis_queue_config() -> JobQueueConfig {
@@ -71,6 +87,15 @@ pub fn subtitle_download_queue_config() -> JobQueueConfig {
         max_concurrent: 1, // Strict rate limiting for API
         queue_capacity: 200,
         job_delay: Duration::from_secs(2), // API allows ~1 req/sec, be conservative
+    }
+}
+
+/// Configuration for the fingerprint queue
+pub fn fingerprint_queue_config() -> JobQueueConfig {
+    JobQueueConfig {
+        max_concurrent: 2, // fpcalc is moderately CPU-intensive
+        queue_capacity: 500,
+        job_delay: Duration::from_millis(100),
     }
 }
 
@@ -93,7 +118,19 @@ pub fn create_media_analysis_queue(
             if let Err(e) =
                 process_media_analysis(ffmpeg, db, subtitle_queue, event_sender, job).await
             {
-                error!(error = %e, "Media analysis job failed");
+                let error_str = e.to_string();
+                // FOREIGN KEY constraint failures indicate the media file was deleted
+                // during analysis (common during duplicate cleanup) - this is not an error
+                if error_str.contains("FOREIGN KEY constraint failed") 
+                    || error_str.contains("no longer exists") 
+                {
+                    debug!(
+                        error = %e, 
+                        "Media file was deleted during analysis (likely duplicate cleanup), skipping"
+                    );
+                } else {
+                    error!(error = %e, "Media analysis job failed");
+                }
             }
         }
     })
@@ -226,21 +263,26 @@ async fn process_media_analysis(
 }
 
 /// Info returned after storing analysis (for event emission)
-struct AnalysisStoredInfo {
-    library_id: Uuid,
-    episode_id: Option<Uuid>,
-    movie_id: Option<Uuid>,
-    resolution: Option<String>,
-    video_codec: Option<String>,
-    audio_codec: Option<String>,
-    audio_channels: Option<String>,
-    is_hdr: Option<bool>,
-    hdr_type: Option<String>,
-    duration: Option<i32>,
+pub struct AnalysisStoredInfo {
+    pub library_id: Uuid,
+    pub episode_id: Option<Uuid>,
+    pub movie_id: Option<Uuid>,
+    pub resolution: Option<String>,
+    pub video_codec: Option<String>,
+    pub audio_codec: Option<String>,
+    pub audio_channels: Option<String>,
+    pub is_hdr: Option<bool>,
+    pub hdr_type: Option<String>,
+    pub duration: Option<i32>,
 }
 
 /// Store media analysis results in the database
-async fn store_media_analysis(
+///
+/// This function persists FFprobe analysis data to the media_files record,
+/// including video/audio stream details, resolution, HDR info, etc.
+/// Also stores detailed stream info in media_file_video_streams,
+/// media_file_audio_streams, media_file_subtitles, and media_file_chapters tables.
+pub async fn store_media_analysis(
     db: &Database,
     media_file_id: Uuid,
     analysis: &MediaAnalysis,
@@ -301,58 +343,32 @@ async fn store_media_analysis(
     let analysis_json = serde_json::to_value(analysis)?;
 
     // Update media_files record
-    #[cfg(feature = "postgres")]
     let query = r#"
         UPDATE media_files SET
-            duration = COALESCE($2, duration),
-            bitrate = COALESCE($3, bitrate),
-            width = COALESCE($4, width),
-            height = COALESCE($5, height),
-            video_codec = COALESCE($6, video_codec),
-            audio_codec = COALESCE($7, audio_codec),
-            audio_channels = COALESCE($8, audio_channels),
-            audio_language = COALESCE($9, audio_language),
-            container_format = $10,
-            frame_rate = $11,
-            pixel_format = $12,
-            hdr_type = $13,
-            bit_depth = $14,
-            resolution = COALESCE($15, resolution),
-            sample_rate = $16,
-            chapter_count = $17,
-            analysis_data = $18,
-            analyzed_at = NOW(),
-            modified_at = NOW()
-        WHERE id = $1
-        "#;
-
-    #[cfg(feature = "sqlite")]
-    let query = r#"
-        UPDATE media_files SET
-            duration = COALESCE($2, duration),
-            bitrate = COALESCE($3, bitrate),
-            width = COALESCE($4, width),
-            height = COALESCE($5, height),
-            video_codec = COALESCE($6, video_codec),
-            audio_codec = COALESCE($7, audio_codec),
-            audio_channels = COALESCE($8, audio_channels),
-            audio_language = COALESCE($9, audio_language),
-            container_format = $10,
-            frame_rate = $11,
-            pixel_format = $12,
-            hdr_type = $13,
-            bit_depth = $14,
-            resolution = COALESCE($15, resolution),
-            sample_rate = $16,
-            chapter_count = $17,
-            analysis_data = $18,
-            analyzed_at = datetime('now'),
+            duration = COALESCE(?2, duration),
+            bitrate = COALESCE(?3, bitrate),
+            width = COALESCE(?4, width),
+            height = COALESCE(?5, height),
+            video_codec = COALESCE(?6, video_codec),
+            audio_codec = COALESCE(?7, audio_codec),
+            audio_channels = COALESCE(?8, audio_channels),
+            audio_language = COALESCE(?9, audio_language),
+            container_format = ?10,
+            frame_rate = ?11,
+            pixel_format = ?12,
+            hdr_type = ?13,
+            bit_depth = ?14,
+            resolution = COALESCE(?15, resolution),
+            sample_rate = ?16,
+            chapter_count = ?17,
+            analysis_data = ?18,
+            ffprobe_analyzed_at = datetime('now'),
             modified_at = datetime('now')
-        WHERE id = $1
+        WHERE id = ?1
         "#;
 
     sqlx::query(query)
-    .bind(media_file_id)
+    .bind(uuid_to_str(media_file_id))
     .bind(duration)
     .bind(bitrate)
     .bind(width)
@@ -374,40 +390,44 @@ async fn store_media_analysis(
     .await?;
 
     // Clear existing stream data for this file (in case of re-analysis)
-    sqlx::query("DELETE FROM video_streams WHERE media_file_id = $1")
-        .bind(media_file_id)
+    let media_file_id_str = uuid_to_str(media_file_id);
+    
+    sqlx::query("DELETE FROM video_streams WHERE media_file_id = ?1")
+        .bind(&media_file_id_str)
         .execute(pool)
         .await?;
 
-    sqlx::query("DELETE FROM audio_streams WHERE media_file_id = $1")
-        .bind(media_file_id)
+    sqlx::query("DELETE FROM audio_streams WHERE media_file_id = ?1")
+        .bind(&media_file_id_str)
         .execute(pool)
         .await?;
 
-    sqlx::query("DELETE FROM subtitles WHERE media_file_id = $1 AND source_type = 'embedded'")
-        .bind(media_file_id)
+    sqlx::query("DELETE FROM subtitles WHERE media_file_id = ?1 AND source_type = 'embedded'")
+        .bind(&media_file_id_str)
         .execute(pool)
         .await?;
 
-    sqlx::query("DELETE FROM media_chapters WHERE media_file_id = $1")
-        .bind(media_file_id)
+    sqlx::query("DELETE FROM media_chapters WHERE media_file_id = ?1")
+        .bind(&media_file_id_str)
         .execute(pool)
         .await?;
 
     // Insert video streams
     for video in &analysis.video_streams {
         let metadata_json = serde_json::to_value(&video.metadata)?;
+        let stream_id = uuid_to_str(Uuid::new_v4());
         sqlx::query(
             r#"
             INSERT INTO video_streams (
-                media_file_id, stream_index, codec, codec_long_name,
+                id, media_file_id, stream_index, codec, codec_long_name,
                 width, height, aspect_ratio, frame_rate, avg_frame_rate,
                 bitrate, pixel_format, color_space, color_transfer, color_primaries,
                 hdr_type, bit_depth, language, title, is_default, metadata
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
             "#,
         )
-        .bind(media_file_id)
+        .bind(&stream_id)
+        .bind(&media_file_id_str)
         .bind(video.index as i32)
         .bind(&video.codec)
         .bind(&video.codec_long_name)
@@ -434,16 +454,18 @@ async fn store_media_analysis(
     // Insert audio streams
     for audio in &analysis.audio_streams {
         let metadata_json = serde_json::to_value(&audio.metadata)?;
+        let stream_id = uuid_to_str(Uuid::new_v4());
         sqlx::query(
             r#"
             INSERT INTO audio_streams (
-                media_file_id, stream_index, codec, codec_long_name,
+                id, media_file_id, stream_index, codec, codec_long_name,
                 channels, channel_layout, sample_rate, bitrate, bit_depth,
                 language, title, is_default, is_commentary, metadata
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
             "#,
         )
-        .bind(media_file_id)
+        .bind(&stream_id)
+        .bind(&media_file_id_str)
         .bind(audio.index as i32)
         .bind(&audio.codec)
         .bind(&audio.codec_long_name)
@@ -464,15 +486,17 @@ async fn store_media_analysis(
     // Insert embedded subtitle streams
     for subtitle in &analysis.subtitle_streams {
         let metadata_json = serde_json::to_value(&subtitle.metadata)?;
+        let subtitle_id = uuid_to_str(Uuid::new_v4());
         sqlx::query(
             r#"
             INSERT INTO subtitles (
-                media_file_id, source_type, stream_index, codec, codec_long_name,
+                id, media_file_id, source_type, stream_index, codec, codec_long_name,
                 language, title, is_default, is_forced, is_hearing_impaired, metadata
-            ) VALUES ($1, 'embedded', $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ) VALUES (?1, ?2, 'embedded', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             "#,
         )
-        .bind(media_file_id)
+        .bind(&subtitle_id)
+        .bind(&media_file_id_str)
         .bind(subtitle.index as i32)
         .bind(&subtitle.codec)
         .bind(&subtitle.codec_long_name)
@@ -488,13 +512,15 @@ async fn store_media_analysis(
 
     // Insert chapters into media_chapters table
     for chapter in &analysis.chapters {
+        let chapter_id = uuid_to_str(Uuid::new_v4());
         sqlx::query(
             r#"
-            INSERT INTO media_chapters (media_file_id, chapter_index, start_secs, end_secs, title)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO media_chapters (id, media_file_id, chapter_index, start_secs, end_secs, title)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             "#,
         )
-        .bind(media_file_id)
+        .bind(&chapter_id)
+        .bind(&media_file_id_str)
         .bind(chapter.index as i32)
         .bind(chapter.start_secs)
         .bind(chapter.end_secs)
@@ -545,6 +571,114 @@ pub fn create_subtitle_download_queue(db: Database) -> SubtitleDownloadQueue {
             }
         },
     )
+}
+
+/// Create the fingerprint queue with its processor
+pub fn create_fingerprint_queue(
+    db: Database,
+    acoustid_api_key: Option<String>,
+) -> FingerprintQueue {
+    let config = fingerprint_queue_config();
+
+    WorkQueue::new("fingerprint", config, move |job: FingerprintJob| {
+        let db = db.clone();
+        let api_key = acoustid_api_key.clone();
+
+        async move {
+            if let Err(e) = process_fingerprint_job(db, api_key, job).await {
+                error!(error = %e, "Fingerprint job failed");
+            }
+        }
+    })
+}
+
+/// Process a single fingerprint job
+async fn process_fingerprint_job(
+    db: Database,
+    acoustid_api_key: Option<String>,
+    job: FingerprintJob,
+) -> Result<()> {
+    use super::fingerprint::FingerprintService;
+
+    // Check if file still exists in database
+    if db.media_files().get_by_id(job.media_file_id).await?.is_none() {
+        debug!(
+            media_file_id = %job.media_file_id,
+            "Media file no longer exists, skipping fingerprinting"
+        );
+        return Ok(());
+    }
+
+    // Check if fpcalc is available
+    let service = FingerprintService::with_config(db.clone(), None, acoustid_api_key.clone());
+    if !service.is_available().await {
+        debug!("fpcalc not available, skipping fingerprinting");
+        return Ok(());
+    }
+
+    let filename = job.path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    info!(
+        media_file_id = %job.media_file_id,
+        path = %job.path.display(),
+        "Generating fingerprint for '{}'",
+        filename
+    );
+
+    // Generate fingerprint
+    if job.lookup_acoustid && acoustid_api_key.is_some() {
+        // Full identification with AcoustID lookup
+        match service.identify_track(job.media_file_id, &job.path).await {
+            Ok(Some(match_info)) => {
+                info!(
+                    media_file_id = %job.media_file_id,
+                    acoustid = %match_info.acoustid_id,
+                    title = ?match_info.title,
+                    artist = ?match_info.artist,
+                    "Track identified: '{}'",
+                    filename
+                );
+            }
+            Ok(None) => {
+                info!(
+                    media_file_id = %job.media_file_id,
+                    "Fingerprint stored but no AcoustID match for '{}'",
+                    filename
+                );
+            }
+            Err(e) => {
+                warn!(
+                    media_file_id = %job.media_file_id,
+                    error = %e,
+                    "Fingerprinting failed for '{}'",
+                    filename
+                );
+            }
+        }
+    } else {
+        // Just generate and store fingerprint without lookup
+        match service.fingerprint_and_store(job.media_file_id, &job.path).await {
+            Ok(_) => {
+                debug!(
+                    media_file_id = %job.media_file_id,
+                    "Fingerprint stored for '{}'",
+                    filename
+                );
+            }
+            Err(e) => {
+                warn!(
+                    media_file_id = %job.media_file_id,
+                    error = %e,
+                    "Fingerprinting failed for '{}'",
+                    filename
+                );
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Verify quality against library/item targets and update quality_status
@@ -649,9 +783,9 @@ async fn verify_and_update_quality(
 
 /// Update the quality_status field on a media file
 async fn update_quality_status(db: &Database, media_file_id: Uuid, status: &str) -> Result<()> {
-    sqlx::query("UPDATE media_files SET quality_status = $1 WHERE id = $2")
+    sqlx::query("UPDATE media_files SET quality_status = ?1 WHERE id = ?2")
         .bind(status)
-        .bind(media_file_id)
+        .bind(uuid_to_str(media_file_id))
         .execute(db.pool())
         .await?;
 
@@ -707,13 +841,11 @@ async fn extract_and_store_embedded_metadata(
         );
     } else {
         // Mark as extracted even if no metadata found (to prevent re-extraction)
-        #[cfg(feature = "postgres")]
-        let query = "UPDATE media_files SET metadata_extracted_at = NOW() WHERE id = $1";
         #[cfg(feature = "sqlite")]
-        let query = "UPDATE media_files SET metadata_extracted_at = datetime('now') WHERE id = $1";
+        let query = "UPDATE media_files SET metadata_extracted_at = datetime('now') WHERE id = ?1";
 
         sqlx::query(query)
-        .bind(media_file_id)
+        .bind(uuid_to_str(media_file_id))
         .execute(db.pool())
         .await?;
 
@@ -728,26 +860,111 @@ async fn extract_and_store_embedded_metadata(
 }
 
 /// Extract comprehensive audio metadata including album art and lyrics using lofty
+/// 
+/// Supports metadata from:
+/// - ID3v1/v2 (MP3)
+/// - Vorbis Comments (FLAC, OGG, Opus)
+/// - APEv2 (APE, WavPack)
+/// - MP4/iTunes atoms (M4A, AAC, ALAC)
+/// - WMA (ASF) tags
+/// - RIFF INFO (WAV)
 fn extract_audio_metadata_with_art(path: &str) -> Option<crate::db::EmbeddedMetadata> {
     use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
     use lofty::prelude::*;
     use lofty::probe::Probe;
+    use lofty::tag::ItemKey;
 
     let tagged_file = Probe::open(path).ok()?.read().ok()?;
     let tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag())?;
 
-    // Extract basic metadata
+    // Helper to get a string tag value
+    let get_str = |key: ItemKey| tag.get_string(&key).map(|s| s.to_string());
+    
+    // Helper to parse a numeric string
+    let parse_int = |s: Option<String>| s.and_then(|v| v.parse::<i32>().ok());
+    let parse_float = |s: Option<String>| s.and_then(|v| v.parse::<f64>().ok());
+
+    // =========================================================================
+    // Basic metadata
+    // =========================================================================
     let title = tag.title().map(|s| s.to_string());
     let artist = tag.artist().map(|s| s.to_string());
     let album = tag.album().map(|s| s.to_string());
     let year = tag.year().map(|y| y as i32);
     let track_number = tag.track().map(|n| n as i32);
     let disc_number = tag.disk().map(|n| n as i32);
-    
-    // Extract genre
     let genre = tag.genre().map(|s| s.to_string());
 
-    // Extract album art - take the first picture (usually front cover)
+    // =========================================================================
+    // Extended audio metadata
+    // =========================================================================
+    
+    // Album Artist (iTunes: aART, ID3: TPE2, Vorbis: ALBUMARTIST)
+    let album_artist = get_str(ItemKey::AlbumArtist);
+    
+    // Composer (iTunes: ©wrt, ID3: TCOM, Vorbis: COMPOSER)
+    let composer = get_str(ItemKey::Composer);
+    
+    // Conductor (ID3: TPE3, Vorbis: CONDUCTOR)
+    let conductor = get_str(ItemKey::Conductor);
+    
+    // Label/Publisher (ID3: TPUB, Vorbis: LABEL/ORGANIZATION)
+    let label = get_str(ItemKey::Label)
+        .or_else(|| get_str(ItemKey::Publisher));
+    
+    // Catalog number (Vorbis: CATALOGNUMBER)
+    let catalog_number = get_str(ItemKey::CatalogNumber);
+    
+    // ISRC (ID3: TSRC, Vorbis: ISRC)
+    let isrc = get_str(ItemKey::Isrc);
+    
+    // BPM (ID3: TBPM, Vorbis: BPM)
+    let bpm = get_str(ItemKey::Bpm).and_then(|s| s.parse::<i32>().ok());
+    
+    // Initial Key (ID3: TKEY, Vorbis: INITIALKEY)
+    let initial_key = get_str(ItemKey::InitialKey);
+    
+    // Compilation flag (iTunes: cpil, ID3: TCMP, Vorbis: COMPILATION)
+    let is_compilation = get_str(ItemKey::FlagCompilation)
+        .map(|s| s == "1" || s.to_lowercase() == "true");
+    
+    // Gapless playback (iTunes: pgap)
+    // Note: lofty may not have a direct key for this
+    let gapless_playback: Option<bool> = None;
+    
+    // Rating/Popularity (ID3: POPM, various formats)
+    // Ratings are often 0-255 in ID3, we normalize to 0-100
+    let rating = get_str(ItemKey::Popularimeter)
+        .and_then(|s| s.parse::<i32>().ok())
+        .map(|r| (r as f32 / 255.0 * 100.0) as i32);
+    
+    // Play count (from embedded metadata, not common)
+    let play_count: Option<i32> = None;
+
+    // =========================================================================
+    // ReplayGain / Loudness normalization
+    // =========================================================================
+    
+    // ReplayGain tags (Vorbis: REPLAYGAIN_*, ID3: TXXX with specific descriptions)
+    let replaygain_track_gain = get_str(ItemKey::ReplayGainTrackGain)
+        .and_then(|s| parse_replaygain_value(&s));
+    
+    let replaygain_track_peak = get_str(ItemKey::ReplayGainTrackPeak)
+        .and_then(|s| s.parse::<f64>().ok());
+    
+    let replaygain_album_gain = get_str(ItemKey::ReplayGainAlbumGain)
+        .and_then(|s| parse_replaygain_value(&s));
+    
+    let replaygain_album_peak = get_str(ItemKey::ReplayGainAlbumPeak)
+        .and_then(|s| s.parse::<f64>().ok());
+    
+    // SoundCheck (iTunes normalization)
+    // Stored in iTunes as iTunNORM in a comment
+    let soundcheck_value = get_str(ItemKey::Unknown("iTunNORM".to_string()));
+
+    // =========================================================================
+    // Album art
+    // =========================================================================
     let (cover_art_base64, cover_art_mime) = tag.pictures().first().map(|pic| {
         let base64_data = BASE64.encode(pic.data());
         let mime = match pic.mime_type() {
@@ -756,21 +973,37 @@ fn extract_audio_metadata_with_art(path: &str) -> Option<crate::db::EmbeddedMeta
             Some(lofty::picture::MimeType::Gif) => "image/gif",
             Some(lofty::picture::MimeType::Bmp) => "image/bmp",
             Some(lofty::picture::MimeType::Tiff) => "image/tiff",
-            _ => "image/jpeg", // Default to JPEG
+            _ => "image/jpeg",
         };
         (Some(base64_data), Some(mime.to_string()))
     }).unwrap_or((None, None));
 
-    // Extract lyrics - try to get from tag items
-    // Vorbis/FLAC: LYRICS or UNSYNCEDLYRICS
-    // ID3v2: handled separately below
-    let lyrics = tag.get_string(&lofty::tag::ItemKey::Lyrics)
-        .map(|s| s.to_string())
-        .or_else(|| {
-            // Try UNSYNCEDLYRICS as fallback (common in some files)
-            tag.get_string(&lofty::tag::ItemKey::Unknown("UNSYNCEDLYRICS".to_string()))
-                .map(|s| s.to_string())
-        });
+    // =========================================================================
+    // Lyrics
+    // =========================================================================
+    let lyrics = get_str(ItemKey::Lyrics)
+        .or_else(|| get_str(ItemKey::Unknown("UNSYNCEDLYRICS".to_string())));
+
+    // =========================================================================
+    // Video/Container metadata (for video files with embedded audio)
+    // =========================================================================
+    let director: Option<String> = None; // Would need FFmpeg for video files
+    let producer: Option<String> = None;
+    let copyright = get_str(ItemKey::CopyrightMessage);
+    let encoder = get_str(ItemKey::EncodedBy)
+        .or_else(|| get_str(ItemKey::EncoderSoftware));
+    let creation_date: Option<String> = None;
+
+    // =========================================================================
+    // BWF (Broadcast Wave Format) - typically extracted via FFmpeg for WAV
+    // =========================================================================
+    let bwf_originator: Option<String> = None;
+    let bwf_originator_reference: Option<String> = None;
+    let bwf_origination_date: Option<String> = None;
+    let bwf_origination_time: Option<String> = None;
+    let bwf_time_reference: Option<i64> = None;
+    let bwf_umid: Option<String> = None;
+    let bwf_coding_history: Option<String> = None;
 
     Some(crate::db::EmbeddedMetadata {
         artist,
@@ -786,5 +1019,41 @@ fn extract_audio_metadata_with_art(path: &str) -> Option<crate::db::EmbeddedMeta
         cover_art_base64,
         cover_art_mime,
         lyrics,
+        album_artist,
+        composer,
+        conductor,
+        label,
+        catalog_number,
+        isrc,
+        bpm,
+        initial_key,
+        is_compilation,
+        gapless_playback,
+        rating,
+        play_count,
+        replaygain_track_gain,
+        replaygain_track_peak,
+        replaygain_album_gain,
+        replaygain_album_peak,
+        soundcheck_value,
+        director,
+        producer,
+        copyright,
+        encoder,
+        creation_date,
+        bwf_originator,
+        bwf_originator_reference,
+        bwf_origination_date,
+        bwf_origination_time,
+        bwf_time_reference,
+        bwf_umid,
+        bwf_coding_history,
     })
+}
+
+/// Parse a ReplayGain value string like "-6.5 dB" or "-6.5"
+fn parse_replaygain_value(s: &str) -> Option<f64> {
+    // Remove "dB" suffix if present and parse
+    let cleaned = s.trim().trim_end_matches("dB").trim_end_matches("db").trim();
+    cleaned.parse::<f64>().ok()
 }

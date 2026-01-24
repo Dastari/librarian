@@ -8,7 +8,7 @@ This document defines the unified media pipeline for Librarian - how files flow 
 2. **Always COPY, never move** - Files are always copied from download folders to library folders
 3. **Library owns files** - Unlinking a download source never affects library files
 4. **Quality is verified, not assumed** - Every file is analyzed with FFprobe to determine true quality
-5. **No auto-delete files** - Move conflicts to a designated folder, never auto-delete user files
+5. **No auto-delete files** - Conflicts require user resolution; never overwrite or auto-delete library files
 6. **Partial fulfillment is OK** - Downloading 8 of 12 album tracks is valid; remaining 4 stay "wanted"
 7. **Status reflects reality** - "downloading" means in download queue, "downloaded" means file in library folder
 
@@ -69,7 +69,7 @@ flowchart TD
 |--------|---------|----------|
 | `missing` | No file exists, hasn't aired yet (for episodes) | Default for future content |
 | `wanted` | Aired/released, no file, actively looking | Air date passed, monitored=true |
-| `downloading` | Matched to a pending download | File matched via FileMatcher |
+| `downloading` | Pending match exists for this item | FileMatcher created `pending_file_matches` |
 | `downloaded` | File exists in library folder | File copied via FileProcessor |
 | `suboptimal` | Has file but below quality target | FFprobe detects quality below target |
 | `ignored` | User explicitly skipped | Manual action |
@@ -153,7 +153,7 @@ When a download is added:
 3. **Match files** - `FileMatcher.match_files()` finds matching wanted items
 4. **Save matches** - Creates `pending_file_matches` records
 5. **Update item status** - Sets matched items to "downloading"
-6. **Set active_download_id** - Links item to the pending match for progress display
+   - Unmatched files are stored in `pending_file_matches` with `unmatched_reason` for manual review
 
 ### Phase 2: Post-Download Processing
 
@@ -166,7 +166,6 @@ When download completes (triggered by Download Monitor Job):
    - Create `media_file` record with new path
    - Link item to media_file
    - Update item status to "downloaded"
-   - Clear `active_download_id`
    - Queue file for FFprobe analysis
 
 ### Phase 3: Library Scanning (Alternate Entry)
@@ -203,10 +202,14 @@ pending_file_matches (
     movie_id UUID REFERENCES movies(id) ON DELETE CASCADE,
     track_id UUID REFERENCES tracks(id) ON DELETE CASCADE,
     chapter_id UUID REFERENCES chapters(id) ON DELETE CASCADE,
+    unmatched_reason TEXT,
     
     -- Match metadata
-    match_type VARCHAR(20) DEFAULT 'auto',  -- 'auto', 'manual'
+    match_type VARCHAR(20) DEFAULT 'auto',  -- 'auto', 'manual', 'unmatched'
     match_confidence DECIMAL(3,2),
+    match_attempts INTEGER DEFAULT 1,
+    verification_status TEXT,
+    verification_reason TEXT,
     
     -- Parsed quality info (from filename)
     parsed_resolution VARCHAR(20),
@@ -217,6 +220,7 @@ pending_file_matches (
     -- Processing status
     copied_at TIMESTAMPTZ,               -- null = not yet copied
     copy_error TEXT,                     -- error if copy failed
+    copy_attempts INTEGER DEFAULT 0,
     
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -224,18 +228,6 @@ pending_file_matches (
 
 -- Index for finding matches by source
 CREATE INDEX idx_pending_file_matches_source ON pending_file_matches(source_type, source_id);
-```
-
-### `active_download_id` on Library Items
-
-For showing download progress:
-
-```sql
--- Links to pending_file_matches - works for torrent, usenet, etc.
-ALTER TABLE tracks ADD COLUMN active_download_id UUID REFERENCES pending_file_matches(id) ON DELETE SET NULL;
-ALTER TABLE episodes ADD COLUMN active_download_id UUID REFERENCES pending_file_matches(id) ON DELETE SET NULL;
-ALTER TABLE movies ADD COLUMN active_download_id UUID REFERENCES pending_file_matches(id) ON DELETE SET NULL;
-ALTER TABLE chapters ADD COLUMN active_download_id UUID REFERENCES pending_file_matches(id) ON DELETE SET NULL;
 ```
 
 ---
@@ -252,8 +244,10 @@ query PendingFileMatches($sourceType: String!, $sourceId: String!) {
     sourcePath
     sourceType
     episodeId movieId trackId chapterId
-    matchConfidence
-    copied copiedAt copyError
+    unmatchedReason
+    matchConfidence matchAttempts
+    verificationStatus
+    copied copiedAt copyError copyAttempts
   }
 }
 ```
@@ -429,7 +423,6 @@ lyrics TEXT
 ### Completed
 
 - ✅ `pending_file_matches` database table (source-agnostic)
-- ✅ `active_download_id` on library items
 - ✅ `FileMatcher` service with weighted fuzzy matching
 - ✅ `match_scorer.rs` with field-specific weights for all media types
 - ✅ 3-tier matching priority (metadata → original filename → current filename)
@@ -445,16 +438,17 @@ lyrics TEXT
 - ✅ Frontend: TorrentInfoModal with copy status and remove match
 - ✅ Frontend: FilePropertiesModal with Metadata tab (shows extracted tags, album art, lyrics)
 - ✅ Frontend: Progress fractions (e.g., "9/15") instead of status chips
+- ✅ Notifications for repeated unmatched files and processing failures
 
 ### Pending
 
-- 🟡 Frontend: Library item progress bar when active_download_id is set
+- 🟡 Frontend: Library item progress bar driven by pending matches
 
 ### Future Enhancements
 
 - ⏳ Usenet integration with new services
 - ⏳ IRC/FTP download source support
-- ⏳ User notifications for unmatched files and processing failures
+- ⏳ Conflict resolution UI for duplicates vs incorrect matches
 
 ---
 
@@ -474,7 +468,7 @@ lyrics TEXT
 
 | Feature | Status |
 |---------|--------|
-| Progress bar when downloading | 🟡 Needs active_download_id integration |
+| Progress bar when downloading | 🟡 Needs pending match integration |
 | Suboptimal quality indicator | ✅ Complete |
 
 ---

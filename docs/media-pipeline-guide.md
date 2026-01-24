@@ -10,7 +10,7 @@ This document defines the decision points in the media processing pipeline and w
 2. **Always COPY, never move** - Files are always copied from download folders to library folders
 3. **Library owns files** - Unlinking a download source never affects library files
 4. **Quality is verified, not assumed** - Every file is analyzed with FFprobe to determine true quality
-5. **No auto-delete files** - Move conflicts to a designated folder, never auto-delete user files
+5. **No auto-delete files** - Conflicts require user resolution; never overwrite or auto-delete library files
 6. **Partial fulfillment is OK** - Downloading 8 of 12 album tracks is valid; remaining 4 stay "wanted"
 7. **Status reflects reality** - "downloading" means in download queue, "downloaded" means file in library folder
 8. **Use what exists now** - If a file exists NOW which is a better match, use it rather than waiting for a download
@@ -40,31 +40,32 @@ This document defines the decision points in the media processing pipeline and w
 | Artist | 30 | 80% match = 24 points |
 | Album | 25 | 90% match = 22.5 points |
 | Track Title | 25 | Proportional to similarity |
-| Track Number | 15 | Exact match only (0 or 15) |
-| Year | 5 | ±1 year tolerance |
+| Track Number | 15 | Exact match only (0 or 15), requires disc match |
+| Year | 5 | ±1 year tolerance (0.8 for ±1) |
 
 **TV Shows (100 points max):**
 | Field | Weight | Scoring |
 |-------|--------|---------|
-| Show Name | 35 | Proportional to similarity |
+| Show Name | 30 | Proportional to similarity |
 | Season | 25 | Exact match only |
 | Episode | 25 | Exact match only |
 | Episode Title | 15 | Bonus if matches |
+| Year | 5 | ±1 year tolerance |
 
 **Movies (100 points max):**
 | Field | Weight | Scoring |
 |-------|--------|---------|
 | Title | 50 | Proportional to similarity |
-| Year | 40 | Exact or ±1 year |
-| Director | 10 | Bonus if matches |
+| Year | 30 | Exact or ±1 year (0.8 for ±1) |
+| Director | 20 | Bonus if matches |
 
 **Audiobooks (100 points max):**
 | Field | Weight | Scoring |
 |-------|--------|---------|
 | Author | 30 | Proportional to similarity |
 | Book Title | 30 | Proportional to similarity |
-| Chapter Title | 20 | Proportional to similarity |
-| Chapter Number | 20 | Exact match only |
+| Chapter Title | 25 | Proportional to similarity |
+| Chapter Number | 15 | Exact match only |
 
 **Thresholds:**
 - Score ≥ 70 → Auto-link (high confidence)
@@ -88,36 +89,46 @@ If metadata exists and produces a match, filename parsing is skipped entirely. T
 This 3-tier approach handles cases where files were incorrectly renamed. The `original_name` is preserved in the database and used as a fallback when current filename matching fails.
 
 ### Q8: What happens when no library matches are found?
-**Answer:** Return an `Unmatched` result with a reason string. The file is saved as an unmatched `pending_file_match` which can be manually matched later via the UI.
+**Answer:** Return an `Unmatched` result with a reason string. The file is saved in `pending_file_matches` with no target IDs, `unmatched_reason`, and `match_attempts` incremented so it can be manually matched later via the UI.
 
 ### Q9: How do we determine if a file is video vs audio?
 **Answer:** File extension check:
 - Video extensions: `.mp4`, `.mkv`, `.avi`, `.mov`, `.wmv`, `.flv`, `.webm`, `.m4v`, `.ts`
 - Audio extensions: `.mp3`, `.flac`, `.m4a`, `.aac`, `.ogg`, `.opus`, `.wav`, `.wma`
 
+### Q9b: How do manual matches work?
+**Answer:** Users can manually match files to library items via the UI. Manual matches:
+1. Set `match_type = 'manual'` on the `media_files` record
+2. Store `matched_by_user_id` and `match_confirmed_at` for audit
+3. **CRITICAL:** Manual matches are NEVER overwritten by automatic matching or scanner verification
+4. Scanner skips files with `match_type = 'manual'` during verification/correction
+5. The `update_match()` function checks for manual matches and returns `false` if file is manually matched
+6. To change a manual match, user must explicitly unmatch first, then rematch
+
 ---
 
 ## Phase 2: Download Processing
 
 ### Q10: When do we copy files vs move files?
-**Answer:** Always COPY from download folder to library folder (never move). This preserves source files for seeding. Within the library folder, we can move/rename for organization.
+**Answer:** Always COPY from download folder to library folder (never move/hardlink). This preserves source files and keeps the download pipeline deterministic. Within the library folder, we can move/rename for organization. `post_download_action` is stored for future source-based rules but is currently ignored.
 
 ### Q11: What happens if the source file doesn't exist when we try to process a match?
 **Answer:** Return an error "Source file does not exist". The match is marked as failed with `copy_error` set in the database.
 
 ### Q12: What happens if the destination file already exists?
-**Answer:** 
-- If existing file has different size → conflict detected → move existing to conflicts folder
-- If existing file has same size → check if another DB record points to it → if yes, delete source (duplicate) → if no, update DB record to new path
+**Answer:** Treat it as a conflict that requires user resolution. The pipeline never overwrites existing library files. Create an action-required notification with options to:
+1. Use the best quality version (replace)
+2. Keep the existing file
+3. Rematch the file to a different item
 
 ### Q13: What happens if creating the destination directory fails?
 **Answer:** The error propagates and the match processing fails. No partial state is created.
 
 ### Q14: How do we handle cross-filesystem copies?
-**Answer:** Try `rename()` first (fast). If it fails with cross-device error, fall back to `copy()` then `delete()`.
+**Answer:** We always copy (no rename/hardlink), so cross-filesystem handling is unnecessary.
 
 ### Q15: What happens when a hardlink operation fails?
-**Answer:** Fall back to regular copy. Hardlinks only work on Unix and require same filesystem.
+**Answer:** Hardlinking is not used in the current pipeline.
 
 ### Q16: What status do we set after processing a torrent's files?
 **Answer:**
@@ -207,8 +218,7 @@ The system does NOT automatically trigger an upgrade hunt.
 1. Spawn async task to match files immediately
 2. Skip if matches already exist (created by auto-hunt to avoid duplicates)
 3. Save matches to `pending_file_matches`
-4. Update matched items to `downloading` status
-5. Set `active_download_id` on items
+4. Update matched items to `downloading` status (derived from pending matches)
 
 ### Q32: What happens when a torrent completes?
 **Answer:**
@@ -292,7 +302,7 @@ These scenarios have been explicitly decided and should be implemented according
 ### Q37: What happens when an item has multiple pending downloads?
 **Answer:** Prefer the newer/better quality download. When a second download matches the same item:
 1. Compare quality of both downloads (parsed from filename)
-2. Keep the higher quality one as `active_download_id`
+2. Keep both pending matches, but mark the higher quality as preferred in processing
 3. Let both downloads complete
 4. When processing, use the better quality file
 
@@ -313,7 +323,7 @@ These scenarios have been explicitly decided and should be implemented according
 ### Q40: What happens when matching fails repeatedly for the same file?
 **Answer:** Retain the unmatched file but notify the user. The system should:
 1. Keep unmatched files in `pending_file_matches` indefinitely
-2. After N failed match attempts (configurable, default 3), create a user notification
+2. After N failed match attempts (configurable, default 3 via `match_attempts`), create a user notification
 3. Notification should link to the file for manual matching
 4. Do NOT auto-delete unmatched files
 
@@ -336,7 +346,7 @@ These scenarios have been explicitly decided and should be implemented according
 **Answer:** Track free space and alert proactively. The system should:
 1. Track disk free space in server status (exposed via GraphQL for frontend)
 2. Create user notification when space drops below threshold (configurable, default 10GB)
-3. If copy fails due to ENOSPC, create urgent notification
+3. If copy fails due to ENOSPC, create urgent notification (implemented on copy failure)
 4. Clean up any partial files on copy failure
 
 **TODO:** Implement free space tracking in server status. Already exposed via GraphQL for TUI backend, extend for frontend use.
@@ -370,9 +380,8 @@ These scenarios have been explicitly decided and should be implemented according
 **Answer:** Remove all links that torrents/files have to that library. On library delete:
 1. CASCADE delete all library items (shows, movies, albums, etc.)
 2. This cascades to delete `pending_file_matches` via FK
-3. This clears `active_download_id` on items (already handled by CASCADE)
-4. Torrents remain but become "unlinked" (no library association)
-5. Downloaded files in the library folder are NOT deleted (library owns files, user must delete manually)
+3. Torrents remain but become "unlinked" (no library association)
+4. Downloaded files in the library folder are NOT deleted (library owns files, user must delete manually)
 
 ### Q48: How do we handle files with non-ASCII characters in names?
 **Answer:** Sanitize to ASCII-safe names when organizing, but only if library has `organize_files` enabled. The system should:

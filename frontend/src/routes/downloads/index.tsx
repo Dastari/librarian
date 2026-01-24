@@ -733,6 +733,7 @@ function DownloadsPage() {
                           size="sm"
                           variant="flat"
                           onPress={() => handlePauseUsenet(download.id)}
+                          aria-label="Pause download"
                         >
                           <IconPlayerPause size={16} />
                         </Button>
@@ -743,6 +744,7 @@ function DownloadsPage() {
                           variant="flat"
                           color="primary"
                           onPress={() => handleResumeUsenet(download.id)}
+                          aria-label="Resume download"
                         >
                           <IconPlayerPlay size={16} />
                         </Button>
@@ -753,6 +755,7 @@ function DownloadsPage() {
                         variant="flat"
                         color="danger"
                         onPress={() => handleRemoveUsenet(download.id)}
+                        aria-label="Remove download"
                       >
                         <IconTrash size={16} />
                       </Button>

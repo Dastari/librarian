@@ -133,6 +133,7 @@ export type {
   // Media Files
   MediaFile,
   MediaFileDetails,
+  ManualMatchResult,
   EmbeddedMetadata,
   VideoStreamInfo,
   AudioStreamInfo,
@@ -184,6 +185,9 @@ export type {
   NotificationResult,
   MarkAllReadResult,
   NotificationEvent,
+  // Content Download Progress Types
+  ContentDownloadType,
+  ContentDownloadProgressEvent,
 } from "./types";
 
 // Constants
@@ -359,7 +363,11 @@ export {
   MARK_NOTIFICATION_READ_MUTATION,
   MARK_ALL_NOTIFICATIONS_READ_MUTATION,
   RESOLVE_NOTIFICATION_MUTATION,
+  RESOLVE_NOTIFICATION_WITH_ACTION_MUTATION,
   DELETE_NOTIFICATION_MUTATION,
+  // Manual Match Mutations
+  MANUAL_MATCH_MUTATION,
+  UNMATCH_MEDIA_FILE_MUTATION,
 } from "./mutations";
 
 // Subscriptions
@@ -380,7 +388,16 @@ export {
   // Notification Subscriptions
   NOTIFICATION_RECEIVED_SUBSCRIPTION,
   NOTIFICATION_COUNTS_SUBSCRIPTION,
+  // Content Download Progress Subscriptions
+  CONTENT_DOWNLOAD_PROGRESS_SUBSCRIPTION,
 } from "./subscriptions";
 
 // GraphQL-based filesystem functions (replaces REST API)
-export { browseDirectory, createDirectory } from "./filesystem";
+export {
+  browseDirectory,
+  createDirectory,
+  deleteFiles,
+  copyFiles,
+  moveFiles,
+  renameFile,
+} from "./filesystem";

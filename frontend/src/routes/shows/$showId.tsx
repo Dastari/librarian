@@ -35,7 +35,6 @@ import { Tooltip } from '@heroui/tooltip'
 import { DeleteShowModal, ShowSettingsModal, type ShowSettingsInput } from '../../components/shows'
 import {
   EpisodeStatusChip,
-  AutoDownloadBadge,
   AutoHuntBadge,
   FileOrganizationBadge,
   MonitoredBadge,
@@ -862,16 +861,26 @@ function ShowDetailPage() {
 
             {/* Settings Badges - inline with show details */}
             <div className="flex flex-wrap items-center gap-2">
-              {/* Auto Download Badge */}
+              {/* Auto Hunt Badge - consolidated from auto-download and auto-hunt */}
               {(() => {
-                const isInherited = displayShow.autoDownloadOverride === null
-                const effectiveValue = isInherited ? (displayLibrary.autoDownload ?? false) : displayShow.autoDownloadOverride
-                const isEnabled = effectiveValue === true
+                // Auto Hunt is enabled if either the autoHuntOverride or autoDownloadOverride is set
+                // Both settings are now consolidated into "Auto Hunt"
+                const huntInherited = displayShow.autoHuntOverride === null
+                const downloadInherited = displayShow.autoDownloadOverride === null
+                const isInherited = huntInherited && downloadInherited
+                
+                const libraryEnabled = (displayLibrary.autoHunt ?? false) || (displayLibrary.autoDownload ?? false)
+                const showHuntEnabled = displayShow.autoHuntOverride === true
+                const showDownloadEnabled = displayShow.autoDownloadOverride === true
+                
+                const effectiveValue = isInherited 
+                  ? libraryEnabled 
+                  : (showHuntEnabled || showDownloadEnabled)
 
                 return (
-                  <AutoDownloadBadge
+                  <AutoHuntBadge
                     isInherited={isInherited}
-                    isEnabled={isEnabled}
+                    isEnabled={effectiveValue}
                     isLoading={togglingAutoDownload}
                     onClick={() => handleToggleAutoDownload(!effectiveValue)}
                   />
@@ -886,20 +895,6 @@ function ShowDetailPage() {
 
                 return (
                   <FileOrganizationBadge
-                    isInherited={isInherited}
-                    isEnabled={isEnabled}
-                  />
-                )
-              })()}
-
-              {/* Auto Hunt Badge */}
-              {(() => {
-                const isInherited = displayShow.autoHuntOverride === null
-                const effectiveValue = isInherited ? (displayLibrary.autoHunt ?? false) : displayShow.autoHuntOverride
-                const isEnabled = effectiveValue === true
-
-                return (
-                  <AutoHuntBadge
                     isInherited={isInherited}
                     isEnabled={isEnabled}
                   />

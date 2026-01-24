@@ -7,8 +7,6 @@ use anyhow::Result;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
 #[cfg(feature = "sqlite")]
 use sqlx::SqlitePool;
 
@@ -17,8 +15,6 @@ use crate::db::sqlite_helpers::{
     bool_to_int, int_to_bool, str_to_uuid, str_to_uuid_opt, uuid_to_str,
 };
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
 #[cfg(feature = "sqlite")]
 type DbPool = SqlitePool;
 
@@ -73,30 +69,6 @@ pub struct WatchProgressRecord {
     pub updated_at: OffsetDateTime,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for WatchProgressRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        Ok(Self {
-            id: row.try_get("id")?,
-            user_id: row.try_get("user_id")?,
-            episode_id: row.try_get("episode_id")?,
-            movie_id: row.try_get("movie_id")?,
-            track_id: row.try_get("track_id")?,
-            audiobook_id: row.try_get("audiobook_id")?,
-            content_type: row.try_get("content_type")?,
-            media_file_id: row.try_get("media_file_id")?,
-            current_position: row.try_get("current_position")?,
-            duration: row.try_get("duration")?,
-            progress_percent: row.try_get("progress_percent")?,
-            is_watched: row.try_get("is_watched")?,
-            watched_at: row.try_get("watched_at")?,
-            last_watched_at: row.try_get("last_watched_at")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for WatchProgressRecord {

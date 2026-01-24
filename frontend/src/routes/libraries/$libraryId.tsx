@@ -19,7 +19,6 @@ import { useDisclosure } from "@heroui/modal";
 import { ShimmerLoader } from "../../components/shared/ShimmerLoader";
 import { libraryTemplate } from "../../lib/template-data";
 import {
-  AutoDownloadBadge,
   AutoHuntBadge,
   FileOrganizationBadge,
   QualityFilterBadge,
@@ -28,6 +27,10 @@ import { addToast } from "@heroui/toast";
 import { Breadcrumbs, BreadcrumbItem } from "@heroui/breadcrumbs";
 import { ConfirmModal } from "../../components/ConfirmModal";
 import { useDataReactivity } from "../../hooks/useSubscription";
+import {
+  useContentDownloadProgress,
+  type ContentProgressMap,
+} from "../../hooks/useContentDownloadProgress";
 import { RouteError } from "../../components/RouteError";
 import {
   AddShowModal,
@@ -61,6 +64,8 @@ export interface LibraryContextValue {
   handleDeleteShowClick: (showId: string, showName: string) => void;
   handleUpdateLibrary: (input: UpdateLibraryInput) => Promise<void>;
   onOpenAddShow: () => void;
+  /** Map of content IDs to download progress (0-1) for real-time updates */
+  downloadProgress: ContentProgressMap;
 }
 
 // Default context with loading state - used when context not yet initialized
@@ -73,6 +78,7 @@ const defaultContextValue: LibraryContextValue = {
   handleDeleteShowClick: () => {},
   handleUpdateLibrary: async () => {},
   onOpenAddShow: () => {},
+  downloadProgress: new Map(),
 };
 
 export const LibraryContext =
@@ -229,6 +235,12 @@ function LibraryDetailLayout() {
     { onTorrentComplete: true, periodicInterval: 30000, onFocus: true },
   );
 
+  // Subscribe to content download progress for real-time updates on this library
+  const downloadProgress = useContentDownloadProgress({
+    libraryId: libraryId,
+    enabled: !loading && !!library,
+  });
+
   const handleDeleteShowClick = (showId: string, showName: string) => {
     setShowToDelete({ id: showId, name: showName });
     onConfirmOpen();
@@ -351,7 +363,7 @@ function LibraryDetailLayout() {
   // Track previous scanning state to detect transitions
   const prevScanningRef = useRef(library?.scanning);
 
-  // Subscribe to library changes to detect scan completion
+  // Subscribe to library changes to refresh data on any change
   useEffect(() => {
     if (!library) return;
 
@@ -372,7 +384,7 @@ function LibraryDetailLayout() {
               setLibrary(event.library);
               prevScanningRef.current = nowScanning;
 
-              // Detect scan completion (was scanning, now not scanning)
+              // Handle scan state transitions for UI feedback
               if (wasScanning && !nowScanning) {
                 setIsScanning(false);
                 addToast({
@@ -380,12 +392,14 @@ function LibraryDetailLayout() {
                   description: `Finished scanning ${library.name}`,
                   color: "success",
                 });
-                // Refresh all data
-                fetchData(true);
               } else if (!wasScanning && nowScanning) {
                 // Scan started (e.g., from another client)
                 setIsScanning(true);
               }
+
+              // Always refresh data on any library change
+              // (new content, scan completion, metadata updates, etc.)
+              fetchData(true);
             }
           }
         },
@@ -424,6 +438,7 @@ function LibraryDetailLayout() {
     handleDeleteShowClick,
     handleUpdateLibrary,
     onOpenAddShow: onOpen,
+    downloadProgress,
   };
 
   return (
@@ -466,9 +481,8 @@ function LibraryDetailLayout() {
               </div>
 
               <div className="flex items-center gap-2">
-                {/* Setting Badges */}
-                <AutoDownloadBadge isEnabled={displayLibrary.autoDownload} />
-                <AutoHuntBadge isEnabled={displayLibrary.autoHunt} />
+                {/* Setting Badges - Auto Hunt covers both search and RSS download */}
+                <AutoHuntBadge isEnabled={displayLibrary.autoHunt || displayLibrary.autoDownload} />
                 <FileOrganizationBadge
                   isEnabled={displayLibrary.organizeFiles}
                 />

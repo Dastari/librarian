@@ -56,15 +56,10 @@ const httpLink = new HttpLink({
 const authLink = setContext(async (operation, { headers }) => {
   const token = await getAuthTokenAsync();
   
-  // Debug logging in development - use warn for no token so it's visible
-  if (import.meta.env.DEV) {
+  // Only log when token is found - no token is normal for unauthenticated users
+  if (import.meta.env.DEV && token) {
     const opName = operation.operationName || 'unknown';
-    if (!token) {
-      console.warn(`[GraphQL] ⚠️ No auth token for operation: ${opName} - request will fail if auth required`);
-    } else {
-      // Log that we're sending a token (truncated for security)
-      console.debug(`[GraphQL] Sending auth token for ${opName}: ${token.substring(0, 20)}...`);
-    }
+    console.debug(`[GraphQL] Sending auth token for ${opName}: ${token.substring(0, 20)}...`);
   }
   
   return {

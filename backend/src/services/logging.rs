@@ -10,15 +10,9 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
-#[cfg(feature = "sqlite")]
 use sqlx::SqlitePool;
 use time::OffsetDateTime;
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
-#[cfg(feature = "sqlite")]
 type DbPool = SqlitePool;
 use tokio::sync::{RwLock, broadcast, mpsc};
 use tracing::field::{Field, Visit};

@@ -7,15 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
-#[cfg(feature = "sqlite")]
-use sqlx::SqlitePool;
-
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
-#[cfg(feature = "sqlite")]
-type DbPool = SqlitePool;
+type DbPool = crate::db::Pool;
 
 use crate::tui::input::Action;
 use crate::tui::panels::Panel;

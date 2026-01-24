@@ -111,6 +111,7 @@ export function TorrentCard({
                   variant="light"
                   color="success"
                   onPress={() => onResume(torrent.id)}
+                  aria-label="Resume torrent"
                 >
                   <IconPlayerPlay size={16} />
                 </Button>
@@ -123,6 +124,7 @@ export function TorrentCard({
                   variant="light"
                   color="warning"
                   onPress={() => onPause(torrent.id)}
+                  aria-label="Pause torrent"
                 >
                   <IconPlayerPause size={16} />
                 </Button>
@@ -135,6 +137,7 @@ export function TorrentCard({
                 variant="light"
                 color="danger"
                 onPress={handleRemove}
+                aria-label="Remove torrent"
               >
                 <IconTrash size={16} />
               </Button>

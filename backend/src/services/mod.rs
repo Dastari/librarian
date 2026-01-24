@@ -17,6 +17,7 @@ pub mod file_processor;
 pub mod file_utils;
 pub mod filename_parser;
 pub mod filesystem;
+pub mod fingerprint;
 pub mod hunt;
 pub mod job_queue;
 pub mod logging;
@@ -33,7 +34,6 @@ pub mod queues;
 pub mod rate_limiter;
 pub mod rss;
 pub mod scanner;
-pub mod supabase_storage;
 pub mod text_utils;
 pub mod tmdb;
 pub mod torrent;
@@ -65,6 +65,7 @@ pub use file_utils::{
     is_video_file, sanitize_for_filename,
 };
 pub use filesystem::{DirectoryChangeEvent, FilesystemService, FilesystemServiceConfig};
+pub use fingerprint::{AcoustIdMatch, AudioFingerprint, FingerprintService};
 pub use job_queue::{
     ConcurrencyLimiter, JobQueueConfig, MetadataQueue, WorkQueue, process_concurrent,
     process_in_chunks,
@@ -93,16 +94,16 @@ pub use quality_evaluator::{
     EffectiveQualitySettings, QualityEvaluation, QualityEvaluator, QualityStatus,
 };
 pub use queues::{
-    MediaAnalysisJob, MediaAnalysisQueue, SubtitleDownloadJob, SubtitleDownloadQueue,
-    create_media_analysis_queue, create_subtitle_download_queue, media_analysis_queue_config,
-    subtitle_download_queue_config,
+    FingerprintJob, FingerprintQueue, MediaAnalysisJob, MediaAnalysisQueue,
+    SubtitleDownloadJob, SubtitleDownloadQueue, create_fingerprint_queue,
+    create_media_analysis_queue, create_subtitle_download_queue, fingerprint_queue_config,
+    media_analysis_queue_config, subtitle_download_queue_config,
 };
 pub use rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};
 pub use rss::{ParsedRssItem, RssService, validate_url_for_ssrf};
 pub use scanner::{
     ScannerConfig, ScannerService, create_scanner_service, create_scanner_service_with_config,
 };
-pub use supabase_storage::StorageClient;
 pub use text_utils::{
     levenshtein_distance, normalize_quality, normalize_show_name, normalize_show_name_no_articles,
     normalize_title, normalize_track_title, show_name_similarity, string_similarity,

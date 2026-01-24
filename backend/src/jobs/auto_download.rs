@@ -15,16 +15,9 @@
 //! 3. Episode status is derived from media_file_id presence
 
 use anyhow::Result;
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-use sqlx::SqlitePool;
 use std::sync::Arc;
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-type DbPool = SqlitePool;
+type DbPool = crate::db::Pool;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 

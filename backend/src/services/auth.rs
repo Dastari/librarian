@@ -620,39 +620,16 @@ pub fn verify_token(token: &str) -> async_graphql::Result<crate::graphql::auth::
     validation.validate_exp = true;
     validation.validate_aud = false;
 
-    // Try to decode as new format first
-    if let Ok(token_data) = decode::<AccessTokenClaims>(
-        token,
-        &DecodingKey::from_secret(jwt_secret.as_bytes()),
-        &validation,
-    ) {
-        return Ok(crate::graphql::auth::AuthUser {
-            user_id: token_data.claims.sub,
-            email: token_data.claims.email,
-            role: Some(token_data.claims.role),
-        });
-    }
-
-    // Fall back to Supabase format for backward compatibility
-    #[derive(Debug, Deserialize)]
-    struct LegacyClaims {
-        sub: String,
-        email: Option<String>,
-        role: Option<String>,
-    }
-
-    let token_data = decode::<LegacyClaims>(
+    let token_data = decode::<AccessTokenClaims>(
         token,
         &DecodingKey::from_secret(jwt_secret.as_bytes()),
         &validation,
     )
-    .map_err(|e| {
-        async_graphql::Error::new(format!("Invalid token: {}", e))
-    })?;
+    .map_err(|e| async_graphql::Error::new(format!("Invalid token: {}", e)))?;
 
     Ok(crate::graphql::auth::AuthUser {
         user_id: token_data.claims.sub,
         email: token_data.claims.email,
-        role: token_data.claims.role,
+        role: Some(token_data.claims.role),
     })
 }

@@ -244,7 +244,7 @@ impl TorrentMutations {
     /// This legacy mutation:
     /// 1. Parse filenames to identify show/episode
     /// 2. Match to existing shows in the library
-    /// 3. Copy/move/hardlink files based on library settings
+    /// 3. Copy files based on library settings (post_download_action is stored but ignored)
     /// 4. Create folder structure (Show Name/Season XX/)
     /// 5. Update episode status to downloaded
     ///
@@ -578,6 +578,185 @@ impl TorrentMutations {
         })
     }
 
+/// Import a completed torrent's files into a library
+    ///
+    /// This is for the "torrent-first" workflow where you download something
+    /// before adding it to your library. It will:
+    /// 1. Copy files from the torrent download location to the library root
+    /// 2. Trigger a library scan to auto-create the library item
+    ///
+    /// Use this when you have a completed torrent and want to add its content
+    /// as a new item in your library (vs linking to an existing item).
+    async fn import_to_library(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(desc = "Torrent ID (numeric)")] torrent_id: i32,
+        #[graphql(desc = "Target library ID")] library_id: String,
+    ) -> Result<ImportToLibraryResult> {
+        use crate::services::ScannerService;
+        use std::path::PathBuf;
+        use tracing::{info, warn};
+
+        let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
+        let torrent_service = ctx.data_unchecked::<Arc<TorrentService>>();
+        let scanner = ctx.data_unchecked::<Arc<ScannerService>>();
+
+        let user_id = Uuid::parse_str(&user.user_id)
+            .map_err(|_| async_graphql::Error::new("Invalid user ID"))?;
+        let library_uuid = Uuid::parse_str(&library_id)
+            .map_err(|_| async_graphql::Error::new("Invalid library ID"))?;
+
+        // Get torrent info
+        let torrent_info = match torrent_service.get_torrent_info(torrent_id as usize).await {
+            Ok(info) => info,
+            Err(e) => {
+                return Ok(ImportToLibraryResult {
+                    success: false,
+                    files_copied: 0,
+                    error: Some(format!("Failed to get torrent info: {}", e)),
+                });
+            }
+        };
+
+        // Check if torrent is complete
+        if torrent_info.progress < 1.0 {
+            return Ok(ImportToLibraryResult {
+                success: false,
+                files_copied: 0,
+                error: Some("Torrent is not complete. Wait for download to finish.".to_string()),
+            });
+        }
+
+        // Get library info
+        let library = match db.libraries().get_by_id(library_uuid).await {
+            Ok(Some(lib)) => lib,
+            Ok(None) => {
+                return Ok(ImportToLibraryResult {
+                    success: false,
+                    files_copied: 0,
+                    error: Some("Library not found".to_string()),
+                });
+            }
+            Err(e) => {
+                return Ok(ImportToLibraryResult {
+                    success: false,
+                    files_copied: 0,
+                    error: Some(format!("Database error: {}", e)),
+                });
+            }
+        };
+
+        info!(
+            torrent_id = torrent_id,
+            torrent_name = %torrent_info.name,
+            library_id = %library_id,
+            library_name = %library.name,
+            file_count = torrent_info.files.len(),
+            "Importing torrent to library"
+        );
+
+        // Determine source path (torrent download location)
+        // The torrent's save_path contains the base path
+        let source_base = PathBuf::from(&torrent_info.save_path);
+        
+        // If torrent has a single root folder, use that as the source
+        // Otherwise, create a folder with the torrent name
+        let source_path = if torrent_info.files.len() == 1 {
+            // Single file - copy directly
+            source_base.join(&torrent_info.files[0].path)
+        } else {
+            // Multi-file - the torrent name is usually the folder name
+            source_base.join(&torrent_info.name)
+        };
+
+        // Destination is library root
+        let dest_base = PathBuf::from(&library.path);
+        
+        // If multi-file torrent, preserve the folder structure
+        let dest_path = if torrent_info.files.len() == 1 {
+            dest_base.join(
+                PathBuf::from(&torrent_info.files[0].path)
+                    .file_name()
+                    .unwrap_or_default(),
+            )
+        } else {
+            dest_base.join(&torrent_info.name)
+        };
+
+        // Copy files
+        let mut files_copied = 0;
+        
+        if source_path.is_file() {
+            // Single file copy
+            if let Err(e) = tokio::fs::copy(&source_path, &dest_path).await {
+                warn!(
+                    source = %source_path.display(),
+                    dest = %dest_path.display(),
+                    error = %e,
+                    "Failed to copy file"
+                );
+                return Ok(ImportToLibraryResult {
+                    success: false,
+                    files_copied: 0,
+                    error: Some(format!("Failed to copy file: {}", e)),
+                });
+            }
+            files_copied = 1;
+        } else if source_path.is_dir() {
+            // Directory copy - use copy_dir_all
+            match copy_dir_recursive(&source_path, &dest_path).await {
+                Ok(count) => files_copied = count,
+                Err(e) => {
+                    warn!(
+                        source = %source_path.display(),
+                        dest = %dest_path.display(),
+                        error = %e,
+                        "Failed to copy directory"
+                    );
+                    return Ok(ImportToLibraryResult {
+                        success: false,
+                        files_copied: 0,
+                        error: Some(format!("Failed to copy directory: {}", e)),
+                    });
+                }
+            }
+        } else {
+            return Ok(ImportToLibraryResult {
+                success: false,
+                files_copied: 0,
+                error: Some(format!("Source path does not exist: {}", source_path.display())),
+            });
+        }
+
+        info!(
+            torrent_name = %torrent_info.name,
+            files_copied = files_copied,
+            dest = %dest_path.display(),
+            "Files copied to library, triggering scan"
+        );
+
+        // Trigger library scan
+        tokio::spawn({
+            let scanner = scanner.clone();
+            async move {
+                if let Err(e) = scanner.scan_library(library_uuid).await {
+                    tracing::error!(
+                        library_id = %library_uuid,
+                        error = %e,
+                        "Failed to scan library after import"
+                    );
+                }
+            }
+        });
+
+        Ok(ImportToLibraryResult {
+            success: true,
+            files_copied: files_copied as i32,
+            error: None,
+        })
+    }
+
     /// Manually set a match target for a pending file match
     async fn set_match(
         &self,
@@ -662,6 +841,42 @@ pub struct ProcessSourceResult {
 pub struct SetMatchResult {
     pub success: bool,
     pub error: Option<String>,
+}
+
+/// Result of import to library operation
+#[derive(async_graphql::SimpleObject)]
+pub struct ImportToLibraryResult {
+    pub success: bool,
+    pub files_copied: i32,
+    pub error: Option<String>,
+}
+
+/// Recursively copy a directory
+async fn copy_dir_recursive(
+    source: &std::path::Path,
+    dest: &std::path::Path,
+) -> anyhow::Result<usize> {
+    use tokio::fs;
+
+    let mut count = 0;
+
+    // Create destination directory
+    fs::create_dir_all(dest).await?;
+
+    let mut entries = fs::read_dir(source).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+
+        if src_path.is_dir() {
+            count += Box::pin(copy_dir_recursive(&src_path, &dest_path)).await?;
+        } else {
+            fs::copy(&src_path, &dest_path).await?;
+            count += 1;
+        }
+    }
+
+    Ok(count)
 }
 
 /// Create file-level matches for a torrent if a target item (album, movie, or episode) is specified
@@ -756,9 +971,11 @@ async fn create_file_matches_for_target(
                     source_id: Some(torrent_record.id),
                     source_file_index: Some(*idx as i32),
                     file_size: file.size as i64,
-                    target: MatchTarget::Track(track_id),
+                    target: Some(MatchTarget::Track(track_id)),
+                    unmatched_reason: None,
                     match_type: "manual".to_string(),
                     match_confidence: Some(rust_decimal::Decimal::from(1)),
+                    match_attempts: 1,
                     parsed_resolution: quality.resolution,
                     parsed_codec: quality.codec,
                     parsed_source: quality.source,
@@ -799,9 +1016,11 @@ async fn create_file_matches_for_target(
                 source_id: Some(torrent_record.id),
                 source_file_index: Some(*idx as i32),
                 file_size: file.size as i64,
-                target: MatchTarget::Movie(movie_id),
+                target: Some(MatchTarget::Movie(movie_id)),
+                unmatched_reason: None,
                 match_type: "manual".to_string(),
                 match_confidence: Some(rust_decimal::Decimal::from(1)),
+                match_attempts: 1,
                 parsed_resolution: quality.resolution,
                 parsed_codec: quality.codec,
                 parsed_source: quality.source,
@@ -838,9 +1057,11 @@ async fn create_file_matches_for_target(
                 source_id: Some(torrent_record.id),
                 source_file_index: Some(*idx as i32),
                 file_size: file.size as i64,
-                target: MatchTarget::Episode(episode_id),
+                target: Some(MatchTarget::Episode(episode_id)),
+                unmatched_reason: None,
                 match_type: "manual".to_string(),
                 match_confidence: Some(rust_decimal::Decimal::from(1)),
+                match_attempts: 1,
                 parsed_resolution: quality.resolution,
                 parsed_codec: quality.codec,
                 parsed_source: quality.source,

@@ -11,6 +11,7 @@ use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use tokio::fs;
 use tokio::sync::broadcast;
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::db::{Database, libraries::LibraryRecord};
@@ -425,6 +426,12 @@ impl FilesystemService {
         recursive: bool,
         user_id: Uuid,
     ) -> Result<(i32, Vec<String>)> {
+        info!(
+            user_id = %user_id,
+            count = paths.len(),
+            recursive = recursive,
+            "Deleting files"
+        );
         let mut deleted_count = 0;
         let mut messages = Vec::new();
 
@@ -432,13 +439,9 @@ impl FilesystemService {
             // Validate path is inside a library
             let validation = self.require_library_path(path, user_id).await?;
             if !validation.is_valid {
-                messages.push(format!(
-                    "Skipped '{}': {}",
-                    path,
-                    validation
-                        .error
-                        .unwrap_or_else(|| "Not allowed".to_string())
-                ));
+                let error_msg = validation.error.unwrap_or_else(|| "Not allowed".to_string());
+                warn!(path = %path, error = %error_msg, "Delete skipped: path not in library");
+                messages.push(format!("Skipped '{}': {}", path, error_msg));
                 continue;
             }
 
@@ -475,6 +478,7 @@ impl FilesystemService {
             }
 
             deleted_count += 1;
+            debug!(path = %path, "Deleted file/directory");
             messages.push(format!("Deleted: {}", path));
 
             // Broadcast the change
@@ -489,6 +493,7 @@ impl FilesystemService {
             }
         }
 
+        info!(deleted_count = deleted_count, "Delete operation completed");
         Ok((deleted_count, messages))
     }
 
@@ -500,6 +505,13 @@ impl FilesystemService {
         overwrite: bool,
         user_id: Uuid,
     ) -> Result<(i32, Vec<String>)> {
+        info!(
+            user_id = %user_id,
+            count = sources.len(),
+            destination = %destination,
+            overwrite = overwrite,
+            "Copying files"
+        );
         // Validate destination is inside a library
         let dest_validation = self.require_library_path(destination, user_id).await?;
         if !dest_validation.is_valid {
@@ -520,16 +532,16 @@ impl FilesystemService {
         let mut messages = Vec::new();
 
         for source in sources {
-            // Validate source is inside a library
-            let source_validation = self.require_library_path(source, user_id).await?;
-            if !source_validation.is_valid {
-                messages.push(format!(
-                    "Skipped '{}': {}",
-                    source,
-                    source_validation
-                        .error
-                        .unwrap_or_else(|| "Not allowed".to_string())
-                ));
+            // For copy, we only require the destination to be in a library
+            // This allows importing files from download directories, etc.
+            // The source just needs to be readable
+            let source_path = PathBuf::from(source);
+            
+            // Check source exists and is readable
+            if !source_path.exists() {
+                let msg = format!("Skipped '{}': Path does not exist", source);
+                warn!(source = %source, "Copy skipped: path does not exist");
+                messages.push(msg);
                 continue;
             }
 
@@ -537,29 +549,32 @@ impl FilesystemService {
             let file_name = match source_path.file_name() {
                 Some(n) => n,
                 None => {
+                    warn!(source = %source, "Copy skipped: invalid path (no filename)");
                     messages.push(format!("Skipped '{}': Invalid path", source));
                     continue;
                 }
             };
 
             let target_path = dest_path.join(file_name);
+            debug!(source = %source, target = %target_path.display(), "Attempting to copy");
 
             // Check if target exists
             if target_path.exists() && !overwrite {
-                messages.push(format!(
-                    "Skipped '{}': Target exists (use overwrite)",
-                    source
-                ));
+                let msg = format!("Skipped '{}': Target exists (use overwrite)", source);
+                warn!(source = %source, target = %target_path.display(), "Copy skipped: target exists");
+                messages.push(msg);
                 continue;
             }
 
             // Copy the file/directory
             if let Err(e) = self.copy_recursive(&source_path, &target_path).await {
+                warn!(source = %source, error = %e, "Copy failed");
                 messages.push(format!("Failed to copy '{}': {}", source, e));
                 continue;
             }
 
             copied_count += 1;
+            debug!(source = %source, target = %target_path.display(), "Copied file/directory");
             messages.push(format!("Copied: {} -> {}", source, target_path.display()));
 
             // Broadcast the change
@@ -572,6 +587,7 @@ impl FilesystemService {
             });
         }
 
+        info!(copied_count = copied_count, destination = %destination, "Copy operation completed");
         Ok((copied_count, messages))
     }
 
@@ -605,6 +621,13 @@ impl FilesystemService {
         overwrite: bool,
         user_id: Uuid,
     ) -> Result<(i32, Vec<String>)> {
+        info!(
+            user_id = %user_id,
+            count = sources.len(),
+            destination = %destination,
+            overwrite = overwrite,
+            "Moving files"
+        );
         // Validate destination is inside a library
         let dest_validation = self.require_library_path(destination, user_id).await?;
         if !dest_validation.is_valid {
@@ -689,6 +712,7 @@ impl FilesystemService {
             }
 
             moved_count += 1;
+            debug!(source = %source, target = %target_path.display(), "Moved file/directory");
             messages.push(format!("Moved: {} -> {}", source, target_path.display()));
 
             // Broadcast changes
@@ -710,11 +734,18 @@ impl FilesystemService {
             });
         }
 
+        info!(moved_count = moved_count, destination = %destination, "Move operation completed");
         Ok((moved_count, messages))
     }
 
     /// Rename a file or directory (must be inside a library)
     pub async fn rename_file(&self, path: &str, new_name: &str, user_id: Uuid) -> Result<String> {
+        info!(
+            user_id = %user_id,
+            path = %path,
+            new_name = %new_name,
+            "Renaming file"
+        );
         // Validate path is inside a library
         let validation = self.require_library_path(path, user_id).await?;
         if !validation.is_valid {
@@ -745,6 +776,12 @@ impl FilesystemService {
         }
 
         fs::rename(&source_path, &target_path).await?;
+
+        info!(
+            old_path = %path,
+            new_path = %target_path.display(),
+            "Rename completed"
+        );
 
         // Broadcast the change
         self.broadcast_change(DirectoryChangeEvent {

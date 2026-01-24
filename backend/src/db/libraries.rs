@@ -3,13 +3,9 @@
 use anyhow::Result;
 use uuid::Uuid;
 
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
 #[cfg(feature = "sqlite")]
 use sqlx::SqlitePool;
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
 #[cfg(feature = "sqlite")]
 type DbPool = SqlitePool;
 
@@ -51,45 +47,6 @@ pub struct LibraryRecord {
     pub preferred_subtitle_languages: Option<Vec<String>>,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for LibraryRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        Ok(Self {
-            id: row.try_get("id")?,
-            user_id: row.try_get("user_id")?,
-            name: row.try_get("name")?,
-            path: row.try_get("path")?,
-            library_type: row.try_get("library_type")?,
-            icon: row.try_get("icon")?,
-            color: row.try_get("color")?,
-            auto_scan: row.try_get("auto_scan")?,
-            scan_interval_minutes: row.try_get("scan_interval_minutes")?,
-            watch_for_changes: row.try_get("watch_for_changes")?,
-            post_download_action: row.try_get("post_download_action")?,
-            organize_files: row.try_get("organize_files")?,
-            rename_style: row.try_get("rename_style")?,
-            naming_pattern: row.try_get("naming_pattern")?,
-            auto_add_discovered: row.try_get("auto_add_discovered")?,
-            auto_download: row.try_get("auto_download")?,
-            auto_hunt: row.try_get("auto_hunt")?,
-            scanning: row.try_get("scanning")?,
-            last_scanned_at: row.try_get("last_scanned_at")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-            allowed_resolutions: row.try_get("allowed_resolutions")?,
-            allowed_video_codecs: row.try_get("allowed_video_codecs")?,
-            allowed_audio_formats: row.try_get("allowed_audio_formats")?,
-            require_hdr: row.try_get("require_hdr")?,
-            allowed_hdr_types: row.try_get("allowed_hdr_types")?,
-            allowed_sources: row.try_get("allowed_sources")?,
-            release_group_blacklist: row.try_get("release_group_blacklist")?,
-            release_group_whitelist: row.try_get("release_group_whitelist")?,
-            auto_download_subtitles: row.try_get("auto_download_subtitles")?,
-            preferred_subtitle_languages: row.try_get("preferred_subtitle_languages")?,
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for LibraryRecord {
@@ -240,30 +197,6 @@ impl LibraryRepository {
     }
 
     /// Get all libraries for a user
-    #[cfg(feature = "postgres")]
-    pub async fn list_by_user(&self, user_id: Uuid) -> Result<Vec<LibraryRecord>> {
-        let records = sqlx::query_as::<_, LibraryRecord>(
-            r#"
-            SELECT id, user_id, name, path, library_type, icon, color, 
-                   auto_scan, scan_interval_minutes, watch_for_changes,
-                   post_download_action, organize_files, rename_style, naming_pattern,
-                   auto_add_discovered, auto_download, auto_hunt,
-                   scanning, last_scanned_at, created_at, updated_at,
-                   allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
-                   require_hdr, allowed_hdr_types, allowed_sources,
-                   release_group_blacklist, release_group_whitelist,
-                   auto_download_subtitles, preferred_subtitle_languages
-            FROM libraries
-            WHERE user_id = $1
-            ORDER BY name
-            "#,
-        )
-        .bind(user_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_by_user(&self, user_id: Uuid) -> Result<Vec<LibraryRecord>> {
@@ -293,29 +226,6 @@ impl LibraryRepository {
     }
 
     /// Get a library by ID
-    #[cfg(feature = "postgres")]
-    pub async fn get_by_id(&self, id: Uuid) -> Result<Option<LibraryRecord>> {
-        let record = sqlx::query_as::<_, LibraryRecord>(
-            r#"
-            SELECT id, user_id, name, path, library_type, icon, color, 
-                   auto_scan, scan_interval_minutes, watch_for_changes,
-                   post_download_action, organize_files, rename_style, naming_pattern,
-                   auto_add_discovered, auto_download, auto_hunt,
-                   scanning, last_scanned_at, created_at, updated_at,
-                   allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
-                   require_hdr, allowed_hdr_types, allowed_sources,
-                   release_group_blacklist, release_group_whitelist,
-                   auto_download_subtitles, preferred_subtitle_languages
-            FROM libraries
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_by_id(&self, id: Uuid) -> Result<Option<LibraryRecord>> {
@@ -344,34 +254,6 @@ impl LibraryRepository {
     }
 
     /// Get a library by ID and user (for auth check)
-    #[cfg(feature = "postgres")]
-    pub async fn get_by_id_and_user(
-        &self,
-        id: Uuid,
-        user_id: Uuid,
-    ) -> Result<Option<LibraryRecord>> {
-        let record = sqlx::query_as::<_, LibraryRecord>(
-            r#"
-            SELECT id, user_id, name, path, library_type, icon, color, 
-                   auto_scan, scan_interval_minutes, watch_for_changes,
-                   post_download_action, organize_files, rename_style, naming_pattern,
-                   auto_add_discovered, auto_download, auto_hunt,
-                   scanning, last_scanned_at, created_at, updated_at,
-                   allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
-                   require_hdr, allowed_hdr_types, allowed_sources,
-                   release_group_blacklist, release_group_whitelist,
-                   auto_download_subtitles, preferred_subtitle_languages
-            FROM libraries
-            WHERE id = $1 AND user_id = $2
-            "#,
-        )
-        .bind(id)
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_by_id_and_user(
@@ -405,61 +287,6 @@ impl LibraryRepository {
     }
 
     /// Create a new library
-    #[cfg(feature = "postgres")]
-    pub async fn create(&self, input: CreateLibrary) -> Result<LibraryRecord> {
-        let record = sqlx::query_as::<_, LibraryRecord>(
-            r#"
-            INSERT INTO libraries (
-                user_id, name, path, library_type, icon, color,
-                auto_scan, scan_interval_minutes, watch_for_changes,
-                post_download_action, organize_files, rename_style, naming_pattern,
-                auto_add_discovered, auto_download, auto_hunt,
-                allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
-                require_hdr, allowed_hdr_types, allowed_sources,
-                release_group_blacklist, release_group_whitelist
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                    $17, $18, $19, $20, $21, $22, $23, $24)
-            RETURNING id, user_id, name, path, library_type, icon, color, 
-                      auto_scan, scan_interval_minutes, watch_for_changes,
-                      post_download_action, organize_files, rename_style, naming_pattern,
-                      auto_add_discovered, auto_download, auto_hunt,
-                      scanning, last_scanned_at, created_at, updated_at,
-                      allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
-                      require_hdr, allowed_hdr_types, allowed_sources,
-                      release_group_blacklist, release_group_whitelist,
-                      auto_download_subtitles, preferred_subtitle_languages
-            "#,
-        )
-        .bind(input.user_id)
-        .bind(&input.name)
-        .bind(&input.path)
-        .bind(&input.library_type)
-        .bind(&input.icon)
-        .bind(&input.color)
-        .bind(input.auto_scan)
-        .bind(input.scan_interval_minutes)
-        .bind(input.watch_for_changes)
-        .bind(&input.post_download_action)
-        .bind(input.organize_files)
-        .bind(&input.rename_style)
-        .bind(&input.naming_pattern)
-        .bind(input.auto_add_discovered)
-        .bind(input.auto_download)
-        .bind(input.auto_hunt)
-        .bind(&input.allowed_resolutions)
-        .bind(&input.allowed_video_codecs)
-        .bind(&input.allowed_audio_formats)
-        .bind(input.require_hdr)
-        .bind(&input.allowed_hdr_types)
-        .bind(&input.allowed_sources)
-        .bind(&input.release_group_blacklist)
-        .bind(&input.release_group_whitelist)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn create(&self, input: CreateLibrary) -> Result<LibraryRecord> {
@@ -516,75 +343,6 @@ impl LibraryRepository {
     }
 
     /// Update a library
-    #[cfg(feature = "postgres")]
-    pub async fn update(&self, id: Uuid, input: UpdateLibrary) -> Result<Option<LibraryRecord>> {
-        // Build dynamic update query
-        let record = sqlx::query_as::<_, LibraryRecord>(
-            r#"
-            UPDATE libraries SET
-                name = COALESCE($2, name),
-                path = COALESCE($3, path),
-                icon = COALESCE($4, icon),
-                color = COALESCE($5, color),
-                auto_scan = COALESCE($6, auto_scan),
-                scan_interval_minutes = COALESCE($7, scan_interval_minutes),
-                watch_for_changes = COALESCE($8, watch_for_changes),
-                post_download_action = COALESCE($9, post_download_action),
-                organize_files = COALESCE($10, organize_files),
-                rename_style = COALESCE($11, rename_style),
-                naming_pattern = COALESCE($12, naming_pattern),
-                auto_add_discovered = COALESCE($13, auto_add_discovered),
-                auto_download = COALESCE($14, auto_download),
-                auto_hunt = COALESCE($15, auto_hunt),
-                allowed_resolutions = COALESCE($16, allowed_resolutions),
-                allowed_video_codecs = COALESCE($17, allowed_video_codecs),
-                allowed_audio_formats = COALESCE($18, allowed_audio_formats),
-                require_hdr = COALESCE($19, require_hdr),
-                allowed_hdr_types = COALESCE($20, allowed_hdr_types),
-                allowed_sources = COALESCE($21, allowed_sources),
-                release_group_blacklist = COALESCE($22, release_group_blacklist),
-                release_group_whitelist = COALESCE($23, release_group_whitelist),
-                updated_at = NOW()
-            WHERE id = $1
-            RETURNING id, user_id, name, path, library_type, icon, color, 
-                      auto_scan, scan_interval_minutes, watch_for_changes,
-                      post_download_action, organize_files, rename_style, naming_pattern,
-                      auto_add_discovered, auto_download, auto_hunt,
-                      scanning, last_scanned_at, created_at, updated_at,
-                      allowed_resolutions, allowed_video_codecs, allowed_audio_formats,
-                      require_hdr, allowed_hdr_types, allowed_sources,
-                      release_group_blacklist, release_group_whitelist,
-                      auto_download_subtitles, preferred_subtitle_languages
-            "#,
-        )
-        .bind(id)
-        .bind(&input.name)
-        .bind(&input.path)
-        .bind(&input.icon)
-        .bind(&input.color)
-        .bind(input.auto_scan)
-        .bind(input.scan_interval_minutes)
-        .bind(input.watch_for_changes)
-        .bind(&input.post_download_action)
-        .bind(input.organize_files)
-        .bind(&input.rename_style)
-        .bind(&input.naming_pattern)
-        .bind(input.auto_add_discovered)
-        .bind(input.auto_download)
-        .bind(input.auto_hunt)
-        .bind(&input.allowed_resolutions)
-        .bind(&input.allowed_video_codecs)
-        .bind(&input.allowed_audio_formats)
-        .bind(input.require_hdr)
-        .bind(&input.allowed_hdr_types)
-        .bind(&input.allowed_sources)
-        .bind(&input.release_group_blacklist)
-        .bind(&input.release_group_whitelist)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn update(&self, id: Uuid, input: UpdateLibrary) -> Result<Option<LibraryRecord>> {
@@ -659,15 +417,6 @@ impl LibraryRepository {
     }
 
     /// Delete a library
-    #[cfg(feature = "postgres")]
-    pub async fn delete(&self, id: Uuid) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM libraries WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn delete(&self, id: Uuid) -> Result<bool> {
@@ -682,15 +431,6 @@ impl LibraryRepository {
     }
 
     /// Update last scanned timestamp
-    #[cfg(feature = "postgres")]
-    pub async fn update_last_scanned(&self, id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE libraries SET last_scanned_at = NOW() WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn update_last_scanned(&self, id: Uuid) -> Result<()> {
@@ -705,16 +445,6 @@ impl LibraryRepository {
     }
 
     /// Set the scanning state for a library
-    #[cfg(feature = "postgres")]
-    pub async fn set_scanning(&self, id: Uuid, scanning: bool) -> Result<()> {
-        sqlx::query("UPDATE libraries SET scanning = $2, updated_at = NOW() WHERE id = $1")
-            .bind(id)
-            .bind(scanning)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn set_scanning(&self, id: Uuid, scanning: bool) -> Result<()> {
@@ -730,65 +460,6 @@ impl LibraryRepository {
     }
 
     /// Get library statistics
-    #[cfg(feature = "postgres")]
-    pub async fn get_stats(&self, id: Uuid) -> Result<LibraryStats> {
-        // First get the library path to filter files
-        let library_path: Option<String> =
-            sqlx::query_scalar("SELECT path FROM libraries WHERE id = $1")
-                .bind(id)
-                .fetch_optional(&self.pool)
-                .await?;
-
-        let path_pattern = library_path
-            .map(|p| format!("{}%", p))
-            .unwrap_or_else(|| "%".to_string());
-
-        // Count only files that are within the library path
-        let file_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM media_files WHERE library_id = $1 AND path LIKE $2",
-        )
-        .bind(id)
-        .bind(&path_pattern)
-        .fetch_one(&self.pool)
-        .await?;
-
-        // Sum size only for files within the library path
-        let total_size: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(size), 0)::BIGINT FROM media_files WHERE library_id = $1 AND path LIKE $2",
-        )
-        .bind(id)
-        .bind(&path_pattern)
-        .fetch_one(&self.pool)
-        .await?;
-
-        let show_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM tv_shows WHERE library_id = $1")
-                .bind(id)
-                .fetch_one(&self.pool)
-                .await?;
-
-        let movie_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM movies WHERE library_id = $1")
-                .bind(id)
-                .fetch_one(&self.pool)
-                .await?;
-
-        tracing::debug!(
-            library_id = %id,
-            file_count = file_count,
-            total_size = total_size,
-            show_count = show_count,
-            movie_count = movie_count,
-            "Library stats fetched"
-        );
-
-        Ok(LibraryStats {
-            file_count: Some(file_count),
-            total_size_bytes: Some(total_size),
-            show_count: Some(show_count),
-            movie_count: Some(movie_count),
-        })
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_stats(&self, id: Uuid) -> Result<LibraryStats> {

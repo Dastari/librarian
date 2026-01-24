@@ -12,7 +12,7 @@ import type { Connection } from '../../lib/graphql/types'
 import { IconMusicBolt, IconCircleCheck, IconDownload } from '@tabler/icons-react'
 import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 import { formatDuration } from '../../lib/format'
-import { TrackStatusChip } from '../shared/TrackStatusChip'
+import { MediaItemStatusChip } from '../shared'
 
 // ============================================================================
 // Component Props
@@ -184,7 +184,7 @@ export function LibraryTracksTab({ libraryId, loading: parentLoading }: LibraryT
         width: 120,
         sortable: false,
         render: (track) => (
-          <TrackStatusChip mediaFileId={track.mediaFileId} downloadProgress={track.downloadProgress} />
+          <MediaItemStatusChip mediaFileId={track.mediaFileId} downloadProgress={track.downloadProgress} />
         ),
       },
       {
