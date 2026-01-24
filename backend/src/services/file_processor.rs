@@ -17,7 +17,8 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::db::{
-    CreateMediaFile, Database, LibraryRecord, MediaFileRecord, PendingFileMatchRecord,
+    ActionType, CreateMediaFile, CreateNotification, Database, LibraryRecord, MediaFileRecord,
+    NotificationCategory, NotificationType, PendingFileMatchRecord,
 };
 use crate::services::file_utils::get_container;
 use crate::services::organizer::{
@@ -113,11 +114,72 @@ impl FileProcessor {
                     result.messages.push(error_msg.clone());
                     
                     // Mark the match as failed
-                    self.db
+                    if let Ok(record) = self
+                        .db
                         .pending_file_matches()
                         .mark_failed(pending_match.id, &error_msg)
                         .await
-                        .ok();
+                    {
+                        if error_msg.to_lowercase().contains("no space left") {
+                            let notification = CreateNotification {
+                                user_id: record.user_id,
+                                title: "Storage is full".to_string(),
+                                message: "Copy failed due to insufficient disk space. Free up storage and retry.".to_string(),
+                                notification_type: NotificationType::Error,
+                                category: NotificationCategory::Storage,
+                                library_id: None,
+                                torrent_id: record.source_id,
+                                media_file_id: None,
+                                pending_match_id: Some(record.id),
+                                action_type: Some(ActionType::Review),
+                                action_data: Some(serde_json::json!({
+                                    "source_path": record.source_path,
+                                    "error": error_msg,
+                                })),
+                            };
+
+                            if let Err(e) = self.db.notifications().create(notification).await {
+                                warn!(
+                                    pending_match_id = %record.id,
+                                    error = %e,
+                                    "Failed to create storage notification"
+                                );
+                            }
+                        }
+
+                        if record.copy_attempts == 3
+                            && !error_msg.contains("Destination conflict")
+                            && !error_msg.contains("Existing media file")
+                        {
+                            let notification = CreateNotification {
+                                user_id: record.user_id,
+                                title: "File processing failed".to_string(),
+                                message: format!(
+                                    "Failed to copy after multiple attempts: {}",
+                                    record.source_path
+                                ),
+                                notification_type: NotificationType::ActionRequired,
+                                category: NotificationCategory::Processing,
+                                library_id: None,
+                                torrent_id: record.source_id,
+                                media_file_id: None,
+                                pending_match_id: Some(record.id),
+                                action_type: Some(ActionType::Retry),
+                                action_data: Some(serde_json::json!({
+                                    "source_path": record.source_path,
+                                    "error": error_msg,
+                                })),
+                            };
+
+                            if let Err(e) = self.db.notifications().create(notification).await {
+                                warn!(
+                                    pending_match_id = %record.id,
+                                    error = %e,
+                                    "Failed to create processing failure notification"
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -304,14 +366,37 @@ impl FileProcessor {
 
         // Queue for FFprobe analysis
         if let Some(ref queue) = self.analysis_queue {
-            queue
+            match queue
                 .submit(crate::services::queues::MediaAnalysisJob {
                     media_file_id: media_file.id,
                     path: std::path::PathBuf::from(file_path),
                     check_subtitles: false,
                 })
                 .await
-                .ok();
+            {
+                Ok(job_id) => {
+                    debug!(
+                        media_file_id = %media_file.id,
+                        job_id = %job_id,
+                        path = %file_path,
+                        "Queued existing file for FFprobe analysis"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        media_file_id = %media_file.id,
+                        path = %file_path,
+                        error = %e,
+                        "Failed to queue existing file for FFprobe analysis"
+                    );
+                }
+            }
+        } else {
+            debug!(
+                media_file_id = %media_file.id,
+                path = %file_path,
+                "No analysis queue available for existing file"
+            );
         }
 
         Ok(media_file)
@@ -346,6 +431,14 @@ impl FileProcessor {
             .await?
             .context("Library not found")?;
 
+        self.check_existing_media_file(
+            pending_match,
+            episode.media_file_id,
+            library.id,
+            &format!("{} S{:02}E{:02}", show.name, episode.season, episode.episode),
+        )
+        .await?;
+
         // Get naming pattern
         let pattern = self
             .db
@@ -364,6 +457,9 @@ impl FileProcessor {
         // Generate destination path
         let relative_path = apply_naming_pattern(&pattern, &show, &episode, ext);
         let dest_path = Path::new(&library.path).join(&relative_path);
+
+        self.check_destination_conflict(pending_match, &dest_path, library.id)
+            .await?;
 
         // Copy file
         let media_file = self
@@ -414,6 +510,14 @@ impl FileProcessor {
             .await?
             .context("Library not found")?;
 
+        self.check_existing_media_file(
+            pending_match,
+            movie.media_file_id,
+            library.id,
+            &movie.title,
+        )
+        .await?;
+
         // Get naming pattern
         let pattern = self
             .db
@@ -436,6 +540,9 @@ impl FileProcessor {
         // Generate destination path
         let relative_path = apply_movie_naming_pattern(&pattern, &movie, original_filename, ext);
         let dest_path = Path::new(&library.path).join(&relative_path);
+
+        self.check_destination_conflict(pending_match, &dest_path, library.id)
+            .await?;
 
         // Copy file
         let media_file = self
@@ -497,6 +604,14 @@ impl FileProcessor {
             .await?
             .context("Library not found")?;
 
+        self.check_existing_media_file(
+            pending_match,
+            track.media_file_id,
+            library.id,
+            &track.title,
+        )
+        .await?;
+
         // Get naming pattern
         let pattern = self
             .db
@@ -526,6 +641,9 @@ impl FileProcessor {
             ext,
         );
         let dest_path = Path::new(&library.path).join(&relative_path);
+
+        self.check_destination_conflict(pending_match, &dest_path, library.id)
+            .await?;
 
         // Copy file
         let media_file = self
@@ -595,6 +713,14 @@ impl FileProcessor {
             .await?
             .context("Library not found")?;
 
+        self.check_existing_media_file(
+            pending_match,
+            chapter.media_file_id,
+            library.id,
+            &format!("{} Chapter {}", audiobook.title, chapter.chapter_number),
+        )
+        .await?;
+
         // Get naming pattern
         let pattern = self
             .db
@@ -620,6 +746,9 @@ impl FileProcessor {
         let relative_path =
             apply_audiobook_naming_pattern(&pattern, &author, &audiobook, original_filename, ext);
         let dest_path = Path::new(&library.path).join(&relative_path);
+
+        self.check_destination_conflict(pending_match, &dest_path, library.id)
+            .await?;
 
         // Copy file with chapter_id set
         let media_file = self
@@ -653,6 +782,120 @@ impl FileProcessor {
     // =========================================================================
     // Helper Methods
     // =========================================================================
+
+    async fn check_destination_conflict(
+        &self,
+        pending_match: &PendingFileMatchRecord,
+        dest_path: &Path,
+        library_id: Uuid,
+    ) -> Result<()> {
+        if tokio::fs::metadata(dest_path).await.is_err() {
+            return Ok(());
+        }
+
+        let source_meta = tokio::fs::metadata(&pending_match.source_path)
+            .await
+            .with_context(|| format!("Failed to get metadata for: {}", pending_match.source_path))?;
+        let dest_meta = tokio::fs::metadata(dest_path)
+            .await
+            .with_context(|| format!("Failed to get metadata for: {}", dest_path.display()))?;
+
+        let conflict_type = if source_meta.len() == dest_meta.len() {
+            "duplicate"
+        } else {
+            "size_mismatch"
+        };
+
+        let notification = CreateNotification {
+            user_id: pending_match.user_id,
+            title: "Destination conflict detected".to_string(),
+            message: format!(
+                "Destination already exists for {}. Manual resolution required.",
+                dest_path.display()
+            ),
+            notification_type: NotificationType::ActionRequired,
+            category: NotificationCategory::Matching,
+            library_id: Some(library_id),
+            torrent_id: pending_match.source_id,
+            media_file_id: None,
+            pending_match_id: Some(pending_match.id),
+            action_type: Some(ActionType::Review),
+            action_data: Some(serde_json::json!({
+                "source_path": pending_match.source_path,
+                "dest_path": dest_path.display().to_string(),
+                "source_size": source_meta.len(),
+                "dest_size": dest_meta.len(),
+                "conflict_type": conflict_type,
+                "options": [
+                    "use_best_quality",
+                    "keep_existing",
+                    "rematch"
+                ]
+            })),
+        };
+
+        if let Err(e) = self.db.notifications().create(notification).await {
+            warn!(
+                pending_match_id = %pending_match.id,
+                error = %e,
+                "Failed to create destination conflict notification"
+            );
+        }
+
+        Err(anyhow::anyhow!(
+            "Destination conflict at {}",
+            dest_path.display()
+        ))
+    }
+
+    async fn check_existing_media_file(
+        &self,
+        pending_match: &PendingFileMatchRecord,
+        existing_media_file_id: Option<Uuid>,
+        library_id: Uuid,
+        item_label: &str,
+    ) -> Result<()> {
+        let Some(existing_id) = existing_media_file_id else {
+            return Ok(());
+        };
+
+        let notification = CreateNotification {
+            user_id: pending_match.user_id,
+            title: "Upgrade decision needed".to_string(),
+            message: format!(
+                "A file already exists for {}. Choose whether to upgrade or keep the current file.",
+                item_label
+            ),
+            notification_type: NotificationType::ActionRequired,
+            category: NotificationCategory::Quality,
+            library_id: Some(library_id),
+            torrent_id: pending_match.source_id,
+            media_file_id: Some(existing_id),
+            pending_match_id: Some(pending_match.id),
+            action_type: Some(ActionType::ConfirmUpgrade),
+            action_data: Some(serde_json::json!({
+                "existing_media_file_id": existing_id,
+                "source_path": pending_match.source_path,
+                "parsed_resolution": pending_match.parsed_resolution,
+                "parsed_codec": pending_match.parsed_codec,
+                "parsed_source": pending_match.parsed_source,
+                "parsed_audio": pending_match.parsed_audio
+            })),
+        };
+
+        if let Err(e) = self.db.notifications().create(notification).await {
+            warn!(
+                pending_match_id = %pending_match.id,
+                error = %e,
+                "Failed to create upgrade notification"
+            );
+        }
+
+        Err(anyhow::anyhow!(
+            "Existing media file for {}",
+            item_label
+        ))
+    }
 
     /// Copy a file to the library and create a media_file record
     ///

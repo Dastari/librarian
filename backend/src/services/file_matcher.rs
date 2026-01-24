@@ -17,8 +17,8 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::db::{
-    CreatePendingFileMatch, Database, LibraryRecord, MatchTarget,
-    PendingFileMatchRecord,
+    ActionType, CreateNotification, CreatePendingFileMatch, Database, LibraryRecord, MatchTarget,
+    NotificationCategory, NotificationType, PendingFileMatchRecord,
 };
 use crate::services::file_utils::{is_audio_file, is_video_file};
 use crate::services::filename_parser::{self, ParsedEpisode, ParsedQuality};
@@ -432,8 +432,8 @@ impl FileMatcher {
 
     /// Save match results to the database as pending file matches
     ///
-    /// Only saves successful matches (not Unmatched or Sample).
-    /// Returns the created records.
+    /// Saves successful matches and unmatched results (for manual review).
+    /// Returns the created records for matched items only.
     pub async fn save_matches(
         &self,
         user_id: Uuid,
@@ -444,35 +444,95 @@ impl FileMatcher {
         let mut records = Vec::new();
 
         for m in matches {
-            if let Some(target) = m.match_target.to_match_target() {
-                let input = CreatePendingFileMatch {
-                    user_id,
-                    source_path: m.file_path.clone(),
-                    source_type: source_type.to_string(),
-                    source_id,
-                    source_file_index: m.file_index,
-                    file_size: m.file_size,
-                    target,
-                    match_type: m.match_type.to_string(),
-                    match_confidence: Some(Decimal::from_f64(m.confidence).unwrap_or_default()),
-                    parsed_resolution: m.quality.resolution.clone(),
-                    parsed_codec: m.quality.codec.clone(),
-                    parsed_source: m.quality.source.clone(),
-                    parsed_audio: m.quality.audio.clone(),
-                };
+            if matches!(m.match_target, FileMatchTarget::Sample) {
+                continue;
+            }
 
-                match self.db.pending_file_matches().create(input).await {
-                    Ok(record) => {
+            let target = m.match_target.to_match_target();
+            let unmatched_reason = match &m.match_target {
+                FileMatchTarget::Unmatched { reason } => Some(reason.clone()),
+                _ => None,
+            };
+            let match_type = if unmatched_reason.is_some() {
+                "unmatched".to_string()
+            } else {
+                m.match_type.to_string()
+            };
+
+            let input = CreatePendingFileMatch {
+                user_id,
+                source_path: m.file_path.clone(),
+                source_type: source_type.to_string(),
+                source_id,
+                source_file_index: m.file_index,
+                file_size: m.file_size,
+                target,
+                unmatched_reason,
+                match_type,
+                match_confidence: Some(Decimal::from_f64(m.confidence).unwrap_or_default()),
+                match_attempts: 1,
+                parsed_resolution: m.quality.resolution.clone(),
+                parsed_codec: m.quality.codec.clone(),
+                parsed_source: m.quality.source.clone(),
+                parsed_audio: m.quality.audio.clone(),
+            };
+
+            let save_result = if input.target.is_some() {
+                self.db.pending_file_matches().create(input).await
+            } else {
+                self.db.pending_file_matches().upsert_unmatched(input).await
+            };
+
+            match save_result {
+                Ok(record) => {
+                    if record.episode_id.is_some()
+                        || record.movie_id.is_some()
+                        || record.track_id.is_some()
+                        || record.chapter_id.is_some()
+                    {
                         // Status is derived from pending_file_matches - no direct update needed
                         records.push(record);
-                    }
-                    Err(e) => {
-                        warn!(
-                            file_path = %m.file_path,
-                            error = %e,
-                            "Failed to save pending file match"
+                    } else if record.match_attempts == 3 {
+                        let torrent_id = if source_type == "torrent" {
+                            source_id
+                        } else {
+                            None
+                        };
+                        let message = format!(
+                            "No match found after multiple attempts: {}",
+                            record.source_path
                         );
+                        let notification = CreateNotification {
+                            user_id,
+                            title: "Manual match needed".to_string(),
+                            message,
+                            notification_type: NotificationType::ActionRequired,
+                            category: NotificationCategory::Matching,
+                            library_id: None,
+                            torrent_id,
+                            media_file_id: None,
+                            pending_match_id: Some(record.id),
+                            action_type: Some(ActionType::ManualMatch),
+                            action_data: Some(serde_json::json!({
+                                "source_path": record.source_path,
+                            })),
+                        };
+
+                        if let Err(e) = self.db.notifications().create(notification).await {
+                            warn!(
+                                pending_match_id = %record.id,
+                                error = %e,
+                                "Failed to create unmatched notification"
+                            );
+                        }
                     }
+                }
+                Err(e) => {
+                    warn!(
+                        file_path = %m.file_path,
+                        error = %e,
+                        "Failed to save pending file match"
+                    );
                 }
             }
         }
@@ -1276,9 +1336,11 @@ impl FileMatcher {
                     source_id: Some(source_id),
                     source_file_index: file.file_index,
                     file_size: file.size,
-                    target: MatchTarget::Track(track_id),
+                    target: Some(MatchTarget::Track(track_id)),
+                    unmatched_reason: None,
                     match_type: "auto".to_string(),
                     match_confidence: Some(Decimal::from_f64(confidence).unwrap_or_default()),
+                    match_attempts: 1,
                     parsed_resolution: quality.resolution,
                     parsed_codec: quality.codec,
                     parsed_source: quality.source,
@@ -1355,9 +1417,11 @@ impl FileMatcher {
                 source_id: Some(source_id),
                 source_file_index: file.file_index,
                 file_size: file.size,
-                target: MatchTarget::Episode(episode_id),
+                target: Some(MatchTarget::Episode(episode_id)),
+                unmatched_reason: None,
                 match_type: "auto".to_string(),
                 match_confidence: Some(Decimal::from(1)), // Known target = 100% confidence
+                match_attempts: 1,
                 parsed_resolution: quality.resolution,
                 parsed_codec: quality.codec,
                 parsed_source: quality.source,
@@ -1429,9 +1493,11 @@ impl FileMatcher {
                 source_id: Some(source_id),
                 source_file_index: file.file_index,
                 file_size: file.size,
-                target: MatchTarget::Movie(movie_id),
+                target: Some(MatchTarget::Movie(movie_id)),
+                unmatched_reason: None,
                 match_type: "auto".to_string(),
                 match_confidence: Some(Decimal::from(1)), // Known target = 100% confidence
+                match_attempts: 1,
                 parsed_resolution: quality.resolution,
                 parsed_codec: quality.codec,
                 parsed_source: quality.source,
@@ -1526,9 +1592,11 @@ impl FileMatcher {
                         source_id: Some(source_id),
                         source_file_index: file.file_index,
                         file_size: file.size,
-                        target: MatchTarget::Chapter(chapter.id),
+                        target: Some(MatchTarget::Chapter(chapter.id)),
+                        unmatched_reason: None,
                         match_type: "auto".to_string(),
                         match_confidence: Some(Decimal::from_f64(0.9).unwrap_or_default()),
+                        match_attempts: 1,
                         parsed_resolution: quality.resolution,
                         parsed_codec: quality.codec,
                         parsed_source: quality.source,
@@ -1653,7 +1721,18 @@ impl FileMatcher {
                         reason = %reason,
                         "Match flagged for review"
                     );
-                    // TODO: When db migration adds verification_status column, update it here
+                    if let Err(e) = self
+                        .db
+                        .pending_file_matches()
+                        .mark_verification_status(pending_match.id, "flagged", Some(&reason))
+                        .await
+                    {
+                        warn!(
+                            pending_match_id = %pending_match.id,
+                            error = %e,
+                            "Failed to mark pending match verification status"
+                        );
+                    }
                     result.flagged += 1;
                 }
                 MatchVerification::NoMetadata => {

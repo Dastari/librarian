@@ -8,6 +8,7 @@
 pub mod artwork;
 pub mod auto_download;
 pub mod auto_hunt;
+pub mod content_progress;
 pub mod download_monitor;
 pub mod rss_poller;
 pub mod scanner;
@@ -17,17 +18,9 @@ pub mod transcode_gc;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
-
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-use sqlx::SqlitePool;
 use tokio_cron_scheduler::{Job, JobScheduler};
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-type DbPool = SqlitePool;
+type DbPool = crate::db::Pool;
 use tracing::{error, info, warn};
 
 use crate::indexer::manager::IndexerManager;
@@ -209,25 +202,9 @@ pub async fn start_scheduler(
     })?;
     scheduler.add(rss_job).await?;
 
-    // Auto-download available episodes - run every 5 minutes (critical - use more retries)
-    let torrent_svc = torrent_service.clone();
-    let download_pool = pool.clone();
-    let auto_dl_retry = critical_retry.clone();
-    let auto_download_job = Job::new_async("0 */5 * * * *", move |_uuid, _l| {
-        let svc = torrent_svc.clone();
-        let p = download_pool.clone();
-        let retry_cfg = auto_dl_retry.clone();
-        Box::pin(async move {
-            info!("Running auto-download check");
-            let _ = run_with_retry("auto_download", &retry_cfg, || {
-                let svc = svc.clone();
-                let p = p.clone();
-                async move { auto_download::process_available_episodes(p, svc).await }
-            })
-            .await;
-        })
-    })?;
-    scheduler.add(auto_download_job).await?;
+    // NOTE: Auto-download job removed - it was deprecated.
+    // Episodes now derive status from media_file_id presence.
+    // Use auto-hunt for automated downloads instead.
 
     // Download monitor - run every minute to process completed torrents (critical)
     let monitor_torrent_svc = torrent_service.clone();

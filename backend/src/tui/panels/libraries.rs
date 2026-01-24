@@ -7,15 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-use sqlx::SqlitePool;
-
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-type DbPool = SqlitePool;
+type DbPool = crate::db::Pool;
 
 use crate::tui::input::Action;
 use crate::tui::panels::Panel;
@@ -54,8 +46,8 @@ pub fn spawn_libraries_updater(pool: DbPool, libraries: SharedLibraries) {
 
 /// Fetch library stats from database
 async fn fetch_library_stats(pool: &DbPool) -> Vec<LibraryStats> {
-    // Query libraries with id, name, type, path
-    let result = sqlx::query_as::<_, (uuid::Uuid, String, String, String)>(
+    // Query libraries with id, name, type, path (id as TEXT for SQLite)
+    let result = sqlx::query_as::<_, (String, String, String, String)>(
         r#"
         SELECT id, name, library_type, path
         FROM libraries
@@ -71,9 +63,9 @@ async fn fetch_library_stats(pool: &DbPool) -> Vec<LibraryStats> {
         for (library_id, name, library_type, path) in libs {
             // Get total size from media_files (same as frontend)
             let total_size = sqlx::query_scalar::<_, i64>(
-                "SELECT COALESCE(SUM(size), 0)::BIGINT FROM media_files WHERE library_id = $1",
+                "SELECT CAST(COALESCE(SUM(size), 0) AS INTEGER) FROM media_files WHERE library_id = ?1",
             )
-            .bind(library_id)
+            .bind(&library_id)
             .fetch_one(pool)
             .await
             .unwrap_or(0);
@@ -82,17 +74,17 @@ async fn fetch_library_stats(pool: &DbPool) -> Vec<LibraryStats> {
             let (item_count, missing_count) = match library_type.as_str() {
                 "movies" => {
                     let count = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM movies WHERE library_id = $1",
+                        "SELECT COUNT(*) FROM movies WHERE library_id = ?1",
                     )
-                    .bind(library_id)
+                    .bind(&library_id)
                     .fetch_one(pool)
                     .await
                     .unwrap_or(0);
 
                     let missing = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM movies WHERE library_id = $1 AND has_file = false",
+                        "SELECT COUNT(*) FROM movies WHERE library_id = ?1 AND has_file = 0",
                     )
-                    .bind(library_id)
+                    .bind(&library_id)
                     .fetch_one(pool)
                     .await
                     .unwrap_or(0);
@@ -101,17 +93,17 @@ async fn fetch_library_stats(pool: &DbPool) -> Vec<LibraryStats> {
                 }
                 "tv" => {
                     let count = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM tv_shows WHERE library_id = $1",
+                        "SELECT COUNT(*) FROM tv_shows WHERE library_id = ?1",
                     )
-                    .bind(library_id)
+                    .bind(&library_id)
                     .fetch_one(pool)
                     .await
                     .unwrap_or(0);
 
                     let missing = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(DISTINCT e.id) FROM episodes e JOIN tv_shows s ON e.tv_show_id = s.id WHERE s.library_id = $1 AND NOT EXISTS (SELECT 1 FROM media_files WHERE episode_id = e.id)"
+                        "SELECT COUNT(DISTINCT e.id) FROM episodes e JOIN tv_shows s ON e.tv_show_id = s.id WHERE s.library_id = ?1 AND NOT EXISTS (SELECT 1 FROM media_files WHERE episode_id = e.id)"
                     )
-                    .bind(library_id)
+                    .bind(&library_id)
                     .fetch_one(pool)
                     .await
                     .unwrap_or(0);
@@ -120,9 +112,9 @@ async fn fetch_library_stats(pool: &DbPool) -> Vec<LibraryStats> {
                 }
                 "music" => {
                     let count = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM albums WHERE library_id = $1",
+                        "SELECT COUNT(*) FROM albums WHERE library_id = ?1",
                     )
-                    .bind(library_id)
+                    .bind(&library_id)
                     .fetch_one(pool)
                     .await
                     .unwrap_or(0);
@@ -131,9 +123,9 @@ async fn fetch_library_stats(pool: &DbPool) -> Vec<LibraryStats> {
                 }
                 "audiobooks" => {
                     let count = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM audiobooks WHERE library_id = $1",
+                        "SELECT COUNT(*) FROM audiobooks WHERE library_id = ?1",
                     )
-                    .bind(library_id)
+                    .bind(&library_id)
                     .fetch_one(pool)
                     .await
                     .unwrap_or(0);

@@ -40,3 +40,6 @@ export { LibraryAudiobooksTab } from './LibraryAudiobooksTab'
 export { LibraryAuthorsTab } from './LibraryAuthorsTab'
 export { AudiobookCard, type AudiobookCardProps } from './AudiobookCard'
 export { AddAudiobookModal } from './AddAudiobookModal'
+
+// Manual matching
+export { ManualMatchModal, type ManualMatchModalProps } from './ManualMatchModal'

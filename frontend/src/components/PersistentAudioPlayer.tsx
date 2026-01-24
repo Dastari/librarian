@@ -429,6 +429,7 @@ export function PersistentAudioPlayer() {
                 className={shuffleEnabled ? 'text-primary' : 'text-default-500'}
                 onPress={toggleShuffle}
                 isDisabled={!hasQueue}
+                aria-label={shuffleEnabled ? 'Shuffle on' : 'Shuffle off'}
               >
                 <IconArrowsShuffle size={18} />
               </Button>
@@ -442,6 +443,7 @@ export function PersistentAudioPlayer() {
                 variant="light"
                 onPress={() => playPrevious()}
                 isDisabled={!hasQueue && isFirst}
+                aria-label="Previous track"
               >
                 <IconPlayerTrackPrev size={20} />
               </Button>
@@ -455,6 +457,7 @@ export function PersistentAudioPlayer() {
               variant="solid"
               className="rounded-full"
               onPress={togglePlay}
+              aria-label={isPaused ? 'Play' : 'Pause'}
             >
               {isPaused ? <IconPlayerPlay size={24} /> : <IconPlayerPause size={24} />}
             </Button>
@@ -467,6 +470,7 @@ export function PersistentAudioPlayer() {
                 variant="light"
                 onPress={() => playNext()}
                 isDisabled={!hasQueue && isLast && repeatMode !== 'all'}
+                aria-label="Next track"
               >
                 <IconPlayerTrackNext size={20} />
               </Button>
@@ -483,6 +487,7 @@ export function PersistentAudioPlayer() {
                 variant="light"
                 className={repeatMode !== 'off' ? 'text-primary' : 'text-default-500'}
                 onPress={cycleRepeatMode}
+                aria-label={repeatMode === 'off' ? 'Repeat off' : repeatMode === 'all' ? 'Repeat all' : 'Repeat one'}
               >
                 {repeatMode === 'one' ? <IconRepeatOnce size={18} /> : <IconRepeat size={18} />}
               </Button>
@@ -537,6 +542,7 @@ export function PersistentAudioPlayer() {
               variant="light"
               className="text-default-500 hover:text-danger"
               onPress={handleStop}
+              aria-label="Stop playback"
             >
               <IconX size={18} />
             </Button>

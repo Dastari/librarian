@@ -4,6 +4,8 @@ use std::env;
 
 use anyhow::{Context, Result};
 
+use crate::app_mode::RunMode;
+
 /// Application configuration loaded from environment variables
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -13,18 +15,9 @@ pub struct Config {
     /// Server port
     pub port: u16,
 
-    /// Database URL (PostgreSQL) or path (SQLite)
+    /// Database URL or path (SQLite)
     /// For SQLite: use DATABASE_PATH or DATABASE_URL with sqlite:// prefix
     pub database_url: String,
-
-    /// Supabase API URL (only required for postgres feature)
-    pub supabase_url: Option<String>,
-
-    /// Supabase anonymous key (only required for postgres feature)
-    pub supabase_anon_key: Option<String>,
-
-    /// Supabase service role key (only required for postgres feature)
-    pub supabase_service_key: Option<String>,
 
     /// JWT secret for token verification
     pub jwt_secret: String,
@@ -55,34 +48,24 @@ pub struct Config {
 
     /// Maximum concurrent torrent downloads
     pub torrent_max_concurrent: usize,
+
+    /// Run mode (server/tray/service)
+    pub run_mode: RunMode,
+
+    /// Auto-start tray on login (Windows)
+    pub tray_autostart: bool,
 }
 
 impl Config {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self> {
         // For SQLite, prefer DATABASE_PATH, fall back to DATABASE_URL
-        #[cfg(feature = "sqlite")]
-        let database_url = env::var("DATABASE_PATH")
+        let mut database_url = env::var("DATABASE_PATH")
             .or_else(|_| env::var("DATABASE_URL"))
             .unwrap_or_else(|_| "./data/librarian.db".to_string());
-
-        #[cfg(feature = "postgres")]
-        let database_url = env::var("DATABASE_URL").context("DATABASE_URL is required")?;
-
-        // Supabase config is only required for postgres feature
-        #[cfg(feature = "postgres")]
-        let (supabase_url, supabase_anon_key, supabase_service_key) = (
-            Some(env::var("SUPABASE_URL").context("SUPABASE_URL is required")?),
-            Some(env::var("SUPABASE_ANON_KEY").context("SUPABASE_ANON_KEY is required")?),
-            Some(env::var("SUPABASE_SERVICE_KEY").context("SUPABASE_SERVICE_KEY is required")?),
-        );
-
-        #[cfg(not(feature = "postgres"))]
-        let (supabase_url, supabase_anon_key, supabase_service_key) = (
-            env::var("SUPABASE_URL").ok(),
-            env::var("SUPABASE_ANON_KEY").ok(),
-            env::var("SUPABASE_SERVICE_KEY").ok(),
-        );
+        if !database_url.starts_with("sqlite:") {
+            database_url = format!("sqlite://{}", database_url);
+        }
 
         // JWT_SECRET is always required - generate a random one if not provided in dev
         let jwt_secret = env::var("JWT_SECRET").unwrap_or_else(|_| {
@@ -104,10 +87,6 @@ impl Config {
                 .context("Invalid PORT")?,
 
             database_url,
-
-            supabase_url,
-            supabase_anon_key,
-            supabase_service_key,
 
             jwt_secret,
 
@@ -137,6 +116,12 @@ impl Config {
                 .unwrap_or_else(|_| "5".to_string())
                 .parse()
                 .unwrap_or(5),
+
+            run_mode: RunMode::from_env(),
+
+            tray_autostart: env::var("TRAY_AUTOSTART")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false),
         })
     }
 }

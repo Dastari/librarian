@@ -20,9 +20,9 @@ This document tracks the implementation status of Librarian's features and outli
 |-----------|------------|
 | Frontend | React 19, TanStack Router, TypeScript, HeroUI, Tailwind CSS v4, pnpm |
 | Backend | Rust, Axum, Tokio, async-graphql |
-| Database | PostgreSQL via Supabase, sqlx (compile-time checks) |
-| Auth | Supabase Auth (JWT) |
-| Storage | Supabase Storage (artwork) |
+| Database | SQLite via sqlx (compile-time checks) |
+| Auth | Local JWT auth |
+| Storage | SQLite artwork cache |
 | Torrent Client | librqbit (native Rust, embedded) |
 | Usenet Client | Native Rust (NNTP + yEnc) |
 | Indexers | Native system (Torznab/Newznab compatible) |
@@ -123,7 +123,7 @@ This document tracks the implementation status of Librarian's features and outli
 
 #### File Organization
 - ✅ Configurable naming patterns with tokens
-- ✅ copy/move/hardlink actions
+- ✅ copy-only actions (move/hardlink deprecated)
 - ✅ Show-level overrides for organization settings
 - ✅ Rename styles: none, clean, preserve_info
 - ✅ Library consolidation for duplicate folder cleanup
@@ -162,7 +162,7 @@ This document tracks the implementation status of Librarian's features and outli
 - ✅ Fuzzy matching with rapidfuzz library
 - ✅ Quality parsed from filename vs verified from FFprobe
 - ✅ Partial downloads (8 of 12 tracks OK)
-- ✅ `active_download_id` on library items for progress display
+- ✅ pending match tracking for download progress (no `active_download_id`)
 - ✅ GraphQL API: rematchSource, processSource, setMatch, removeMatch
 
 #### Usenet Support
@@ -342,11 +342,11 @@ librarian.example.com
     │  Caddy  │  (reverse proxy, auto HTTPS)
     └────┬────┘
          │
-    ┌────┼────────────────┐
-    │    │                │
-    ▼    ▼                ▼
-  /    /graphql        Supabase
-Frontend  Backend       (auth/db)
+    ┌────┼──────────────┐
+    │    │              │
+    ▼    ▼              ▼
+  /    /graphql       SQLite
+Frontend  Backend     (local db)
  :3000    :3001
 ```
 

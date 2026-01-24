@@ -281,7 +281,7 @@ flowchart LR
         C --> M[Filename Format]
         D --> N[Path Pattern]
         
-        E --> O[copy/move/hardlink]
+        E --> O[copy-only]
         
         F --> P[Auto-create Shows]
         G --> Q[Auto-grab Torrents]
@@ -556,15 +556,9 @@ flowchart TD
     J -->|No| L[Mark as Conflicted]
     
     I -->|No| M[Create Parent Dirs]
-    M --> N{post_download_action?}
+    M --> N[Copy File]
     
-    N -->|move| O[Rename or Copy+Delete]
-    N -->|copy| P[Copy File]
-    N -->|hardlink| Q[Create Hard Link]
-    
-    O --> R[Update DB Path]
-    P --> R
-    Q --> R
+    N --> R[Update DB Path]
     
     R --> S[Mark as Organized]
 ```

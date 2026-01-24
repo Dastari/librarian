@@ -18,12 +18,13 @@ use crate::services::{
     TorrentEvent, TorrentService,
 };
 
-use super::auth::AuthGuard;
+use super::auth::{AuthGuard, AuthUser};
 use super::types::{
-    ActiveDownloadCount, CastDevice, CastPlayerState, CastSession, DirectoryChangeEvent,
-    LibraryChangedEvent, LogEventSubscription, LogLevel, MediaFileUpdatedEvent, Notification,
-    NotificationCounts, NotificationEvent, NotificationEventType, TorrentAddedEvent,
-    TorrentCompletedEvent, TorrentProgress, TorrentRemovedEvent, TorrentState,
+    ActiveDownloadCount, CastDevice, CastPlayerState, CastSession, ContentDownloadProgressEvent,
+    DirectoryChangeEvent, LibraryChangedEvent, LogEventSubscription, LogLevel,
+    MediaFileUpdatedEvent, Notification, NotificationCounts, NotificationEvent,
+    NotificationEventType, TorrentAddedEvent, TorrentCompletedEvent, TorrentProgress,
+    TorrentRemovedEvent, TorrentState,
 };
 
 pub struct SubscriptionRoot;
@@ -454,6 +455,43 @@ impl SubscriptionRoot {
         })
     }
 
+    /// Subscribe to content download progress updates
+    ///
+    /// Receives events when content items (movies, episodes, tracks, chapters) linked
+    /// to active downloads have progress updates. Use this to show real-time download
+    /// progress on content detail pages.
+    #[graphql(guard = "AuthGuard")]
+    async fn content_download_progress<'ctx>(
+        &self,
+        ctx: &Context<'ctx>,
+        #[graphql(desc = "Filter to updates for a specific library")] library_id: Option<String>,
+        #[graphql(desc = "Filter to updates for a specific parent (show, album, audiobook)")] parent_id: Option<String>,
+    ) -> impl Stream<Item = ContentDownloadProgressEvent> + 'ctx {
+        let receiver = ctx
+            .data_unchecked::<broadcast::Sender<ContentDownloadProgressEvent>>()
+            .subscribe();
+
+        let filter_library = library_id;
+        let filter_parent = parent_id;
+
+        BroadcastStream::new(receiver).filter_map(move |result| {
+            result.ok().and_then(|event| {
+                // Apply filters if provided
+                if let Some(ref lib_id) = filter_library {
+                    if &event.library_id != lib_id {
+                        return None;
+                    }
+                }
+                if let Some(ref p_id) = filter_parent {
+                    if event.parent_id.as_ref() != Some(p_id) {
+                        return None;
+                    }
+                }
+                Some(event)
+            })
+        })
+    }
+
     // ------------------------------------------------------------------------
     // Filesystem Subscriptions
     // ------------------------------------------------------------------------
@@ -510,10 +548,10 @@ impl SubscriptionRoot {
         let notification_service = ctx.data_unchecked::<Arc<NotificationService>>();
         let receiver = notification_service.subscribe();
 
-        // Get user ID from context for filtering
+        // Get user ID from auth context for filtering
         let user_id = ctx
-            .data_opt::<uuid::Uuid>()
-            .copied()
+            .data_opt::<AuthUser>()
+            .and_then(|auth| uuid::Uuid::parse_str(&auth.user_id).ok())
             .unwrap_or(uuid::Uuid::nil());
 
         BroadcastStream::new(receiver).filter_map(move |result| {
@@ -556,10 +594,10 @@ impl SubscriptionRoot {
         let notification_service = ctx.data_unchecked::<Arc<NotificationService>>();
         let receiver = notification_service.subscribe_counts();
 
-        // Get user ID from context for filtering
+        // Get user ID from auth context for filtering
         let user_id = ctx
-            .data_opt::<uuid::Uuid>()
-            .copied()
+            .data_opt::<AuthUser>()
+            .and_then(|auth| uuid::Uuid::parse_str(&auth.user_id).ok())
             .unwrap_or(uuid::Uuid::nil());
 
         BroadcastStream::new(receiver).filter_map(move |result| {

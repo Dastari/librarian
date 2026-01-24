@@ -5,13 +5,9 @@ use serde_json::Value as JsonValue;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
 #[cfg(feature = "sqlite")]
 use sqlx::SqlitePool;
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
 #[cfg(feature = "sqlite")]
 type DbPool = SqlitePool;
 
@@ -32,23 +28,6 @@ pub struct LogRecord {
     pub created_at: OffsetDateTime,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for LogRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        Ok(Self {
-            id: row.try_get("id")?,
-            timestamp: row.try_get("timestamp")?,
-            level: row.try_get("level")?,
-            target: row.try_get("target")?,
-            message: row.try_get("message")?,
-            fields: row.try_get("fields")?,
-            span_name: row.try_get("span_name")?,
-            span_id: row.try_get("span_id")?,
-            created_at: row.try_get("created_at")?,
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for LogRecord {
@@ -151,26 +130,6 @@ impl LogsRepository {
     }
 
     /// Insert a new log entry
-    #[cfg(feature = "postgres")]
-    pub async fn create(&self, log: CreateLog) -> Result<LogRecord> {
-        let record = sqlx::query_as::<_, LogRecord>(
-            r#"
-            INSERT INTO app_logs (level, target, message, fields, span_name, span_id)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            RETURNING *
-            "#,
-        )
-        .bind(&log.level)
-        .bind(&log.target)
-        .bind(&log.message)
-        .bind(&log.fields)
-        .bind(&log.span_name)
-        .bind(&log.span_id)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn create(&self, log: CreateLog) -> Result<LogRecord> {
@@ -203,36 +162,6 @@ impl LogsRepository {
     }
 
     /// Insert multiple log entries in a batch (for efficiency)
-    #[cfg(feature = "postgres")]
-    pub async fn create_batch(&self, logs: Vec<CreateLog>) -> Result<usize> {
-        if logs.is_empty() {
-            return Ok(0);
-        }
-
-        let mut tx = self.pool.begin().await?;
-        let mut count = 0;
-
-        for log in logs {
-            sqlx::query(
-                r#"
-                INSERT INTO app_logs (level, target, message, fields, span_name, span_id)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                "#,
-            )
-            .bind(&log.level)
-            .bind(&log.target)
-            .bind(&log.message)
-            .bind(&log.fields)
-            .bind(&log.span_name)
-            .bind(&log.span_id)
-            .execute(&mut *tx)
-            .await?;
-            count += 1;
-        }
-
-        tx.commit().await?;
-        Ok(count)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn create_batch(&self, logs: Vec<CreateLog>) -> Result<usize> {
@@ -270,132 +199,6 @@ impl LogsRepository {
     }
 
     /// Get logs with filtering, ordering, and pagination
-    #[cfg(feature = "postgres")]
-    pub async fn list(
-        &self,
-        filter: LogFilter,
-        order_by: Option<LogOrderBy>,
-        limit: i64,
-        offset: i64,
-    ) -> Result<PaginatedLogs> {
-        // Build the WHERE clause dynamically
-        let mut conditions = Vec::new();
-        let mut params_count = 0;
-
-        // Build conditions based on filters
-        if filter.levels.is_some() {
-            params_count += 1;
-            conditions.push(format!("level = ANY(${})", params_count));
-        }
-
-        if filter.target.is_some() {
-            params_count += 1;
-            conditions.push(format!("target ILIKE ${}  || '%'", params_count));
-        }
-
-        if filter.keyword.is_some() {
-            params_count += 1;
-            conditions.push(format!("message ILIKE '%' || ${} || '%'", params_count));
-        }
-
-        if filter.from_timestamp.is_some() {
-            params_count += 1;
-            conditions.push(format!("timestamp >= ${}", params_count));
-        }
-
-        if filter.to_timestamp.is_some() {
-            params_count += 1;
-            conditions.push(format!("timestamp <= ${}", params_count));
-        }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", conditions.join(" AND "))
-        };
-
-        // Build ORDER BY clause - validate field names to prevent SQL injection
-        let order_clause = match &order_by {
-            Some(order) => {
-                let field = match order.field.as_str() {
-                    "timestamp" => "timestamp",
-                    "level" => "level",
-                    "target" => "target",
-                    _ => "timestamp", // Default to timestamp for unknown fields
-                };
-                let direction = if order.direction.to_uppercase() == "ASC" {
-                    "ASC"
-                } else {
-                    "DESC"
-                };
-                format!("ORDER BY {} {}", field, direction)
-            }
-            None => "ORDER BY timestamp DESC".to_string(),
-        };
-
-        // Count query
-        let count_sql = format!("SELECT COUNT(*) as count FROM app_logs {}", where_clause);
-
-        // Data query with limit/offset
-        let data_sql = format!(
-            "SELECT * FROM app_logs {} {} LIMIT ${} OFFSET ${}",
-            where_clause,
-            order_clause,
-            params_count + 1,
-            params_count + 2
-        );
-
-        // Execute count query
-        let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql);
-
-        if let Some(ref levels) = filter.levels {
-            count_query = count_query.bind(levels);
-        }
-        if let Some(ref target) = filter.target {
-            count_query = count_query.bind(target);
-        }
-        if let Some(ref keyword) = filter.keyword {
-            count_query = count_query.bind(keyword);
-        }
-        if let Some(ref from_ts) = filter.from_timestamp {
-            count_query = count_query.bind(from_ts);
-        }
-        if let Some(ref to_ts) = filter.to_timestamp {
-            count_query = count_query.bind(to_ts);
-        }
-
-        let total_count = count_query.fetch_one(&self.pool).await?;
-
-        // Execute data query
-        let mut data_query = sqlx::query_as::<_, LogRecord>(&data_sql);
-
-        if let Some(ref levels) = filter.levels {
-            data_query = data_query.bind(levels);
-        }
-        if let Some(ref target) = filter.target {
-            data_query = data_query.bind(target);
-        }
-        if let Some(ref keyword) = filter.keyword {
-            data_query = data_query.bind(keyword);
-        }
-        if let Some(ref from_ts) = filter.from_timestamp {
-            data_query = data_query.bind(from_ts);
-        }
-        if let Some(ref to_ts) = filter.to_timestamp {
-            data_query = data_query.bind(to_ts);
-        }
-
-        data_query = data_query.bind(limit).bind(offset);
-
-        let logs = data_query.fetch_all(&self.pool).await?;
-        let has_more = (offset + logs.len() as i64) < total_count;
-
-        Ok(PaginatedLogs {
-            logs,
-            total_count,
-            has_more,
-        })
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list(
@@ -548,15 +351,6 @@ impl LogsRepository {
     }
 
     /// Get a single log by ID
-    #[cfg(feature = "postgres")]
-    pub async fn get_by_id(&self, id: Uuid) -> Result<Option<LogRecord>> {
-        let record = sqlx::query_as::<_, LogRecord>("SELECT * FROM app_logs WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_by_id(&self, id: Uuid) -> Result<Option<LogRecord>> {
@@ -569,23 +363,6 @@ impl LogsRepository {
     }
 
     /// Get distinct target values for filtering (top N most common)
-    #[cfg(feature = "postgres")]
-    pub async fn get_distinct_targets(&self, limit: i64) -> Result<Vec<String>> {
-        let targets = sqlx::query_scalar::<_, String>(
-            r#"
-            SELECT target
-            FROM app_logs
-            GROUP BY target
-            ORDER BY COUNT(*) DESC
-            LIMIT $1
-            "#,
-        )
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(targets)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_distinct_targets(&self, limit: i64) -> Result<Vec<String>> {
@@ -622,15 +399,6 @@ impl LogsRepository {
     }
 
     /// Delete logs older than a given timestamp (for cleanup)
-    #[cfg(feature = "postgres")]
-    pub async fn delete_before(&self, before: OffsetDateTime) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM app_logs WHERE timestamp < $1")
-            .bind(before)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(result.rows_affected())
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn delete_before(&self, before: OffsetDateTime) -> Result<u64> {

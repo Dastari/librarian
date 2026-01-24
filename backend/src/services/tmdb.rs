@@ -16,6 +16,7 @@ use tracing::{debug, info, warn};
 use super::rate_limiter::{RateLimitedClient, RetryConfig, retry_async};
 
 /// TMDB API client with rate limiting and retry logic
+#[derive(Clone)]
 pub struct TmdbClient {
     client: Arc<RateLimitedClient>,
     base_url: String,

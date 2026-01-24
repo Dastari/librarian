@@ -4,6 +4,8 @@
 //! All operations are exposed via GraphQL at /graphql.
 
 mod api;
+mod app_mode;
+mod cli;
 mod config;
 mod db;
 mod graphql;
@@ -11,6 +13,8 @@ mod indexer;
 mod jobs;
 mod media;
 mod services;
+#[cfg(feature = "embed-frontend")]
+mod static_assets;
 mod tui;
 mod usenet;
 
@@ -32,6 +36,7 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::api::media::{MediaState, media_routes};
+use crate::cli::CliOptions;
 use crate::config::Config;
 use crate::db::Database;
 use crate::graphql::{AuthUser, LibrarianSchema, verify_token};
@@ -43,8 +48,6 @@ use crate::services::{
     create_database_layer, create_media_analysis_queue, create_metadata_service_with_artwork,
     create_metrics_collector,
 };
-#[cfg(feature = "postgres")]
-use crate::services::StorageClient;
 use crate::tui::{TuiApp, TuiConfig, create_tui_layer, should_use_tui};
 
 /// Application state shared across all handlers
@@ -64,8 +67,14 @@ pub struct AppState {
 async fn main() -> anyhow::Result<()> {
     // Load configuration first (before tracing, so we can use the database for logging)
     dotenvy::dotenv().ok();
+    let cli = CliOptions::from_args();
     let config = Config::from_env()?;
+    let run_mode = cli.run_mode_override.unwrap_or(config.run_mode);
     let config = Arc::new(config);
+
+    if cfg!(windows) {
+        tracing::info!(?run_mode, "Windows run mode selected");
+    }
 
     // Initialize database connection early so we can use it for logging
     // Uses retry logic to wait for database to become available
@@ -148,34 +157,16 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Torrent service initialized with database persistence");
 
     // Initialize artwork service
-    #[cfg(feature = "postgres")]
-    let artwork_service = {
-        use crate::services::artwork::{ArtworkService, ensure_artwork_bucket, StorageClient};
-        
-        let storage_client = StorageClient::new(
-            config.supabase_url.clone().expect("SUPABASE_URL required for postgres feature"),
-            config.supabase_service_key.clone().expect("SUPABASE_SERVICE_KEY required for postgres feature"),
-        );
-
-        // Ensure artwork bucket exists
-        if let Err(e) = ensure_artwork_bucket(&storage_client).await {
-            tracing::warn!(error = %e, "Failed to create artwork bucket - artwork caching may not work");
-        }
-
-        Arc::new(ArtworkService::new(storage_client))
-    };
-    
-    #[cfg(feature = "sqlite")]
     let artwork_service = {
         use crate::services::artwork::{ArtworkService, ensure_artwork_storage};
-        
+
         let base_url = format!("http://localhost:{}", config.port);
-        
+
         // Ensure artwork storage is ready (SQLite tables exist)
         if let Err(e) = ensure_artwork_storage(&db).await {
             tracing::warn!(error = %e, "Failed to initialize artwork storage");
         }
-        
+
         Arc::new(ArtworkService::new(db.clone(), base_url))
     };
     tracing::info!("Artwork service initialized");
@@ -219,10 +210,12 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let metadata_config = MetadataServiceConfig {
-        tmdb_api_key,
+        tmdb_api_key: tmdb_api_key.clone(),
         tvdb_api_key,
         openai_api_key,
     };
+    // Store TMDB config status for later checks
+    let tmdb_api_configured = tmdb_api_key.is_some();
     let metadata_service =
         create_metadata_service_with_artwork(db.clone(), metadata_config, artwork_service);
     tracing::info!("Metadata service initialized with artwork caching");
@@ -252,6 +245,9 @@ async fn main() -> anyhow::Result<()> {
     // Create library changed broadcast channel for real-time scan status updates
     let (library_changed_tx, _) = tokio::sync::broadcast::channel::<LibraryChangedEvent>(100);
 
+    // Create content download progress broadcast channel for real-time download progress on content pages
+    let (content_progress_tx, _) = tokio::sync::broadcast::channel::<graphql::ContentDownloadProgressEvent>(100);
+
     // Initialize IndexerManager early so we can pass it to ScannerService for auto-hunt
     let indexer_manager = match db.settings().get_or_create_indexer_encryption_key().await {
         Ok(encryption_key) => {
@@ -272,12 +268,17 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Initialize notification service early so scanner can use it
+    let notification_service = services::create_notification_service(db.clone());
+    tracing::info!("Notification service initialized");
+
     // Initialize scanner service with analysis queue, library broadcast, and auto-hunt services
     let scanner_service = {
         let mut scanner = ScannerService::new(db.clone(), metadata_service.clone())
             .with_analysis_queue(analysis_queue.clone())
             .with_library_changed_tx(library_changed_tx.clone())
-            .with_torrent_service(torrent_service.clone());
+            .with_torrent_service(torrent_service.clone())
+            .with_notification_service(notification_service.clone());
 
         // Add IndexerManager if available for post-scan auto-hunt
         if let Some(ref mgr) = indexer_manager {
@@ -313,10 +314,6 @@ async fn main() -> anyhow::Result<()> {
     let filesystem_service = FilesystemService::new(db.clone(), filesystem_config);
     tracing::info!("Filesystem service initialized");
 
-    // Initialize notification service for user alerts
-    let notification_service = services::create_notification_service(db.clone());
-    tracing::info!("Notification service initialized");
-
     // Initialize auth service for user authentication
     // Use JWT_SECRET from environment (which was set by initialize_jwt_secret)
     let auth_config = AuthConfig::from_env();
@@ -337,6 +334,7 @@ async fn main() -> anyhow::Result<()> {
         Some(log_broadcast_sender),
         Some(library_changed_tx),
         Some(media_file_tx),
+        Some(content_progress_tx.clone()),
     );
     tracing::info!("GraphQL schema built");
 
@@ -365,6 +363,90 @@ async fn main() -> anyhow::Result<()> {
 
     let _completion_handle = completion_handler.start();
     tracing::info!("Torrent completion handler started");
+
+    // Start content download progress monitor for real-time progress on content pages
+    let progress_db = db.clone();
+    let progress_torrent_svc = torrent_service.clone();
+    let progress_tx_for_monitor = content_progress_tx;
+    tokio::spawn(async move {
+        jobs::content_progress::start_content_progress_monitor(
+            progress_db,
+            progress_torrent_svc,
+            progress_tx_for_monitor,
+        )
+        .await;
+    });
+    tracing::info!("Content download progress monitor started");
+
+    // Check system configuration and create notifications for issues
+    {
+        use crate::db::NotificationCategory;
+        let notification_svc = notification_service.clone();
+        let torrent_svc = torrent_service.clone();
+        let tmdb_configured = tmdb_api_configured;
+
+        tokio::spawn(async move {
+            // Short delay to ensure users are created
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+            // Check if torrent download path is using temp directory
+            let download_dir = torrent_svc.download_dir();
+            let temp_dir = std::env::temp_dir();
+            if download_dir.starts_with(&temp_dir) {
+                tracing::warn!(
+                    "Torrent download directory is using temp folder: {}",
+                    download_dir.display()
+                );
+                if let Err(e) = notification_svc
+                    .create_system_warning(
+                        "Torrent downloads using temporary folder".to_string(),
+                        format!(
+                            "Downloads are being saved to a temporary folder ({}) which may be cleared on reboot. \
+                            Configure a permanent download path in Settings → Downloads.",
+                            download_dir.display()
+                        ),
+                        NotificationCategory::Configuration,
+                    )
+                    .await
+                {
+                    tracing::warn!("Failed to create temp folder warning notification: {}", e);
+                }
+            }
+
+            // Store TMDB config status for library creation checks
+            if !tmdb_configured {
+                tracing::info!("TMDB API key not configured - movie metadata will be limited");
+            }
+
+            // Check UPnP status and notify if port forwarding failed
+            if let Some(upnp_result) = torrent_svc.upnp_result() {
+                if !upnp_result.success {
+                    let port = torrent_svc.listen_port();
+                    let error_msg = upnp_result.error.as_deref().unwrap_or("Unknown error");
+                    tracing::warn!(
+                        "UPnP port forwarding failed for port {}: {}",
+                        port, error_msg
+                    );
+                    if let Err(e) = notification_svc
+                        .create_system_warning(
+                            "Port forwarding required for torrents".to_string(),
+                            format!(
+                                "Automatic UPnP port forwarding failed: {}. \
+                                For best torrent performance, manually forward port {} (TCP and UDP) \
+                                in your router settings. Without port forwarding, downloads may be slower \
+                                and some peers may be unreachable.",
+                                error_msg, port
+                            ),
+                            NotificationCategory::Configuration,
+                        )
+                        .await
+                    {
+                        tracing::warn!("Failed to create UPnP warning notification: {}", e);
+                    }
+                }
+            }
+        });
+    }
 
     // Trigger initial schedule sync in the background
     // This ensures the schedule cache is populated on first startup
@@ -458,12 +540,6 @@ async fn main() -> anyhow::Result<()> {
         .route("/graphql", get(graphiql).post(graphql_handler))
         // GraphQL WebSocket endpoint for subscriptions
         .route("/graphql/ws", get(graphql_ws_handler))
-        // Static file serving for frontend SPA (SQLite self-hosted mode)
-        // Falls back to index.html for client-side routing
-        .fallback_service(
-            ServeDir::new("./static")
-                .not_found_service(ServeFile::new("./static/index.html"))
-        )
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
@@ -472,6 +548,15 @@ async fn main() -> anyhow::Result<()> {
         )
         .layer(TraceLayer::new_for_http())
         .with_state(state);
+
+    #[cfg(feature = "embed-frontend")]
+    let app = app.fallback(static_assets::embedded_fallback);
+
+    #[cfg(not(feature = "embed-frontend"))]
+    let app = app.fallback_service(
+        ServeDir::new("./static")
+            .not_found_service(ServeFile::new("./static/index.html")),
+    );
 
     // Start server
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));

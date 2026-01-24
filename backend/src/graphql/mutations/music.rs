@@ -1,7 +1,23 @@
 use super::prelude::*;
+use tokio::sync::broadcast;
 
 #[derive(Default)]
 pub struct MusicMutations;
+
+/// Helper to broadcast library change events
+async fn broadcast_library_changed(ctx: &Context<'_>, library_id: Uuid) {
+    if let Ok(tx) = ctx.data::<broadcast::Sender<LibraryChangedEvent>>() {
+        let db = ctx.data_unchecked::<Database>();
+        if let Ok(Some(lib)) = db.libraries().get_by_id(library_id).await {
+            let _ = tx.send(LibraryChangedEvent {
+                change_type: LibraryChangeType::Updated,
+                library_id: library_id.to_string(),
+                library_name: Some(lib.name.clone()),
+                library: Some(Library::from_db(lib)),
+            });
+        }
+    }
+}
 
 #[Object]
 impl MusicMutations {
@@ -53,6 +69,9 @@ impl MusicMutations {
                     "User added album: {}",
                     record.name
                 );
+
+                // Broadcast library change event for UI reactivity
+                broadcast_library_changed(ctx, lib_id).await;
 
                 // Trigger immediate auto-hunt if the library has auto_hunt enabled
                 {
@@ -182,7 +201,7 @@ impl MusicMutations {
         let album_id = Uuid::parse_str(&id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid album ID: {}", e)))?;
 
-        // Verify album exists
+        // Verify album exists and get library_id for broadcast
         let album = db
             .albums()
             .get_by_id(album_id)
@@ -196,11 +215,17 @@ impl MusicMutations {
             });
         }
 
+        let library_id = album.as_ref().map(|a| a.library_id);
+
         // Delete the album and all associated data
         match db.albums().delete(album_id).await {
             Ok(deleted) => {
                 if deleted {
                     tracing::info!("Deleted album {}", album_id);
+                    // Broadcast library change event for UI reactivity
+                    if let Some(lib_id) = library_id {
+                        broadcast_library_changed(ctx, lib_id).await;
+                    }
                     Ok(MutationResult {
                         success: true,
                         error: None,

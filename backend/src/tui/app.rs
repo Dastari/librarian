@@ -11,16 +11,9 @@ use crossterm::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
-#[cfg(feature = "sqlite")]
-use sqlx::SqlitePool;
 use tokio::sync::broadcast;
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
-#[cfg(feature = "sqlite")]
-type DbPool = SqlitePool;
+type DbPool = crate::db::Pool;
 
 use crate::services::{LogEvent, SharedMetrics, TorrentService};
 use crate::tui::input::{Action, InputHandler};

@@ -14,16 +14,7 @@
 use anyhow::Result;
 use chrono::Datelike;
 use regex::Regex;
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-use sqlx::SqlitePool;
 use std::sync::Arc;
-
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
-type DbPool = SqlitePool;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
@@ -44,24 +35,17 @@ const FEED_BATCH_DELAY_MS: u64 = 200;
 
 /// Poll all RSS feeds that are due for polling
 pub async fn poll_feeds() -> Result<()> {
-    // RSS episode matching is deprecated - episodes now derive status from media_file_id
-    // and downloads are tracked via pending_file_matches. Use auto-hunt instead.
-    warn!("RSS feed polling with episode matching is deprecated. Use auto-hunt for automated downloads.");
-    
-    info!("Starting RSS feed poll job (fetch-only mode)");
+    debug!("Starting RSS feed poll job");
 
     // Get database path/URL from environment
-    #[cfg(feature = "sqlite")]
-    let database_url = std::env::var("DATABASE_PATH")
+    let mut database_url = std::env::var("DATABASE_PATH")
         .or_else(|_| std::env::var("DATABASE_URL"))
         .unwrap_or_else(|_| "./data/librarian.db".to_string());
+    if !database_url.starts_with("sqlite:") {
+        database_url = format!("sqlite://{}", database_url);
+    }
 
-    #[cfg(feature = "postgres")]
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://localhost/librarian".to_string());
-
-    let pool = DbPool::connect(&database_url).await?;
-    let db = Database::new(pool);
+    let db = Database::connect(&database_url).await?;
 
     poll_feeds_with_db(&db).await
 }
@@ -684,6 +668,9 @@ async fn try_match_episode(
 /// NOTE: This function no longer stores torrent_link on episodes.
 /// Episode status is now derived from media_file_id presence.
 /// Returns the episode ID if found and wanted (no media file).
+/// Respects the show's monitor_type setting:
+/// - ALL: Match any episode without a file
+/// - FUTURE: Only match episodes that aired after the show was added
 async fn try_exact_match(
     db: &Database,
     show_id: Uuid,
@@ -702,9 +689,25 @@ async fn try_exact_match(
         // - No media_file_id = wanted/missing
         // - Has media_file_id = downloaded
         if ep.media_file_id.is_none() {
-            // Episode is wanted (no media file linked)
-            // Note: We no longer store torrent_link on episodes.
-            // The download would need to be triggered via auto-hunt or manual action.
+            // Get the show to check monitor_type
+            if let Some(show) = db.tv_shows().get_by_id(show_id).await? {
+                // For FUTURE monitor type, check if episode aired after show was added
+                if show.monitor_type.to_uppercase() == "FUTURE" {
+                    if let Some(air_date) = &ep.air_date {
+                        let show_added = show.created_at.date_naive();
+                        if *air_date < show_added {
+                            debug!(
+                                episode_id = %ep.id,
+                                air_date = %air_date,
+                                show_added = %show_added,
+                                "Episode aired before show was added, skipping (FUTURE mode)"
+                            );
+                            return Ok(None);
+                        }
+                    }
+                }
+            }
+
             debug!(
                 episode_id = %ep.id,
                 season = ep.season,
@@ -740,10 +743,11 @@ async fn try_absolute_match(
     // we need to find the nth episode of that "scene season"
 
     // First, get all seasons for this show to understand the numbering
+    use crate::db::sqlite_helpers::uuid_to_str;
     let seasons: Vec<(i32,)> = sqlx::query_as(
-        "SELECT DISTINCT season FROM episodes WHERE tv_show_id = $1 ORDER BY season",
+        "SELECT DISTINCT season FROM episodes WHERE tv_show_id = ?1 ORDER BY season",
     )
-    .bind(show_id)
+    .bind(uuid_to_str(show_id))
     .fetch_all(db.pool())
     .await?;
 
@@ -763,11 +767,11 @@ async fn try_absolute_match(
             let episodes: Vec<(Uuid, i32, i32, Option<Uuid>)> = sqlx::query_as(
                 r#"
                 SELECT id, season, episode, media_file_id FROM episodes
-                WHERE tv_show_id = $1 AND season = $2
+                WHERE tv_show_id = ?1 AND season = ?2
                 ORDER BY episode
                 "#,
             )
-            .bind(show_id)
+            .bind(uuid_to_str(show_id))
             .bind(year_season)
             .fetch_all(db.pool())
             .await?;
@@ -805,13 +809,13 @@ async fn try_absolute_match(
     let rows: Vec<(Uuid, i32, i32)> = sqlx::query_as(
         r#"
         SELECT id, season, episode FROM episodes
-        WHERE tv_show_id = $1
+        WHERE tv_show_id = ?1
           AND media_file_id IS NULL
-          AND absolute_number = $2
+          AND absolute_number = ?2
         LIMIT 1
         "#,
     )
-    .bind(show_id)
+    .bind(uuid_to_str(show_id))
     .bind(estimated_absolute)
     .fetch_all(db.pool())
     .await?;
@@ -875,14 +879,16 @@ fn transform_iptorrents_link(page_url: &str, title: &str, feed_url: &str) -> Opt
 /// Find TV shows with names matching the given normalized name
 async fn find_matching_shows(db: &Database, normalized_name: &str) -> Result<Vec<Uuid>> {
     // Query for shows with matching names (case-insensitive, normalized)
+    // Excludes shows with monitor_type = 'NONE' since they don't want auto-downloads
     let rows: Vec<(Uuid,)> = sqlx::query_as(
         r#"
         SELECT id FROM tv_shows
         WHERE monitored = true
+          AND UPPER(monitor_type) != 'NONE'
           AND (
             LOWER(REPLACE(REPLACE(REPLACE(name, '.', ' '), '-', ' '), '_', ' ')) 
-            LIKE '%' || $1 || '%'
-            OR LOWER(name) LIKE '%' || $1 || '%'
+            LIKE '%' || ?1 || '%'
+            OR LOWER(name) LIKE '%' || ?1 || '%'
           )
         "#,
     )

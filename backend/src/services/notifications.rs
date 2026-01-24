@@ -122,6 +122,8 @@ impl NotificationService {
     /// Create a notification with all options
     pub async fn create_full(&self, notification: CreateNotification) -> Result<NotificationRecord> {
         let user_id = notification.user_id;
+        let title = notification.title.clone();
+        let category = notification.category;
 
         // Check for duplicate notification
         if self
@@ -136,9 +138,11 @@ impl NotificationService {
             )
             .await?
         {
-            debug!(
-                "Skipping duplicate notification for user {} in category {:?}",
-                user_id, notification.category
+            info!(
+                user_id = %user_id,
+                category = ?category,
+                title = %title,
+                "Returning existing notification (duplicate prevention)"
             );
             // Return the existing record (or just skip)
             let existing = self
@@ -245,6 +249,101 @@ impl NotificationService {
             .await
     }
 
+    /// Create a system-wide notification for all users
+    ///
+    /// Used for configuration issues, system warnings, etc.
+    pub async fn create_system_warning(
+        &self,
+        title: String,
+        message: String,
+        category: NotificationCategory,
+    ) -> Result<Vec<NotificationRecord>> {
+        let users = self.db.users().list_all().await?;
+        let mut records = Vec::new();
+
+        for user in users {
+            let user_id = match Uuid::parse_str(&user.id) {
+                Ok(id) => id,
+                Err(e) => {
+                    warn!("Invalid user ID {}: {}", user.id, e);
+                    continue;
+                }
+            };
+            match self
+                .create_warning(user_id, title.clone(), message.clone(), category)
+                .await
+            {
+                Ok(record) => records.push(record),
+                Err(e) => {
+                    warn!(
+                        "Failed to create system notification for user {}: {}",
+                        user.id, e
+                    );
+                }
+            }
+        }
+
+        if records.is_empty() {
+            debug!("No users found to send system notification to");
+        } else {
+            info!(
+                "Created system notification '{}' for {} users",
+                title,
+                records.len()
+            );
+        }
+
+        Ok(records)
+    }
+
+    /// Create a system-wide action-required notification for all users
+    pub async fn create_system_action_required(
+        &self,
+        title: String,
+        message: String,
+        category: NotificationCategory,
+        action_type: ActionType,
+        action_data: Option<JsonValue>,
+    ) -> Result<Vec<NotificationRecord>> {
+        let users = self.db.users().list_all().await?;
+        let mut records = Vec::new();
+
+        for user in users {
+            let user_id = match Uuid::parse_str(&user.id) {
+                Ok(id) => id,
+                Err(e) => {
+                    warn!("Invalid user ID {}: {}", user.id, e);
+                    continue;
+                }
+            };
+            match self
+                .create_action_required(
+                    user_id,
+                    title.clone(),
+                    message.clone(),
+                    category,
+                    action_type,
+                    action_data.clone(),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+            {
+                Ok(record) => records.push(record),
+                Err(e) => {
+                    warn!(
+                        "Failed to create system notification for user {}: {}",
+                        user.id, e
+                    );
+                }
+            }
+        }
+
+        Ok(records)
+    }
+
     /// Get a notification by ID
     pub async fn get(&self, id: Uuid) -> Result<Option<NotificationRecord>> {
         self.db.notifications().get_by_id(id).await
@@ -280,6 +379,11 @@ impl NotificationService {
     /// Get recent notifications for popover display
     pub async fn get_recent(&self, user_id: Uuid, limit: i64) -> Result<Vec<NotificationRecord>> {
         self.db.notifications().get_recent(user_id, limit).await
+    }
+
+    /// Get recent unread notifications (for navbar popover)
+    pub async fn get_recent_unread(&self, user_id: Uuid, limit: i64) -> Result<Vec<NotificationRecord>> {
+        self.db.notifications().get_recent_unread(user_id, limit).await
     }
 
     /// Mark a notification as read

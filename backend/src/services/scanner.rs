@@ -144,6 +144,10 @@ pub struct ScannerService {
     torrent_service: Option<Arc<TorrentService>>,
     /// Optional IndexerManager for auto-hunt after scans
     indexer_manager: Option<Arc<IndexerManager>>,
+    /// Optional notification service for user alerts
+    notification_service: Option<Arc<super::NotificationService>>,
+    /// Track if we've already notified about missing TMDB key (to avoid spam)
+    tmdb_key_notified: std::sync::atomic::AtomicBool,
 }
 
 impl ScannerService {
@@ -167,6 +171,8 @@ impl ScannerService {
             config,
             metadata_semaphore,
             analysis_queue: None,
+            notification_service: None,
+            tmdb_key_notified: std::sync::atomic::AtomicBool::new(false),
             library_changed_tx: None,
             torrent_service: None,
             indexer_manager: None,
@@ -197,6 +203,12 @@ impl ScannerService {
         self
     }
 
+    /// Set the notification service for user alerts
+    pub fn with_notification_service(mut self, service: Arc<super::NotificationService>) -> Self {
+        self.notification_service = Some(service);
+        self
+    }
+
     /// Subscribe to scan progress updates - for GraphQL subscriptions
     #[allow(dead_code)]
     pub fn subscribe(&self) -> broadcast::Receiver<ScanProgress> {
@@ -220,17 +232,29 @@ impl ScannerService {
 
     /// Scan a specific library
     pub async fn scan_library(&self, library_id: Uuid) -> Result<ScanProgress> {
+        debug!(library_id = %library_id, "scan_library called");
+        
         // Get library info
         let library = self
             .db
             .libraries()
             .get_by_id(library_id)
-            .await?
+            .await
+            .context("Failed to query library from database")?
             .context("Library not found")?;
+
+        debug!(
+            library_id = %library_id,
+            name = %library.name,
+            path = %library.path,
+            library_type = %library.library_type,
+            scanning = library.scanning,
+            "Retrieved library info"
+        );
 
         // Check if already scanning
         if library.scanning {
-            warn!(library_id = %library_id, "Scan already in progress, skipping");
+            warn!(library_id = %library_id, name = %library.name, "Scan already in progress, skipping");
             return Ok(ScanProgress {
                 library_id,
                 library_name: library.name,
@@ -404,7 +428,7 @@ impl ScannerService {
                     progress,
                 )
                 .await?;
-        } else if library_type == "audiobook" && auto_add {
+        } else if library_type == "audiobooks" && auto_add {
             // Audiobook library with auto-add: parse audio files, match OpenLibrary
             progress = self
                 .process_audiobook_library_with_auto_add(
@@ -429,7 +453,7 @@ impl ScannerService {
 
         // Auto-organize files if the library has organize_files enabled
         let is_music_library = library_type == "music";
-        let is_audiobook_library = library_type == "audiobook";
+        let is_audiobook_library = library_type == "audiobooks";
         if library.organize_files
             && (is_tv_library || is_movie_library || is_music_library || is_audiobook_library)
         {
@@ -465,20 +489,10 @@ impl ScannerService {
             true
         } else if library.library_type.to_lowercase() == "tv" {
             // Check for any TV shows with auto_hunt_override = true
-            #[cfg(feature = "postgres")]
-            let has_override: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM tv_shows WHERE library_id = $1 AND auto_hunt_override = true AND monitored = true)"
-            )
-            .bind(library_id)
-            .fetch_one(self.db.pool())
-            .await
-            .unwrap_or(false);
-            
-            #[cfg(all(feature = "sqlite", not(feature = "postgres")))]
             let has_override: bool = {
                 use crate::db::sqlite_helpers::uuid_to_str;
                 let result: Option<i32> = sqlx::query_scalar(
-                    "SELECT 1 FROM tv_shows WHERE library_id = ?1 AND auto_hunt_override = 1 AND monitored = 1 LIMIT 1"
+                    "SELECT 1 FROM tv_shows WHERE library_id = ?1 AND auto_hunt_override = 1 AND monitored = 1 LIMIT 1",
                 )
                 .bind(uuid_to_str(library_id))
                 .fetch_optional(self.db.pool())
@@ -486,7 +500,7 @@ impl ScannerService {
                 .unwrap_or(None);
                 result.is_some()
             };
-            
+
             has_override
         } else {
             false
@@ -808,6 +822,8 @@ impl ScannerService {
         let scanned_files = Arc::new(AtomicI32::new(progress.scanned_files));
         let files_linked = Arc::new(AtomicI32::new(0));
         let new_files = Arc::new(AtomicI32::new(progress.new_files));
+        // Track if we've notified about TMDB key (to avoid spam)
+        let tmdb_notified = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         // Collect movie groups into a vec for parallel processing
         let movie_groups: Vec<((String, Option<u32>), Vec<DiscoveredFile>)> =
@@ -841,6 +857,8 @@ impl ScannerService {
                 let total_files = progress.total_files;
                 let analysis_queue = self.analysis_queue.clone();
                 let year = *year;
+                let notification_service = self.notification_service.clone();
+                let tmdb_key_notified = tmdb_notified.clone();
 
                 let handle = tokio::spawn(async move {
                     // Acquire semaphore permit for metadata operations
@@ -877,7 +895,47 @@ impl ScannerService {
                             None
                         }
                         Err(e) => {
-                            error!(title = %title, year = ?year, error = %e, "Error finding/creating movie");
+                            let error_str = e.to_string();
+                            error!(
+                                title = %title, 
+                                year = ?year, 
+                                error = %e, 
+                                "Error fetching metadata for '{}': {}", title, e
+                            );
+                            
+                            // Create notification for TMDB API key issues (only once per scan)
+                            // Use create_system_warning to notify all users since this is a system config issue
+                            let is_tmdb_error = error_str.to_lowercase().contains("tmdb api key");
+                            if is_tmdb_error {
+                                let was_notified = tmdb_key_notified.swap(true, Ordering::SeqCst);
+                                if !was_notified {
+                                    if let Some(notif_svc) = &notification_service {
+                                        info!(movie = %title, "Creating TMDB API key notification for all users");
+                                        match notif_svc
+                                            .create_system_warning(
+                                                "TMDB API key not configured".to_string(),
+                                                format!(
+                                                    "Could not fetch metadata for '{}'. TMDB API key is not configured. \
+                                                    Add your TMDB API key in Settings → Metadata to enable movie metadata, \
+                                                    posters, and search.",
+                                                    title
+                                                ),
+                                                crate::db::NotificationCategory::Configuration,
+                                            )
+                                            .await
+                                        {
+                                            Ok(records) => info!(
+                                                count = records.len(),
+                                                "TMDB API key notification created for all users"
+                                            ),
+                                            Err(e) => error!(error = %e, "Failed to create TMDB notification"),
+                                        }
+                                    } else {
+                                        error!("Notification service not configured on scanner - this is a bug");
+                                    }
+                                }
+                            }
+                            
                             None
                         }
                     };
@@ -1065,10 +1123,36 @@ impl ScannerService {
         let media_files_repo = db.media_files();
         if let Some(existing_file) = media_files_repo.get_by_path(&file.path).await? {
             if existing_file.movie_id.is_some() {
-                debug!(path = %file.path, "File already linked to movie, skipping");
+                // File already linked - but check if it needs analysis
+                if existing_file.ffprobe_analyzed_at.is_none() {
+                    // File was never analyzed - queue it now
+                    if let Some(queue) = analysis_queue {
+                        debug!(
+                            path = %file.path,
+                            media_file_id = %existing_file.id,
+                            "File already linked but not analyzed (ffprobe_analyzed_at is null), queueing for analysis"
+                        );
+                        let job = MediaAnalysisJob {
+                            media_file_id: existing_file.id,
+                            path: std::path::PathBuf::from(&file.path),
+                            check_subtitles: true,
+                        };
+                        if let Err(e) = queue.submit(job).await {
+                            warn!(
+                                media_file_id = %existing_file.id,
+                                error = %e,
+                                "Failed to queue existing file for analysis"
+                            );
+                        }
+                    }
+                }
                 return Ok(());
             }
             // File exists but not linked - will be handled by FileProcessor below
+            debug!(
+                path = %file.path,
+                "File exists in database but not linked to movie, will link now"
+            );
         }
 
         // Get the library to use with FileMatcher
@@ -1335,26 +1419,32 @@ impl ScannerService {
 
                             info!("Verifying: {} (linked to: {})", file_name, linked_to);
 
-                            match Self::verify_music_file_link(&db, &file.path, &existing_file).await {
-                                Ok(true) => {
-                                    debug!("Verified OK: {}", file_name);
-                                }
-                                Ok(false) => {
-                                    // Mismatch detected - try to fix
-                                    match Self::try_fix_music_file_link(&db, library_id, &file.path, &existing_file).await {
-                                        Ok(true) => {
-                                            info!("Auto-corrected: {} -> new album link", file_name);
-                                        }
-                                        Ok(false) => {
-                                            warn!("Could not auto-correct: {} - manual review needed", file_name);
-                                        }
-                                        Err(e) => {
-                                            warn!("Error fixing {}: {}", file_name, e);
+                            // Skip verification/auto-correction for manually matched files
+                            // Manual matches should never be overwritten by automatic matching
+                            if existing_file.match_type.as_deref() == Some("manual") {
+                                debug!("Skipping verification for manually matched file: {}", file_name);
+                            } else {
+                                match Self::verify_music_file_link(&db, &file.path, &existing_file).await {
+                                    Ok(true) => {
+                                        debug!("Verified OK: {}", file_name);
+                                    }
+                                    Ok(false) => {
+                                        // Mismatch detected - try to fix
+                                        match Self::try_fix_music_file_link(&db, library_id, &file.path, &existing_file).await {
+                                            Ok(true) => {
+                                                info!("Auto-corrected: {} -> new album link", file_name);
+                                            }
+                                            Ok(false) => {
+                                                warn!("Could not auto-correct: {} - manual review needed", file_name);
+                                            }
+                                            Err(e) => {
+                                                warn!("Error fixing {}: {}", file_name, e);
+                                            }
                                         }
                                     }
-                                }
-                                Err(e) => {
-                                    warn!("Error verifying {}: {}", file_name, e);
+                                    Err(e) => {
+                                        warn!("Error verifying {}: {}", file_name, e);
+                                    }
                                 }
                             }
                         } else if let Some(album_id) = album_id {
@@ -1882,12 +1972,14 @@ impl ScannerService {
         // AND clear any OTHER tracks that incorrectly have media_file_id pointing to this file
         // Note: Status is derived from media_file_id presence, so we only update media_file_id
         if let Some(correct_track_id) = existing_file.track_id {
+            use crate::db::sqlite_helpers::uuid_to_str;
+            
             // 1. Clear any OTHER tracks that incorrectly point to this file
             let cleared = sqlx::query(
-                "UPDATE tracks SET media_file_id = NULL WHERE media_file_id = $1 AND id != $2"
+                "UPDATE tracks SET media_file_id = NULL WHERE media_file_id = ?1 AND id != ?2"
             )
-            .bind(existing_file.id)
-            .bind(correct_track_id)
+            .bind(uuid_to_str(existing_file.id))
+            .bind(uuid_to_str(correct_track_id))
             .execute(db.pool())
             .await?;
 
@@ -1900,10 +1992,10 @@ impl ScannerService {
 
             // 2. Ensure the correct track has media_file_id pointing to this file
             sqlx::query(
-                "UPDATE tracks SET media_file_id = $1 WHERE id = $2"
+                "UPDATE tracks SET media_file_id = ?1 WHERE id = ?2"
             )
-            .bind(existing_file.id)
-            .bind(correct_track_id)
+            .bind(uuid_to_str(existing_file.id))
+            .bind(uuid_to_str(correct_track_id))
             .execute(db.pool())
             .await?;
         }
@@ -1925,6 +2017,15 @@ impl ScannerService {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or(file_path);
+
+        // Never auto-correct manually matched files
+        if existing_file.match_type.as_deref() == Some("manual") {
+            debug!(
+                file = %file_name,
+                "Skipping auto-correction for manually matched file"
+            );
+            return Ok(false);
+        }
 
         // Read embedded metadata
         let metadata = match Self::read_audio_metadata(file_path) {
@@ -1950,6 +2051,7 @@ impl ScannerService {
             cover_art_base64: None, // Album art extracted by queues processor
             cover_art_mime: None,
             lyrics: None, // Lyrics extracted by queues processor
+            ..Default::default()
         };
 
         db.media_files()
@@ -1996,8 +2098,9 @@ impl ScannerService {
                             // Note: Status is derived from media_file_id presence
                             if let Some(old_track_id) = existing_file.track_id {
                                 if old_track_id != *track_id {
-                                    sqlx::query("UPDATE tracks SET media_file_id = NULL WHERE id = $1")
-                                        .bind(old_track_id)
+                                    use crate::db::sqlite_helpers::uuid_to_str;
+                                    sqlx::query("UPDATE tracks SET media_file_id = NULL WHERE id = ?1")
+                                        .bind(uuid_to_str(old_track_id))
                                         .execute(db.pool())
                                         .await?;
                                     debug!(
@@ -2022,11 +2125,14 @@ impl ScannerService {
 
                             // Update the NEW track: set media_file_id
                             // Note: Status is derived from media_file_id presence
-                            sqlx::query("UPDATE tracks SET media_file_id = $1 WHERE id = $2")
-                                .bind(existing_file.id)
-                                .bind(track_id)
-                                .execute(db.pool())
-                                .await?;
+                            {
+                                use crate::db::sqlite_helpers::uuid_to_str;
+                                sqlx::query("UPDATE tracks SET media_file_id = ?1 WHERE id = ?2")
+                                    .bind(uuid_to_str(existing_file.id))
+                                    .bind(uuid_to_str(*track_id))
+                                    .execute(db.pool())
+                                    .await?;
+                            }
                             debug!(
                                 "Linked new track {}: media_file_id={}",
                                 track_id, existing_file.id
@@ -2202,10 +2308,36 @@ impl ScannerService {
         let media_files_repo = db.media_files();
         if let Some(existing_file) = media_files_repo.get_by_path(&file.path).await? {
             if existing_file.episode_id.is_some() {
-                debug!(path = %file.path, "File already linked to episode, skipping");
+                // File already linked - but check if it needs analysis
+                if existing_file.ffprobe_analyzed_at.is_none() {
+                    // File was never analyzed - queue it now
+                    if let Some(queue) = analysis_queue {
+                        debug!(
+                            path = %file.path,
+                            media_file_id = %existing_file.id,
+                            "File already linked but not analyzed (ffprobe_analyzed_at is null), queueing for analysis"
+                        );
+                        let job = MediaAnalysisJob {
+                            media_file_id: existing_file.id,
+                            path: std::path::PathBuf::from(&file.path),
+                            check_subtitles: true,
+                        };
+                        if let Err(e) = queue.submit(job).await {
+                            warn!(
+                                media_file_id = %existing_file.id,
+                                error = %e,
+                                "Failed to queue existing file for analysis"
+                            );
+                        }
+                    }
+                }
                 return Ok(());
             }
             // File exists but not linked - will be handled by FileProcessor below
+            debug!(
+                path = %file.path,
+                "File exists in database but not linked to episode, will link now"
+            );
         }
 
         // Get the library to use with FileMatcher
@@ -2444,10 +2576,36 @@ impl ScannerService {
         let media_files_repo = db.media_files();
         if let Some(existing_file) = media_files_repo.get_by_path(&file.path).await? {
             if existing_file.track_id.is_some() {
-                debug!(path = %file.path, "File already linked to track, skipping");
+                // File already linked - but check if it needs analysis
+                if existing_file.ffprobe_analyzed_at.is_none() {
+                    // File was never analyzed - queue it now
+                    if let Some(queue) = analysis_queue {
+                        debug!(
+                            path = %file.path,
+                            media_file_id = %existing_file.id,
+                            "File already linked but not analyzed (ffprobe_analyzed_at is null), queueing for analysis"
+                        );
+                        let job = MediaAnalysisJob {
+                            media_file_id: existing_file.id,
+                            path: std::path::PathBuf::from(&file.path),
+                            check_subtitles: false,
+                        };
+                        if let Err(e) = queue.submit(job).await {
+                            warn!(
+                                media_file_id = %existing_file.id,
+                                error = %e,
+                                "Failed to queue existing file for analysis"
+                            );
+                        }
+                    }
+                }
                 return Ok(());
             }
             // File exists but not linked - will be handled by FileProcessor below
+            debug!(
+                path = %file.path,
+                "File exists in database but not linked to track, will link now"
+            );
         }
 
         // Get the library to use with FileMatcher
@@ -2582,10 +2740,36 @@ impl ScannerService {
         let media_files_repo = db.media_files();
         if let Some(existing_file) = media_files_repo.get_by_path(&file.path).await? {
             if existing_file.chapter_id.is_some() {
-                debug!(path = %file.path, "File already linked to chapter, skipping");
+                // File already linked - but check if it needs analysis
+                if existing_file.ffprobe_analyzed_at.is_none() {
+                    // File was never analyzed - queue it now
+                    if let Some(queue) = analysis_queue {
+                        debug!(
+                            path = %file.path,
+                            media_file_id = %existing_file.id,
+                            "File already linked but not analyzed (ffprobe_analyzed_at is null), queueing for analysis"
+                        );
+                        let job = MediaAnalysisJob {
+                            media_file_id: existing_file.id,
+                            path: std::path::PathBuf::from(&file.path),
+                            check_subtitles: false,
+                        };
+                        if let Err(e) = queue.submit(job).await {
+                            warn!(
+                                media_file_id = %existing_file.id,
+                                error = %e,
+                                "Failed to queue existing file for analysis"
+                            );
+                        }
+                    }
+                }
                 return Ok(());
             }
             // File exists but not linked - will be handled by FileProcessor below
+            debug!(
+                path = %file.path,
+                "File exists in database but not linked to chapter, will link now"
+            );
         }
 
         // Get the library to use with FileMatcher
@@ -2864,12 +3048,18 @@ impl ScannerService {
 
     /// Scan all libraries (for scheduled job)
     pub async fn scan_all_libraries(&self) -> Result<()> {
+        use crate::db::sqlite_helpers::str_to_uuid;
         let pool = self.db.pool();
 
-        let library_ids: Vec<Uuid> =
+        let library_id_strs: Vec<String> =
             sqlx::query_scalar("SELECT id FROM libraries WHERE auto_scan = true")
                 .fetch_all(pool)
                 .await?;
+
+        let library_ids: Vec<Uuid> = library_id_strs
+            .iter()
+            .filter_map(|s| str_to_uuid(s).ok())
+            .collect();
 
         info!(
             count = library_ids.len(),
@@ -2962,7 +3152,7 @@ impl ScannerService {
             );
         }
 
-        // Step 3: Clean up orphan files (hardlinks left behind after organization)
+        // Step 3: Clean up orphan files (legacy links left behind after organization)
         match organizer.cleanup_orphan_files(library_id).await {
             Ok(cleanup) => {
                 if cleanup.folders_removed > 0 {

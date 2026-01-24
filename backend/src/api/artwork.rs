@@ -99,16 +99,9 @@ async fn storage_stats(
     (StatusCode::OK, axum::Json(response)).into_response()
 }
 
-/// Create the artwork router (SQLite mode)
-#[cfg(feature = "sqlite")]
+/// Create the artwork router
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/artwork/{entity_type}/{entity_id}/{artwork_type}", get(serve_artwork))
         .route("/artwork/stats", get(storage_stats))
-}
-
-/// Placeholder router for PostgreSQL mode (Supabase handles artwork)
-#[cfg(feature = "postgres")]
-pub fn router() -> Router<crate::AppState> {
-    Router::new()
 }

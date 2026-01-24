@@ -130,13 +130,9 @@ function deleteCookie(name: string): void {
 export function getAccessToken(): string | null {
   try {
     const token = getCookie(COOKIE_NAMES.ACCESS_TOKEN);
-    // Debug in development - use warn for visibility
-    if (import.meta.env?.DEV) {
-      if (!token) {
-        console.warn("[Auth] No access token cookie found - user needs to sign in");
-      } else {
-        console.debug(`[Auth] Access token found: ${token.substring(0, 30)}...`);
-      }
+    // Only log when token is found (debug level) - no token is normal for unauthenticated users
+    if (import.meta.env?.DEV && token) {
+      console.debug(`[Auth] Access token found: ${token.substring(0, 30)}...`);
     }
     return token;
   } catch (e) {

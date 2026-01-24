@@ -174,7 +174,8 @@ pub struct CoverArtArchiveResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoverArtImage {
-    pub id: u64,
+    /// Image ID - Cover Art Archive returns this as a string
+    pub id: String,
     pub image: String,
     pub thumbnails: CoverArtThumbnails,
     pub front: bool,

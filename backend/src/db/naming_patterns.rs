@@ -5,16 +5,12 @@
 use anyhow::Result;
 use uuid::Uuid;
 
-#[cfg(feature = "postgres")]
-use sqlx::PgPool;
 #[cfg(feature = "sqlite")]
 use sqlx::SqlitePool;
 
 #[cfg(feature = "sqlite")]
 use crate::db::sqlite_helpers::{bool_to_int, int_to_bool, str_to_datetime, str_to_uuid, uuid_to_str};
 
-#[cfg(feature = "postgres")]
-type DbPool = PgPool;
 #[cfg(feature = "sqlite")]
 type DbPool = SqlitePool;
 
@@ -31,22 +27,6 @@ pub struct NamingPatternRecord {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[cfg(feature = "postgres")]
-impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for NamingPatternRecord {
-    fn from_row(row: &sqlx::postgres::PgRow) -> sqlx::Result<Self> {
-        use sqlx::Row;
-        Ok(Self {
-            id: row.try_get("id")?,
-            name: row.try_get("name")?,
-            pattern: row.try_get("pattern")?,
-            description: row.try_get("description")?,
-            is_default: row.try_get("is_default")?,
-            is_system: row.try_get("is_system")?,
-            library_type: row.try_get("library_type")?,
-            created_at: row.try_get("created_at")?,
-        })
-    }
-}
 
 #[cfg(feature = "sqlite")]
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for NamingPatternRecord {
@@ -114,22 +94,6 @@ impl NamingPatternRepository {
     }
 
     /// List naming patterns by library type
-    #[cfg(feature = "postgres")]
-    pub async fn list_by_type(&self, library_type: &str) -> Result<Vec<NamingPatternRecord>> {
-        let records = sqlx::query_as::<_, NamingPatternRecord>(
-            r#"
-            SELECT id, name, pattern, description, is_default, is_system, library_type, created_at
-            FROM naming_patterns
-            WHERE library_type = $1
-            ORDER BY is_default DESC, is_system DESC, name ASC
-            "#,
-        )
-        .bind(library_type)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(records)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn list_by_type(&self, library_type: &str) -> Result<Vec<NamingPatternRecord>> {
@@ -149,21 +113,6 @@ impl NamingPatternRepository {
     }
 
     /// Get a naming pattern by ID
-    #[cfg(feature = "postgres")]
-    pub async fn get_by_id(&self, id: Uuid) -> Result<Option<NamingPatternRecord>> {
-        let record = sqlx::query_as::<_, NamingPatternRecord>(
-            r#"
-            SELECT id, name, pattern, description, is_default, is_system, library_type, created_at
-            FROM naming_patterns
-            WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_by_id(&self, id: Uuid) -> Result<Option<NamingPatternRecord>> {
@@ -182,25 +131,6 @@ impl NamingPatternRepository {
     }
 
     /// Get the default naming pattern for a library type
-    #[cfg(feature = "postgres")]
-    pub async fn get_default_for_type(
-        &self,
-        library_type: &str,
-    ) -> Result<Option<NamingPatternRecord>> {
-        let record = sqlx::query_as::<_, NamingPatternRecord>(
-            r#"
-            SELECT id, name, pattern, description, is_default, is_system, library_type, created_at
-            FROM naming_patterns
-            WHERE is_default = true AND library_type = $1
-            LIMIT 1
-            "#,
-        )
-        .bind(library_type)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn get_default_for_type(
@@ -250,24 +180,6 @@ impl NamingPatternRepository {
     }
 
     /// Create a custom naming pattern (user-created, not system)
-    #[cfg(feature = "postgres")]
-    pub async fn create(&self, input: CreateNamingPattern) -> Result<NamingPatternRecord> {
-        let record = sqlx::query_as::<_, NamingPatternRecord>(
-            r#"
-            INSERT INTO naming_patterns (name, pattern, description, is_default, is_system, library_type)
-            VALUES ($1, $2, $3, false, false, $4)
-            RETURNING id, name, pattern, description, is_default, is_system, library_type, created_at
-            "#,
-        )
-        .bind(&input.name)
-        .bind(&input.pattern)
-        .bind(&input.description)
-        .bind(&input.library_type)
-        .fetch_one(&self.pool)
-        .await?;
-
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn create(&self, input: CreateNamingPattern) -> Result<NamingPatternRecord> {
@@ -294,20 +206,6 @@ impl NamingPatternRepository {
     }
 
     /// Delete a naming pattern (only non-system patterns can be deleted)
-    #[cfg(feature = "postgres")]
-    pub async fn delete(&self, id: Uuid) -> Result<bool> {
-        let result = sqlx::query(
-            r#"
-            DELETE FROM naming_patterns 
-            WHERE id = $1 AND is_system = false
-            "#,
-        )
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn delete(&self, id: Uuid) -> Result<bool> {
@@ -325,58 +223,6 @@ impl NamingPatternRepository {
     }
 
     /// Update a naming pattern (only non-system patterns can be updated)
-    #[cfg(feature = "postgres")]
-    pub async fn update(
-        &self,
-        id: Uuid,
-        input: UpdateNamingPattern,
-    ) -> Result<Option<NamingPatternRecord>> {
-        // Build dynamic update query
-        let mut set_clauses = Vec::new();
-        let mut param_idx = 2; // $1 is id
-
-        if input.name.is_some() {
-            set_clauses.push(format!("name = ${}", param_idx));
-            param_idx += 1;
-        }
-        if input.pattern.is_some() {
-            set_clauses.push(format!("pattern = ${}", param_idx));
-            param_idx += 1;
-        }
-        if input.description.is_some() {
-            set_clauses.push(format!("description = ${}", param_idx));
-        }
-
-        if set_clauses.is_empty() {
-            // Nothing to update, just return the existing record
-            return self.get_by_id(id).await;
-        }
-
-        let query = format!(
-            r#"
-            UPDATE naming_patterns
-            SET {}
-            WHERE id = $1 AND is_system = false
-            RETURNING id, name, pattern, description, is_default, is_system, library_type, created_at
-            "#,
-            set_clauses.join(", ")
-        );
-
-        let mut query_builder = sqlx::query_as::<_, NamingPatternRecord>(&query).bind(id);
-
-        if let Some(name) = &input.name {
-            query_builder = query_builder.bind(name);
-        }
-        if let Some(pattern) = &input.pattern {
-            query_builder = query_builder.bind(pattern);
-        }
-        if let Some(description) = &input.description {
-            query_builder = query_builder.bind(description);
-        }
-
-        let record = query_builder.fetch_optional(&self.pool).await?;
-        Ok(record)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn update(
@@ -438,31 +284,6 @@ impl NamingPatternRepository {
     }
 
     /// Set a pattern as the default for its library type (unsets any existing default for that type)
-    #[cfg(feature = "postgres")]
-    pub async fn set_default(&self, id: Uuid) -> Result<bool> {
-        // Get the pattern's library type first
-        let pattern = self.get_by_id(id).await?;
-        let library_type = match pattern {
-            Some(p) => p.library_type.unwrap_or_else(|| "tv".to_string()),
-            None => return Ok(false),
-        };
-
-        // Unset defaults for this library type
-        sqlx::query(
-            "UPDATE naming_patterns SET is_default = false WHERE is_default = true AND library_type = $1",
-        )
-        .bind(&library_type)
-        .execute(&self.pool)
-        .await?;
-
-        // Set the new default
-        let result = sqlx::query("UPDATE naming_patterns SET is_default = true WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-
-        Ok(result.rows_affected() > 0)
-    }
 
     #[cfg(feature = "sqlite")]
     pub async fn set_default(&self, id: Uuid) -> Result<bool> {

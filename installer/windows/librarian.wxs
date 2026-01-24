@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?ifndef ProductName?>
+  <?define ProductName="Librarian" ?>
+<?endif?>
+<?ifndef Manufacturer?>
+  <?define Manufacturer="Librarian" ?>
+<?endif?>
+<?ifndef Version?>
+  <?define Version="1.0.0" ?>
+<?endif?>
+<?ifndef UpgradeCode?>
+  <?define UpgradeCode="8D2C5C0B-5B37-4A3F-9A78-8B2A1E0E0C01" ?>
+<?endif?>
+<?ifndef SourceDir?>
+  <?define SourceDir="windows\\x86_64" ?>
+<?endif?>
+
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="$(var.ProductName)"
+    Manufacturer="$(var.Manufacturer)"
+    Version="$(var.Version)"
+    UpgradeCode="$(var.UpgradeCode)"
+    Compressed="yes"
+    InstallerVersion="500">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of $(var.ProductName) is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFilesFolder">
+      <Directory Id="INSTALLFOLDER" Name="$(var.ProductName)">
+        <Component Id="MainExecutable" Guid="2D785E8E-0C77-4A92-A3EA-03C8B3B95A03">
+          <File Id="LibrarianExe" Source="$(var.SourceDir)\\librarian.exe" KeyPath="yes" />
+        </Component>
+        <Component Id="FfprobeExecutable" Guid="A0F3E2A5-3C2D-4E9E-9E72-BBF08A61F5A1">
+          <File Id="FfprobeExe" Source="$(var.SourceDir)\\ffprobe.exe" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="ProductFeature" Title="$(var.ProductName)" Level="1">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="FfprobeExecutable" />
+    </Feature>
+  </Package>
+</Wix>

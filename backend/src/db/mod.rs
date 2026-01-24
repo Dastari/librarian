@@ -1,8 +1,6 @@
 //! Database connection and operations
 //!
-//! This module supports both PostgreSQL and SQLite backends via feature flags.
-//! - `postgres` feature: Uses PostgreSQL (original backend)
-//! - `sqlite` feature: Uses SQLite (for self-hosted deployment)
+//! This module uses SQLite for the local-first backend.
 //!
 //! Re-exports are provided for convenience, even if not all are used within the crate.
 
@@ -39,16 +37,8 @@ pub mod watch_progress;
 
 use anyhow::Result;
 
-// Database pool type aliases based on feature flags
-// postgres takes precedence when both features are enabled
-#[cfg(feature = "postgres")]
-pub type DbPool = sqlx::PgPool;
-#[cfg(feature = "postgres")]
-use sqlx::postgres::PgPoolOptions as DbPoolOptions;
-
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
+// Database pool type alias for SQLite
 pub type DbPool = sqlx::SqlitePool;
-#[cfg(all(feature = "sqlite", not(feature = "postgres")))]
 use sqlx::sqlite::SqlitePoolOptions as DbPoolOptions;
 
 // Re-export the pool type for external use
@@ -134,20 +124,7 @@ impl Database {
             .unwrap_or(10)
     }
 
-    /// Create a new database connection pool
-    #[cfg(feature = "postgres")]
-    pub async fn connect(url: &str) -> Result<Self> {
-        let max_connections = Self::get_max_connections();
-        let pool = DbPoolOptions::new()
-            .max_connections(max_connections)
-            .connect(url)
-            .await?;
-
-        Ok(Self { pool })
-    }
-
     /// Create a new database connection pool for SQLite
-    #[cfg(feature = "sqlite")]
     pub async fn connect(url: &str) -> Result<Self> {
         use anyhow::Context;
         use sqlx::sqlite::SqliteConnectOptions;
@@ -183,35 +160,7 @@ impl Database {
         Ok(Self { pool })
     }
 
-    /// Create a new database connection pool with retry logic
-    /// Retries every `retry_interval` until successful
-    #[cfg(feature = "postgres")]
-    pub async fn connect_with_retry(url: &str, retry_interval: std::time::Duration) -> Self {
-        let max_connections = Self::get_max_connections();
-        loop {
-            match DbPoolOptions::new()
-                .max_connections(max_connections)
-                .acquire_timeout(std::time::Duration::from_secs(10))
-                .connect(url)
-                .await
-            {
-                Ok(pool) => {
-                    return Self { pool };
-                }
-                Err(e) => {
-                    eprintln!(
-                        "Database connection failed: {}. Retrying in {} seconds...",
-                        e,
-                        retry_interval.as_secs()
-                    );
-                    tokio::time::sleep(retry_interval).await;
-                }
-            }
-        }
-    }
-
     /// Create a new database connection pool with retry logic for SQLite
-    #[cfg(feature = "sqlite")]
     pub async fn connect_with_retry(url: &str, retry_interval: std::time::Duration) -> Self {
         loop {
             match Self::connect(url).await {
@@ -378,19 +327,11 @@ impl Database {
         ArtworkRepository::new(self.pool.clone())
     }
 
-    /// Run database migrations (PostgreSQL)
-    #[cfg(feature = "postgres")]
-    pub async fn migrate(&self) -> Result<()> {
-        sqlx::migrate!("./migrations").run(&self.pool).await?;
-        Ok(())
-    }
-
     /// Run database migrations (SQLite)
-    /// 
+    ///
     /// For a self-contained application, we handle checksum mismatches gracefully:
     /// if a migration was already applied but the file changed (e.g., due to version updates),
     /// we update the checksum rather than failing.
-    #[cfg(feature = "sqlite")]
     pub async fn migrate(&self) -> Result<()> {
         let migrator = sqlx::migrate!("./migrations_sqlite");
         

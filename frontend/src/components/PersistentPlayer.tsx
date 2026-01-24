@@ -397,10 +397,10 @@ export function PersistentPlayer() {
                           className="text-white"
                         />
                       )}
-                      <Button isIconOnly variant="light" className="text-white" onPress={handleFullscreen}>
+                      <Button isIconOnly variant="light" className="text-white" onPress={handleFullscreen} aria-label="Fullscreen">
                         <IconMaximize size={20} />
                       </Button>
-                      <Button isIconOnly variant="light" className="text-white" onPress={() => setIsExpanded(false)}>
+                      <Button isIconOnly variant="light" className="text-white" onPress={() => setIsExpanded(false)} aria-label="Minimize player">
                         <IconMinimize size={20} />
                       </Button>
                     </div>
@@ -424,10 +424,10 @@ export function PersistentPlayer() {
                     <div className="flex items-center gap-2 text-white">
                       {/* Playback controls group */}
                       <div className="flex items-center">
-                        <Button isIconOnly variant="light" className="text-white" onPress={togglePlay}>
+                        <Button isIconOnly variant="light" className="text-white" onPress={togglePlay} aria-label={isPaused ? "Play" : "Pause"}>
                           {isPaused ? <IconPlayerPlay size={24} /> : <IconPlayerPause size={24} />}
                         </Button>
-                        <Button isIconOnly variant="light" className="text-white" onPress={handleStop}>
+                        <Button isIconOnly variant="light" className="text-white" onPress={handleStop} aria-label="Stop">
                           <IconPlayerStop size={20} />
                         </Button>
                         <VolumeControl
@@ -457,7 +457,7 @@ export function PersistentPlayer() {
         {!isExpanded && (
           <div className="flex items-center justify-between px-2 py-1.5 bg-default-100 rounded-b-lg">
             <div className="flex items-center">
-              <Button isIconOnly size="sm" variant="light" onPress={togglePlay}>
+              <Button isIconOnly size="sm" variant="light" onPress={togglePlay} aria-label={isPaused ? "Play" : "Pause"}>
                 {isPaused ? <IconPlayerPlay size={18} /> : <IconPlayerPause size={18} />}
               </Button>
               <VolumeControl
@@ -468,7 +468,7 @@ export function PersistentPlayer() {
                 size="sm"
                 iconSize={18}
               />
-              <Button isIconOnly size="sm" variant="light" onPress={handleStop}>
+              <Button isIconOnly size="sm" variant="light" onPress={handleStop} aria-label="Stop">
                 <IconPlayerStop size={18} />
               </Button>
             </div>

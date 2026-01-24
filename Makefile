@@ -1,8 +1,8 @@
 # Librarian Makefile
 # Common commands for development and deployment
 
-.PHONY: help dev dev-backend dev-frontend supabase-start supabase-stop \
-        build docker-up docker-down docker-logs clean test lint \
+.PHONY: help dev dev-backend dev-frontend \
+        build docker-up docker-down docker-logs clean test lint distro \
         db-migrate db-migrate-info db-migrate-revert db-migrate-add
 
 # Default target
@@ -13,12 +13,6 @@ help:
 	@echo "  make dev            - Start all development services"
 	@echo "  make dev-backend    - Start Rust backend in dev mode"
 	@echo "  make dev-frontend   - Start frontend in dev mode"
-	@echo ""
-	@echo "Supabase:"
-	@echo "  make supabase-start - Start Supabase local stack"
-	@echo "  make supabase-stop  - Stop Supabase local stack"
-	@echo "  make supabase-reset - Reset Supabase database"
-	@echo "  make supabase-status - Show Supabase status and keys"
 	@echo ""
 	@echo "Database:"
 	@echo "  make db-migrate     - Run all pending migrations"
@@ -44,13 +38,14 @@ help:
 	@echo "  make build          - Build all projects"
 	@echo "  make test           - Run all tests"
 	@echo "  make lint           - Run linters"
+	@echo "  make distro         - Build distro artifacts (Linux + Windows)"
 	@echo "  make clean          - Clean build artifacts"
 
 # =============================================================================
 # Development
 # =============================================================================
 
-dev: supabase-start
+dev:
 	@echo "Starting development services..."
 	@make -j2 dev-backend dev-frontend
 
@@ -61,49 +56,31 @@ dev-frontend:
 	cd frontend && pnpm run dev
 
 # =============================================================================
-# Supabase
-# =============================================================================
-
-supabase-start:
-	@echo "Starting Supabase local stack..."
-	supabase start
-
-supabase-stop:
-	@echo "Stopping Supabase local stack..."
-	supabase stop
-
-supabase-reset:
-	@echo "Resetting Supabase database..."
-	supabase db reset
-
-supabase-status:
-	supabase status
-
-# =============================================================================
 # Database Migrations
 # =============================================================================
 
-# Default database URL for local Supabase
-DATABASE_URL ?= postgresql://postgres:postgres@127.0.0.1:54322/postgres
+# Default SQLite database path for local development
+DATABASE_PATH ?= ./data/librarian.db
+DATABASE_URL ?= sqlite://$(DATABASE_PATH)
 
 db-migrate:
 	@echo "Running database migrations..."
-	cd backend && DATABASE_URL="$(DATABASE_URL)" sqlx migrate run
+	cd backend && DATABASE_URL="$(DATABASE_URL)" sqlx migrate run --source migrations_sqlite
 
 db-migrate-info:
 	@echo "Migration status:"
-	cd backend && DATABASE_URL="$(DATABASE_URL)" sqlx migrate info
+	cd backend && DATABASE_URL="$(DATABASE_URL)" sqlx migrate info --source migrations_sqlite
 
 db-migrate-revert:
 	@echo "Reverting last migration..."
-	cd backend && DATABASE_URL="$(DATABASE_URL)" sqlx migrate revert
+	cd backend && DATABASE_URL="$(DATABASE_URL)" sqlx migrate revert --source migrations_sqlite
 
 db-migrate-add:
 ifndef NAME
 	$(error NAME is required. Usage: make db-migrate-add NAME=my_migration)
 endif
 	@echo "Creating new migration: $(NAME)"
-	cd backend && sqlx migrate add $(NAME)
+	cd backend && sqlx migrate add $(NAME) --source migrations_sqlite
 
 # =============================================================================
 # Docker (Development)
@@ -166,6 +143,13 @@ build-backend:
 
 build-frontend:
 	cd frontend && pnpm run build
+
+# =============================================================================
+# Distribution
+# =============================================================================
+
+distro:
+	./scripts/build-distro.sh
 
 # =============================================================================
 # Testing

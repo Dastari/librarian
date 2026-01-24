@@ -10,7 +10,7 @@ use async_graphql::{MergedObject, Schema};
 use crate::db::Database;
 use crate::graphql::mutations;
 use crate::graphql::queries;
-use crate::graphql::types::{LibraryChangedEvent, MediaFileUpdatedEvent};
+use crate::graphql::types::{ContentDownloadProgressEvent, LibraryChangedEvent, MediaFileUpdatedEvent};
 use crate::services::{
     AuthService, CastService, FilesystemService, LogEvent, MetadataService, NotificationService,
     ScannerService, TorrentService,
@@ -35,6 +35,7 @@ pub fn build_schema(
     log_broadcast: Option<tokio::sync::broadcast::Sender<LogEvent>>,
     library_broadcast: Option<tokio::sync::broadcast::Sender<LibraryChangedEvent>>,
     media_file_broadcast: Option<tokio::sync::broadcast::Sender<MediaFileUpdatedEvent>>,
+    content_progress_broadcast: Option<tokio::sync::broadcast::Sender<ContentDownloadProgressEvent>>,
 ) -> LibrarianSchema {
     // Create library events broadcast channel (use provided or create new)
     let library_tx = library_broadcast
@@ -43,6 +44,10 @@ pub fn build_schema(
     // Create media file updated broadcast channel (use provided or create new)
     let media_file_tx = media_file_broadcast
         .unwrap_or_else(|| tokio::sync::broadcast::channel::<MediaFileUpdatedEvent>(100).0);
+
+    // Create content download progress broadcast channel (use provided or create new)
+    let content_progress_tx = content_progress_broadcast
+        .unwrap_or_else(|| tokio::sync::broadcast::channel::<ContentDownloadProgressEvent>(100).0);
 
     let mut schema = Schema::build(
         QueryRoot::default(),
@@ -59,7 +64,8 @@ pub fn build_schema(
     .data(db)
     .data(analysis_queue)
     .data(library_tx)
-    .data(media_file_tx);
+    .data(media_file_tx)
+    .data(content_progress_tx);
 
     // Add log broadcast sender if provided
     if let Some(sender) = log_broadcast {

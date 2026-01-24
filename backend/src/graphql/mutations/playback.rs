@@ -505,7 +505,7 @@ impl PlaybackMutations {
                         };
 
                     if let Some((content_type, content_id)) = content_info {
-                        tracing::info!(
+                        tracing::debug!(
                             "Persisting watch progress: user={}, type={:?}, content={}, position={:.1}s",
                             user_id,
                             content_type,
@@ -523,7 +523,7 @@ impl PlaybackMutations {
                         };
 
                         match db.watch_progress().upsert_progress(wp_input).await {
-                            Ok(wp) => tracing::info!(
+                            Ok(wp) => tracing::debug!(
                                 "Watch progress saved: content={}, progress={:.1}%, is_watched={}",
                                 content_id,
                                 wp.progress_percent * 100.0,

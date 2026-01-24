@@ -113,6 +113,42 @@ impl LibraryMutations {
             });
         }
 
+        // Check if this is a movie library and TMDB isn't configured
+        if input.library_type == LibraryType::Movies {
+            let settings = db.settings();
+            let tmdb_configured = match settings.get_value::<String>("metadata.tmdb_api_key").await {
+                Ok(Some(key)) if !key.is_empty() => true,
+                _ => std::env::var("TMDB_API_KEY").map(|k| !k.is_empty()).unwrap_or(false),
+            };
+
+            if !tmdb_configured {
+                // Create a notification warning about missing TMDB config
+                if let Ok(notification_service) = ctx.data::<Arc<crate::services::NotificationService>>() {
+                    let library_name = library.name.clone();
+                    let notification_svc = notification_service.clone();
+                    let notify_user_id = user_id;
+                    tokio::spawn(async move {
+                        if let Err(e) = notification_svc
+                            .create_warning(
+                                notify_user_id,
+                                "Movie metadata provider not configured".to_string(),
+                                format!(
+                                    "The movie library '{}' was created, but TMDB API is not configured. \
+                                    Movie metadata, posters, and search will be limited. \
+                                    Add your TMDB API key in Settings → Metadata to enable full functionality.",
+                                    library_name
+                                ),
+                                crate::db::NotificationCategory::Configuration,
+                            )
+                            .await
+                        {
+                            tracing::warn!("Failed to create TMDB warning notification: {}", e);
+                        }
+                    });
+                }
+            }
+        }
+
         Ok(LibraryResult {
             success: true,
             library: Some(library),
@@ -277,16 +313,27 @@ impl LibraryMutations {
         let library_id = Uuid::parse_str(&id)
             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
 
-        tracing::info!("Scan requested for library: {}", id);
+        tracing::info!(library_id = %id, "Scan requested for library");
 
         // Spawn the scan in the background so the mutation returns immediately
         let scanner = scanner.clone();
         tokio::spawn(async move {
-            if let Err(e) = scanner.scan_library(library_id).await {
-                tracing::error!(library_id = %library_id, error = %e, "Library scan failed");
-                // Ensure scanning state is reset on error
-                if let Err(reset_err) = db.libraries().set_scanning(library_id, false).await {
-                    tracing::error!(library_id = %library_id, error = %reset_err, "Failed to reset scanning state");
+            tracing::debug!(library_id = %library_id, "Scan task started");
+            match scanner.scan_library(library_id).await {
+                Ok(progress) => {
+                    tracing::info!(
+                        library_id = %library_id,
+                        total_files = progress.total_files,
+                        new_files = progress.new_files,
+                        "Library scan completed successfully"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(library_id = %library_id, error = %e, "Library scan failed");
+                    // Ensure scanning state is reset on error
+                    if let Err(reset_err) = db.libraries().set_scanning(library_id, false).await {
+                        tracing::error!(library_id = %library_id, error = %reset_err, "Failed to reset scanning state");
+                    }
                 }
             }
         });

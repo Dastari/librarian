@@ -9,8 +9,6 @@ use uuid::Uuid;
 
 #[cfg(feature = "sqlite")]
 use sqlx::SqlitePool as Pool;
-#[cfg(feature = "postgres")]
-use sqlx::PgPool as Pool;
 
 use super::sqlite_helpers::now_iso8601;
 
