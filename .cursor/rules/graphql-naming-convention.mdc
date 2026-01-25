@@ -1,0 +1,40 @@
+---
+description: Enforce PascalCase for all GraphQL resolvers, queries, mutations, subscriptions, types, and fields; apply on create and when editing existing definitions. Rust source may remain snake_case internally but must expose PascalCase via GraphQL attributes and Serde.
+globs:
+  - "**/*.graphql"
+  - "**/*.gql"
+  - "**/*.rs"
+alwaysApply: true
+---
+
+You must enforce PascalCase (regex ^[A-Z][A-Za-z0-9]\*$) for every GraphQL-exposed name: operation names, root fields on Query/Mutation/Subscription, object/interface/input fields, type names, union members, enum variants, scalars, and directives. This applies when creating new items and when modifying existing items in .rs, .graphql, and .gql files.
+
+Rust-specific rules:
+• Internal Rust identifiers may remain snake_case.
+• For every GraphQL-exposed item defined in Rust, set an explicit PascalCase name using #[graphql(name = "PascalCaseName")].
+• When exposing structs or payloads as JSON through GraphQL, ensure serde uses PascalCase via #[serde(rename_all = "PascalCase")] or per-field #[serde(rename = "PascalCaseName")] so the resulting GraphQL JSON matches PascalCase.
+
+SDL-specific rules:
+• In .graphql/.gql SDL, all names and fields must be PascalCase.
+• Operation documents intended for the server must use PascalCase operation names.
+
+Validation:
+• Reject or rewrite any GraphQL-exposed name that does not match ^[A-Z][A-Za-z0-9]\*$.
+• Disallow underscores, hyphens, spaces, and leading lowercase for GraphQL-exposed names.
+• Ensure root operation type fields and nested fields are PascalCase.
+• Ensure resolver map keys and export identifiers match the PascalCase GraphQL names.
+
+Autofix procedure:
+
+1. Identify non-PascalCase GraphQL-exposed names in touched files and linked modules.
+2. Compute consistent PascalCase replacements.
+3. In Rust, add or update #[graphql(name = "PascalCase")] on fields, resolvers, objects, and enums; update resolver maps to the PascalCase keys.
+4. Add or update #[serde(rename_all = "PascalCase")] on structs returned through GraphQL, or apply #[serde(rename = "...")] per field to achieve PascalCase.
+5. In SDL files, rename definitions and fields to PascalCase and update all references.
+6. Perform project-wide renames for imported symbols and tests, regenerate codegen if present, and ensure types build cleanly.
+
+Edge cases:
+• If legacy names exist, perform strict rename to PascalCase and update tests, mocks, fixtures, and docs. Do not introduce aliases with different casing.
+• Generated code must not introduce non-PascalCase GraphQL-exposed names.
+
+Output from the agent must not introduce new non-PascalCase GraphQL-exposed names under any circumstances.
