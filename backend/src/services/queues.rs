@@ -880,10 +880,6 @@ fn extract_audio_metadata_with_art(path: &str) -> Option<crate::db::EmbeddedMeta
     // Helper to get a string tag value
     let get_str = |key: ItemKey| tag.get_string(&key).map(|s| s.to_string());
     
-    // Helper to parse a numeric string
-    let parse_int = |s: Option<String>| s.and_then(|v| v.parse::<i32>().ok());
-    let parse_float = |s: Option<String>| s.and_then(|v| v.parse::<f64>().ok());
-
     // =========================================================================
     // Basic metadata
     // =========================================================================

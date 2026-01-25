@@ -25,12 +25,9 @@ use crate::db::movies::MovieRecord;
 use crate::db::tv_shows::TvShowRecord;
 use crate::indexer::manager::IndexerManager;
 use crate::indexer::{ReleaseInfo, TorznabQuery};
-use crate::services::hunt::HuntService;
 use crate::services::TorrentService;
 use crate::services::text_utils::normalize_quality;
 use crate::services::torrent::TorrentInfo;
-use crate::services::file_utils::is_audio_file;
-use crate::services::filename_parser;
 use crate::services::torrent_metadata::{
     extract_audio_files, is_single_file_album, parse_torrent_files,
 };

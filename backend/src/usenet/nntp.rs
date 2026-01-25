@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use native_tls::TlsConnector;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info};
 
 /// NNTP client configuration
 #[derive(Debug, Clone)]

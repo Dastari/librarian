@@ -56,6 +56,6 @@ pub(crate) mod prelude {
     pub(crate) use crate::graphql::pagination::{Connection, parse_pagination_args};
     pub(crate) use crate::graphql::types::*;
     pub(crate) use crate::services::{
-        CastService, FilesystemService, MetadataService, NotificationService, TorrentService,
+        CastService, FilesystemService, MetadataService, TorrentService,
     };
 }

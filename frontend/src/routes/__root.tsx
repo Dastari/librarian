@@ -10,6 +10,7 @@ import { ErrorLogToaster } from '../components/ErrorLogToaster'
 import { GraphQLErrorToaster } from '../components/GraphQLErrorToaster'
 import { PersistentPlayer } from '../components/PersistentPlayer'
 import { PersistentAudioPlayer } from '../components/PersistentAudioPlayer'
+import { CastControlBar } from '../components/cast'
 import { PlaybackProvider, usePlaybackContext } from '../contexts/PlaybackContext'
 import type { AuthContext } from '../lib/auth-context'
 
@@ -101,6 +102,9 @@ function RootLayoutContent() {
 
       {/* Persistent audio player - shows when audio content (tracks/audiobooks) is playing */}
       <PersistentAudioPlayer />
+
+      {/* Cast control bar - shows when casting to a device */}
+      <CastControlBar />
 
       {/* Dev tools - only in development */}
       {import.meta.env.DEV && (

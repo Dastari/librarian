@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use tokio::fs;
 
 use crate::AppState;
+use crate::services::file_utils::normalize_display_path_buf;
 
 #[derive(Debug, Deserialize)]
 pub struct BrowseQuery {
@@ -59,11 +60,31 @@ pub struct QuickPath {
 fn get_quick_paths() -> Vec<QuickPath> {
     let mut paths = vec![];
 
+    if cfg!(windows) {
+        for drive in windows_drive_paths() {
+            let name = drive
+                .to_string_lossy()
+                .trim_end_matches('\\')
+                .to_string();
+            paths.push(QuickPath {
+                name,
+                path: normalize_display_path_buf(&drive),
+            });
+        }
+        if let Some(home) = dirs::home_dir() {
+            paths.push(QuickPath {
+                name: "Home".to_string(),
+                path: normalize_display_path_buf(&home),
+            });
+        }
+        return paths;
+    }
+
     // Home directory
     if let Some(home) = dirs::home_dir() {
         paths.push(QuickPath {
             name: "Home".to_string(),
-            path: home.to_string_lossy().to_string(),
+            path: normalize_display_path_buf(&home),
         });
     }
 
@@ -103,7 +124,13 @@ async fn browse_directory(
     // Determine the path to browse (default to root)
     let requested_path = match &query.path {
         Some(p) if !p.is_empty() => PathBuf::from(p),
-        _ => PathBuf::from("/"),
+        _ => default_browse_path(),
+    };
+    #[cfg(windows)]
+    let requested_path = if requested_path == PathBuf::from("/") {
+        default_browse_path()
+    } else {
+        requested_path
     };
 
     // Canonicalize the path to resolve symlinks and ..
@@ -164,7 +191,7 @@ async fn browse_directory(
 
                 entries.push(FileEntry {
                     name,
-                    path: entry_path.to_string_lossy().to_string(),
+                    path: normalize_display_path_buf(&entry_path),
                     is_dir,
                     size: if is_dir { 0 } else { metadata.len() },
                     readable,
@@ -190,14 +217,49 @@ async fn browse_directory(
     // Get parent path
     let parent_path = canonical_path
         .parent()
-        .map(|p| p.to_string_lossy().to_string());
+        .map(|p| normalize_display_path_buf(p));
 
     Ok(Json(BrowseResponse {
-        current_path: canonical_path.to_string_lossy().to_string(),
+        current_path: normalize_display_path_buf(&canonical_path),
         parent_path,
         entries,
         quick_paths: get_quick_paths(),
     }))
+}
+
+fn windows_drive_paths() -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        let mut drives = Vec::new();
+        for letter in b'A'..=b'Z' {
+            let path = format!("{}:\\", letter as char);
+            if std::path::Path::new(&path).exists() {
+                drives.push(PathBuf::from(path));
+            }
+        }
+        return drives;
+    }
+
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
+fn default_browse_path() -> PathBuf {
+    #[cfg(windows)]
+    {
+        let drives = windows_drive_paths();
+        return drives
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| PathBuf::from("C:\\"));
+    }
+
+    #[cfg(not(windows))]
+    {
+        PathBuf::from("/")
+    }
 }
 
 /// Create a directory on the server

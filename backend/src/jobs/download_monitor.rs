@@ -29,7 +29,7 @@ use crate::services::usenet::UsenetService;
 /// to process all torrents that have pending file matches.
 pub async fn process_completed_torrents(
     pool: DbPool,
-    torrent_service: Arc<TorrentService>,
+    _torrent_service: Arc<TorrentService>,
     analysis_queue: Option<Arc<MediaAnalysisQueue>>,
 ) -> Result<()> {
     let db = Database::new(pool);

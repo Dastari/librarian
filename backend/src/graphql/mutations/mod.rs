@@ -47,7 +47,6 @@ pub(crate) mod prelude {
     pub(crate) use crate::graphql::helpers::*;
     pub(crate) use crate::graphql::types::*;
     pub(crate) use crate::services::{
-        CastService, FilesystemService, MetadataService, NotificationService, ScannerService,
-        TorrentService,
+        CastService, FilesystemService, MetadataService, ScannerService, TorrentService,
     };
 }
