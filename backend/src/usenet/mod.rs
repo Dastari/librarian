@@ -24,5 +24,5 @@ pub mod yenc;
 
 // Re-export commonly used types
 pub use nntp::{NntpClient, NntpConfig};
-pub use nzb::{NzbFile, NzbFileEntry, NzbSegment};
-pub use yenc::{YencDecoded, decode_yenc};
+pub use nzb::{NzbFile, NzbFileEntry};
+pub use yenc::decode_yenc;

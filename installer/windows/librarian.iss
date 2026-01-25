@@ -34,7 +34,6 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "{#SourceDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\ffprobe.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -42,3 +41,13 @@ Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+[Tasks]
+Name: "installffmpeg"; Description: "Install FFmpeg via winget (required for ffprobe)"; Flags: checkedonce
+
+[Run]
+Filename: "winget.exe"; \
+  Parameters: "install -e --id Gyan.FFmpeg"; \
+  StatusMsg: "Installing FFmpeg with winget..."; \
+  Flags: runhidden waituntilterminated; \
+  Tasks: installffmpeg

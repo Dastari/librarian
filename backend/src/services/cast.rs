@@ -505,6 +505,18 @@ impl CastService {
         // Determine media type from file
         let content_type = Self::get_content_type(&media_file.path);
 
+        info!(
+            device_id = %device_id,
+            device_name = %device.name,
+            device_addr = %device.address,
+            device_port = device.port,
+            media_file_id = %media_file_id,
+            stream_url = %stream_url,
+            content_type = %content_type,
+            start_position = start_pos,
+            "Casting media to device"
+        );
+
         tokio::task::spawn_blocking(move || {
             match Self::cast_media_blocking(&addr, port, &stream_url, &content_type, start_pos) {
                 Ok((_transport_id, duration)) => {
@@ -551,6 +563,14 @@ impl CastService {
         content_type: &str,
         start_position: f64,
     ) -> Result<(String, Option<f64>)> {
+        debug!(
+            addr = %addr,
+            port = port,
+            stream_url = %stream_url,
+            content_type = %content_type,
+            start_position = start_position,
+            "Connecting to cast device"
+        );
         let device = RustCastDevice::connect_without_host_verification(addr, port)
             .context("Failed to connect to cast device")?;
 
@@ -618,6 +638,7 @@ impl CastService {
                     .map(|d| d as f64)
             });
 
+        debug!(addr = %addr, duration = ?duration, "Cast media loaded");
         Ok((transport_id, duration))
     }
 
@@ -664,6 +685,7 @@ impl CastService {
         let addr = device.address.to_string();
         let port = device.port as u16;
 
+        info!(session_id = %session_id, addr = %addr, port = port, "Cast play");
         tokio::task::spawn_blocking(move || {
             Self::control_playback_blocking(&addr, port, PlaybackCommand::Play)
         })
@@ -704,6 +726,7 @@ impl CastService {
         let addr = device.address.to_string();
         let port = device.port as u16;
 
+        info!(session_id = %session_id, addr = %addr, port = port, "Cast pause");
         tokio::task::spawn_blocking(move || {
             Self::control_playback_blocking(&addr, port, PlaybackCommand::Pause)
         })
@@ -739,6 +762,7 @@ impl CastService {
                 let addr = device.address.to_string();
                 let port = device.port as u16;
 
+                info!(session_id = %session_id, addr = %addr, port = port, "Cast stop");
                 let _ = tokio::task::spawn_blocking(move || {
                     Self::control_playback_blocking(&addr, port, PlaybackCommand::Stop)
                 })
@@ -770,6 +794,13 @@ impl CastService {
         let addr = device.address.to_string();
         let port = device.port as u16;
 
+        info!(
+            session_id = %session_id,
+            addr = %addr,
+            port = port,
+            position = position,
+            "Cast seek"
+        );
         tokio::task::spawn_blocking(move || {
             Self::control_playback_blocking(&addr, port, PlaybackCommand::Seek(position))
         })
@@ -811,6 +842,13 @@ impl CastService {
         let port = device.port as u16;
         let vol = volume.clamp(0.0, 1.0);
 
+        info!(
+            session_id = %session_id,
+            addr = %addr,
+            port = port,
+            volume = vol,
+            "Cast set volume"
+        );
         tokio::task::spawn_blocking(move || Self::control_volume_blocking(&addr, port, vol, None))
             .await??;
 
@@ -849,6 +887,13 @@ impl CastService {
         let addr = device.address.to_string();
         let port = device.port as u16;
 
+        info!(
+            session_id = %session_id,
+            addr = %addr,
+            port = port,
+            muted = muted,
+            "Cast set muted"
+        );
         tokio::task::spawn_blocking(move || {
             Self::control_volume_blocking(&addr, port, 0.0, Some(muted))
         })

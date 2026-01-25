@@ -31,6 +31,7 @@ use axum::http::header::AUTHORIZATION;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use tower_http::cors::{Any, CorsLayer};
+#[cfg(not(feature = "embed-frontend"))]
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -42,11 +43,10 @@ use crate::db::Database;
 use crate::graphql::{AuthUser, LibrarianSchema, verify_token};
 use crate::graphql::{LibraryChangedEvent, MediaFileUpdatedEvent};
 use crate::services::{
-    ArtworkService, AuthConfig, AuthService, CastService, CastServiceConfig, DatabaseLoggerConfig,
-    FfmpegService, FilesystemService, FilesystemServiceConfig, MediaAnalysisQueue,
-    MetadataServiceConfig, ScannerService, TorrentService, TorrentServiceConfig,
-    create_database_layer, create_media_analysis_queue, create_metadata_service_with_artwork,
-    create_metrics_collector,
+    AuthConfig, AuthService, CastService, CastServiceConfig, DatabaseLoggerConfig, FfmpegService,
+    FilesystemService, FilesystemServiceConfig, MediaAnalysisQueue, MetadataServiceConfig,
+    ScannerService, TorrentService, TorrentServiceConfig, create_database_layer,
+    create_media_analysis_queue, create_metadata_service_with_artwork, create_metrics_collector,
 };
 use crate::tui::{TuiApp, TuiConfig, create_tui_layer, should_use_tui};
 
@@ -65,6 +65,8 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    install_rustls_crypto_provider();
+
     // Load configuration first (before tracing, so we can use the database for logging)
     dotenvy::dotenv().ok();
     let cli = CliOptions::from_args();
@@ -468,7 +470,6 @@ async fn main() -> anyhow::Result<()> {
     let startup_pool2 = db.pool().clone();
     let startup_torrent_service = torrent_service.clone();
     let startup_analysis_queue = analysis_queue.clone();
-    let startup_metadata_service = metadata_service.clone();
     tokio::spawn(async move {
         // Short delay to ensure everything is initialized
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -576,6 +577,7 @@ async fn main() -> anyhow::Result<()> {
             tui_rx,
             tui_torrent_service,
             tui_pool,
+            config.port,
             TuiConfig::default(),
         )?;
 
@@ -595,6 +597,16 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn install_rustls_crypto_provider() {
+    // Avoid rustls panics when multiple providers are available in dependency graph.
+    if rustls::crypto::ring::default_provider()
+        .install_default()
+        .is_err()
+    {
+        tracing::debug!("Rustls crypto provider already configured");
+    }
 }
 
 /// Initialize JWT secret from database or generate if missing.

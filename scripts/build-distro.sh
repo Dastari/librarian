@@ -29,10 +29,13 @@ win_run() {
 }
 
 version_from_cargo() {
-  rg -n '^version\\s*=\\s*"' "${BACKEND_DIR}/Cargo.toml" | head -n1 | awk -F'"' '{print $2}'
+  if command -v rg >/dev/null 2>&1; then
+    rg -n '^version\\s*=\\s*"' "${BACKEND_DIR}/Cargo.toml" | head -n1 | awk -F'"' '{print $2}'
+    return
+  fi
+  grep -E '^[[:space:]]*version[[:space:]]*=' "${BACKEND_DIR}/Cargo.toml" | head -n1 | sed -E 's/.*"([^"]+)".*/\1/'
 }
 
-require rg
 require pnpm
 require cargo
 
@@ -41,19 +44,43 @@ log "Building Librarian distro version: ${VERSION}"
 
 mkdir -p "${DIST_DIR}"
 
-log "Building frontend..."
-(cd "${FRONTEND_DIR}" && pnpm install && pnpm run build)
+BUILD_LINUX=1
+BUILD_WINDOWS=1
+SKIP_FRONTEND=0
+SKIP_WINDOWS_BUILD=0
 
-log "Building Linux release binary..."
-(cd "${BACKEND_DIR}" && cargo build --release --features embed-frontend)
+case "${1:-}" in
+  --windows-only)
+    BUILD_LINUX=0
+    ;;
+  --linux-only)
+    BUILD_WINDOWS=0
+    ;;
+  --windows-package-only)
+    BUILD_LINUX=0
+    BUILD_WINDOWS=1
+    SKIP_FRONTEND=1
+    SKIP_WINDOWS_BUILD=1
+    ;;
+esac
 
-mkdir -p "${DIST_DIR}/linux"
-cp "${BACKEND_DIR}/target/release/librarian" "${DIST_DIR}/linux/librarian"
+if [[ "${SKIP_FRONTEND}" -eq 0 ]]; then
+  log "Building frontend..."
+  (cd "${FRONTEND_DIR}" && pnpm install && pnpm run build)
+fi
 
-log "Packaging Linux tarball..."
-tar -czf "${DIST_DIR}/librarian-${VERSION}-linux-x86_64.tar.gz" -C "${DIST_DIR}/linux" librarian
+if [[ "${BUILD_LINUX}" -eq 1 ]]; then
+  log "Building Linux release binary..."
+  (cd "${BACKEND_DIR}" && cargo build --release --features embed-frontend)
 
-if is_wsl; then
+  mkdir -p "${DIST_DIR}/linux"
+  cp "${BACKEND_DIR}/target/release/librarian" "${DIST_DIR}/linux/librarian"
+
+  log "Packaging Linux tarball..."
+  tar -czf "${DIST_DIR}/librarian-${VERSION}-linux-x86_64.tar.gz" -C "${DIST_DIR}/linux" librarian
+fi
+
+if [[ "${BUILD_WINDOWS}" -eq 1 ]] && is_wsl; then
   log "Building Windows binaries via host toolchain..."
 
   WIN_BACKEND_DIR="$(wslpath -w "${BACKEND_DIR}")"
@@ -61,21 +88,19 @@ if is_wsl; then
   WIN_WIX_WXS="$(wslpath -w "${WINDOWS_WIX_WXS}")"
   WIN_INNO_ISS="$(wslpath -w "${WINDOWS_INNO_ISS}")"
 
-  win_run "Set-Location '${WIN_BACKEND_DIR}'; rustup target add x86_64-pc-windows-msvc; cargo build --release --features embed-frontend --target x86_64-pc-windows-msvc"
+  if [[ "${SKIP_WINDOWS_BUILD}" -eq 0 ]]; then
+    win_run "Set-Location '${WIN_BACKEND_DIR}'; rustup target add x86_64-pc-windows-msvc; cargo build --release --features embed-frontend --target x86_64-pc-windows-msvc"
+  fi
 
   mkdir -p "${DIST_DIR}/windows/x86_64"
   cp "${BACKEND_DIR}/target/x86_64-pc-windows-msvc/release/librarian.exe" "${DIST_DIR}/windows/x86_64/librarian.exe"
 
-  if command -v zip >/dev/null 2>&1; then
-    log "Packaging Windows zip artifacts..."
-    (cd "${DIST_DIR}/windows/x86_64" && zip -r "${DIST_DIR}/librarian-${VERSION}-windows-x86_64.zip" librarian.exe)
-  else
-    log "zip not found; skipping Windows zip packaging."
-  fi
+  log "Packaging Windows zip artifacts..."
+  win_run "Set-Location '${WIN_DIST_DIR}'; Compress-Archive -Path '${WIN_DIST_DIR}\\windows\\x86_64\\librarian.exe' -DestinationPath '${WIN_DIST_DIR}\\librarian-${VERSION}-windows-x86_64.zip' -Force"
 
   if [[ -f "${WINDOWS_WIX_WXS}" ]]; then
     log "Building MSI via WiX (x86_64)..."
-    win_run "Set-Location '${WIN_DIST_DIR}'; candle.exe -dVersion='${VERSION}' -dSourceDir='${WIN_DIST_DIR}\\windows\\x86_64' '${WIN_WIX_WXS}' -out 'librarian-x86_64.wixobj'; light.exe 'librarian-x86_64.wixobj' -out 'librarian-${VERSION}-windows-x86_64.msi'"
+    win_run "\$temp = Join-Path \$env:TEMP 'librarian-dist'; if (Test-Path \$temp) { Remove-Item -Recurse -Force \$temp }; New-Item -ItemType Directory -Force -Path \$temp | Out-Null; Copy-Item -Recurse -Force '${WIN_DIST_DIR}\\windows\\x86_64' (Join-Path \$temp 'windows\\x86_64') | Out-Null; Copy-Item -Force '${WIN_WIX_WXS}' (Join-Path \$temp 'librarian.wxs') | Out-Null; \$wxs = Join-Path \$temp 'librarian.wxs'; \$sourceDir = Join-Path \$temp 'windows\\x86_64'; \$out = Join-Path \$temp 'librarian-${VERSION}-windows-x86_64.msi'; \$wix = (Get-Command wix.exe -ErrorAction SilentlyContinue).Source; if (-not \$wix) { \$wix = Join-Path \$env:USERPROFILE '.dotnet\\tools\\wix.exe' }; Set-Location \$temp; if (Test-Path \$wix) { & \$wix build -d Version='${VERSION}' -d SourceDir=\$sourceDir -o \$out \$wxs } elseif ((Get-Command candle.exe -ErrorAction SilentlyContinue) -and (Get-Command light.exe -ErrorAction SilentlyContinue)) { candle.exe -dVersion='${VERSION}' -dSourceDir=\$sourceDir \$wxs -out 'librarian-x86_64.wixobj'; light.exe 'librarian-x86_64.wixobj' -out \$out } else { Write-Error 'WiX tools not found (wix.exe or candle.exe/light.exe).'; exit 1 }; Copy-Item -Force \$out '${WIN_DIST_DIR}\\librarian-${VERSION}-windows-x86_64.msi'"
   else
     log "Missing ${WINDOWS_WIX_WXS}; skipping MSI build."
   fi
@@ -87,7 +112,9 @@ if is_wsl; then
     log "Missing ${WINDOWS_INNO_ISS}; skipping EXE installer build."
   fi
 else
-  log "Not running under WSL; skipping Windows builds."
+  if [[ "${BUILD_WINDOWS}" -eq 1 ]]; then
+    log "Not running under WSL; skipping Windows builds."
+  fi
 fi
 
 log "Distro build complete. Artifacts are in ${DIST_DIR}"

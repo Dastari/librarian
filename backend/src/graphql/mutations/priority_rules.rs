@@ -1,5 +1,5 @@
 use super::prelude::*;
-use crate::db::priority_rules::{CreatePriorityRule, SourceRef, SourceType, UpdatePriorityRule};
+use crate::db::priority_rules::{CreatePriorityRule, SourceRef, SourceType};
 
 #[derive(Default)]
 pub struct PriorityRuleMutations;
