@@ -16,13 +16,19 @@ pub struct SystemPanel {
     metrics: SharedMetrics,
     /// Cached snapshot
     snapshot: SystemSnapshot,
+    /// Server port for endpoint URLs
+    port: u16,
 }
 
 impl SystemPanel {
     /// Create a new system panel
-    pub fn new(metrics: SharedMetrics) -> Self {
+    pub fn new(metrics: SharedMetrics, port: u16) -> Self {
         let snapshot = metrics.snapshot();
-        Self { metrics, snapshot }
+        Self {
+            metrics,
+            snapshot,
+            port,
+        }
     }
 
     /// Refresh metrics snapshot
@@ -72,13 +78,29 @@ impl Panel for SystemPanel {
             return;
         }
 
-        let chunks = Layout::vertical([
-            Constraint::Length(1), // CPU
-            Constraint::Length(1), // Memory
-            Constraint::Length(1), // Uptime
-            Constraint::Length(1), // Requests
-        ])
-        .split(inner);
+        let show_endpoints = inner.height >= 9;
+        let chunks = if show_endpoints {
+            Layout::vertical([
+                Constraint::Length(1), // CPU
+                Constraint::Length(1), // Memory
+                Constraint::Length(1), // Uptime
+                Constraint::Length(1), // Requests
+                Constraint::Length(1), // Frontend URL
+                Constraint::Length(1), // GraphQL URL
+                Constraint::Length(1), // API URL
+                Constraint::Length(1), // GraphQL WS URL
+                Constraint::Length(1), // Health URL
+            ])
+            .split(inner)
+        } else {
+            Layout::vertical([
+                Constraint::Length(1), // CPU
+                Constraint::Length(1), // Memory
+                Constraint::Length(1), // Uptime
+                Constraint::Length(1), // Requests
+            ])
+            .split(inner)
+        };
 
         // CPU line with sparkline - use minimal label width for maximum graph space
         let cpu_history: Vec<u64> = self
@@ -177,6 +199,51 @@ impl Panel for SystemPanel {
             ])),
             chunks[3],
         );
+
+        if show_endpoints {
+            let base_url = format_base_url(&ip_addr, self.port);
+            let frontend_url = format!("{}/", base_url);
+            let graphql_url = format!("{}/graphql", base_url);
+            let graphql_ws_url = format!("{}/graphql/ws", base_url);
+            let api_url = format!("{}/api", base_url);
+            let health_url = format!("{}/api/health", base_url);
+
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("WEB ", Theme::dim()),
+                    Span::styled(frontend_url, Theme::text()),
+                ])),
+                chunks[4],
+            );
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("GQL ", Theme::dim()),
+                    Span::styled(graphql_url, Theme::text()),
+                ])),
+                chunks[5],
+            );
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("API ", Theme::dim()),
+                    Span::styled(api_url, Theme::text()),
+                ])),
+                chunks[6],
+            );
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("WS  ", Theme::dim()),
+                    Span::styled(graphql_ws_url, Theme::text()),
+                ])),
+                chunks[7],
+            );
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("HLT ", Theme::dim()),
+                    Span::styled(health_url, Theme::text()),
+                ])),
+                chunks[8],
+            );
+        }
     }
 
     fn handle_action(&mut self, action: &Action) {
@@ -229,4 +296,12 @@ fn get_local_ip() -> Option<String> {
     }
 
     None
+}
+
+fn format_base_url(ip: &str, port: u16) -> String {
+    if ip.contains(':') {
+        format!("http://[{}]:{}", ip, port)
+    } else {
+        format!("http://{}:{}", ip, port)
+    }
 }

@@ -21,6 +21,7 @@ import { CastButton } from './cast';
 import { VolumeControl } from './VolumeControl';
 import { getMediaStreamUrl } from './VideoPlayer';
 import { graphqlClient, TV_SHOW_QUERY, EPISODES_QUERY, PLAYBACK_SETTINGS_QUERY, type TvShow, type Episode, type PlaybackSettings } from '../lib/graphql';
+import { useCast } from '../hooks/useCast';
 
 // Default sync interval (will be overridden by settings)
 const DEFAULT_SYNC_INTERVAL = 15000;
@@ -41,6 +42,15 @@ export function PersistentPlayer() {
     currentEpisode, currentShow, setCurrentEpisode, setCurrentShow,
     shouldExpand, clearExpandFlag,
   } = usePlaybackContext();
+  const {
+    activeSession: castSession,
+    play: castPlay,
+    pause: castPause,
+    stop: castStop,
+    seek: castSeek,
+    setVolume: castSetVolume,
+    setMuted: castSetMuted,
+  } = useCast();
 
   const [isExpanded, setIsExpanded] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -58,6 +68,10 @@ export function PersistentPlayer() {
 
   // Only handle video content (EPISODE, MOVIE), not audio (TRACK, AUDIOBOOK)
   const isVideoSession = session?.contentType === 'EPISODE' || session?.contentType === 'MOVIE';
+  const isCastingThisMedia = Boolean(
+    castSession?.mediaFileId && session?.mediaFileId && castSession.mediaFileId === session.mediaFileId
+  );
+  const isCastingPlaying = isCastingThisMedia && castSession?.playerState === 'PLAYING';
 
   // Fetch playback settings on mount
   useEffect(() => {
@@ -111,14 +125,20 @@ export function PersistentPlayer() {
   // Auto-play when video is ready and session indicates playing
   useEffect(() => {
     if (!isVideoSession) return;
+    if (isCastingThisMedia && videoRef.current && !videoRef.current.paused) {
+      videoRef.current.pause();
+      setIsPaused(true);
+      return;
+    }
     if (session?.isPlaying && videoReady && videoRef.current && videoRef.current.paused) {
       videoRef.current.play().catch(() => {});
     }
-  }, [session?.isPlaying, videoReady, isVideoSession]);
+  }, [session?.isPlaying, videoReady, isVideoSession, isCastingThisMedia]);
 
   // Sync position periodically (using configurable interval from settings)
   useEffect(() => {
     if (!isVideoSession) return;
+    if (isCastingThisMedia) return;
     if (session && !isPaused) {
       syncIntervalRef.current = setInterval(() => {
         if (videoRef.current) {
@@ -131,7 +151,7 @@ export function PersistentPlayer() {
       }, syncInterval);
     }
     return () => { if (syncIntervalRef.current) clearInterval(syncIntervalRef.current); };
-  }, [session, isPaused, updatePlayback, syncInterval, isVideoSession]);
+  }, [session, isPaused, updatePlayback, syncInterval, isVideoSession, isCastingThisMedia]);
 
   // Cleanup video stream when mediaFileId changes or component unmounts
   // This is critical to abort the HTTP connection and stop network traffic
@@ -176,27 +196,47 @@ export function PersistentPlayer() {
   }, [syncPausedState]);
 
   const handlePlay = useCallback(() => {
+    if (isCastingThisMedia) {
+      castPlay().catch(() => {});
+      return;
+    }
     setIsPaused(false);
     updatePlayback({ isPlaying: true });
-  }, [updatePlayback]);
+  }, [updatePlayback, isCastingThisMedia, castPlay]);
 
   const handlePause = useCallback(() => {
+    if (isCastingThisMedia) {
+      castPause().catch(() => {});
+      return;
+    }
     setIsPaused(true);
     if (videoRef.current) {
       updatePlayback({ isPlaying: false, currentPosition: videoRef.current.currentTime });
     }
-  }, [updatePlayback]);
+  }, [updatePlayback, isCastingThisMedia, castPause]);
 
   const togglePlay = useCallback(() => {
+    if (isCastingThisMedia) {
+      if (isCastingPlaying) {
+        castPause().catch(() => {});
+      } else {
+        castPlay().catch(() => {});
+      }
+      return;
+    }
     if (!videoRef.current) return;
     if (videoRef.current.paused) {
       videoRef.current.play().catch(() => {});
     } else {
       videoRef.current.pause();
     }
-  }, []);
+  }, [isCastingThisMedia, isCastingPlaying, castPause, castPlay]);
 
   const handleStop = useCallback(async () => {
+    if (isCastingThisMedia) {
+      await castStop();
+      return;
+    }
     // Stop the video and release resources
     if (videoRef.current) {
       videoRef.current.pause();
@@ -211,16 +251,24 @@ export function PersistentPlayer() {
     setDuration(0);
     // Stop the playback session
     await stopPlayback();
-  }, [stopPlayback]);
+  }, [stopPlayback, isCastingThisMedia, castStop]);
 
   const toggleMute = useCallback(() => {
+    if (isCastingThisMedia) {
+      castSetMuted(!castSession?.isMuted).catch(() => {});
+      return;
+    }
     if (!videoRef.current) return;
     videoRef.current.muted = !videoRef.current.muted;
     setIsMuted(videoRef.current.muted);
     updatePlayback({ isMuted: videoRef.current.muted });
-  }, [updatePlayback]);
+  }, [updatePlayback, isCastingThisMedia, castSetMuted, castSession?.isMuted]);
 
   const handleVolumeChange = useCallback((newVolume: number) => {
+    if (isCastingThisMedia) {
+      castSetVolume(newVolume).catch(() => {});
+      return;
+    }
     if (!videoRef.current) return;
     videoRef.current.volume = newVolume;
     setVolume(newVolume);
@@ -230,9 +278,18 @@ export function PersistentPlayer() {
       setIsMuted(false);
       updatePlayback({ isMuted: false });
     }
-  }, [isMuted, updatePlayback]);
+  }, [isMuted, updatePlayback, isCastingThisMedia, castSetVolume]);
 
   const handleSeek = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (isCastingThisMedia) {
+      const castDuration = castSession?.duration || 0;
+      if (castDuration <= 0) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const percent = (e.clientX - rect.left) / rect.width;
+      const newTime = percent * castDuration;
+      castSeek(newTime).catch(() => {});
+      return;
+    }
     if (!videoRef.current || duration <= 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const percent = (e.clientX - rect.left) / rect.width;
@@ -240,7 +297,7 @@ export function PersistentPlayer() {
     videoRef.current.currentTime = newTime;
     setCurrentTime(newTime);
     updatePlayback({ currentPosition: newTime });
-  }, [duration, updatePlayback]);
+  }, [duration, updatePlayback, isCastingThisMedia, castSeek, castSession?.duration]);
 
   const handleFullscreen = useCallback(() => {
     if (videoRef.current) {
@@ -318,7 +375,9 @@ export function PersistentPlayer() {
   // Don't render for audio content or when no session
   if (isLoading || !session?.mediaFileId || !isVideoSession) return null;
 
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const displayCurrentTime = isCastingThisMedia ? castSession?.currentTime || 0 : currentTime;
+  const displayDuration = isCastingThisMedia ? castSession?.duration || 0 : duration;
+  const progress = displayDuration > 0 ? (displayCurrentTime / displayDuration) * 100 : 0;
   const epTitle = currentEpisode 
     ? `S${String(currentEpisode.season).padStart(2, '0')}E${String(currentEpisode.episode).padStart(2, '0')}${currentEpisode.title ? ` - ${currentEpisode.title}` : ''}`
     : 'Episode';
@@ -375,6 +434,13 @@ export function PersistentPlayer() {
                 <Spinner size="lg" color="white" />
               </div>
             )}
+            {isCastingThisMedia && (
+              <div className={`absolute inset-0 flex items-center justify-center bg-black/60 ${isExpanded ? '' : 'h-40'}`}>
+                <div className="text-white text-sm font-medium">
+                  Casting to {castSession?.deviceName || 'device'}
+                </div>
+              </div>
+            )}
 
             {/* Expanded player: controls overlay */}
             {isExpanded && (
@@ -424,15 +490,15 @@ export function PersistentPlayer() {
                     <div className="flex items-center gap-2 text-white">
                       {/* Playback controls group */}
                       <div className="flex items-center">
-                        <Button isIconOnly variant="light" className="text-white" onPress={togglePlay} aria-label={isPaused ? "Play" : "Pause"}>
-                          {isPaused ? <IconPlayerPlay size={24} /> : <IconPlayerPause size={24} />}
+                        <Button isIconOnly variant="light" className="text-white" onPress={togglePlay} aria-label={isCastingThisMedia ? (isCastingPlaying ? "Pause" : "Play") : (isPaused ? "Play" : "Pause")}>
+                          {isCastingThisMedia ? (isCastingPlaying ? <IconPlayerPause size={24} /> : <IconPlayerPlay size={24} />) : (isPaused ? <IconPlayerPlay size={24} /> : <IconPlayerPause size={24} />)}
                         </Button>
                         <Button isIconOnly variant="light" className="text-white" onPress={handleStop} aria-label="Stop">
                           <IconPlayerStop size={20} />
                         </Button>
                         <VolumeControl
-                          volume={volume}
-                          isMuted={isMuted}
+                          volume={isCastingThisMedia ? castSession?.volume || 0 : volume}
+                          isMuted={isCastingThisMedia ? castSession?.isMuted || false : isMuted}
                           onVolumeChange={handleVolumeChange}
                           onMuteToggle={toggleMute}
                           size="sm"
@@ -443,7 +509,7 @@ export function PersistentPlayer() {
 
                       {/* Time display */}
                       <span className="text-sm font-mono ml-2">
-                        {formatTime(currentTime)} / {formatTime(duration)}
+                        {formatTime(displayCurrentTime)} / {formatTime(displayDuration)}
                       </span>
                     </div>
                   </div>
@@ -457,12 +523,12 @@ export function PersistentPlayer() {
         {!isExpanded && (
           <div className="flex items-center justify-between px-2 py-1.5 bg-default-100 rounded-b-lg">
             <div className="flex items-center">
-              <Button isIconOnly size="sm" variant="light" onPress={togglePlay} aria-label={isPaused ? "Play" : "Pause"}>
-                {isPaused ? <IconPlayerPlay size={18} /> : <IconPlayerPause size={18} />}
+              <Button isIconOnly size="sm" variant="light" onPress={togglePlay} aria-label={isCastingThisMedia ? (isCastingPlaying ? "Pause" : "Play") : (isPaused ? "Play" : "Pause")}>
+                {isCastingThisMedia ? (isCastingPlaying ? <IconPlayerPause size={18} /> : <IconPlayerPlay size={18} />) : (isPaused ? <IconPlayerPlay size={18} /> : <IconPlayerPause size={18} />)}
               </Button>
               <VolumeControl
-                volume={volume}
-                isMuted={isMuted}
+                volume={isCastingThisMedia ? castSession?.volume || 0 : volume}
+                isMuted={isCastingThisMedia ? castSession?.isMuted || false : isMuted}
                 onVolumeChange={handleVolumeChange}
                 onMuteToggle={toggleMute}
                 size="sm"

@@ -65,6 +65,7 @@ impl TuiApp {
         log_rx: broadcast::Receiver<LogEvent>,
         torrent_service: Arc<TorrentService>,
         pool: DbPool,
+        server_port: u16,
         config: TuiConfig,
     ) -> io::Result<Self> {
         // Setup terminal
@@ -92,7 +93,7 @@ impl TuiApp {
             layout: UiLayout::default(),
             logs_panel: LogsPanel::new(log_rx),
             torrents_panel: TorrentsPanel::new(torrents),
-            system_panel: SystemPanel::new(metrics),
+            system_panel: SystemPanel::new(metrics, server_port),
             libraries_panel: LibrariesPanel::new(libraries),
             database_panel: DatabasePanel::new(pool, table_counts),
             should_quit: false,

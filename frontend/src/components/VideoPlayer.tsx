@@ -111,6 +111,11 @@ export function VideoPlayer({
             mediaFileId={mediaFileId}
             episodeId={episodeId}
             startPosition={videoRef.current?.currentTime}
+            onCastStart={() => {
+              if (videoRef.current) {
+                videoRef.current.pause();
+              }
+            }}
             size="sm"
           />
         </div>

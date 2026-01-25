@@ -1,6 +1,4 @@
 use super::prelude::*;
-use crate::indexer::manager::IndexerManager;
-use crate::services::hunt::HuntService;
 
 #[derive(Default)]
 pub struct IndexerQueries;

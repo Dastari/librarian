@@ -154,7 +154,7 @@ impl NotificationMutations {
         #[graphql(desc = "Notification ID")] id: String,
         #[graphql(desc = "Resolution type")] resolution: NotificationResolution,
         #[graphql(desc = "Action type that was performed")] action_performed: Option<String>,
-        #[graphql(desc = "JSON data about the action taken")] action_result: Option<String>,
+        #[graphql(desc = "JSON data about the action taken")] _action_result: Option<String>,
     ) -> Result<NotificationResult> {
         let _user = ctx.auth_user()?;
         let db = ctx.data_unchecked::<Database>();

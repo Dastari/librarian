@@ -15,6 +15,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::db::{Database, libraries::LibraryRecord};
+use crate::services::file_utils::{normalize_display_path, normalize_display_path_buf};
 
 /// Event emitted when directory contents change
 #[derive(Debug, Clone)]
@@ -121,11 +122,31 @@ impl FilesystemService {
     pub fn get_quick_paths() -> Vec<QuickPath> {
         let mut paths = vec![];
 
+        if cfg!(windows) {
+            for drive in windows_drive_paths() {
+                let name = drive
+                    .to_string_lossy()
+                    .trim_end_matches('\\')
+                    .to_string();
+                paths.push(QuickPath {
+                    name,
+                    path: normalize_display_path_buf(&drive),
+                });
+            }
+            if let Some(home) = dirs::home_dir() {
+                paths.push(QuickPath {
+                    name: "Home".to_string(),
+                    path: normalize_display_path_buf(&home),
+                });
+            }
+            return paths;
+        }
+
         // Home directory
         if let Some(home) = dirs::home_dir() {
             paths.push(QuickPath {
                 name: "Home".to_string(),
-                path: home.to_string_lossy().to_string(),
+                path: normalize_display_path_buf(&home),
             });
         }
 
@@ -202,7 +223,6 @@ impl FilesystemService {
             }
         };
 
-        let path_str = canonical.to_string_lossy();
         let libraries = self.get_libraries(user_id).await?;
 
         for lib in &libraries {
@@ -210,13 +230,7 @@ impl FilesystemService {
                 Ok(p) => p,
                 Err(_) => continue,
             };
-            let lib_str = lib_canonical.to_string_lossy();
-
-            // Check if path is inside or equal to library path
-            if path_str.starts_with(lib_str.as_ref())
-                && (path_str.len() == lib_str.len()
-                    || path_str.chars().nth(lib_str.len()) == Some('/'))
-            {
+            if canonical.starts_with(&lib_canonical) {
                 return Ok(PathValidation {
                     is_valid: true,
                     is_library_path: true,
@@ -237,14 +251,14 @@ impl FilesystemService {
                 error: None,
             })
         } else {
-            Ok(PathValidation {
-                is_valid: false,
-                is_library_path: false,
-                library_id: None,
-                library_name: None,
-                error: Some("Path is not inside any library".to_string()),
-            })
-        }
+        Ok(PathValidation {
+            is_valid: false,
+            is_library_path: false,
+            library_id: None,
+            library_name: None,
+            error: Some("Path is not inside any library".to_string()),
+        })
+    }
     }
 
     /// Check if a path is inside any library (for operations requiring library paths)
@@ -273,7 +287,13 @@ impl FilesystemService {
         // Determine the path to browse (default to root)
         let requested_path = match path {
             Some(p) if !p.is_empty() => PathBuf::from(p),
-            _ => PathBuf::from("/"),
+            _ => default_browse_path(),
+        };
+        #[cfg(windows)]
+        let requested_path = if requested_path == PathBuf::from("/") {
+            default_browse_path()
+        } else {
+            requested_path
         };
 
         // Canonicalize the path to resolve symlinks and ..
@@ -294,8 +314,9 @@ impl FilesystemService {
         };
 
         // Check if this path is inside a library
-        let path_str = canonical_path.to_string_lossy().to_string();
-        let validation = self.validate_path(&path_str, user_id).await?;
+        let validation = self
+            .validate_path(&canonical_path.to_string_lossy(), user_id)
+            .await?;
 
         // Read directory contents
         let mut entries = Vec::new();
@@ -356,7 +377,7 @@ impl FilesystemService {
 
             entries.push(FileEntry {
                 name,
-                path: entry_path.to_string_lossy().to_string(),
+                path: normalize_display_path_buf(&entry_path),
                 is_dir,
                 size: if is_dir { 0 } else { metadata.len() },
                 readable,
@@ -376,10 +397,10 @@ impl FilesystemService {
         // Get parent path
         let parent_path = canonical_path
             .parent()
-            .map(|p| p.to_string_lossy().to_string());
+            .map(|p| normalize_display_path_buf(p));
 
         Ok(BrowseResult {
-            current_path: canonical_path.to_string_lossy().to_string(),
+            current_path: normalize_display_path_buf(&canonical_path),
             parent_path,
             entries,
             quick_paths: Self::get_quick_paths(),
@@ -415,7 +436,7 @@ impl FilesystemService {
 
         path_buf
             .canonicalize()
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| normalize_display_path_buf(&p))
             .map_err(|e| anyhow!("Failed to resolve path: {}", e))
     }
 
@@ -440,8 +461,9 @@ impl FilesystemService {
             let validation = self.require_library_path(path, user_id).await?;
             if !validation.is_valid {
                 let error_msg = validation.error.unwrap_or_else(|| "Not allowed".to_string());
-                warn!(path = %path, error = %error_msg, "Delete skipped: path not in library");
-                messages.push(format!("Skipped '{}': {}", path, error_msg));
+                let display_path = normalize_display_path(path);
+                warn!(path = %display_path, error = %error_msg, "Delete skipped: path not in library");
+                messages.push(format!("Skipped '{}': {}", display_path, error_msg));
                 continue;
             }
 
@@ -449,12 +471,13 @@ impl FilesystemService {
             let metadata = match fs::metadata(&path_buf).await {
                 Ok(m) => m,
                 Err(e) => {
-                    messages.push(format!("Skipped '{}': {}", path, e));
+                    let display_path = normalize_display_path(path);
+                    messages.push(format!("Skipped '{}': {}", display_path, e));
                     continue;
                 }
             };
 
-            let parent_path = path_buf.parent().map(|p| p.to_string_lossy().to_string());
+            let parent_path = path_buf.parent().map(normalize_display_path_buf);
             let file_name = path_buf
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string());
@@ -462,24 +485,28 @@ impl FilesystemService {
             if metadata.is_dir() {
                 if recursive {
                     if let Err(e) = fs::remove_dir_all(&path_buf).await {
-                        messages.push(format!("Failed to delete '{}': {}", path, e));
+                        let display_path = normalize_display_path(path);
+                        messages.push(format!("Failed to delete '{}': {}", display_path, e));
                         continue;
                     }
                 } else if let Err(e) = fs::remove_dir(&path_buf).await {
+                    let display_path = normalize_display_path(path);
                     messages.push(format!(
                         "Failed to delete '{}': {} (use recursive for non-empty directories)",
-                        path, e
+                        display_path, e
                     ));
                     continue;
                 }
             } else if let Err(e) = fs::remove_file(&path_buf).await {
-                messages.push(format!("Failed to delete '{}': {}", path, e));
+                let display_path = normalize_display_path(path);
+                messages.push(format!("Failed to delete '{}': {}", display_path, e));
                 continue;
             }
 
             deleted_count += 1;
-            debug!(path = %path, "Deleted file/directory");
-            messages.push(format!("Deleted: {}", path));
+            let display_path = normalize_display_path(path);
+            debug!(path = %display_path, "Deleted file/directory");
+            messages.push(format!("Deleted: {}", display_path));
 
             // Broadcast the change
             if let Some(parent) = parent_path {
@@ -539,47 +566,51 @@ impl FilesystemService {
             
             // Check source exists and is readable
             if !source_path.exists() {
-                let msg = format!("Skipped '{}': Path does not exist", source);
-                warn!(source = %source, "Copy skipped: path does not exist");
-                messages.push(msg);
-                continue;
-            }
+            let display_source = normalize_display_path(source);
+            let msg = format!("Skipped '{}': Path does not exist", display_source);
+            warn!(source = %display_source, "Copy skipped: path does not exist");
+            messages.push(msg);
+            continue;
+        }
 
             let source_path = PathBuf::from(source);
             let file_name = match source_path.file_name() {
                 Some(n) => n,
                 None => {
-                    warn!(source = %source, "Copy skipped: invalid path (no filename)");
-                    messages.push(format!("Skipped '{}': Invalid path", source));
-                    continue;
-                }
-            };
+                let display_source = normalize_display_path(source);
+                warn!(source = %display_source, "Copy skipped: invalid path (no filename)");
+                messages.push(format!("Skipped '{}': Invalid path", display_source));
+                continue;
+            }
+        };
 
-            let target_path = dest_path.join(file_name);
-            debug!(source = %source, target = %target_path.display(), "Attempting to copy");
+        let target_path = dest_path.join(file_name);
+        let display_source = normalize_display_path(source);
+        let display_target = normalize_display_path_buf(&target_path);
+        debug!(source = %display_source, target = %display_target, "Attempting to copy");
 
             // Check if target exists
             if target_path.exists() && !overwrite {
-                let msg = format!("Skipped '{}': Target exists (use overwrite)", source);
-                warn!(source = %source, target = %target_path.display(), "Copy skipped: target exists");
-                messages.push(msg);
-                continue;
-            }
+            let msg = format!("Skipped '{}': Target exists (use overwrite)", display_source);
+            warn!(source = %display_source, target = %display_target, "Copy skipped: target exists");
+            messages.push(msg);
+            continue;
+        }
 
             // Copy the file/directory
             if let Err(e) = self.copy_recursive(&source_path, &target_path).await {
-                warn!(source = %source, error = %e, "Copy failed");
-                messages.push(format!("Failed to copy '{}': {}", source, e));
-                continue;
-            }
+            warn!(source = %display_source, error = %e, "Copy failed");
+            messages.push(format!("Failed to copy '{}': {}", display_source, e));
+            continue;
+        }
 
-            copied_count += 1;
-            debug!(source = %source, target = %target_path.display(), "Copied file/directory");
-            messages.push(format!("Copied: {} -> {}", source, target_path.display()));
+        copied_count += 1;
+        debug!(source = %display_source, target = %display_target, "Copied file/directory");
+        messages.push(format!("Copied: {} -> {}", display_source, display_target));
 
             // Broadcast the change
             self.broadcast_change(DirectoryChangeEvent {
-                path: destination.to_string(),
+                path: normalize_display_path(destination),
                 change_type: "created".to_string(),
                 name: Some(file_name.to_string_lossy().to_string()),
                 new_name: None,
@@ -651,9 +682,10 @@ impl FilesystemService {
             // Validate source is inside a library
             let source_validation = self.require_library_path(source, user_id).await?;
             if !source_validation.is_valid {
+                let display_source = normalize_display_path(source);
                 messages.push(format!(
                     "Skipped '{}': {}",
-                    source,
+                    display_source,
                     source_validation
                         .error
                         .unwrap_or_else(|| "Not allowed".to_string())
@@ -665,15 +697,16 @@ impl FilesystemService {
             let file_name = match source_path.file_name() {
                 Some(n) => n,
                 None => {
-                    messages.push(format!("Skipped '{}': Invalid path", source));
+                    let display_source = normalize_display_path(source);
+                    messages.push(format!("Skipped '{}': Invalid path", display_source));
                     continue;
                 }
             };
 
-            let source_parent = source_path
-                .parent()
-                .map(|p| p.to_string_lossy().to_string());
+            let source_parent = source_path.parent().map(normalize_display_path_buf);
             let target_path = dest_path.join(file_name);
+            let display_source = normalize_display_path(source);
+            let display_target = normalize_display_path_buf(&target_path);
 
             // Check if target exists
             if target_path.exists() {
@@ -688,7 +721,7 @@ impl FilesystemService {
                 } else {
                     messages.push(format!(
                         "Skipped '{}': Target exists (use overwrite)",
-                        source
+                        display_source
                     ));
                     continue;
                 }
@@ -698,7 +731,7 @@ impl FilesystemService {
             if let Err(_) = fs::rename(&source_path, &target_path).await {
                 // Fallback to copy + delete (different filesystem)
                 if let Err(e) = self.copy_recursive(&source_path, &target_path).await {
-                    messages.push(format!("Failed to move '{}': {}", source, e));
+                    messages.push(format!("Failed to move '{}': {}", display_source, e));
                     continue;
                 }
 
@@ -712,8 +745,8 @@ impl FilesystemService {
             }
 
             moved_count += 1;
-            debug!(source = %source, target = %target_path.display(), "Moved file/directory");
-            messages.push(format!("Moved: {} -> {}", source, target_path.display()));
+            debug!(source = %display_source, target = %display_target, "Moved file/directory");
+            messages.push(format!("Moved: {} -> {}", display_source, display_target));
 
             // Broadcast changes
             if let Some(parent) = source_parent {
@@ -726,7 +759,7 @@ impl FilesystemService {
                 });
             }
             self.broadcast_change(DirectoryChangeEvent {
-                path: destination.to_string(),
+                path: normalize_display_path(destination),
                 change_type: "created".to_string(),
                 name: Some(file_name.to_string_lossy().to_string()),
                 new_name: None,
@@ -777,21 +810,58 @@ impl FilesystemService {
 
         fs::rename(&source_path, &target_path).await?;
 
+        let display_path = normalize_display_path(path);
+        let display_target = normalize_display_path_buf(&target_path);
         info!(
-            old_path = %path,
-            new_path = %target_path.display(),
+            old_path = %display_path,
+            new_path = %display_target,
             "Rename completed"
         );
 
         // Broadcast the change
         self.broadcast_change(DirectoryChangeEvent {
-            path: parent.to_string_lossy().to_string(),
+            path: normalize_display_path_buf(parent),
             change_type: "renamed".to_string(),
             name: old_name,
             new_name: Some(new_name.to_string()),
             timestamp: Utc::now(),
         });
 
-        Ok(target_path.to_string_lossy().to_string())
+        Ok(display_target)
+    }
+}
+
+fn windows_drive_paths() -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        let mut drives = Vec::new();
+        for letter in b'A'..=b'Z' {
+            let path = format!("{}:\\", letter as char);
+            if Path::new(&path).exists() {
+                drives.push(PathBuf::from(path));
+            }
+        }
+        return drives;
+    }
+
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
+fn default_browse_path() -> PathBuf {
+    #[cfg(windows)]
+    {
+        let drives = windows_drive_paths();
+        return drives
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| PathBuf::from("C:\\"));
+    }
+
+    #[cfg(not(windows))]
+    {
+        PathBuf::from("/")
     }
 }

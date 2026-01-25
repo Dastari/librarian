@@ -69,15 +69,12 @@ pub fn decode_yenc(data: &[u8]) -> Result<YencDecoded> {
     let mut filename = None;
     let mut expected_size = None;
     let mut part = None;
-    let mut line_length = 128; // default
-
     for token in ybegin_line.split_whitespace().skip(1) {
         if let Some((key, value)) = token.split_once('=') {
             match key {
                 "name" => filename = Some(value.to_string()),
                 "size" => expected_size = value.parse::<u64>().ok(),
                 "part" => part = value.parse::<u32>().ok(),
-                "line" => line_length = value.parse::<usize>().unwrap_or(128),
                 _ => {}
             }
         }

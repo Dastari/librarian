@@ -90,9 +90,6 @@ impl MovieQueries {
         let has_file_filter = r#where
             .as_ref()
             .and_then(|w| w.has_file.as_ref().and_then(|f| f.eq));
-        let download_status_filter = r#where
-            .as_ref()
-            .and_then(|w| w.download_status.as_ref().and_then(|f| f.eq.clone()));
 
         // Determine sort field and direction
         let sort_field = order_by

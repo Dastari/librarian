@@ -9,6 +9,7 @@ use crate::services::{
     PeerStats as ServicePeerStats, TorrentDetails as ServiceTorrentDetails,
     TorrentInfo as ServiceTorrentInfo, TorrentState as ServiceTorrentState,
 };
+use crate::services::file_utils::normalize_display_path;
 
 /// Torrent download state
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum, Serialize, Deserialize)]
@@ -615,7 +616,7 @@ impl Library {
         Self {
             id: r.id.to_string(),
             name: r.name,
-            path: r.path,
+            path: normalize_display_path(&r.path),
             library_type: match r.library_type.as_str() {
                 "movies" => LibraryType::Movies,
                 "tv" => LibraryType::Tv,
@@ -2919,7 +2920,7 @@ impl LibraryFull {
         Self {
             id: r.id.to_string(),
             name: r.name,
-            path: r.path,
+            path: normalize_display_path(&r.path),
             library_type: match r.library_type.as_str() {
                 "movies" => LibraryType::Movies,
                 "tv" => LibraryType::Tv,

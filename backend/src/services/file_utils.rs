@@ -169,6 +169,26 @@ pub fn format_bytes_i64(bytes: i64) -> String {
     }
 }
 
+/// Normalize paths for display (strip Windows verbatim prefixes).
+pub fn normalize_display_path(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        if let Some(stripped) = path.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{}", stripped);
+        }
+        if let Some(stripped) = path.strip_prefix(r"\\?\") {
+            return stripped.to_string();
+        }
+    }
+
+    path.to_string()
+}
+
+/// Normalize a Path for display (strip Windows verbatim prefixes).
+pub fn normalize_display_path_buf(path: &std::path::Path) -> String {
+    normalize_display_path(&path.to_string_lossy())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

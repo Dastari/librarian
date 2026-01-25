@@ -124,7 +124,8 @@ impl PlaybackMutations {
         ctx: &Context<'_>,
         input: CastMediaInput,
     ) -> Result<CastSessionResult> {
-        let _user = ctx.auth_user()?;
+        let user = ctx.auth_user()?;
+        let db = ctx.data_unchecked::<Database>();
         let cast_service = ctx.data_unchecked::<Arc<CastService>>();
 
         let device_id = Uuid::parse_str(&input.device_id)
@@ -137,6 +138,34 @@ impl PlaybackMutations {
             .map(|id| Uuid::parse_str(id))
             .transpose()
             .map_err(|_| async_graphql::Error::new("Invalid episode ID"))?;
+
+        let user_label = user
+            .email
+            .as_deref()
+            .unwrap_or(&user.user_id)
+            .to_string();
+        let device_label = cast_service
+            .get_device(device_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|d| d.name)
+            .unwrap_or_else(|| input.device_id.clone());
+        let media_label = db
+            .media_files()
+            .get_by_id(media_file_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|m| std::path::Path::new(&m.path).file_name().map(|n| n.to_string_lossy().to_string()))
+            .unwrap_or_else(|| input.media_file_id.clone());
+
+        tracing::info!(
+            "{} started casting {} to {}",
+            user_label,
+            media_label,
+            device_label
+        );
 
         match cast_service
             .cast_media(device_id, media_file_id, episode_id, input.start_position)
@@ -165,11 +194,13 @@ impl PlaybackMutations {
 
     /// Play/resume current cast session
     async fn cast_play(&self, ctx: &Context<'_>, session_id: String) -> Result<CastSessionResult> {
-        let _user = ctx.auth_user()?;
+        let user = ctx.auth_user()?;
         let cast_service = ctx.data_unchecked::<Arc<CastService>>();
 
         let id = Uuid::parse_str(&session_id)
             .map_err(|_| async_graphql::Error::new("Invalid session ID"))?;
+
+        log_cast_action(user, cast_service.as_ref(), id, "resumed playback").await;
 
         match cast_service.play(id).await {
             Ok(session) => {
@@ -199,11 +230,13 @@ impl PlaybackMutations {
 
     /// Pause current cast session
     async fn cast_pause(&self, ctx: &Context<'_>, session_id: String) -> Result<CastSessionResult> {
-        let _user = ctx.auth_user()?;
+        let user = ctx.auth_user()?;
         let cast_service = ctx.data_unchecked::<Arc<CastService>>();
 
         let id = Uuid::parse_str(&session_id)
             .map_err(|_| async_graphql::Error::new("Invalid session ID"))?;
+
+        log_cast_action(user, cast_service.as_ref(), id, "paused playback").await;
 
         match cast_service.pause(id).await {
             Ok(session) => {
@@ -233,11 +266,13 @@ impl PlaybackMutations {
 
     /// Stop casting and end session
     async fn cast_stop(&self, ctx: &Context<'_>, session_id: String) -> Result<MutationResult> {
-        let _user = ctx.auth_user()?;
+        let user = ctx.auth_user()?;
         let cast_service = ctx.data_unchecked::<Arc<CastService>>();
 
         let id = Uuid::parse_str(&session_id)
             .map_err(|_| async_graphql::Error::new("Invalid session ID"))?;
+
+        log_cast_action(user, cast_service.as_ref(), id, "stopped casting").await;
 
         match cast_service.stop(id).await {
             Ok(_) => Ok(MutationResult {
@@ -258,11 +293,19 @@ impl PlaybackMutations {
         session_id: String,
         position: f64,
     ) -> Result<CastSessionResult> {
-        let _user = ctx.auth_user()?;
+        let user = ctx.auth_user()?;
         let cast_service = ctx.data_unchecked::<Arc<CastService>>();
 
         let id = Uuid::parse_str(&session_id)
             .map_err(|_| async_graphql::Error::new("Invalid session ID"))?;
+
+        log_cast_action(
+            user,
+            cast_service.as_ref(),
+            id,
+            &format!("seeked to {:.1}s", position),
+        )
+        .await;
 
         match cast_service.seek(id, position).await {
             Ok(session) => {
@@ -297,11 +340,19 @@ impl PlaybackMutations {
         session_id: String,
         volume: f32,
     ) -> Result<CastSessionResult> {
-        let _user = ctx.auth_user()?;
+        let user = ctx.auth_user()?;
         let cast_service = ctx.data_unchecked::<Arc<CastService>>();
 
         let id = Uuid::parse_str(&session_id)
             .map_err(|_| async_graphql::Error::new("Invalid session ID"))?;
+
+        log_cast_action(
+            user,
+            cast_service.as_ref(),
+            id,
+            &format!("set volume to {:.0}%", volume * 100.0),
+        )
+        .await;
 
         match cast_service.set_volume(id, volume).await {
             Ok(session) => {
@@ -336,11 +387,19 @@ impl PlaybackMutations {
         session_id: String,
         muted: bool,
     ) -> Result<CastSessionResult> {
-        let _user = ctx.auth_user()?;
+        let user = ctx.auth_user()?;
         let cast_service = ctx.data_unchecked::<Arc<CastService>>();
 
         let id = Uuid::parse_str(&session_id)
             .map_err(|_| async_graphql::Error::new("Invalid session ID"))?;
+
+        log_cast_action(
+            user,
+            cast_service.as_ref(),
+            id,
+            if muted { "muted audio" } else { "unmuted audio" },
+        )
+        .await;
 
         match cast_service.set_muted(id, muted).await {
             Ok(session) => {
@@ -615,4 +674,23 @@ impl PlaybackMutations {
             sync_interval_seconds: sync_interval,
         })
     }
+}
+
+async fn log_cast_action(
+    user: &crate::graphql::auth::AuthUser,
+    cast_service: &CastService,
+    session_id: Uuid,
+    action: &str,
+) {
+    let user_label = user.email.as_deref().unwrap_or(&user.user_id);
+    let mut device_label = session_id.to_string();
+    if let Ok(Some(session)) = cast_service.get_session(session_id).await {
+        if let Some(device_id) = session.device_id {
+            if let Ok(Some(device)) = cast_service.get_device(device_id).await {
+                device_label = device.name;
+            }
+        }
+    }
+
+    tracing::info!("{} {} on {}", user_label, action, device_label);
 }

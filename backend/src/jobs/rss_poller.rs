@@ -17,7 +17,7 @@ use regex::Regex;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::db::libraries::LibraryRecord;

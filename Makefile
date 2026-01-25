@@ -3,6 +3,9 @@
 
 .PHONY: help dev dev-backend dev-frontend \
         build docker-up docker-down docker-logs clean test lint distro \
+        build-backend-debug build-backend-release build-windows-debug build-windows-release \
+        windows-installer \
+        windows-package-only \
         db-migrate db-migrate-info db-migrate-revert db-migrate-add
 
 # Default target
@@ -36,9 +39,15 @@ help:
 	@echo ""
 	@echo "Other:"
 	@echo "  make build          - Build all projects"
+	@echo "  make build-backend-debug  - Build backend debug (no embedded frontend)"
+	@echo "  make build-backend-release - Build backend release (embedded frontend)"
+	@echo "  make build-windows-debug  - Build Windows debug exe from WSL (no embedded frontend)"
+	@echo "  make build-windows-release - Build Windows release exe from WSL (embedded frontend)"
 	@echo "  make test           - Run all tests"
 	@echo "  make lint           - Run linters"
 	@echo "  make distro         - Build distro artifacts (Linux + Windows)"
+	@echo "  make windows-installer - Build Windows installer artifacts only"
+	@echo "  make windows-package-only - Package MSI/EXE from an existing Windows exe"
 	@echo "  make clean          - Clean build artifacts"
 
 # =============================================================================
@@ -136,20 +145,44 @@ prod-pull:
 # Build
 # =============================================================================
 
-build: build-backend build-frontend
+build: build-backend-release build-frontend
 
-build-backend:
-	cd backend && cargo build --release
+build-backend: build-backend-release
+
+build-backend-debug:
+	cd backend && cargo build
+
+build-backend-release:
+	cd backend && cargo build --release --features embed-frontend
 
 build-frontend:
-	cd frontend && pnpm run build
+	cd frontend && pnpm install && pnpm run build
+
+# =============================================================================
+# Windows (from WSL)
+# =============================================================================
+
+WIN_BACKEND_DIR_RAW := $(shell wslpath -w $(PWD)/backend)
+WIN_BACKEND_DIR := $(subst \,\\,$(WIN_BACKEND_DIR_RAW))
+
+build-windows-debug:
+	powershell.exe -NoProfile -Command "Set-Location '$(WIN_BACKEND_DIR)'; [Environment]::SetEnvironmentVariable('CARGO_INCREMENTAL','0','Process'); cargo build --target x86_64-pc-windows-msvc"
+
+build-windows-release: build-frontend
+	powershell.exe -NoProfile -Command "Set-Location '$(WIN_BACKEND_DIR)'; [Environment]::SetEnvironmentVariable('CARGO_INCREMENTAL','0','Process'); cargo build --release --features embed-frontend --target x86_64-pc-windows-msvc"
 
 # =============================================================================
 # Distribution
 # =============================================================================
 
 distro:
-	./scripts/build-distro.sh
+	bash ./scripts/build-distro.sh
+
+windows-installer:
+	bash ./scripts/build-distro.sh --windows-only
+
+windows-package-only:
+	bash ./scripts/build-distro.sh --windows-package-only
 
 # =============================================================================
 # Testing

@@ -31,15 +31,21 @@
         <Component Id="MainExecutable" Guid="2D785E8E-0C77-4A92-A3EA-03C8B3B95A03">
           <File Id="LibrarianExe" Source="$(var.SourceDir)\\librarian.exe" KeyPath="yes" />
         </Component>
-        <Component Id="FfprobeExecutable" Guid="A0F3E2A5-3C2D-4E9E-9E72-BBF08A61F5A1">
-          <File Id="FfprobeExe" Source="$(var.SourceDir)\\ffprobe.exe" KeyPath="yes" />
-        </Component>
       </Directory>
     </StandardDirectory>
 
     <Feature Id="ProductFeature" Title="$(var.ProductName)" Level="1">
       <ComponentRef Id="MainExecutable" />
-      <ComponentRef Id="FfprobeExecutable" />
     </Feature>
+
+    <CustomAction Id="InstallFfmpeg"
+                  Directory="SystemFolder"
+                  ExeCommand='cmd.exe /c winget install -e --id Gyan.FFmpeg'
+                  Execute="deferred"
+                  Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="InstallFfmpeg" After="InstallFinalize" Condition="NOT Installed" />
+    </InstallExecuteSequence>
   </Package>
 </Wix>

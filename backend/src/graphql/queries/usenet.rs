@@ -1,5 +1,4 @@
 use super::prelude::*;
-use crate::services::usenet::UsenetDownloadInfo;
 
 #[derive(Default)]
 pub struct UsenetQueries;

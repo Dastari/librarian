@@ -262,7 +262,7 @@ impl TorrentMutations {
         use crate::services::file_processor::FileProcessor;
         use tracing::info;
         
-        let user = ctx.auth_user()?;
+        let _user = ctx.auth_user()?;
         let db = ctx.data_unchecked::<Database>();
         let torrent_service = ctx.data_unchecked::<Arc<TorrentService>>();
         let analysis_queue = ctx.data_opt::<Arc<crate::services::queues::MediaAnalysisQueue>>();
@@ -516,8 +516,6 @@ impl TorrentMutations {
         let saved = matcher.save_matches(user_id, &source_type, Some(source_uuid), &matches).await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        let summary = FileMatcher::summarize_matches(&matches);
-
         Ok(RematchSourceResult {
             success: true,
             match_count: saved.len() as i32,
@@ -597,13 +595,11 @@ impl TorrentMutations {
         use std::path::PathBuf;
         use tracing::{info, warn};
 
-        let user = ctx.auth_user()?;
+        let _user = ctx.auth_user()?;
         let db = ctx.data_unchecked::<Database>();
         let torrent_service = ctx.data_unchecked::<Arc<TorrentService>>();
         let scanner = ctx.data_unchecked::<Arc<ScannerService>>();
 
-        let user_id = Uuid::parse_str(&user.user_id)
-            .map_err(|_| async_graphql::Error::new("Invalid user ID"))?;
         let library_uuid = Uuid::parse_str(&library_id)
             .map_err(|_| async_graphql::Error::new("Invalid library ID"))?;
 
@@ -685,9 +681,7 @@ impl TorrentMutations {
         };
 
         // Copy files
-        let mut files_copied = 0;
-        
-        if source_path.is_file() {
+        let files_copied = if source_path.is_file() {
             // Single file copy
             if let Err(e) = tokio::fs::copy(&source_path, &dest_path).await {
                 warn!(
@@ -702,11 +696,11 @@ impl TorrentMutations {
                     error: Some(format!("Failed to copy file: {}", e)),
                 });
             }
-            files_copied = 1;
+            1
         } else if source_path.is_dir() {
             // Directory copy - use copy_dir_all
             match copy_dir_recursive(&source_path, &dest_path).await {
-                Ok(count) => files_copied = count,
+                Ok(count) => count,
                 Err(e) => {
                     warn!(
                         source = %source_path.display(),
@@ -727,7 +721,7 @@ impl TorrentMutations {
                 files_copied: 0,
                 error: Some(format!("Source path does not exist: {}", source_path.display())),
             });
-        }
+        };
 
         info!(
             torrent_name = %torrent_info.name,

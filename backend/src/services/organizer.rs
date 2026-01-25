@@ -3135,6 +3135,7 @@ mod tests {
         use uuid::Uuid;
 
         let show = TvShowRecord {
+            hunt_individual_items: false,
             id: Uuid::new_v4(),
             library_id: Uuid::new_v4(),
             user_id: Uuid::new_v4(),
@@ -3221,6 +3222,7 @@ mod tests {
         use uuid::Uuid;
 
         let show = TvShowRecord {
+            hunt_individual_items: false,
             id: Uuid::new_v4(),
             library_id: Uuid::new_v4(),
             user_id: Uuid::new_v4(),
@@ -3298,6 +3300,7 @@ mod tests {
         use uuid::Uuid;
 
         let show = TvShowRecord {
+            hunt_individual_items: false,
             id: Uuid::new_v4(),
             library_id: Uuid::new_v4(),
             user_id: Uuid::new_v4(),

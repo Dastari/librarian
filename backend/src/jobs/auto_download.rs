@@ -18,7 +18,7 @@ use anyhow::Result;
 use std::sync::Arc;
 
 type DbPool = crate::db::Pool;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::db::Database;
