@@ -3,7 +3,7 @@ import { Card } from '@heroui/card'
 import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
 import { Button } from '@heroui/button'
 import { Image } from '@heroui/image'
-import type { TvShow } from '../../lib/graphql'
+import type { Show } from '../../lib/graphql/generated/graphql'
 import { formatBytes } from '../../lib/format'
 import { IconEye, IconTrash, IconDeviceTv, IconCheck, IconDotsVertical } from '@tabler/icons-react'
 
@@ -12,7 +12,7 @@ import { IconEye, IconTrash, IconDeviceTv, IconCheck, IconDotsVertical } from '@
 // ============================================================================
 
 export interface TvShowCardProps {
-  show: TvShow
+  show: Show
   onDelete: () => void
 }
 
@@ -31,18 +31,18 @@ export function TvShowCard({ show, onDelete }: TvShowCardProps) {
       {/* Clickable overlay for navigation - covers the entire card */}
       <Link
         to="/shows/$showId"
-        params={{ showId: show.id }}
+        params={{ showId: show.Id }}
         className="absolute inset-0 z-20 w-full h-full cursor-pointer bg-transparent border-none outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-        aria-label={`View ${show.name}`}
+        aria-label={`View ${show.Name}`}
       />
 
       {/* Background artwork with gradient overlay */}
       <div className="absolute inset-0 w-full h-full">
-        {show.posterUrl ? (
+        {show.PosterUrl ? (
           <>
             <Image
-              src={show.posterUrl}
-              alt={show.name}
+              src={show.PosterUrl}
+              alt={show.Name}
               classNames={{
                 wrapper: "absolute inset-0 w-full h-full !max-w-full",
                 img: "w-full h-full object-cover"
@@ -66,8 +66,8 @@ export function TvShowCard({ show, onDelete }: TvShowCardProps) {
       {/* Progress badge - top left */}
       <div className="absolute top-2 left-2 z-10 pointer-events-none">
         {(() => {
-          const downloaded = show.episodeFileCount ?? 0
-          const total = show.episodeCount ?? 0
+          const downloaded = show.EpisodeFileCount ?? 0
+          const total = show.EpisodeCount ?? 0
           const isComplete = total > 0 && downloaded >= total
           return (
             <div
@@ -87,19 +87,19 @@ export function TvShowCard({ show, onDelete }: TvShowCardProps) {
       {/* Bottom content */}
       <div className="absolute bottom-0 left-0 right-0 z-10 p-3 pointer-events-none bg-black/50 backdrop-blur-sm h-20 flex flex-col">
         <h3 className="text-sm font-bold text-white mb-0.5 line-clamp-2 drop-shadow-lg grow">
-          {show.name}
-          {show.year && <span className="font-normal opacity-70"> ({show.year})</span>}
+          {show.Name}
+          {show.Year != null && <span className="font-normal opacity-70"> ({show.Year})</span>}
         </h3>
         <div className="flex items-center gap-1.5 text-xs text-white/70">
           <span>
-            {show.episodeFileCount}/{show.episodeCount}
+            {show.EpisodeFileCount ?? 0}/{show.EpisodeCount ?? 0}
           </span>
           <span>•</span>
-          <span>{formatBytes(show.sizeBytes)}</span>
-          {show.network && (
+          <span>{formatBytes(show.SizeBytes ?? 0)}</span>
+          {show.Network && (
             <>
               <span>•</span>
-              <span className="truncate">{show.network}</span>
+              <span className="truncate">{show.Network}</span>
             </>
           )}
         </div>
@@ -123,7 +123,7 @@ export function TvShowCard({ show, onDelete }: TvShowCardProps) {
             aria-label="Show actions menu"
             onAction={(key) => {
               if (key === 'view') {
-                navigate({ to: '/shows/$showId', params: { showId: show.id } })
+                navigate({ to: '/shows/$showId', params: { showId: show.Id } })
               } else if (key === 'delete') {
                 onDelete()
               }

@@ -73,7 +73,7 @@ function AudiobooksPage() {
     <>
       <LibraryAudiobooksTab
         key={refreshKey}
-        libraryId={library.id}
+        libraryId={library.Id}
         loading={loading}
         onAddAudiobook={onOpen}
         onDeleteAudiobook={handleDeleteAudiobook}
@@ -81,7 +81,7 @@ function AudiobooksPage() {
       <AddAudiobookModal
         isOpen={isOpen}
         onClose={onClose}
-        libraryId={library.id}
+        libraryId={library.Id}
         onAudiobookAdded={handleAudiobookAdded}
       />
 

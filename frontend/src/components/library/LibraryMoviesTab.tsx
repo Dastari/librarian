@@ -13,8 +13,8 @@ import {
   type RowAction,
   type CardRendererProps,
 } from '../data-table'
-import { MOVIES_CONNECTION_QUERY, type Movie } from '../../lib/graphql'
-import type { Connection } from '../../lib/graphql/types'
+import type { Movie } from '../../lib/graphql/generated/graphql'
+import { MOVIES_CONNECTION_QUERY } from '../../lib/graphql'
 import { IconPlus, IconTrash, IconEye, IconMovie, IconClock, IconStar } from '@tabler/icons-react'
 import { MovieCard } from './MovieCard'
 import { MediaCardSkeleton } from './MediaCardSkeleton'
@@ -37,20 +37,29 @@ interface LibraryMoviesTabProps {
 // ============================================================================
 
 interface MoviesConnectionResponse {
-  moviesConnection: Connection<Movie>
+  Movies: {
+    Edges: Array<{ Node: Movie; Cursor: string }>
+    PageInfo: {
+      HasNextPage: boolean
+      HasPreviousPage: boolean
+      StartCursor: string | null
+      EndCursor: string | null
+      TotalCount: number | null
+    }
+  }
 }
 
 // ============================================================================
 // Main Component
 // ============================================================================
 
-// Map column keys to GraphQL sort fields
+// Map column keys to GraphQL MovieOrderByInput field names
 const SORT_FIELD_MAP: Record<string, string> = {
-  title: 'SORT_TITLE',
-  year: 'YEAR',
-  runtime: 'RUNTIME',
-  rating: 'RATING',
-  size: 'SIZE_BYTES',
+  title: 'SortTitle',
+  year: 'Year',
+  runtime: 'Runtime',
+  rating: 'SortTitle',
+  size: 'Runtime',
 }
 
 export function LibraryMoviesTab({ libraryId, loading: parentLoading, onDeleteMovie, onAddMovie }: LibraryMoviesTabProps) {
@@ -75,28 +84,22 @@ export function LibraryMoviesTab({ libraryId, loading: parentLoading, onDeleteMo
     setSortDirection(direction)
   }, [setSortColumn, setSortDirection])
 
-  // Build filter variables for GraphQL query
+  // Build filter variables for GraphQL query (PascalCase schema)
   const queryVariables = useMemo(() => {
-    const vars: Record<string, unknown> = { libraryId }
-    
-    // Add search filter if there's a search term
+    const where: Record<string, unknown> = { LibraryId: { Eq: libraryId } }
     if (searchTerm) {
-      vars.where = {
-        title: { contains: searchTerm },
-      }
+      where.Title = { Contains: searchTerm }
     }
-    
-    // Add order by from sort state
-    const graphqlField = SORT_FIELD_MAP[sortColumn || 'title'] || 'SORT_TITLE'
-    vars.orderBy = {
-      field: graphqlField,
-      direction: sortDirection.toUpperCase(),
+    const graphqlField = SORT_FIELD_MAP[sortColumn || 'title'] || 'SortTitle'
+    const orderBy = [{ [graphqlField]: sortDirection === 'asc' ? 'Asc' : 'Desc' }]
+    return {
+      Where: where,
+      Page: { Limit: 500 },
+      OrderBy: orderBy,
     }
-    
-    return vars
   }, [libraryId, searchTerm, sortColumn, sortDirection])
 
-  // Use infinite connection hook for server-side pagination
+  // Use infinite connection hook; map schema response to Connection shape
   const {
     items: movies,
     isLoading,
@@ -107,7 +110,16 @@ export function LibraryMoviesTab({ libraryId, loading: parentLoading, onDeleteMo
   } = useInfiniteConnection<MoviesConnectionResponse, Movie>({
     query: MOVIES_CONNECTION_QUERY,
     variables: queryVariables,
-    getConnection: (data) => data.moviesConnection,
+    getConnection: (data) => ({
+      edges: data.Movies.Edges.map((e) => ({ node: e.Node, cursor: e.Cursor })),
+      pageInfo: {
+        hasNextPage: data.Movies.PageInfo.HasNextPage,
+        hasPreviousPage: data.Movies.PageInfo.HasPreviousPage,
+        startCursor: data.Movies.PageInfo.StartCursor ?? null,
+        endCursor: data.Movies.PageInfo.EndCursor ?? null,
+        totalCount: data.Movies.PageInfo.TotalCount ?? null,
+      },
+    }),
     batchSize: 50,
     enabled: !shouldSkipQueries,
     deps: [libraryId, searchTerm],
@@ -117,7 +129,7 @@ export function LibraryMoviesTab({ libraryId, loading: parentLoading, onDeleteMo
   const availableLetters = useMemo(() => {
     const letters = new Set<string>()
     movies.forEach((movie) => {
-      letters.add(getFirstLetter(movie.title))
+      letters.add(getFirstLetter(movie.Title))
     })
     return letters
   }, [movies])
@@ -125,7 +137,7 @@ export function LibraryMoviesTab({ libraryId, loading: parentLoading, onDeleteMo
   // Filter movies by selected letter (client-side for alphabet filter)
   const filteredMovies = useMemo(() => {
     if (!normalizedLetter) return movies
-    return movies.filter((movie) => getFirstLetter(movie.title) === normalizedLetter)
+    return movies.filter((movie) => getFirstLetter(movie.Title) === normalizedLetter)
   }, [movies, normalizedLetter])
 
   // Handle letter change - toggle filter
@@ -147,11 +159,11 @@ export function LibraryMoviesTab({ libraryId, loading: parentLoading, onDeleteMo
         label: 'MOVIE',
         // sortable: true (default) - server handles actual sorting
         render: (movie) => (
-          <Link to="/movies/$movieId" params={{ movieId: movie.id }} className="flex items-center gap-3 hover:opacity-80">
-            {movie.posterUrl ? (
+          <Link to="/movies/$movieId" params={{ movieId: movie.Id }} className="flex items-center gap-3 hover:opacity-80">
+            {movie.PosterUrl ? (
               <Image
-                src={movie.posterUrl}
-                alt={movie.title}
+                src={movie.PosterUrl}
+                alt={movie.Title}
                 className="w-10 h-14 object-cover rounded"
               />
             ) : (
@@ -160,10 +172,10 @@ export function LibraryMoviesTab({ libraryId, loading: parentLoading, onDeleteMo
               </div>
             )}
             <div>
-              <p className="font-medium">{movie.title}</p>
-              {movie.genres && movie.genres.length > 0 && (
+              <p className="font-medium">{movie.Title}</p>
+              {movie.Genres && movie.Genres.length > 0 && (
                 <p className="text-xs text-default-400">
-                  {movie.genres.slice(0, 2).join(', ')}
+                  {movie.Genres.slice(0, 2).join(', ')}
                 </p>
               )}
             </div>
@@ -174,7 +186,7 @@ export function LibraryMoviesTab({ libraryId, loading: parentLoading, onDeleteMo
         key: 'year',
         label: 'YEAR',
         width: 80,
-        render: (movie) => <span>{movie.year || '—'}</span>,
+        render: (movie) => <span>{movie.Year ?? '—'}</span>,
       },
       {
         key: 'runtime',
@@ -182,10 +194,10 @@ export function LibraryMoviesTab({ libraryId, loading: parentLoading, onDeleteMo
         width: 100,
         render: (movie) => (
           <span className="flex items-center gap-1">
-            {movie.runtime ? (
+            {movie.Runtime != null ? (
               <>
                 <IconClock size={14} className="text-default-400" />
-                {Math.floor(movie.runtime / 60)}h {movie.runtime % 60}m
+                {Math.floor(movie.Runtime / 60)}h {movie.Runtime % 60}m
               </>
             ) : '—'}
           </span>
@@ -196,14 +208,14 @@ export function LibraryMoviesTab({ libraryId, loading: parentLoading, onDeleteMo
         label: 'RATING',
         width: 100,
         render: (movie) => (
-          movie.tmdbRating && movie.tmdbRating > 0 ? (
+          movie.TmdbRating && Number(movie.TmdbRating) > 0 ? (
             <Chip
               size="sm"
               variant="flat"
-              color={movie.tmdbRating >= 7 ? 'success' : movie.tmdbRating >= 5 ? 'warning' : 'danger'}
+              color={Number(movie.TmdbRating) >= 7 ? 'success' : Number(movie.TmdbRating) >= 5 ? 'warning' : 'danger'}
               startContent={<IconStar size={12} />}
             >
-              {movie.tmdbRating.toFixed(1)}
+              {Number(movie.TmdbRating).toFixed(1)}
             </Chip>
           ) : <span>—</span>
         ),
@@ -216,10 +228,10 @@ export function LibraryMoviesTab({ libraryId, loading: parentLoading, onDeleteMo
         render: (movie) => (
           <Chip
             size="sm"
-            color={movie.mediaFileId ? 'success' : 'warning'}
+            color={movie.MediaFileId ? 'success' : 'warning'}
             variant="flat"
           >
-            {movie.mediaFileId ? 'Downloaded' : 'Missing'}
+            {movie.MediaFileId ? 'Downloaded' : 'Missing'}
           </Chip>
         ),
       },
@@ -245,7 +257,7 @@ export function LibraryMoviesTab({ libraryId, loading: parentLoading, onDeleteMo
         icon: <IconTrash size={16} className="text-red-400" />,
         isDestructive: true,
         inDropdown: true,
-        onAction: (movie) => onDeleteMovie(movie.id, movie.title),
+        onAction: (movie) => onDeleteMovie(movie.Id, movie.Title),
       },
     ],
     [onDeleteMovie]
@@ -256,7 +268,7 @@ export function LibraryMoviesTab({ libraryId, loading: parentLoading, onDeleteMo
     ({ item }: CardRendererProps<Movie>) => (
       <MovieCard
         movie={item}
-        onDelete={() => onDeleteMovie(item.id, item.title)}
+        onDelete={() => onDeleteMovie(item.Id, item.Title)}
       />
     ),
     [onDeleteMovie]
@@ -270,7 +282,7 @@ export function LibraryMoviesTab({ libraryId, loading: parentLoading, onDeleteMo
           skeletonDelay={500}
           data={filteredMovies}
           columns={columns}
-          getRowKey={(movie) => movie.id}
+          getRowKey={(movie) => movie.Id}
           searchPlaceholder="Search movies..."
           sortColumn={sortColumn || 'title'}
           sortDirection={sortDirection}

@@ -95,23 +95,26 @@ export const ERROR_LOGS_SUBSCRIPTION = `
 
 export const LIBRARY_CHANGED_SUBSCRIPTION = `
   subscription LibraryChanged {
-    libraryChanged {
-      changeType
-      libraryId
-      libraryName
-      library {
-        id
-        name
-        path
-        libraryType
-        icon
-        color
-        autoScan
-        scanIntervalMinutes
-        itemCount
-        totalSizeBytes
-        lastScannedAt
-        scanning
+    LibraryChanged {
+      Action
+      Id
+      Library {
+        Id
+        Name
+        Path
+        LibraryType
+        Icon
+        Color
+        AutoScan
+        ScanIntervalMinutes
+        WatchForChanges
+        AutoAddDiscovered
+        AutoDownload
+        AutoHunt
+        Scanning
+        LastScannedAt
+        CreatedAt
+        UpdatedAt
       }
     }
   }

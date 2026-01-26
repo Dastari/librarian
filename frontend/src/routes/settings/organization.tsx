@@ -30,6 +30,7 @@ import {
   IconMusic,
   IconBook,
 } from '@tabler/icons-react'
+import type { NamingPattern } from '../../lib/graphql/generated/graphql'
 import {
   graphqlClient,
   NAMING_PATTERNS_QUERY,
@@ -38,7 +39,6 @@ import {
   DELETE_NAMING_PATTERN_MUTATION,
   SET_DEFAULT_NAMING_PATTERN_MUTATION,
   LLM_PARSER_SETTINGS_QUERY,
-  type NamingPattern,
   type LlmParserSettings,
   type SettingsResult,
   type OllamaConnectionResult,
@@ -113,38 +113,38 @@ const TEST_FILENAME_PARSER_MUTATION = `
   }
 `
 
-// GraphQL response types for naming patterns
+// GraphQL response types for naming patterns (PascalCase to match schema)
 interface NamingPatternsQueryResponse {
-  namingPatterns: NamingPattern[]
+  NamingPatterns: { Edges: Array<{ Node: NamingPattern }> }
 }
 
 interface CreateNamingPatternResponse {
-  createNamingPattern: {
-    success: boolean
-    namingPattern: NamingPattern | null
-    error: string | null
+  CreateNamingPattern: {
+    Success: boolean
+    NamingPattern: NamingPattern | null
+    Error: string | null
   }
 }
 
 interface DeleteNamingPatternResponse {
-  deleteNamingPattern: {
-    success: boolean
-    error: string | null
+  DeleteNamingPattern: {
+    Success: boolean
+    Error: string | null
   }
 }
 
 interface SetDefaultNamingPatternResponse {
-  setDefaultNamingPattern: {
-    success: boolean
-    error: string | null
+  SetDefaultNamingPattern: {
+    Success: boolean
+    Error: string | null
   }
 }
 
 interface UpdateNamingPatternResponse {
-  updateNamingPattern: {
-    success: boolean
-    namingPattern: NamingPattern | null
-    error: string | null
+  UpdateNamingPattern: {
+    Success: boolean
+    NamingPattern: NamingPattern | null
+    Error: string | null
   }
 }
 
@@ -275,8 +275,8 @@ function OrganizationSettingsPage() {
         throw new Error(result.error.message)
       }
 
-      if (result.data?.namingPatterns) {
-        setPatterns(result.data.namingPatterns)
+      if (result.data?.NamingPatterns?.Edges) {
+        setPatterns(result.data.NamingPatterns.Edges.map((e) => e.Node))
       }
       setPatternsError(null)
     } catch (e) {
@@ -359,18 +359,24 @@ function OrganizationSettingsPage() {
 
     setIsSavingPattern(true)
     try {
+      const now = new Date().toISOString()
       const result = await graphqlClient
         .mutation<CreateNamingPatternResponse>(CREATE_NAMING_PATTERN_MUTATION, {
-          input: {
-            name: formData.name.trim(),
-            pattern: formData.pattern.trim(),
-            description: formData.description.trim() || null,
-            libraryType: formData.libraryType,
+          Input: {
+            Name: formData.name.trim(),
+            Pattern: formData.pattern.trim(),
+            Description: formData.description.trim() || null,
+            LibraryType: formData.libraryType,
+            IsDefault: false,
+            IsSystem: false,
+            CreatedAt: now,
+            UpdatedAt: now,
+            UserId: '',
           },
         })
         .toPromise()
 
-      if (result.data?.createNamingPattern.success) {
+      if (result.data?.CreateNamingPattern?.Success) {
         addToast({
           title: 'Pattern Created',
           description: `"${formData.name}" has been added`,
@@ -380,7 +386,7 @@ function OrganizationSettingsPage() {
         setFormData({ name: '', pattern: '', description: '', libraryType: 'tv' })
         fetchPatterns()
       } else {
-        throw new Error(result.data?.createNamingPattern.error || 'Failed to create pattern')
+        throw new Error(result.data?.CreateNamingPattern?.Error || 'Failed to create pattern')
       }
     } catch (e) {
       addToast({
@@ -408,16 +414,16 @@ function OrganizationSettingsPage() {
     try {
       const result = await graphqlClient
         .mutation<UpdateNamingPatternResponse>(UPDATE_NAMING_PATTERN_MUTATION, {
-          id: selectedPattern.id,
-          input: {
-            name: editFormData.name.trim(),
-            pattern: editFormData.pattern.trim(),
-            description: editFormData.description.trim() || null,
+          Id: selectedPattern.Id,
+          Input: {
+            Name: editFormData.name.trim(),
+            Pattern: editFormData.pattern.trim(),
+            Description: editFormData.description.trim() || null,
           },
         })
         .toPromise()
 
-      if (result.data?.updateNamingPattern.success) {
+      if (result.data?.UpdateNamingPattern?.Success) {
         addToast({
           title: 'Pattern Updated',
           description: `"${editFormData.name}" has been updated`,
@@ -427,7 +433,7 @@ function OrganizationSettingsPage() {
         setSelectedPattern(null)
         fetchPatterns()
       } else {
-        throw new Error(result.data?.updateNamingPattern.error || 'Failed to update pattern')
+        throw new Error(result.data?.UpdateNamingPattern?.Error || 'Failed to update pattern')
       }
     } catch (e) {
       addToast({
@@ -447,21 +453,21 @@ function OrganizationSettingsPage() {
     try {
       const result = await graphqlClient
         .mutation<DeleteNamingPatternResponse>(DELETE_NAMING_PATTERN_MUTATION, {
-          id: selectedPattern.id,
+          Id: selectedPattern.Id,
         })
         .toPromise()
 
-      if (result.data?.deleteNamingPattern.success) {
+      if (result.data?.DeleteNamingPattern?.Success) {
         addToast({
           title: 'Pattern Deleted',
-          description: `"${selectedPattern.name}" has been removed`,
+          description: `"${selectedPattern.Name}" has been removed`,
           color: 'success',
         })
         onDeleteClose()
         setSelectedPattern(null)
         fetchPatterns()
       } else {
-        throw new Error(result.data?.deleteNamingPattern.error || 'Failed to delete pattern')
+        throw new Error(result.data?.DeleteNamingPattern?.Error || 'Failed to delete pattern')
       }
     } catch (e) {
       addToast({
@@ -478,19 +484,19 @@ function OrganizationSettingsPage() {
     try {
       const result = await graphqlClient
         .mutation<SetDefaultNamingPatternResponse>(SET_DEFAULT_NAMING_PATTERN_MUTATION, {
-          id: pattern.id,
+          Id: pattern.Id,
         })
         .toPromise()
 
-      if (result.data?.setDefaultNamingPattern.success) {
+      if (result.data?.SetDefaultNamingPattern?.Success) {
         addToast({
           title: 'Default Updated',
-          description: `"${pattern.name}" is now the default pattern`,
+          description: `"${pattern.Name}" is now the default pattern`,
           color: 'success',
         })
         fetchPatterns()
       } else {
-        throw new Error(result.data?.setDefaultNamingPattern.error || 'Failed to set default')
+        throw new Error(result.data?.SetDefaultNamingPattern?.Error || 'Failed to set default')
       }
     } catch (e) {
       addToast({
@@ -672,13 +678,13 @@ function OrganizationSettingsPage() {
       render: (pattern) => (
         <div className="flex items-center gap-2">
           <IconTemplate size={16} className="text-amber-400" />
-          <span className="font-medium">{pattern.name}</span>
-          {pattern.isDefault && (
+          <span className="font-medium">{pattern.Name}</span>
+          {pattern.IsDefault && (
             <Chip size="sm" color="primary" variant="flat">
               Default
             </Chip>
           )}
-          {pattern.isSystem && (
+          {pattern.IsSystem && (
             <Chip size="sm" variant="flat" className="text-default-500">
               System
             </Chip>
@@ -694,7 +700,7 @@ function OrganizationSettingsPage() {
       width: 100,
       render: (pattern) => (
         <span className="text-sm text-default-500 capitalize">
-          {pattern.libraryType || 'tv'}
+          {pattern.LibraryType || 'tv'}
         </span>
       ),
     },
@@ -706,13 +712,13 @@ function OrganizationSettingsPage() {
           content={
             <div className="text-xs">
               <span className="text-default-500">Example: </span>
-              <code className="font-mono">{previewNamingPattern(pattern.pattern, pattern.libraryType || undefined)}</code>
+              <code className="font-mono">{previewNamingPattern(pattern.Pattern, pattern.LibraryType || undefined)}</code>
             </div>
           }
           delay={300}
         >
           <code className="text-xs  px-2 py-1 rounded font-mono text-default-600 break-all cursor-help">
-            {pattern.pattern}
+            {pattern.Pattern}
           </code>
         </Tooltip>
       ),
@@ -727,14 +733,14 @@ function OrganizationSettingsPage() {
       icon: <IconPencil size={16} />,
       color: 'primary',
       inDropdown: true,
-      isDisabled: (pattern: NamingPattern) => pattern.isSystem,
+      isDisabled: (pattern: NamingPattern) => pattern.IsSystem,
       onAction: (pattern: NamingPattern) => {
         setSelectedPattern(pattern)
         setEditFormData({
-          name: pattern.name,
-          pattern: pattern.pattern,
-          description: pattern.description || '',
-          libraryType: pattern.libraryType || 'tv',
+          name: pattern.Name,
+          pattern: pattern.Pattern,
+          description: pattern.Description || '',
+          libraryType: pattern.LibraryType || 'tv',
         })
         onEditOpen()
       },
@@ -745,7 +751,7 @@ function OrganizationSettingsPage() {
       icon: <IconStarFilled size={16} />,
       color: 'warning',
       inDropdown: true,
-      isVisible: (pattern: NamingPattern) => !pattern.isDefault,
+      isVisible: (pattern: NamingPattern) => !pattern.IsDefault,
       onAction: handleSetDefault,
     },
     {
@@ -754,7 +760,7 @@ function OrganizationSettingsPage() {
       icon: <IconTrash size={16} />,
       color: 'danger',
       inDropdown: true,
-      isDisabled: (pattern: NamingPattern) => pattern.isSystem,
+      isDisabled: (pattern: NamingPattern) => pattern.IsSystem,
       onAction: (pattern: NamingPattern) => {
         setSelectedPattern(pattern)
         onDeleteOpen()
@@ -770,18 +776,18 @@ function OrganizationSettingsPage() {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-2">
               <IconTemplate size={18} className="text-amber-400" />
-              <span className="font-medium">{item.name}</span>
-              {item.isDefault && (
+              <span className="font-medium">{item.Name}</span>
+              {item.IsDefault && (
                 <Chip size="sm" color="primary" variant="flat">
                   Default
                 </Chip>
               )}
             </div>
             <code className="text-xs bg-default-100 px-2 py-1 rounded font-mono text-default-600 block mb-2 break-all">
-              {item.pattern}
+              {item.Pattern}
             </code>
-            {item.description && (
-              <p className="text-sm text-default-500">{item.description}</p>
+            {item.Description && (
+              <p className="text-sm text-default-500">{item.Description}</p>
             )}
           </div>
           <div className="flex gap-1">
@@ -877,7 +883,7 @@ function OrganizationSettingsPage() {
                 skeletonDelay={500}
                 data={patterns}
                 columns={columns}
-                getRowKey={(pattern) => pattern.id}
+                getRowKey={(pattern) => pattern.Id}
                 rowActions={rowActions}
                 cardRenderer={cardRenderer}
                 removeWrapper
@@ -1374,7 +1380,7 @@ function OrganizationSettingsPage() {
               <div className="bg-content2 rounded-lg p-3">
                 <p className="text-xs text-default-500 mb-2 font-medium">Available Variables</p>
                 <div className="flex flex-wrap gap-2">
-                  {getPatternVariables(editFormData.libraryType || selectedPattern?.libraryType || 'tv').map((v) => (
+                  {getPatternVariables(editFormData.libraryType || selectedPattern?.LibraryType || 'tv').map((v) => (
                     <Tooltip key={v.var} content={v.desc}>
                       <Button
                         size="sm"
@@ -1404,7 +1410,7 @@ function OrganizationSettingsPage() {
                 <div className="bg-default-100 p-3 rounded">
                   <p className="text-xs text-default-500 mb-1">Preview:</p>
                   <code className="text-sm font-mono break-all">
-                    {previewNamingPattern(editFormData.pattern, selectedPattern?.libraryType || undefined)}
+                    {previewNamingPattern(editFormData.pattern, selectedPattern?.LibraryType || undefined)}
                   </code>
                 </div>
               )}
@@ -1432,7 +1438,7 @@ function OrganizationSettingsPage() {
           <ModalHeader>Delete Pattern</ModalHeader>
           <ModalBody>
             <p>
-              Are you sure you want to delete <strong>"{selectedPattern?.name}"</strong>?
+              Are you sure you want to delete <strong>"{selectedPattern?.Name}"</strong>?
             </p>
             <p className="text-sm text-default-500 mt-2">
               This action cannot be undone. Libraries using this pattern will fall back to the default.

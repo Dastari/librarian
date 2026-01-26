@@ -159,34 +159,34 @@ export const CREATE_LIBRARY_MUTATION = `
 `;
 
 export const UPDATE_LIBRARY_MUTATION = `
-  mutation UpdateLibrary($id: String!, $input: UpdateLibraryInput!) {
-    updateLibrary(id: $id, input: $input) {
-      success
-      library {
-        id
-        name
-        path
+  mutation UpdateLibrary($Id: String!, $Input: UpdateLibraryInput!) {
+    UpdateLibrary(Id: $Id, Input: $Input) {
+      Success
+      Library {
+        Id
+        Name
+        Path
       }
-      error
+      Error
     }
   }
 `;
 
 export const DELETE_LIBRARY_MUTATION = `
-  mutation DeleteLibrary($id: String!) {
-    deleteLibrary(id: $id) {
-      success
-      error
+  mutation DeleteLibrary($Id: String!) {
+    DeleteLibrary(Id: $Id) {
+      Success
+      Error
     }
   }
 `;
 
 export const SCAN_LIBRARY_MUTATION = `
-  mutation ScanLibrary($id: String!) {
-    scanLibrary(id: $id) {
-      libraryId
-      status
-      message
+  mutation ScanLibrary($Id: String!) {
+    ScanLibrary(Id: $Id) {
+      LibraryId
+      Status
+      Message
     }
   }
 `;
@@ -907,54 +907,55 @@ export const RENAME_FILE_MUTATION = `
 // ============================================================================
 
 export const CREATE_NAMING_PATTERN_MUTATION = `
-  mutation CreateNamingPattern($input: CreateNamingPatternInput!) {
-    createNamingPattern(input: $input) {
-      success
-      namingPattern {
-        id
-        name
-        pattern
-        description
-        isDefault
-        isSystem
+  mutation CreateNamingPattern($Input: CreateNamingPatternInput!) {
+    CreateNamingPattern(Input: $Input) {
+      Success
+      NamingPattern {
+        Id
+        Name
+        Pattern
+        Description
+        IsDefault
+        IsSystem
+        LibraryType
       }
-      error
+      Error
     }
   }
 `;
 
 export const UPDATE_NAMING_PATTERN_MUTATION = `
-  mutation UpdateNamingPattern($id: String!, $input: UpdateNamingPatternInput!) {
-    updateNamingPattern(id: $id, input: $input) {
-      success
-      namingPattern {
-        id
-        name
-        pattern
-        description
-        isDefault
-        isSystem
-        libraryType
+  mutation UpdateNamingPattern($Id: String!, $Input: UpdateNamingPatternInput!) {
+    UpdateNamingPattern(Id: $Id, Input: $Input) {
+      Success
+      NamingPattern {
+        Id
+        Name
+        Pattern
+        Description
+        IsDefault
+        IsSystem
+        LibraryType
       }
-      error
+      Error
     }
   }
 `;
 
 export const DELETE_NAMING_PATTERN_MUTATION = `
-  mutation DeleteNamingPattern($id: String!) {
-    deleteNamingPattern(id: $id) {
-      success
-      error
+  mutation DeleteNamingPattern($Id: String!) {
+    DeleteNamingPattern(Id: $Id) {
+      Success
+      Error
     }
   }
 `;
 
 export const SET_DEFAULT_NAMING_PATTERN_MUTATION = `
-  mutation SetDefaultNamingPattern($id: String!) {
-    setDefaultNamingPattern(id: $id) {
-      success
-      error
+  mutation SetDefaultNamingPattern($Id: String!) {
+    SetDefaultNamingPattern(Id: $Id) {
+      Success
+      Error
     }
   }
 `;

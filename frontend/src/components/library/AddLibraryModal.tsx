@@ -4,10 +4,15 @@ import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@herou
 import { LibrarySettingsForm, DEFAULT_LIBRARY_SETTINGS, type LibrarySettingsValues } from './LibrarySettingsForm'
 import type { CreateLibraryInput } from '../../lib/graphql'
 
+export type CreateLibraryFormInput = Omit<
+  CreateLibraryInput,
+  'UserId' | 'CreatedAt' | 'UpdatedAt'
+>
+
 export interface AddLibraryModalProps {
   isOpen: boolean
   onClose: () => void
-  onAdd: (library: CreateLibraryInput) => Promise<void>
+  onAdd: (library: CreateLibraryFormInput) => Promise<void>
   isLoading: boolean
 }
 
@@ -22,26 +27,16 @@ export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibrar
     if (!values.name || !values.path) return
     
     await onAdd({
-      name: values.name,
-      path: values.path,
-      libraryType: values.libraryType,
-      autoScan: values.autoScan,
-      scanIntervalMinutes: values.scanIntervalMinutes,
-      watchForChanges: values.watchForChanges,
-      organizeFiles: values.organizeFiles,
-      namingPattern: values.namingPattern || undefined,
-      autoAddDiscovered: values.autoAddDiscovered,
-      autoDownload: values.autoDownload,
-      autoHunt: values.autoHunt,
-      // Quality settings
-      allowedResolutions: values.allowedResolutions,
-      allowedVideoCodecs: values.allowedVideoCodecs,
-      allowedAudioFormats: values.allowedAudioFormats,
-      requireHdr: values.requireHdr,
-      allowedHdrTypes: values.allowedHdrTypes,
-      allowedSources: values.allowedSources,
-      releaseGroupBlacklist: values.releaseGroupBlacklist,
-      releaseGroupWhitelist: values.releaseGroupWhitelist,
+      Name: values.name,
+      Path: values.path,
+      LibraryType: values.libraryType,
+      AutoScan: values.autoScan,
+      ScanIntervalMinutes: values.scanIntervalMinutes,
+      WatchForChanges: values.watchForChanges,
+      AutoAddDiscovered: values.autoAddDiscovered,
+      AutoDownload: values.autoDownload,
+      AutoHunt: values.autoHunt,
+      Scanning: false,
     })
     
     // Reset form

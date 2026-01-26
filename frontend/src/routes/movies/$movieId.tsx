@@ -10,7 +10,41 @@ import { Card, CardBody } from "@heroui/card";
 import { Chip } from "@heroui/chip";
 import { Image } from "@heroui/image";
 import { ShimmerLoader } from "../../components/shared/ShimmerLoader";
-import { movieTemplate } from "../../lib/template-data";
+// PascalCase template for loading state (matches generated Movie type)
+const movieTemplate: Movie = {
+  Id: "template",
+  LibraryId: "template",
+  CreatedAt: "",
+  UpdatedAt: "",
+  UserId: "",
+  Title: "Loading...",
+  SortTitle: null,
+  OriginalTitle: null,
+  Year: 2024,
+  TmdbId: null,
+  ImdbId: null,
+  Status: "RELEASED",
+  Overview: "Loading...",
+  Tagline: null,
+  Runtime: 120,
+  Genres: [],
+  Director: null,
+  CastNames: [],
+  PosterUrl: null,
+  BackdropUrl: null,
+  Monitored: true,
+  MediaFileId: null,
+  CollectionId: null,
+  CollectionName: null,
+  CollectionPosterUrl: null,
+  TmdbRating: null,
+  TmdbVoteCount: null,
+  Certification: null,
+  ReleaseDate: null,
+  HasFile: false,
+  ProductionCountries: [],
+  SpokenLanguages: [],
+};
 import { Breadcrumbs, BreadcrumbItem } from "@heroui/breadcrumbs";
 import { useDisclosure } from "@heroui/modal";
 import { addToast } from "@heroui/toast";
@@ -19,6 +53,7 @@ import { Spinner } from "@heroui/spinner";
 import { RouteError } from "../../components/RouteError";
 import { sanitizeError, formatBytes } from "../../lib/format";
 import { useDataReactivity } from "../../hooks/useSubscription";
+import type { Movie } from "../../lib/graphql/generated/graphql";
 import {
   graphqlClient,
   MOVIE_QUERY,
@@ -26,7 +61,6 @@ import {
   DELETE_MOVIE_MUTATION,
   REFRESH_MOVIE_MUTATION,
   MOVIE_MEDIA_FILE_QUERY,
-  type Movie,
   type Library,
   type MediaFile,
 } from "../../lib/graphql";
@@ -84,7 +118,7 @@ function MovieDetailPage() {
   // Update page title
   useEffect(() => {
     if (movie) {
-      document.title = `Librarian - ${movie.title}`;
+      document.title = `Librarian - ${movie.Title}`;
     }
     return () => {
       document.title = "Librarian";
@@ -98,20 +132,20 @@ function MovieDetailPage() {
       }
 
       const movieResult = await graphqlClient
-        .query<{ movie: Movie | null }>(MOVIE_QUERY, { id: movieId })
+        .query<{ Movie: Movie | null }>(MOVIE_QUERY, { Id: movieId })
         .toPromise();
 
-      if (movieResult.data?.movie) {
-        setMovie(movieResult.data.movie);
+      if (movieResult.data?.Movie) {
+        setMovie(movieResult.data.Movie);
 
         // Fetch library info and media file in parallel
         const [libraryResult, mediaFileResult] = await Promise.all([
           graphqlClient
-            .query<{ library: Library | null }>(LIBRARY_QUERY, {
-              id: movieResult.data.movie.libraryId,
-            })
+            .query<{
+              Library: import("../../lib/graphql/generated/graphql").Library | null;
+            }>(LIBRARY_QUERY, { Id: movieResult.data.Movie.LibraryId })
             .toPromise(),
-          movieResult.data.movie.mediaFileId
+          movieResult.data.Movie.MediaFileId
             ? graphqlClient
                 .query<{ movieMediaFile: MediaFile | null }>(
                   MOVIE_MEDIA_FILE_QUERY,
@@ -123,8 +157,8 @@ function MovieDetailPage() {
             : Promise.resolve({ data: null }),
         ]);
 
-        if (libraryResult.data?.library) {
-          setLibrary(libraryResult.data.library);
+        if (libraryResult.data?.Library) {
+          setLibrary(libraryResult.data.Library);
         }
         if (mediaFileResult.data?.movieMediaFile) {
           setMediaFile(mediaFileResult.data.movieMediaFile);
@@ -181,7 +215,7 @@ function MovieDetailPage() {
       // Start playback using the PersistentPlayer
       // TODO: Add watch progress resume once backend returns it for movies
       await startMoviePlayback(
-        movie.id,
+        movie.Id,
         fileToPlay.id,
         movie,
         0,
@@ -228,7 +262,7 @@ function MovieDetailPage() {
       onDeleteClose();
       navigate({
         to: "/libraries/$libraryId",
-        params: { libraryId: movie?.libraryId || "" },
+        params: { libraryId: movie?.LibraryId || "" },
       });
     } catch (err) {
       console.error("Failed to delete movie:", err);
@@ -323,10 +357,10 @@ function MovieDetailPage() {
         <div className="flex flex-col md:flex-row gap-6 mb-8">
           {/* Poster */}
           <div className="shrink-0">
-            {displayMovie.posterUrl ? (
+            {displayMovie.PosterUrl ? (
               <Image
-                src={displayMovie.posterUrl}
-                alt={displayMovie.title}
+                src={displayMovie.PosterUrl}
+                alt={displayMovie.Title}
                 className="w-64 h-96 object-cover rounded-lg shadow-lg"
               />
             ) : (
@@ -340,18 +374,18 @@ function MovieDetailPage() {
           <div className="flex-1">
             <Breadcrumbs className="mb-2">
               <BreadcrumbItem href="/libraries">Libraries</BreadcrumbItem>
-              <BreadcrumbItem href={`/libraries/${displayMovie.libraryId}`}>
-                {library?.name || "Library"}
+              <BreadcrumbItem href={`/libraries/${displayMovie.LibraryId}`}>
+                {library?.Name || "Library"}
               </BreadcrumbItem>
-              <BreadcrumbItem isCurrent>{displayMovie.title}</BreadcrumbItem>
+              <BreadcrumbItem isCurrent>{displayMovie.Title}</BreadcrumbItem>
             </Breadcrumbs>
 
             <div className="flex items-start justify-between gap-4 mb-2">
               <h1 className="text-3xl font-bold">
-                {displayMovie.title}
-                {displayMovie.year && (
+                {displayMovie.Title}
+                {displayMovie.Year && (
                   <span className="text-default-500 ml-2">
-                    ({displayMovie.year})
+                    ({displayMovie.Year})
                   </span>
                 )}
               </h1>
@@ -391,9 +425,9 @@ function MovieDetailPage() {
             </div>
 
             {/* Tagline */}
-            {displayMovie.tagline && (
+            {displayMovie.Tagline && (
               <p className="text-default-500 italic mb-4">
-                "{displayMovie.tagline}"
+                "{displayMovie.Tagline}"
               </p>
             )}
 
@@ -402,73 +436,73 @@ function MovieDetailPage() {
               {/* File status */}
               <Chip
                 size="sm"
-                color={displayMovie.mediaFileId ? "success" : "warning"}
+                color={displayMovie.MediaFileId ? "success" : "warning"}
                 variant="flat"
                 startContent={
-                  displayMovie.mediaFileId ? (
+                  displayMovie.MediaFileId ? (
                     <IconCheck size={14} />
                   ) : (
                     <IconX size={14} />
                   )
                 }
               >
-                {displayMovie.mediaFileId ? "Downloaded" : "Missing"}
+                {displayMovie.MediaFileId ? "Downloaded" : "Missing"}
               </Chip>
 
               {/* Rating */}
-              {displayMovie.tmdbRating && displayMovie.tmdbRating > 0 && (
+              {displayMovie.TmdbRating && Number(displayMovie.TmdbRating) > 0 && (
                 <Chip
                   size="sm"
                   variant="flat"
                   color={
-                    displayMovie.tmdbRating >= 7
+                    Number(displayMovie.TmdbRating) >= 7
                       ? "success"
-                      : displayMovie.tmdbRating >= 5
+                      : Number(displayMovie.TmdbRating) >= 5
                         ? "warning"
                         : "danger"
                   }
                   startContent={<IconStar size={14} />}
                 >
-                  {displayMovie.tmdbRating.toFixed(1)} (
-                  {displayMovie.tmdbVoteCount?.toLocaleString()} votes)
+                  {Number(displayMovie.TmdbRating).toFixed(1)} (
+                  {displayMovie.TmdbVoteCount?.toLocaleString()} votes)
                 </Chip>
               )}
 
               {/* Certification */}
-              {displayMovie.certification && (
+              {displayMovie.Certification && (
                 <Chip size="sm" variant="flat">
-                  {displayMovie.certification}
+                  {displayMovie.Certification}
                 </Chip>
               )}
 
               {/* Runtime */}
-              {displayMovie.runtime && (
+              {displayMovie.Runtime && (
                 <Chip
                   size="sm"
                   variant="flat"
                   startContent={<IconClock size={14} />}
                 >
-                  {Math.floor(displayMovie.runtime / 60)}h{" "}
-                  {displayMovie.runtime % 60}m
+                  {Math.floor(displayMovie.Runtime / 60)}h{" "}
+                  {displayMovie.Runtime % 60}m
                 </Chip>
               )}
 
               {/* Release date */}
-              {displayMovie.releaseDate && (
+              {displayMovie.ReleaseDate && (
                 <Chip
                   size="sm"
                   variant="flat"
                   startContent={<IconCalendar size={14} />}
                 >
-                  {new Date(displayMovie.releaseDate).toLocaleDateString()}
+                  {new Date(displayMovie.ReleaseDate).toLocaleDateString()}
                 </Chip>
               )}
             </div>
 
             {/* Genres */}
-            {displayMovie.genres.length > 0 && (
+            {displayMovie.Genres.length > 0 && (
               <div className="flex flex-wrap gap-1 mb-4">
-                {displayMovie.genres.map((genre, index) => (
+                {displayMovie.Genres.map((genre, index) => (
                   <Chip
                     key={`${genre}-${index}`}
                     size="sm"
@@ -482,25 +516,25 @@ function MovieDetailPage() {
             )}
 
             {/* Overview */}
-            {displayMovie.overview && (
+            {displayMovie.Overview && (
               <p className="text-default-600 mb-4 line-clamp-4">
-                {displayMovie.overview}
+                {displayMovie.Overview}
               </p>
             )}
 
             {/* Credits */}
             <div className="flex gap-8 text-sm mb-4">
-              {displayMovie.director && (
+              {displayMovie.Director && (
                 <div>
                   <span className="text-default-500">Director:</span>{" "}
-                  <span className="font-medium">{displayMovie.director}</span>
+                  <span className="font-medium">{displayMovie.Director}</span>
                 </div>
               )}
-              {displayMovie.castNames.length > 0 && (
+              {displayMovie.CastNames.length > 0 && (
                 <div>
                   <span className="text-default-500">Cast:</span>{" "}
                   <span className="font-medium">
-                    {displayMovie.castNames.slice(0, 3).join(", ")}
+                    {displayMovie.CastNames.slice(0, 3).join(", ")}
                   </span>
                 </div>
               )}
@@ -520,7 +554,7 @@ function MovieDetailPage() {
 
             {/* Actions */}
             <div className="flex gap-2 mt-6">
-              {displayMovie.mediaFileId ? (
+              {displayMovie.MediaFileId ? (
                 <Button
                   color="success"
                   startContent={
@@ -542,9 +576,9 @@ function MovieDetailPage() {
                   isDisabled={loading}
                   onPress={() => {
                     // Build search query: "Movie Title (Year)"
-                    const searchQuery = displayMovie.year
-                      ? `${displayMovie.title} ${displayMovie.year}`
-                      : displayMovie.title;
+                    const searchQuery = displayMovie.Year
+                      ? `${displayMovie.Title} ${displayMovie.Year}`
+                      : displayMovie.Title;
                     navigate({
                       to: "/hunt",
                       search: {
@@ -562,20 +596,20 @@ function MovieDetailPage() {
         </div>
 
         {/* Collection info */}
-        {displayMovie.collectionName && (
+        {displayMovie.CollectionName && (
           <Card className="bg-content1 mb-8">
             <CardBody>
               <div className="flex items-center gap-4">
-                {displayMovie.collectionPosterUrl && (
+                {displayMovie.CollectionPosterUrl && (
                   <Image
-                    src={displayMovie.collectionPosterUrl}
-                    alt={displayMovie.collectionName}
+                    src={displayMovie.CollectionPosterUrl}
+                    alt={displayMovie.CollectionName}
                     className="w-16 h-24 object-cover rounded"
                   />
                 )}
                 <div>
                   <h3 className="font-semibold">
-                    Part of {displayMovie.collectionName}
+                    Part of {displayMovie.CollectionName}
                   </h3>
                   <p className="text-sm text-default-500">
                     View all movies in this collection
@@ -593,7 +627,7 @@ function MovieDetailPage() {
             onClose={onDeleteClose}
             onConfirm={handleDelete}
             title="Delete Movie"
-            message={`Are you sure you want to delete "${movie.title}"?`}
+            message={`Are you sure you want to delete "${movie.Title}"?`}
             description="This will remove the movie from your library. Downloaded files will not be deleted."
             confirmLabel="Delete"
             confirmColor="danger"

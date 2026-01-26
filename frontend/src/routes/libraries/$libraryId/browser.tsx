@@ -9,5 +9,5 @@ export const Route = createFileRoute('/libraries/$libraryId/browser')({
 function BrowserPage() {
   const { library, loading } = useLibraryContext()
 
-  return <LibraryFileBrowserTab libraryPath={library.path} loading={loading} />
+  return <LibraryFileBrowserTab libraryPath={library.Path} loading={loading} />
 }

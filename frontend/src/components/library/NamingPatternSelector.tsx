@@ -4,7 +4,8 @@ import { Input } from '@heroui/input'
 import { Switch } from '@heroui/switch'
 import { Spinner } from '@heroui/spinner'
 import { IconTemplate, IconPencil } from '@tabler/icons-react'
-import { graphqlClient, NAMING_PATTERNS_QUERY, type NamingPattern } from '../../lib/graphql'
+import type { NamingPattern } from '../../lib/graphql/generated/graphql'
+import { graphqlClient, NAMING_PATTERNS_QUERY } from '../../lib/graphql'
 import { previewNamingPattern } from '../../lib/format'
 
 interface NamingPatternSelectorProps {
@@ -53,7 +54,7 @@ export function NamingPatternSelector({
 
   // Filter patterns by library type
   const patterns = libraryType
-    ? allPatterns.filter(p => p.libraryType === libraryType)
+    ? allPatterns.filter(p => p.LibraryType === libraryType)
     : allPatterns
 
   // Fetch available patterns
@@ -61,19 +62,20 @@ export function NamingPatternSelector({
     const fetchPatterns = async () => {
       try {
         const result = await graphqlClient
-          .query<{ namingPatterns: NamingPattern[] }>(NAMING_PATTERNS_QUERY, {})
+          .query<{ NamingPatterns: { Edges: Array<{ Node: NamingPattern }> } }>(NAMING_PATTERNS_QUERY, {})
           .toPromise()
         
-        if (result.data?.namingPatterns) {
-          setAllPatterns(result.data.namingPatterns)
+        if (result.data?.NamingPatterns?.Edges) {
+          const nodes = result.data.NamingPatterns.Edges.map(e => e.Node)
+          setAllPatterns(nodes)
           
           // Check if current value matches a preset or is custom
           if (value) {
             const filteredPatterns = libraryType
-              ? result.data.namingPatterns.filter(p => p.libraryType === libraryType)
-              : result.data.namingPatterns
+              ? nodes.filter(p => p.LibraryType === libraryType)
+              : nodes
             const matchingPreset = filteredPatterns.find(
-              (p) => p.pattern === value
+              (p) => p.Pattern === value
             )
             if (!matchingPreset) {
               setUseCustom(true)
@@ -92,16 +94,16 @@ export function NamingPatternSelector({
   }, [value, libraryType])
 
   // Find the currently selected pattern ID based on the pattern string
-  const selectedPatternId = patterns.find(p => p.pattern === value)?.id || ''
+  const selectedPatternId = patterns.find(p => p.Pattern === value)?.Id || ''
   
   // Get appropriate description and placeholder for this library type
   const variableDescription = VARIABLE_DESCRIPTIONS[libraryType || 'tv'] || VARIABLE_DESCRIPTIONS.tv
   const placeholderPattern = PLACEHOLDER_PATTERNS[libraryType || 'tv'] || PLACEHOLDER_PATTERNS.tv
 
   const handlePatternSelect = (patternId: string) => {
-    const pattern = patterns.find(p => p.id === patternId)
+    const pattern = patterns.find(p => p.Id === patternId)
     if (pattern) {
-      onChange(pattern.pattern)
+      onChange(pattern.Pattern)
     }
   }
 
@@ -109,9 +111,9 @@ export function NamingPatternSelector({
     setUseCustom(checked)
     if (!checked) {
       // Switch back to preset - use default pattern
-      const defaultPattern = patterns.find(p => p.isDefault) || patterns[0]
+      const defaultPattern = patterns.find(p => p.IsDefault) || patterns[0]
       if (defaultPattern) {
-        onChange(defaultPattern.pattern)
+        onChange(defaultPattern.Pattern)
       }
     } else {
       // Switch to custom - keep current value or use current preset value
@@ -180,19 +182,19 @@ export function NamingPatternSelector({
         >
           {patterns.map((pattern) => (
             <SelectItem
-              key={pattern.id}
-              textValue={pattern.name}
-              description={pattern.description || pattern.pattern}
+              key={pattern.Id}
+              textValue={pattern.Name}
+              description={pattern.Description || pattern.Pattern}
             >
               <div className="flex flex-col">
                 <span className="font-medium">
-                  {pattern.name}
-                  {pattern.isDefault && (
+                  {pattern.Name}
+                  {pattern.IsDefault && (
                     <span className="ml-2 text-xs text-primary">(Default)</span>
                   )}
                 </span>
                 <span className="text-xs text-default-400 truncate max-w-xs">
-                  {pattern.description || pattern.pattern}
+                  {pattern.Description || pattern.Pattern}
                 </span>
               </div>
             </SelectItem>

@@ -495,116 +495,11 @@ export interface RawBrowseResponse {
 // ============================================================================
 // Library Types
 // ============================================================================
+// Library, LibraryResult, LibraryChangedEvent, CreateLibraryInput, UpdateLibraryInput
+// are re-exported from generated/graphql (source of truth). Only helpers stay here.
 
 export type LibraryType = "MOVIES" | "TV" | "MUSIC" | "AUDIOBOOKS" | "OTHER";
 export type PostDownloadAction = "COPY" | "MOVE" | "HARDLINK";
-
-export interface Library {
-  id: string;
-  name: string;
-  path: string;
-  libraryType: LibraryType;
-  icon: string;
-  color: string;
-  autoScan: boolean;
-  scanIntervalMinutes: number;
-  watchForChanges: boolean;
-  organizeFiles: boolean;
-  renameStyle: string;
-  namingPattern: string | null;
-  autoAddDiscovered: boolean;
-  autoDownload: boolean;
-  /** Automatically hunt for missing episodes using indexers */
-  autoHunt: boolean;
-  /** Whether a scan is currently in progress */
-  scanning: boolean;
-  itemCount: number;
-  totalSizeBytes: number;
-  showCount: number;
-  movieCount: number;
-  lastScannedAt: string | null;
-  // Inline quality settings (empty = any)
-  /** Allowed resolutions: 2160p, 1080p, 720p, 480p. Empty = any. */
-  allowedResolutions: string[];
-  /** Allowed video codecs: hevc, h264, av1, xvid. Empty = any. */
-  allowedVideoCodecs: string[];
-  /** Allowed audio formats: atmos, truehd, dtshd, dts, dd51, aac. Empty = any. */
-  allowedAudioFormats: string[];
-  /** If true, only accept releases with HDR. */
-  requireHdr: boolean;
-  /** Allowed HDR types: hdr10, hdr10plus, dolbyvision, hlg. Empty with requireHdr=true = any HDR. */
-  allowedHdrTypes: string[];
-  /** Allowed sources: webdl, webrip, bluray, hdtv. Empty = any. */
-  allowedSources: string[];
-  /** Blacklisted release groups. */
-  releaseGroupBlacklist: string[];
-  /** Whitelisted release groups (if set, only allow these). */
-  releaseGroupWhitelist: string[];
-}
-
-export interface LibraryResult {
-  success: boolean;
-  library: Library | null;
-  error: string | null;
-}
-
-export type LibraryChangeType = "CREATED" | "UPDATED" | "DELETED";
-
-export interface LibraryChangedEvent {
-  changeType: LibraryChangeType;
-  libraryId: string;
-  libraryName: string | null;
-  library: Library | null;
-}
-
-export interface CreateLibraryInput {
-  name: string;
-  path: string;
-  libraryType: LibraryType;
-  icon?: string;
-  color?: string;
-  autoScan?: boolean;
-  scanIntervalMinutes?: number;
-  watchForChanges?: boolean;
-  organizeFiles?: boolean;
-  namingPattern?: string;
-  autoAddDiscovered?: boolean;
-  autoDownload?: boolean;
-  autoHunt?: boolean;
-  // Inline quality settings
-  allowedResolutions?: string[];
-  allowedVideoCodecs?: string[];
-  allowedAudioFormats?: string[];
-  requireHdr?: boolean;
-  allowedHdrTypes?: string[];
-  allowedSources?: string[];
-  releaseGroupBlacklist?: string[];
-  releaseGroupWhitelist?: string[];
-}
-
-export interface UpdateLibraryInput {
-  name?: string;
-  path?: string;
-  icon?: string;
-  color?: string;
-  autoScan?: boolean;
-  scanIntervalMinutes?: number;
-  watchForChanges?: boolean;
-  organizeFiles?: boolean;
-  namingPattern?: string;
-  autoAddDiscovered?: boolean;
-  autoDownload?: boolean;
-  autoHunt?: boolean;
-  // Inline quality settings
-  allowedResolutions?: string[];
-  allowedVideoCodecs?: string[];
-  allowedAudioFormats?: string[];
-  requireHdr?: boolean;
-  allowedHdrTypes?: string[];
-  allowedSources?: string[];
-  releaseGroupBlacklist?: string[];
-  releaseGroupWhitelist?: string[];
-}
 
 // ============================================================================
 // TV Show Types

@@ -13,8 +13,8 @@ import {
   type RowAction,
   type CardRendererProps,
 } from '../data-table'
-import { TV_SHOWS_CONNECTION_QUERY, type TvShow } from '../../lib/graphql'
-import type { Connection } from '../../lib/graphql/types'
+import type { Show } from '../../lib/graphql/generated/graphql'
+import { TV_SHOWS_CONNECTION_QUERY } from '../../lib/graphql'
 import { IconPlus, IconTrash, IconEye, IconDeviceTv } from '@tabler/icons-react'
 import { TvShowCard } from './TvShowCard'
 import { MediaCardSkeleton } from './MediaCardSkeleton'
@@ -37,19 +37,28 @@ interface LibraryShowsTabProps {
 // ============================================================================
 
 interface TvShowsConnectionResponse {
-  tvShowsConnection: Connection<TvShow>
+  Shows: {
+    Edges: Array<{ Node: Show; Cursor: string }>
+    PageInfo: {
+      HasNextPage: boolean
+      HasPreviousPage: boolean
+      StartCursor: string | null
+      EndCursor: string | null
+      TotalCount: number | null
+    }
+  }
 }
 
 // ============================================================================
 // Main Component
 // ============================================================================
 
-// Map column keys to GraphQL sort fields
+// Map column keys to GraphQL ShowOrderByInput field names
 const SORT_FIELD_MAP: Record<string, string> = {
-  name: 'SORT_NAME',
-  year: 'YEAR',
-  seasons: 'SEASON_COUNT',
-  episodes: 'EPISODE_COUNT',
+  name: 'SortName',
+  year: 'Year',
+  seasons: 'EpisodeCount',
+  episodes: 'EpisodeCount',
 }
 
 export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteShow, onAddShow }: LibraryShowsTabProps) {
@@ -74,28 +83,16 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
     setSortDirection(direction)
   }, [setSortColumn, setSortDirection])
 
-  // Build filter variables for GraphQL query
+  // Build filter variables for GraphQL query (PascalCase schema)
   const queryVariables = useMemo(() => {
-    const vars: Record<string, unknown> = { libraryId }
-    
-    // Add search filter if there's a search term
-    if (searchTerm) {
-      vars.where = {
-        name: { contains: searchTerm },
-      }
-    }
-    
-    // Add order by from sort state
-    const graphqlField = SORT_FIELD_MAP[sortColumn || 'name'] || 'SORT_NAME'
-    vars.orderBy = {
-      field: graphqlField,
-      direction: sortDirection.toUpperCase(),
-    }
-    
-    return vars
+    const where: Record<string, unknown> = { LibraryId: { Eq: libraryId } }
+    if (searchTerm) where.Name = { Contains: searchTerm }
+    const graphqlField = SORT_FIELD_MAP[sortColumn || 'name'] || 'SortName'
+    const orderBy = [{ [graphqlField]: sortDirection === 'asc' ? 'Asc' : 'Desc' }]
+    return { Where: where, Page: { Limit: 500 }, OrderBy: orderBy }
   }, [libraryId, searchTerm, sortColumn, sortDirection])
 
-  // Use infinite connection hook for server-side pagination
+  // Use infinite connection hook; map schema response to Connection shape
   const {
     items: shows,
     isLoading,
@@ -103,10 +100,19 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
     hasMore,
     totalCount,
     loadMore,
-  } = useInfiniteConnection<TvShowsConnectionResponse, TvShow>({
+  } = useInfiniteConnection<TvShowsConnectionResponse, Show>({
     query: TV_SHOWS_CONNECTION_QUERY,
     variables: queryVariables,
-    getConnection: (data) => data.tvShowsConnection,
+    getConnection: (data) => ({
+      edges: data.Shows.Edges.map((e) => ({ node: e.Node, cursor: e.Cursor })),
+      pageInfo: {
+        hasNextPage: data.Shows.PageInfo.HasNextPage,
+        hasPreviousPage: data.Shows.PageInfo.HasPreviousPage,
+        startCursor: data.Shows.PageInfo.StartCursor ?? null,
+        endCursor: data.Shows.PageInfo.EndCursor ?? null,
+        totalCount: data.Shows.PageInfo.TotalCount ?? null,
+      },
+    }),
     batchSize: 50,
     enabled: !shouldSkipQueries,
     deps: [libraryId, searchTerm],
@@ -116,7 +122,7 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
   const availableLetters = useMemo(() => {
     const letters = new Set<string>()
     shows.forEach((show) => {
-      letters.add(getFirstLetter(show.name))
+      letters.add(getFirstLetter(show.Name))
     })
     return letters
   }, [shows])
@@ -124,7 +130,7 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
   // Filter shows by selected letter (client-side for alphabet filter)
   const filteredShows = useMemo(() => {
     if (!normalizedLetter) return shows
-    return shows.filter((show) => getFirstLetter(show.name) === normalizedLetter)
+    return shows.filter((show) => getFirstLetter(show.Name) === normalizedLetter)
   }, [shows, normalizedLetter])
 
   // Handle letter change - toggle filter
@@ -139,18 +145,17 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
   }, [setSearchTerm, setSelectedLetter])
 
   // Column definitions
-  const columns: DataTableColumn<TvShow>[] = useMemo(
+  const columns: DataTableColumn<Show>[] = useMemo(
     () => [
       {
         key: 'name',
         label: 'SHOW',
-        // sortable: true (default) - server handles actual sorting
         render: (show) => (
-          <Link to="/shows/$showId" params={{ showId: show.id }} className="flex items-center gap-3 hover:opacity-80">
-            {show.posterUrl ? (
+          <Link to="/shows/$showId" params={{ showId: show.Id }} className="flex items-center gap-3 hover:opacity-80">
+            {show.PosterUrl ? (
               <Image
-                src={show.posterUrl}
-                alt={show.name}
+                src={show.PosterUrl}
+                alt={show.Name}
                 className="w-10 h-14 object-cover rounded"
               />
             ) : (
@@ -159,7 +164,7 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
               </div>
             )}
             <div>
-              <p className="font-medium">{show.name}</p>
+              <p className="font-medium">{show.Name}</p>
             </div>
           </Link>
         ),
@@ -168,18 +173,18 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
         key: 'year',
         label: 'YEAR',
         width: 80,
-        render: (show) => <span>{show.year || '—'}</span>,
+        render: (show) => <span>{show.Year ?? '—'}</span>,
       },
       {
         key: 'episodes',
         label: 'EPISODES',
         width: 150,
         render: (show) => {
-          const missing = (show.episodeCount || 0) - (show.episodeFileCount || 0)
+          const missing = (show.EpisodeCount || 0) - (show.EpisodeFileCount || 0)
           return (
             <div className="flex items-center gap-2">
               <span>
-                {show.episodeFileCount || 0}/{show.episodeCount || 0}
+                {show.EpisodeFileCount || 0}/{show.EpisodeCount || 0}
               </span>
               {missing > 0 && (
                 <Chip size="sm" color="warning" variant="flat">
@@ -196,8 +201,8 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
         width: 80,
         sortable: false,
         render: (show) => {
-          const downloaded = show.episodeFileCount ?? 0
-          const total = show.episodeCount ?? 0
+          const downloaded = show.EpisodeFileCount ?? 0
+          const total = show.EpisodeCount ?? 0
           const isComplete = total > 0 && downloaded >= total
           return (
             <span className={isComplete ? 'text-success font-medium' : 'text-warning font-medium'}>
@@ -211,16 +216,14 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
   )
 
   // Row actions
-  const rowActions: RowAction<TvShow>[] = useMemo(
+  const rowActions: RowAction<Show>[] = useMemo(
     () => [
       {
         key: 'view',
         label: 'View',
         icon: <IconEye size={16} />,
         inDropdown: true,
-        onAction: () => {
-          // Navigation is handled by the Link component in the column
-        },
+        onAction: () => {},
       },
       {
         key: 'delete',
@@ -228,7 +231,7 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
         icon: <IconTrash size={16} className="text-red-400" />,
         isDestructive: true,
         inDropdown: true,
-        onAction: (show) => onDeleteShow(show.id, show.name),
+        onAction: (show) => onDeleteShow(show.Id, show.Name),
       },
     ],
     [onDeleteShow]
@@ -236,10 +239,10 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
 
   // Card renderer
   const cardRenderer = useCallback(
-    ({ item }: CardRendererProps<TvShow>) => (
+    ({ item }: CardRendererProps<Show>) => (
       <TvShowCard
         show={item}
-        onDelete={() => onDeleteShow(item.id, item.name)}
+        onDelete={() => onDeleteShow(item.Id, item.Name)}
       />
     ),
     [onDeleteShow]
@@ -253,7 +256,7 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
           skeletonDelay={500}
           data={filteredShows}
           columns={columns}
-          getRowKey={(show) => show.id}
+          getRowKey={(show) => show.Id}
           searchPlaceholder="Search shows..."
           sortColumn={sortColumn || 'name'}
           sortDirection={sortDirection}

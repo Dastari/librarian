@@ -11,7 +11,7 @@ function ShowsPage() {
 
   return (
     <LibraryShowsTab
-      libraryId={library.id}
+      libraryId={library.Id}
       loading={loading}
       onDeleteShow={handleDeleteShowClick}
       onAddShow={onOpenAddShow}

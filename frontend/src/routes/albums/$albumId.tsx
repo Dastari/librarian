@@ -312,10 +312,12 @@ function AlbumDetailPage() {
 
         // Fetch library info
         const libResult = await graphqlClient
-          .query<{ library: Library | null }>(LIBRARY_QUERY, { id: result.data.albumWithTracks.album.libraryId })
+          .query<{
+            Library: import('../../lib/graphql/generated/graphql').Library | null
+          }>(LIBRARY_QUERY, { Id: result.data.albumWithTracks.album.libraryId })
           .toPromise()
-        if (libResult.data?.library) {
-          setLibrary(libResult.data.library)
+        if (libResult.data?.Library) {
+          setLibrary(libResult.data.Library)
         }
       } else {
         setError('Album not found')
@@ -447,7 +449,7 @@ function AlbumDetailPage() {
             <Link to="/libraries">Libraries</Link>
           </BreadcrumbItem>
           <BreadcrumbItem>
-            <Link to="/libraries/$libraryId" params={{ libraryId: displayLibrary.id }}>{displayLibrary.name}</Link>
+            <Link to="/libraries/$libraryId" params={{ libraryId: displayLibrary.Id }}>{displayLibrary.Name}</Link>
           </BreadcrumbItem>
           <BreadcrumbItem>{album.name}</BreadcrumbItem>
         </Breadcrumbs>

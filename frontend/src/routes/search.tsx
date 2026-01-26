@@ -16,12 +16,11 @@ import {
   IconHeadphones,
   IconFolder,
 } from '@tabler/icons-react'
+import type { Movie, Show } from '../lib/graphql/generated/graphql'
 import {
   graphqlClient,
-  TV_SHOWS_QUERY,
-  MOVIES_QUERY,
-  type TvShow,
-  type Movie,
+  ALL_TV_SHOWS_QUERY,
+  ALL_MOVIES_QUERY,
 } from '../lib/graphql'
 import { RouteError } from '../components/RouteError'
 
@@ -60,7 +59,7 @@ function LibrarySearchPage() {
   const [searchInput, setSearchInput] = useState(query)
   const [mediaType, setMediaType] = useState<MediaType>('all')
   const [isSearching, setIsSearching] = useState(false)
-  const [shows, setShows] = useState<TvShow[]>([])
+  const [shows, setShows] = useState<Show[]>([])
   const [movies, setMovies] = useState<Movie[]>([])
 
   // Sync search input with query param
@@ -77,12 +76,14 @@ function LibrarySearchPage() {
     setIsSearching(true)
     try {
       const [showsResult, moviesResult] = await Promise.all([
-        graphqlClient.query<{ tvShows: TvShow[] }>(TV_SHOWS_QUERY, {}).toPromise(),
-        graphqlClient.query<{ movies: Movie[] }>(MOVIES_QUERY, {}).toPromise(),
+        graphqlClient.query<{ Shows: { Edges: Array<{ Node: Show }> } }>(ALL_TV_SHOWS_QUERY, {}).toPromise(),
+        graphqlClient.query<{ Movies: { Edges: Array<{ Node: Movie }> } }>(ALL_MOVIES_QUERY, {}).toPromise(),
       ])
 
-      setShows(showsResult.data?.tvShows || [])
-      setMovies(moviesResult.data?.movies || [])
+      const showNodes = showsResult.data?.Shows?.Edges?.map((e) => e.Node) ?? []
+      setShows(showNodes)
+      const movieNodes = moviesResult.data?.Movies?.Edges?.map((e) => e.Node) ?? []
+      setMovies(movieNodes)
     } catch (err) {
       console.error('Failed to fetch content:', err)
     } finally {
@@ -98,15 +99,15 @@ function LibrarySearchPage() {
     // Filter shows
     if (mediaType === 'all' || mediaType === 'shows') {
       for (const show of shows) {
-        if (!queryLower || show.name.toLowerCase().includes(queryLower)) {
+        if (!queryLower || show.Name.toLowerCase().includes(queryLower)) {
           results.push({
-            id: show.id,
+            id: show.Id,
             type: 'show',
-            title: show.name,
-            year: show.year ?? undefined,
-            posterUrl: show.posterUrl ?? undefined,
-            status: show.status ?? undefined,
-            libraryId: show.libraryId,
+            title: show.Name,
+            year: show.Year ?? undefined,
+            posterUrl: show.PosterUrl ?? undefined,
+            status: show.Status ?? undefined,
+            libraryId: show.LibraryId,
           })
         }
       }
@@ -115,15 +116,15 @@ function LibrarySearchPage() {
     // Filter movies
     if (mediaType === 'all' || mediaType === 'movies') {
       for (const movie of movies) {
-        if (!queryLower || movie.title.toLowerCase().includes(queryLower)) {
+        if (!queryLower || movie.Title.toLowerCase().includes(queryLower)) {
           results.push({
-            id: movie.id,
+            id: movie.Id,
             type: 'movie',
-            title: movie.title,
-            year: movie.year ?? undefined,
-            posterUrl: movie.posterUrl ?? undefined,
-            status: movie.status ?? undefined,
-            libraryId: movie.libraryId,
+            title: movie.Title,
+            year: movie.Year ?? undefined,
+            posterUrl: movie.PosterUrl ?? undefined,
+            status: movie.Status ?? undefined,
+            libraryId: movie.LibraryId,
           })
         }
       }
@@ -147,8 +148,8 @@ function LibrarySearchPage() {
     return `/libraries/${result.libraryId}`
   }
 
-  const showsCount = shows.filter(s => !query || s.name.toLowerCase().includes(query.toLowerCase())).length
-  const moviesCount = movies.filter(m => !query || m.title.toLowerCase().includes(query.toLowerCase())).length
+  const showsCount = shows.filter(s => !query || s.Name.toLowerCase().includes(query.toLowerCase())).length
+  const moviesCount = movies.filter(m => !query || m.Title.toLowerCase().includes(query.toLowerCase())).length
 
   return (
     <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 min-w-0 grow flex flex-col gap-4">
