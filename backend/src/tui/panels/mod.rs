@@ -8,11 +8,11 @@ mod logs;
 mod system;
 mod torrents;
 
-pub use database::{DatabasePanel, create_shared_table_counts, spawn_table_counts_updater};
-pub use libraries::{LibrariesPanel, create_shared_libraries, spawn_libraries_updater};
+pub use database::{DatabasePanel, create_shared_table_counts};
+pub use libraries::{LibrariesPanel, create_shared_libraries};
 pub use logs::LogsPanel;
 pub use system::SystemPanel;
-pub use torrents::{TorrentsPanel, create_shared_torrents, spawn_torrent_updater};
+pub use torrents::{TorrentsPanel, create_shared_torrents};
 
 use ratatui::Frame;
 use ratatui::layout::Rect;

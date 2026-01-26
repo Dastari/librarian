@@ -608,41 +608,66 @@ mod file_matching {
     /// Match target types
     #[derive(Debug, Clone, PartialEq)]
     enum MatchTarget {
-        Episode { episode_id: String, season: i32, episode: i32 },
-        Movie { movie_id: String, title: String },
-        Track { track_id: String, title: String },
-        Chapter { chapter_id: String, chapter_number: i32 },
-        Unmatched { reason: String },
+        Episode {
+            episode_id: String,
+            season: i32,
+            episode: i32,
+        },
+        Movie {
+            movie_id: String,
+            title: String,
+        },
+        Track {
+            track_id: String,
+            title: String,
+        },
+        Chapter {
+            chapter_id: String,
+            chapter_number: i32,
+        },
+        Unmatched {
+            reason: String,
+        },
         Sample,
     }
 
     /// Simplified matching logic for testing
     fn match_file(file: &FileInfo) -> MatchTarget {
         let lower = file.path.to_lowercase();
-        
+
         // Check for sample
         if lower.contains("sample") {
             return MatchTarget::Sample;
         }
-        
+
         // Small video files are samples
         let ext = std::path::Path::new(&file.path)
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("");
-        let is_video = matches!(ext.to_lowercase().as_str(), "mkv" | "mp4" | "avi" | "mov" | "m4v");
+        let is_video = matches!(
+            ext.to_lowercase().as_str(),
+            "mkv" | "mp4" | "avi" | "mov" | "m4v"
+        );
         if is_video && file.size < 100_000_000 {
             return MatchTarget::Sample;
         }
-        
+
         // Non-media files
-        let is_audio = matches!(ext.to_lowercase().as_str(), "flac" | "mp3" | "m4a" | "aac" | "wav");
+        let is_audio = matches!(
+            ext.to_lowercase().as_str(),
+            "flac" | "mp3" | "m4a" | "aac" | "wav"
+        );
         if !is_video && !is_audio {
-            return MatchTarget::Unmatched { reason: "Not a media file".to_string() };
+            return MatchTarget::Unmatched {
+                reason: "Not a media file".to_string(),
+            };
         }
-        
+
         // For testing, return unmatched - real matching uses database lookups
-        MatchTarget::Unmatched { reason: "No library match found".to_string() }
+        MatchTarget::Unmatched {
+            reason: "No library match found".to_string(),
+        }
     }
 
     #[test]
@@ -654,7 +679,7 @@ mod file_matching {
             file_index: Some(0),
         };
         assert_eq!(match_file(&file), MatchTarget::Sample);
-        
+
         // Small video is sample
         let small_video = FileInfo {
             path: "movie-preview.mkv".to_string(),
@@ -662,7 +687,7 @@ mod file_matching {
             file_index: Some(1),
         };
         assert_eq!(match_file(&small_video), MatchTarget::Sample);
-        
+
         // Large video is not sample
         let large_video = FileInfo {
             path: "Movie.2024.1080p.mkv".to_string(),
@@ -675,11 +700,23 @@ mod file_matching {
     #[test]
     fn test_non_media_files() {
         let files = vec![
-            FileInfo { path: "readme.txt".to_string(), size: 1000, file_index: Some(0) },
-            FileInfo { path: "cover.jpg".to_string(), size: 500_000, file_index: Some(1) },
-            FileInfo { path: "movie.nfo".to_string(), size: 3000, file_index: Some(2) },
+            FileInfo {
+                path: "readme.txt".to_string(),
+                size: 1000,
+                file_index: Some(0),
+            },
+            FileInfo {
+                path: "cover.jpg".to_string(),
+                size: 500_000,
+                file_index: Some(1),
+            },
+            FileInfo {
+                path: "movie.nfo".to_string(),
+                size: 3000,
+                file_index: Some(2),
+            },
         ];
-        
+
         for file in files {
             let result = match_file(&file);
             assert!(
@@ -716,12 +753,7 @@ mod naming_patterns {
     }
 
     /// Apply a naming pattern for movies
-    fn apply_movie_pattern(
-        pattern: &str,
-        title: &str,
-        year: Option<i32>,
-        ext: &str,
-    ) -> String {
+    fn apply_movie_pattern(pattern: &str, title: &str, year: Option<i32>, ext: &str) -> String {
         let year_str = year.map(|y| y.to_string()).unwrap_or_default();
         pattern
             .replace("{title}", &sanitize_for_path(title))
@@ -759,16 +791,20 @@ mod naming_patterns {
 
     #[test]
     fn test_tv_pattern() {
-        let pattern = "{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}";
-        
+        let pattern =
+            "{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}";
+
         let result = apply_tv_pattern(pattern, "Breaking Bad", 1, 5, "Gray Matter", "mkv");
-        assert_eq!(result, "Breaking Bad/Season 01/Breaking Bad - S01E05 - Gray Matter.mkv");
+        assert_eq!(
+            result,
+            "Breaking Bad/Season 01/Breaking Bad - S01E05 - Gray Matter.mkv"
+        );
     }
 
     #[test]
     fn test_movie_pattern() {
         let pattern = "{title} ({year})/{title}.{ext}";
-        
+
         let result = apply_movie_pattern(pattern, "Inception", Some(2010), "mkv");
         assert_eq!(result, "Inception (2010)/Inception.mkv");
     }
@@ -776,17 +812,31 @@ mod naming_patterns {
     #[test]
     fn test_music_pattern() {
         let pattern = "{artist}/{album}/{track:02} - {title}.{ext}";
-        
-        let result = apply_music_pattern(pattern, "Pink Floyd", "Dark Side of the Moon", 3, "Time", "flac");
+
+        let result = apply_music_pattern(
+            pattern,
+            "Pink Floyd",
+            "Dark Side of the Moon",
+            3,
+            "Time",
+            "flac",
+        );
         assert_eq!(result, "Pink Floyd/Dark Side of the Moon/03 - Time.flac");
     }
 
     #[test]
     fn test_sanitization() {
         let pattern = "{show}/Season {season:02}/{show}.{ext}";
-        
+
         // Colons in show name should be replaced
-        let result = apply_tv_pattern(pattern, "Star Trek: Deep Space Nine", 1, 1, "Emissary", "mkv");
+        let result = apply_tv_pattern(
+            pattern,
+            "Star Trek: Deep Space Nine",
+            1,
+            1,
+            "Emissary",
+            "mkv",
+        );
         assert!(
             !result.contains(':'),
             "Colons should be sanitized: {}",

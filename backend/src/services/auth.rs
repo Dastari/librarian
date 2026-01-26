@@ -1,24 +1,34 @@
-//! Authentication service for user management and JWT handling
+//! Authentication service for user management and JWT handling.
 //!
-//! Provides:
-//! - User registration and login
-//! - Password hashing with bcrypt
-//! - JWT token generation and validation
-//! - Refresh token management
-//! - Library access control
+//! Implements [Service](crate::services::manager::Service) and depends on the database service.
+//! Provides user registration, login, JWT/refresh tokens, and library access control.
+//! Uses the `User` and `RefreshToken` entities and `db::operations` for persistence.
 
-use anyhow::{anyhow, Result};
-use bcrypt::{hash, verify, DEFAULT_COST};
+use std::sync::Arc;
+
+use anyhow::{Result, anyhow};
+use async_trait::async_trait;
+use bcrypt::{DEFAULT_COST, hash, verify};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tokio::sync::RwLock;
+use tracing::info;
 use uuid::Uuid;
 
-use crate::db::{
-    CreateUser, Database, UpdateUser, UserRecord, UsersRepository,
+use crate::db::Database;
+use crate::db::operations::{
+    CreateUserParams, cleanup_expired_refresh_tokens, create_refresh_token, create_user,
+    delete_refresh_token, delete_user_refresh_tokens, grant_library_access, has_admin_user,
+    has_library_access, revoke_library_access, update_refresh_token_used, update_user_last_login,
+    update_user_password,
 };
-use crate::db::sqlite_helpers::now_iso8601;
+use crate::services::graphql::entities::{
+    RefreshToken, RefreshTokenWhereInput, User, UserWhereInput,
+};
+use crate::services::graphql::orm::StringFilter;
+use crate::services::manager::{Service, ServiceHealth};
 
 // ============================================================================
 // JWT Claims
@@ -63,26 +73,40 @@ pub struct RefreshTokenClaims {
 // ============================================================================
 
 /// Token pair returned after successful authentication
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, async_graphql::SimpleObject)]
+#[graphql(name = "AuthTokens")]
+#[serde(rename_all = "PascalCase")]
 pub struct AuthTokens {
     /// Short-lived access token
+    #[graphql(name = "AccessToken")]
     pub access_token: String,
     /// Long-lived refresh token
+    #[graphql(name = "RefreshToken")]
     pub refresh_token: String,
     /// Access token expiration in seconds
+    #[graphql(name = "ExpiresIn")]
     pub expires_in: i64,
     /// Token type (always "Bearer")
+    #[graphql(name = "TokenType")]
     pub token_type: String,
 }
 
 /// User info returned after successful authentication
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, async_graphql::SimpleObject)]
+#[graphql(name = "AuthenticatedUser")]
+#[serde(rename_all = "PascalCase")]
 pub struct AuthenticatedUser {
+    #[graphql(name = "Id")]
     pub id: String,
+    #[graphql(name = "Username")]
     pub username: String,
+    #[graphql(name = "Email")]
     pub email: Option<String>,
+    #[graphql(name = "Role")]
     pub role: String,
+    #[graphql(name = "DisplayName")]
     pub display_name: Option<String>,
+    #[graphql(name = "AvatarUrl")]
     pub avatar_url: Option<String>,
 }
 
@@ -121,9 +145,9 @@ pub struct AuthConfig {
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
-            jwt_secret: std::env::var("JWT_SECRET")
-                .unwrap_or_else(|_| "change-me-in-production".to_string()),
-            access_token_lifetime: 15 * 60,        // 15 minutes
+            // Not used at runtime; JWT secret is loaded from database in auth service start.
+            jwt_secret: String::new(),
+            access_token_lifetime: 15 * 60,           // 15 minutes
             refresh_token_lifetime: 7 * 24 * 60 * 60, // 7 days
             bcrypt_cost: DEFAULT_COST,
         }
@@ -133,8 +157,8 @@ impl Default for AuthConfig {
 impl AuthConfig {
     pub fn from_env() -> Self {
         Self {
-            jwt_secret: std::env::var("JWT_SECRET")
-                .unwrap_or_else(|_| "change-me-in-production".to_string()),
+            // Not used at runtime; JWT secret is loaded from database in auth service start.
+            jwt_secret: String::new(),
             access_token_lifetime: std::env::var("ACCESS_TOKEN_LIFETIME")
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -155,22 +179,52 @@ impl AuthConfig {
 // Auth Service
 // ============================================================================
 
-/// Authentication service
-#[derive(Clone)]
+/// Key for JWT secret in auth_secrets table. Must match database service constant.
+const AUTH_SECRETS_JWT_KEY: &str = "jwt_secret";
+
+/// Authentication service. Depends on the database service; obtains the pool in [start](Service::start).
+/// JWT secret is loaded from the database at start and never exposed via GraphQL.
 pub struct AuthService {
-    db: Database,
+    manager: Arc<crate::services::ServicesManager>,
     config: AuthConfig,
+    db: RwLock<Option<Database>>,
+    /// JWT signing secret loaded from auth_secrets table at start. Never exposed.
+    jwt_secret: RwLock<Option<String>>,
 }
 
 impl AuthService {
-    /// Create a new auth service
-    pub fn new(db: Database, config: AuthConfig) -> Self {
-        Self { db, config }
+    /// Create a new auth service. Register with the manager and start it so [start](Service::start) can obtain the database.
+    pub fn new(manager: Arc<crate::services::ServicesManager>, config: AuthConfig) -> Self {
+        Self {
+            manager,
+            config,
+            db: RwLock::new(None),
+            jwt_secret: RwLock::new(None),
+        }
     }
 
-    /// Create with default config from environment
-    pub fn with_env(db: Database) -> Self {
-        Self::new(db, AuthConfig::from_env())
+    /// Create with config from environment.
+    pub fn with_env(manager: Arc<crate::services::ServicesManager>) -> Self {
+        Self::new(manager, AuthConfig::from_env())
+    }
+
+    /// Get the database pool. Returns an error if the service has not been started.
+    async fn get_pool(&self) -> Result<Database> {
+        self.db
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow!("auth service not started"))
+    }
+
+    /// Return the JWT signing secret loaded from the database. Used for token creation and verification.
+    /// Never expose this value via GraphQL or logs.
+    pub async fn get_jwt_secret(&self) -> Result<String> {
+        self.jwt_secret
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow!("JWT secret not loaded (auth service not started or missing in database)"))
     }
 
     // ========================================================================
@@ -179,46 +233,65 @@ impl AuthService {
 
     /// Register a new user
     pub async fn register(&self, input: RegisterInput) -> Result<LoginResult> {
-        let users = self.db.users();
+        let pool = self.get_pool().await?;
 
         // Check if email already exists
-        if users.get_by_email(&input.email).await?.is_some() {
+        if User::query(&pool)
+            .filter(UserWhereInput {
+                email: Some(StringFilter::eq(&input.email)),
+                ..Default::default()
+            })
+            .fetch_optional()
+            .await?
+            .is_some()
+        {
             return Err(anyhow!("Email already registered"));
         }
 
-        // Use email as username (for uniqueness) but display name as the shown name
         let username = input.email.clone();
-
-        // Check if username already exists (email-based)
-        if users.get_by_username(&username).await?.is_some() {
+        if User::query(&pool)
+            .filter(UserWhereInput {
+                username: Some(StringFilter::eq(&username)),
+                ..Default::default()
+            })
+            .fetch_optional()
+            .await?
+            .is_some()
+        {
             return Err(anyhow!("Email already registered"));
         }
 
-        // Determine role - first user becomes admin
-        let role = if users.has_admin().await? {
+        let role = if has_admin_user(&pool).await? {
             "member".to_string()
         } else {
             tracing::info!("Creating first admin user: {}", input.email);
             "admin".to_string()
         };
 
-        // Hash password
         let password_hash = self.hash_password(&input.password)?;
+        let id = Uuid::new_v4().to_string();
 
-        // Create user
-        let user = users.create(CreateUser {
-            username,
-            email: Some(input.email),
-            password_hash,
-            role,
-            display_name: Some(input.name),
-        }).await?;
+        create_user(
+            &pool,
+            &CreateUserParams {
+                id: id.clone(),
+                username: username.clone(),
+                email: Some(input.email.clone()),
+                password_hash,
+                role: role.clone(),
+                display_name: Some(input.name),
+                avatar_url: None,
+            },
+        )
+        .await?;
 
-        // Generate tokens
-        let tokens = self.generate_tokens(&user)?;
+        let user = User::get(&pool, &id)
+            .await?
+            .ok_or_else(|| anyhow!("Failed to load created user"))?;
 
-        // Update last login
-        users.update_last_login(&user.id).await?;
+        let tokens = self.generate_tokens(&user).await?;
+
+        update_user_last_login(&pool, &user.id).await?;
 
         Ok(LoginResult {
             user: self.user_to_authenticated(&user),
@@ -227,36 +300,52 @@ impl AuthService {
     }
 
     /// Register a user with a specific role (admin only)
-    pub async fn register_with_role(&self, input: RegisterInput, role: &str) -> Result<LoginResult> {
-        let users = self.db.users();
+    pub async fn register_with_role(
+        &self,
+        input: RegisterInput,
+        role: &str,
+    ) -> Result<LoginResult> {
+        let pool = self.get_pool().await?;
 
-        // Validate role
         if !["admin", "member", "guest"].contains(&role) {
             return Err(anyhow!("Invalid role: {}", role));
         }
 
-        // Check if email already exists
-        if users.get_by_email(&input.email).await?.is_some() {
+        if User::query(&pool)
+            .filter(UserWhereInput {
+                email: Some(StringFilter::eq(&input.email)),
+                ..Default::default()
+            })
+            .fetch_optional()
+            .await?
+            .is_some()
+        {
             return Err(anyhow!("Email already registered"));
         }
 
-        // Use email as username
         let username = input.email.clone();
-
-        // Hash password
         let password_hash = self.hash_password(&input.password)?;
+        let id = Uuid::new_v4().to_string();
 
-        // Create user
-        let user = users.create(CreateUser {
-            username,
-            email: Some(input.email),
-            password_hash,
-            role: role.to_string(),
-            display_name: Some(input.name),
-        }).await?;
+        create_user(
+            &pool,
+            &CreateUserParams {
+                id: id.clone(),
+                username: username.clone(),
+                email: Some(input.email.clone()),
+                password_hash,
+                role: role.to_string(),
+                display_name: Some(input.name),
+                avatar_url: None,
+            },
+        )
+        .await?;
 
-        // Generate tokens
-        let tokens = self.generate_tokens(&user)?;
+        let user = User::get(&pool, &id)
+            .await?
+            .ok_or_else(|| anyhow!("Failed to load created user"))?;
+
+        let tokens = self.generate_tokens(&user).await?;
 
         Ok(LoginResult {
             user: self.user_to_authenticated(&user),
@@ -270,32 +359,38 @@ impl AuthService {
 
     /// Login with username/email and password
     pub async fn login(&self, username_or_email: &str, password: &str) -> Result<LoginResult> {
-        let users = self.db.users();
+        let pool = self.get_pool().await?;
 
-        // Try to find user by username or email
-        let user = users.get_by_username(username_or_email).await?
-            .or(users.get_by_email(username_or_email).await?);
+        let by_username = User::query(&pool)
+            .filter(UserWhereInput {
+                username: Some(StringFilter::eq(username_or_email)),
+                ..Default::default()
+            })
+            .fetch_optional()
+            .await?;
+        let by_email = User::query(&pool)
+            .filter(UserWhereInput {
+                email: Some(StringFilter::eq(username_or_email)),
+                ..Default::default()
+            })
+            .fetch_optional()
+            .await?;
 
-        let user = match user {
+        let user = match by_username.or(by_email) {
             Some(u) => u,
             None => return Err(anyhow!("Invalid username or password")),
         };
 
-        // Check if user is active
         if !user.is_active {
             return Err(anyhow!("Account is disabled"));
         }
 
-        // Verify password
         if !self.verify_password(password, &user.password_hash)? {
             return Err(anyhow!("Invalid username or password"));
         }
 
-        // Generate tokens
-        let tokens = self.generate_tokens(&user)?;
-
-        // Update last login
-        users.update_last_login(&user.id).await?;
+        let tokens = self.generate_tokens(&user).await?;
+        update_user_last_login(&pool, &user.id).await?;
 
         Ok(LoginResult {
             user: self.user_to_authenticated(&user),
@@ -309,43 +404,39 @@ impl AuthService {
 
     /// Refresh access token using refresh token
     pub async fn refresh_token(&self, refresh_token: &str) -> Result<AuthTokens> {
-        // Decode and validate refresh token
-        let claims = self.decode_refresh_token(refresh_token)?;
-
-        // Hash the token to look up in database
+        let secret = self.get_jwt_secret().await?;
+        let claims = self.decode_refresh_token_with_secret(refresh_token, &secret)?;
         let token_hash = self.hash_token(refresh_token);
+        let pool = self.get_pool().await?;
 
-        let users = self.db.users();
-
-        // Verify token exists in database and is not expired
-        let stored_token = users.get_refresh_token_by_hash(&token_hash).await?
+        let stored_token = RefreshToken::query(&pool)
+            .filter(RefreshTokenWhereInput {
+                token_hash: Some(StringFilter::eq(&token_hash)),
+                ..Default::default()
+            })
+            .fetch_optional()
+            .await?
             .ok_or_else(|| anyhow!("Invalid refresh token"))?;
 
-        // Get user
-        let user = users.get_by_id(&claims.sub).await?
+        let user = User::get(&pool, &claims.sub)
+            .await?
             .ok_or_else(|| anyhow!("User not found"))?;
 
-        // Check if user is still active
         if !user.is_active {
             return Err(anyhow!("Account is disabled"));
         }
 
-        // Update token last used timestamp
-        users.update_refresh_token_used(&stored_token.id).await?;
-
-        // Generate new tokens (token rotation for security)
-        let new_tokens = self.generate_tokens(&user)?;
-
-        // Delete old refresh token
-        users.delete_refresh_token(&stored_token.id).await?;
+        update_refresh_token_used(&pool, &stored_token.id).await?;
+        let new_tokens = self.generate_tokens(&user).await?;
+        delete_refresh_token(&pool, &stored_token.id).await?;
 
         Ok(new_tokens)
     }
 
-    /// Validate access token and return user info
-    pub fn validate_access_token(&self, token: &str) -> Result<AuthenticatedUser> {
-        let claims = self.decode_access_token(token)?;
-
+    /// Validate access token and return user info (from claims only; no DB lookup)
+    pub async fn validate_access_token(&self, token: &str) -> Result<AuthenticatedUser> {
+        let secret = self.get_jwt_secret().await?;
+        let claims = self.decode_access_token_with_secret(token, &secret)?;
         Ok(AuthenticatedUser {
             id: claims.sub,
             username: claims.username,
@@ -359,18 +450,24 @@ impl AuthService {
     /// Logout - invalidate refresh token
     pub async fn logout(&self, refresh_token: &str) -> Result<()> {
         let token_hash = self.hash_token(refresh_token);
-        let users = self.db.users();
-
-        if let Some(stored_token) = users.get_refresh_token_by_hash(&token_hash).await? {
-            users.delete_refresh_token(&stored_token.id).await?;
+        let pool = self.get_pool().await?;
+        if let Some(stored_token) = RefreshToken::query(&pool)
+            .filter(RefreshTokenWhereInput {
+                token_hash: Some(StringFilter::eq(&token_hash)),
+                ..Default::default()
+            })
+            .fetch_optional()
+            .await?
+        {
+            delete_refresh_token(&pool, &stored_token.id).await?;
         }
-
         Ok(())
     }
 
     /// Logout all sessions for a user
     pub async fn logout_all(&self, user_id: &str) -> Result<u64> {
-        self.db.users().delete_user_refresh_tokens(user_id).await
+        let pool = self.get_pool().await?;
+        delete_user_refresh_tokens(&pool, user_id).await
     }
 
     // ========================================================================
@@ -384,45 +481,27 @@ impl AuthService {
         current_password: &str,
         new_password: &str,
     ) -> Result<()> {
-        let users = self.db.users();
-
-        let user = users.get_by_id(user_id).await?
+        let pool = self.get_pool().await?;
+        let user = User::get(&pool, user_id)
+            .await?
             .ok_or_else(|| anyhow!("User not found"))?;
 
-        // Verify current password
         if !self.verify_password(current_password, &user.password_hash)? {
             return Err(anyhow!("Current password is incorrect"));
         }
 
-        // Hash new password
         let new_hash = self.hash_password(new_password)?;
-
-        // Update password
-        users.update(user_id, UpdateUser {
-            password_hash: Some(new_hash),
-            ..Default::default()
-        }).await?;
-
-        // Invalidate all refresh tokens (force re-login)
-        users.delete_user_refresh_tokens(user_id).await?;
-
+        update_user_password(&pool, user_id, &new_hash).await?;
+        delete_user_refresh_tokens(&pool, user_id).await?;
         Ok(())
     }
 
     /// Admin reset password (no current password required)
     pub async fn admin_reset_password(&self, user_id: &str, new_password: &str) -> Result<()> {
-        let users = self.db.users();
-
+        let pool = self.get_pool().await?;
         let new_hash = self.hash_password(new_password)?;
-
-        users.update(user_id, UpdateUser {
-            password_hash: Some(new_hash),
-            ..Default::default()
-        }).await?;
-
-        // Invalidate all refresh tokens
-        users.delete_user_refresh_tokens(user_id).await?;
-
+        update_user_password(&pool, user_id, &new_hash).await?;
+        delete_user_refresh_tokens(&pool, user_id).await?;
         Ok(())
     }
 
@@ -432,7 +511,8 @@ impl AuthService {
 
     /// Check if user has access to a library
     pub async fn check_library_access(&self, user_id: &str, library_id: &str) -> Result<bool> {
-        self.db.users().has_library_access(user_id, library_id).await
+        let pool = self.get_pool().await?;
+        has_library_access(&pool, user_id, library_id).await
     }
 
     /// Grant library access to a user
@@ -443,13 +523,21 @@ impl AuthService {
         access_level: &str,
         granted_by: &str,
     ) -> Result<()> {
-        self.db.users().grant_library_access(user_id, library_id, access_level, Some(granted_by)).await?;
-        Ok(())
+        let pool = self.get_pool().await?;
+        grant_library_access(
+            &pool,
+            user_id,
+            library_id,
+            access_level,
+            Some(granted_by),
+        )
+        .await
     }
 
     /// Revoke library access
     pub async fn revoke_library_access(&self, user_id: &str, library_id: &str) -> Result<bool> {
-        self.db.users().revoke_library_access(user_id, library_id).await
+        let pool = self.get_pool().await?;
+        revoke_library_access(&pool, user_id, library_id).await
     }
 
     // ========================================================================
@@ -464,8 +552,7 @@ impl AuthService {
 
     /// Verify a password against a hash
     fn verify_password(&self, password: &str, hash: &str) -> Result<bool> {
-        verify(password, hash)
-            .map_err(|e| anyhow!("Failed to verify password: {}", e))
+        verify(password, hash).map_err(|e| anyhow!("Failed to verify password: {}", e))
     }
 
     /// Hash a token for storage (using SHA-256)
@@ -476,13 +563,12 @@ impl AuthService {
     }
 
     /// Generate access and refresh tokens for a user
-    fn generate_tokens(&self, user: &UserRecord) -> Result<AuthTokens> {
+    async fn generate_tokens(&self, user: &User) -> Result<AuthTokens> {
+        let secret = self.get_jwt_secret().await?;
         let now = Utc::now();
         let access_exp = now + Duration::seconds(self.config.access_token_lifetime);
         let refresh_exp = now + Duration::seconds(self.config.refresh_token_lifetime);
-        let jti = Uuid::new_v4().to_string();
 
-        // Create access token
         let access_claims = AccessTokenClaims {
             sub: user.id.clone(),
             username: user.username.clone(),
@@ -496,10 +582,11 @@ impl AuthService {
         let access_token = encode(
             &Header::new(Algorithm::HS256),
             &access_claims,
-            &EncodingKey::from_secret(self.config.jwt_secret.as_bytes()),
-        ).map_err(|e| anyhow!("Failed to create access token: {}", e))?;
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .map_err(|e| anyhow!("Failed to create access token: {}", e))?;
 
-        // Create refresh token
+        let jti = Uuid::new_v4().to_string();
         let refresh_claims = RefreshTokenClaims {
             sub: user.id.clone(),
             token_type: "refresh".to_string(),
@@ -511,29 +598,25 @@ impl AuthService {
         let refresh_token = encode(
             &Header::new(Algorithm::HS256),
             &refresh_claims,
-            &EncodingKey::from_secret(self.config.jwt_secret.as_bytes()),
-        ).map_err(|e| anyhow!("Failed to create refresh token: {}", e))?;
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .map_err(|e| anyhow!("Failed to create refresh token: {}", e))?;
 
-        // Store refresh token hash in database
         let token_hash = self.hash_token(&refresh_token);
         let expires_at = refresh_exp.to_rfc3339();
+        let token_id = Uuid::new_v4().to_string();
 
-        // Note: This is synchronous in the token generation, but we need to store it
-        // We'll handle this by having the caller store it, or make this async
-        // For now, we'll spawn a task to store it
-        let users = self.db.users();
-        let user_id = user.id.clone();
-        tokio::spawn(async move {
-            if let Err(e) = users.create_refresh_token(
-                &user_id,
-                &token_hash,
-                &expires_at,
-                None,
-                None,
-            ).await {
-                tracing::error!("Failed to store refresh token: {}", e);
-            }
-        });
+        let pool = self.get_pool().await?;
+        create_refresh_token(
+            &pool,
+            &token_id,
+            &user.id,
+            &token_hash,
+            &expires_at,
+            None,
+            None,
+        )
+        .await?;
 
         Ok(AuthTokens {
             access_token,
@@ -543,16 +626,17 @@ impl AuthService {
         })
     }
 
-    /// Decode and validate access token
-    fn decode_access_token(&self, token: &str) -> Result<AccessTokenClaims> {
+    /// Decode and validate access token using the given secret.
+    fn decode_access_token_with_secret(&self, token: &str, secret: &str) -> Result<AccessTokenClaims> {
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = true;
 
         let token_data = decode::<AccessTokenClaims>(
             token,
-            &DecodingKey::from_secret(self.config.jwt_secret.as_bytes()),
+            &DecodingKey::from_secret(secret.trim().as_bytes()),
             &validation,
-        ).map_err(|e| anyhow!("Invalid access token: {}", e))?;
+        )
+        .map_err(|e| anyhow!("Invalid access token: {}", e))?;
 
         if token_data.claims.token_type != "access" {
             return Err(anyhow!("Invalid token type"));
@@ -561,16 +645,17 @@ impl AuthService {
         Ok(token_data.claims)
     }
 
-    /// Decode and validate refresh token
-    fn decode_refresh_token(&self, token: &str) -> Result<RefreshTokenClaims> {
+    /// Decode and validate refresh token using the given secret.
+    fn decode_refresh_token_with_secret(&self, token: &str, secret: &str) -> Result<RefreshTokenClaims> {
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = true;
 
         let token_data = decode::<RefreshTokenClaims>(
             token,
-            &DecodingKey::from_secret(self.config.jwt_secret.as_bytes()),
+            &DecodingKey::from_secret(secret.trim().as_bytes()),
             &validation,
-        ).map_err(|e| anyhow!("Invalid refresh token: {}", e))?;
+        )
+        .map_err(|e| anyhow!("Invalid refresh token: {}", e))?;
 
         if token_data.claims.token_type != "refresh" {
             return Err(anyhow!("Invalid token type"));
@@ -579,8 +664,8 @@ impl AuthService {
         Ok(token_data.claims)
     }
 
-    /// Convert UserRecord to AuthenticatedUser
-    fn user_to_authenticated(&self, user: &UserRecord) -> AuthenticatedUser {
+    /// Convert User entity to AuthenticatedUser
+    fn user_to_authenticated(&self, user: &User) -> AuthenticatedUser {
         AuthenticatedUser {
             id: user.id.clone(),
             username: user.username.clone(),
@@ -597,39 +682,59 @@ impl AuthService {
 
     /// Check if initial setup is required (no admin exists)
     pub async fn needs_setup(&self) -> Result<bool> {
-        Ok(!self.db.users().has_admin().await?)
+        let pool = self.get_pool().await?;
+        Ok(!has_admin_user(&pool).await?)
     }
 
     /// Clean up expired refresh tokens
     pub async fn cleanup_expired_tokens(&self) -> Result<u64> {
-        self.db.users().cleanup_expired_refresh_tokens().await
+        let pool = self.get_pool().await?;
+        cleanup_expired_refresh_tokens(&pool).await
     }
 }
 
 // ============================================================================
-// Compatibility with existing auth.rs
+// Service impl
 // ============================================================================
 
-/// Verify a token (compatibility function for existing code)
-/// This wraps the new AuthService for backward compatibility
-pub fn verify_token(token: &str) -> async_graphql::Result<crate::graphql::auth::AuthUser> {
-    let jwt_secret = std::env::var("JWT_SECRET")
-        .map_err(|_| async_graphql::Error::new("JWT_SECRET not configured"))?;
+#[async_trait]
+impl Service for AuthService {
+    fn name(&self) -> &str {
+        "auth"
+    }
 
-    let mut validation = Validation::new(Algorithm::HS256);
-    validation.validate_exp = true;
-    validation.validate_aud = false;
+    fn dependencies(&self) -> Vec<String> {
+        vec!["database".to_string()]
+    }
 
-    let token_data = decode::<AccessTokenClaims>(
-        token,
-        &DecodingKey::from_secret(jwt_secret.as_bytes()),
-        &validation,
-    )
-    .map_err(|e| async_graphql::Error::new(format!("Invalid token: {}", e)))?;
+    async fn start(&self) -> Result<()> {
+        info!(service = "auth", "Auth service starting");
+        let db = self
+            .manager
+            .get_database()
+            .await
+            .map(|svc| svc.pool().clone())
+            .ok_or_else(|| anyhow!("database service not available"))?;
+        *self.db.write().await = Some(db.clone());
 
-    Ok(crate::graphql::auth::AuthUser {
-        user_id: token_data.claims.sub,
-        email: token_data.claims.email,
-        role: Some(token_data.claims.role),
-    })
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT value FROM auth_secrets WHERE key = ?")
+                .bind(AUTH_SECRETS_JWT_KEY)
+                .fetch_optional(&db)
+                .await?;
+        let secret = row
+            .map(|(v,)| v)
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| anyhow!("JWT secret not found in database (run database service first)"))?;
+        *self.jwt_secret.write().await = Some(secret);
+        info!(service = "auth", "Auth service started");
+        Ok(())
+    }
+
+    async fn stop(&self) -> Result<()> {
+        *self.jwt_secret.write().await = None;
+        *self.db.write().await = None;
+        info!(service = "auth", "Stopped");
+        Ok(())
+    }
 }

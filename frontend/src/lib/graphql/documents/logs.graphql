@@ -1,0 +1,47 @@
+# Logs: AppLogs query and AppLogChanged subscription
+# Used by codegen for TypedDocumentNode and types
+
+query AppLogs($Where: AppLogWhereInput, $OrderBy: [AppLogOrderByInput!], $Page: PageInput) {
+  AppLogs(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
+    Edges {
+      Node {
+        Id
+        Timestamp
+        Level
+        Target
+        Message
+        Fields
+        SpanName
+      }
+      Cursor
+    }
+    PageInfo {
+      HasNextPage
+      TotalCount
+    }
+  }
+}
+
+subscription AppLogChanged($Filter: SubscriptionFilterInput) {
+  AppLogChanged(Filter: $Filter) {
+    Action
+    Id
+    AppLog {
+      Id
+      Timestamp
+      Level
+      Target
+      Message
+      Fields
+      SpanName
+    }
+  }
+}
+
+mutation DeleteAppLogs($Where: AppLogWhereInput!) {
+  DeleteAppLogs(Where: $Where) {
+    success
+    error
+    DeletedCount
+  }
+}

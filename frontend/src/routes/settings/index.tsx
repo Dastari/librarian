@@ -9,36 +9,42 @@ import { addToast } from '@heroui/toast'
 import { IconPlayerPlay, IconDeviceFloppy } from '@tabler/icons-react'
 import {
   graphqlClient,
-  PLAYBACK_SETTINGS_QUERY,
-  UPDATE_PLAYBACK_SETTINGS_MUTATION,
-  type PlaybackSettings,
+  PlaybackSyncIntervalDocument,
+  UpdateAppSettingDocument,
 } from '../../lib/graphql'
 
 export const Route = createFileRoute('/settings/')({
   component: GeneralSettingsPage,
 })
 
+const PLAYBACK_SYNC_KEY = 'playback_sync_interval'
+
 function GeneralSettingsPage() {
-  const [settings, setSettings] = useState<PlaybackSettings | null>(null)
+  const [settingId, setSettingId] = useState<string | null>(null)
+  const [savedSyncInterval, setSavedSyncInterval] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [syncInterval, setSyncInterval] = useState(15)
 
-  // Load settings on mount
+  // Load playback sync interval from app settings
   useEffect(() => {
     async function loadSettings() {
       try {
         const result = await graphqlClient
-          .query<{ playbackSettings: PlaybackSettings }>(PLAYBACK_SETTINGS_QUERY, {})
+          .query(PlaybackSyncIntervalDocument, { Key: PLAYBACK_SYNC_KEY })
           .toPromise()
 
-        if (result.data?.playbackSettings) {
-          setSettings(result.data.playbackSettings)
-          setSyncInterval(result.data.playbackSettings.syncIntervalSeconds)
+        const node = result.data?.AppSettings?.Edges?.[0]?.Node
+        if (node) {
+          setSettingId(node.Id)
+          const val = Number(node.Value)
+          if (Number.isFinite(val)) {
+            setSyncInterval(val)
+            setSavedSyncInterval(val)
+          }
         }
       } catch (err) {
-        // Silently ignore auth errors - they can happen during login race conditions
-        const errorMsg = err instanceof Error ? err.message : String(err);
+        const errorMsg = err instanceof Error ? err.message : String(err)
         if (!errorMsg.toLowerCase().includes('authentication')) {
           console.error('Failed to load settings:', err)
           addToast({
@@ -56,21 +62,29 @@ function GeneralSettingsPage() {
   }, [])
 
   const handleSave = async () => {
+    if (settingId == null) return
     setSaving(true)
     try {
       const result = await graphqlClient
-        .mutation<{ updatePlaybackSettings: PlaybackSettings }>(
-          UPDATE_PLAYBACK_SETTINGS_MUTATION,
-          { input: { syncIntervalSeconds: syncInterval } }
-        )
+        .mutation(UpdateAppSettingDocument, {
+          Id: settingId,
+          Input: { Value: String(syncInterval) },
+        })
         .toPromise()
 
-      if (result.data?.updatePlaybackSettings) {
-        setSettings(result.data.updatePlaybackSettings)
+      const payload = result.data?.UpdateAppSetting
+      if (payload?.Success) {
+        setSavedSyncInterval(syncInterval)
         addToast({
           title: 'Settings Saved',
           description: 'Playback settings have been updated',
           color: 'success',
+        })
+      } else {
+        addToast({
+          title: 'Error',
+          description: payload?.Error ?? 'Failed to save playback settings',
+          color: 'danger',
         })
       }
     } catch (err) {
@@ -85,7 +99,7 @@ function GeneralSettingsPage() {
     }
   }
 
-  const hasChanges = settings && syncInterval !== settings.syncIntervalSeconds
+  const hasChanges = savedSyncInterval !== null && syncInterval !== savedSyncInterval
 
   if (loading) {
     return (

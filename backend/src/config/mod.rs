@@ -19,7 +19,7 @@ pub struct Config {
     /// For SQLite: use DATABASE_PATH or DATABASE_URL with sqlite:// prefix
     pub database_url: String,
 
-    /// JWT secret for token verification
+    /// JWT secret (legacy: not used for auth; auth loads from database auth_secrets table).
     pub jwt_secret: String,
 
     /// TheTVDB API key
@@ -67,16 +67,8 @@ impl Config {
             database_url = format!("sqlite://{}", database_url);
         }
 
-        // JWT_SECRET is always required - generate a random one if not provided in dev
-        let jwt_secret = env::var("JWT_SECRET").unwrap_or_else(|_| {
-            // In production, this should be set explicitly
-            // For development, generate a random secret
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            std::time::SystemTime::now().hash(&mut hasher);
-            format!("dev-secret-{}", hasher.finish())
-        });
+        // JWT secret is loaded from database at runtime; env value is legacy/unused for auth.
+        let jwt_secret = env::var("JWT_SECRET").unwrap_or_default();
 
         Ok(Self {
             host: env::var("HOST").ok(),

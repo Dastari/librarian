@@ -16,31 +16,16 @@ import {
   DropdownItem,
 } from "@heroui/dropdown";
 import { Avatar } from "@heroui/avatar";
-import { Badge } from "@heroui/badge";
 import { Tooltip } from "@heroui/tooltip";
 import { Kbd } from "@heroui/kbd";
 import { useDisclosure } from "@heroui/modal";
 import { useState, useEffect } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { useTheme } from "../hooks/useTheme";
-import {
-  IconBell,
-  IconDownload,
-  IconSearch,
-  IconSun,
-  IconMoon,
-} from "@tabler/icons-react";
+import { IconSearch, IconSun, IconMoon } from "@tabler/icons-react";
 import { SearchModal } from "./SearchModal";
-import { NotificationPopover } from "./NotificationPopover";
-import {
-  graphqlClient,
-  ACTIVE_DOWNLOAD_COUNT_QUERY,
-  ACTIVE_DOWNLOAD_COUNT_SUBSCRIPTION,
-  NOTIFICATION_COUNTS_QUERY,
-  NOTIFICATION_COUNTS_SUBSCRIPTION,
-  type ActiveDownloadCount,
-  type NotificationCounts,
-} from "../lib/graphql";
+import { NotificationIcon } from "./NotificationIcon";
+import { DownloadIndicator } from "./DownloadIndicator";
 
 const navItems = [
   { to: "/", label: "Home" },
@@ -54,8 +39,6 @@ export function Navbar() {
   const { user, signOut, loading, error } = useAuth();
   const { isDark, toggleTheme } = useTheme();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [activeDownloadCount, setActiveDownloadCount] = useState(0);
-  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const {
     isOpen: isSearchOpen,
     onOpen: onSearchOpen,
@@ -75,84 +58,6 @@ export function Navbar() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onSearchOpen]);
-
-  // Fetch initial count and subscribe to lightweight updates
-  useEffect(() => {
-    if (!user) {
-      setActiveDownloadCount(0);
-      return;
-    }
-
-    // Fetch initial count
-    graphqlClient
-      .query<{ activeDownloadCount: number }>(ACTIVE_DOWNLOAD_COUNT_QUERY, {})
-      .toPromise()
-      .then((result) => {
-        if (result.data?.activeDownloadCount !== undefined) {
-          setActiveDownloadCount(result.data.activeDownloadCount);
-        }
-      });
-
-    // Subscribe to active download count changes
-    // This only fires when the count changes, not on every progress update
-    const countSub = graphqlClient
-      .subscription<{
-        activeDownloadCount: ActiveDownloadCount;
-      }>(ACTIVE_DOWNLOAD_COUNT_SUBSCRIPTION, {})
-      .subscribe({
-        next: (result) => {
-          if (result.data?.activeDownloadCount) {
-            setActiveDownloadCount(result.data.activeDownloadCount.count);
-          }
-        },
-      });
-
-    return () => {
-      countSub.unsubscribe();
-    };
-  }, [user]);
-
-  // Fetch notification count and subscribe to updates
-  useEffect(() => {
-    if (!user) {
-      setUnreadNotificationCount(0);
-      return;
-    }
-
-    // Fetch initial count
-    graphqlClient
-      .query<{ notificationCounts: NotificationCounts }>(
-        NOTIFICATION_COUNTS_QUERY,
-        {},
-      )
-      .toPromise()
-      .then((result) => {
-        if (result.data?.notificationCounts) {
-          setUnreadNotificationCount(
-            result.data.notificationCounts.unreadCount,
-          );
-        }
-      });
-
-    // Subscribe to notification count changes
-    const countSub = graphqlClient
-      .subscription<{
-        notificationCounts: NotificationCounts;
-      }>(NOTIFICATION_COUNTS_SUBSCRIPTION, {})
-      .subscribe({
-        next: (result) => {
-          if (result.data?.notificationCounts) {
-            setUnreadNotificationCount(
-              result.data.notificationCounts.unreadCount,
-            );
-          }
-        },
-      });
-
-    return () => {
-      countSub.unsubscribe();
-    };
-  }, [user]);
 
   const isActive = (path: string) => {
     if (path === "/") return location.pathname === "/";
@@ -253,58 +158,14 @@ export function Navbar() {
         {/* Download indicator - only show when logged in */}
         {user && (
           <NavbarItem>
-            <Tooltip
-              content={
-                activeDownloadCount > 0
-                  ? `${activeDownloadCount} active download${activeDownloadCount !== 1 ? "s" : ""}`
-                  : "No active downloads"
-              }
-            >
-              <Button
-                isIconOnly
-                variant="light"
-                size="sm"
-                as={Link}
-                to="/downloads"
-                aria-label={`${activeDownloadCount} active downloads`}
-              >
-                <Badge
-                  content={activeDownloadCount}
-                  color="primary"
-                  size="sm"
-                  isInvisible={activeDownloadCount === 0}
-                  showOutline={false}
-                >
-                  <IconDownload size={20} className="text-blue-400" />
-                </Badge>
-              </Button>
-            </Tooltip>
+            <DownloadIndicator />
           </NavbarItem>
         )}
 
         {/* Notification indicator - only show when logged in */}
         {user && (
           <NavbarItem>
-            <NotificationPopover
-              trigger={
-                <Button
-                  isIconOnly
-                  variant="light"
-                  size="sm"
-                  aria-label={`${unreadNotificationCount} unread notifications`}
-                >
-                  <Badge
-                    content={unreadNotificationCount}
-                    color="warning"
-                    size="sm"
-                    isInvisible={unreadNotificationCount === 0}
-                    showOutline={false}
-                  >
-                    <IconBell size={20} className="text-amber-400" />
-                  </Badge>
-                </Button>
-              }
-            />
+            <NotificationIcon />
           </NavbarItem>
         )}
 

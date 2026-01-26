@@ -1,0 +1,30 @@
+query PlaybackSessions(
+  $Where: PlaybackSessionWhereInput
+  $OrderBy: [PlaybackSessionOrderByInput!]
+  $Page: PageInput
+) {
+  PlaybackSessions(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
+    Edges {
+      Node {
+        Id
+        UserId
+        MediaFileId
+        CurrentPosition
+        Duration
+        Volume
+        IsMuted
+        IsPlaying
+        StartedAt
+        LastUpdatedAt
+        CompletedAt
+        CreatedAt
+        UpdatedAt
+      }
+      Cursor
+    }
+    PageInfo {
+      HasNextPage
+      TotalCount
+    }
+  }
+}

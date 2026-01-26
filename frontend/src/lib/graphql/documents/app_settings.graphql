@@ -1,0 +1,23 @@
+query PlaybackSyncInterval($Key: String!) {
+  AppSettings(Where: { Key: { Eq: $Key } }, Page: { Limit: 1, Offset: 0 }) {
+    Edges {
+      Node {
+        Id
+        Key
+        Value
+      }
+    }
+  }
+}
+
+mutation UpdateAppSetting($Id: String!, $Input: UpdateAppSettingInput!) {
+  UpdateAppSetting(Id: $Id, Input: $Input) {
+    Success
+    Error
+    AppSetting {
+      Id
+      Key
+      Value
+    }
+  }
+}

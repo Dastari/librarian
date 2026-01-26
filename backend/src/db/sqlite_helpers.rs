@@ -3,8 +3,8 @@
 //! SQLite doesn't natively support UUIDs, arrays, or JSONB like PostgreSQL.
 //! This module provides utilities to convert between Rust types and SQLite-compatible formats.
 
-use anyhow::{anyhow, Result};
-use serde::{de::DeserializeOwned, Serialize};
+use anyhow::{Result, anyhow};
+use serde::{Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
 // ============================================================================
@@ -160,7 +160,10 @@ pub fn int_to_bool(i: i32) -> bool {
 /// Build a SQL fragment to check if a value exists in a JSON array column
 /// Usage: format!("EXISTS (SELECT 1 FROM json_each({}) WHERE value = ?)", column)
 pub fn json_array_contains_sql(column: &str) -> String {
-    format!("EXISTS (SELECT 1 FROM json_each({}) WHERE value = ?)", column)
+    format!(
+        "EXISTS (SELECT 1 FROM json_each({}) WHERE value = ?)",
+        column
+    )
 }
 
 /// Build a SQL fragment to check if any value from a list exists in a JSON array column
@@ -168,7 +171,7 @@ pub fn json_array_overlaps_sql(column: &str, placeholder_count: usize) -> String
     if placeholder_count == 0 {
         return "1=0".to_string(); // Always false for empty list
     }
-    
+
     let placeholders: Vec<&str> = (0..placeholder_count).map(|_| "?").collect();
     format!(
         "EXISTS (SELECT 1 FROM json_each({}) WHERE value IN ({}))",
@@ -237,6 +240,9 @@ mod tests {
     #[test]
     fn test_json_array_contains_sql() {
         let sql = json_array_contains_sql("genres");
-        assert_eq!(sql, "EXISTS (SELECT 1 FROM json_each(genres) WHERE value = ?)");
+        assert_eq!(
+            sql,
+            "EXISTS (SELECT 1 FROM json_each(genres) WHERE value = ?)"
+        );
     }
 }

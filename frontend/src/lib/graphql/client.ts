@@ -177,16 +177,16 @@ export function resetApolloCache(): void {
 
 // Legacy wrapper for compatibility with existing code that uses urql-style API
 export const graphqlClient = {
-  query: <T = unknown>(
-    query: string | DocumentNode,
-    variables?: OperationVariables,
+  query: <TData = unknown, TVariables = OperationVariables>(
+    query: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
+    variables?: TVariables,
   ) => ({
-    toPromise: async (): Promise<{ data?: T; error?: Error }> => {
+    toPromise: async (): Promise<{ data?: TData; error?: Error }> => {
       try {
         const doc = typeof query === "string" ? gql(query) : query;
-        const result = await apolloClient.query<T>({
-          query: doc as TypedDocumentNode<T>,
-          variables,
+        const result = await apolloClient.query<TData>({
+          query: doc as TypedDocumentNode<TData, TVariables>,
+          variables: variables as OperationVariables,
           fetchPolicy: "network-only",
         });
         return { data: result.data };
@@ -196,16 +196,16 @@ export const graphqlClient = {
     },
   }),
 
-  mutation: <T = unknown>(
-    mutation: string | DocumentNode,
-    variables?: OperationVariables,
+  mutation: <TData = unknown, TVariables = OperationVariables>(
+    mutation: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
+    variables?: TVariables,
   ) => ({
-    toPromise: async (): Promise<{ data?: T; error?: Error }> => {
+    toPromise: async (): Promise<{ data?: TData; error?: Error }> => {
       try {
         const doc = typeof mutation === "string" ? gql(mutation) : mutation;
-        const result = await apolloClient.mutate<T>({
-          mutation: doc as TypedDocumentNode<T>,
-          variables,
+        const result = await apolloClient.mutate<TData>({
+          mutation: doc as TypedDocumentNode<TData, TVariables>,
+          variables: variables as OperationVariables,
         });
         return { data: result.data ?? undefined };
       } catch (error) {
@@ -214,15 +214,18 @@ export const graphqlClient = {
     },
   }),
 
-  subscription: <T = unknown>(
-    subscription: string | DocumentNode,
-    variables?: OperationVariables,
+  subscription: <TData = unknown, TVariables = OperationVariables>(
+    subscription:
+      | TypedDocumentNode<TData, TVariables>
+      | string
+      | DocumentNode,
+    variables?: TVariables,
   ) => {
     const doc =
       typeof subscription === "string" ? gql(subscription) : subscription;
-    return apolloClient.subscribe<T>({
-      query: doc as TypedDocumentNode<T>,
-      variables,
+    return apolloClient.subscribe<TData>({
+      query: doc as TypedDocumentNode<TData, TVariables>,
+      variables: variables as OperationVariables,
     });
   },
 };

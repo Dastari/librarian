@@ -1,0 +1,70 @@
+# Notifications: unread count, list, subscription, update and delete
+# Used by codegen for TypedDocumentNode and types
+
+query Notifications(
+  $Where: NotificationWhereInput
+  $OrderBy: [NotificationOrderByInput!]
+  $Page: PageInput
+) {
+  Notifications(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
+    Edges {
+      Node {
+        Id
+        UserId
+        NotificationType
+        Category
+        Title
+        Message
+        LibraryId
+        TorrentId
+        MediaFileId
+        PendingMatchId
+        ActionType
+        ActionData
+        ReadAt
+        ResolvedAt
+        Resolution
+        CreatedAt
+        UpdatedAt
+      }
+      Cursor
+    }
+    PageInfo {
+      HasNextPage
+      TotalCount
+    }
+  }
+}
+
+subscription NotificationChanged($Filter: SubscriptionFilterInput) {
+  NotificationChanged(Filter: $Filter) {
+    Action
+    Id
+    Notification {
+      Id
+      ReadAt
+      ResolvedAt
+      Resolution
+    }
+  }
+}
+
+mutation UpdateNotification($Id: String!, $Input: UpdateNotificationInput!) {
+  UpdateNotification(Id: $Id, Input: $Input) {
+    Success
+    Error
+    Notification {
+      Id
+      ReadAt
+      ResolvedAt
+      Resolution
+    }
+  }
+}
+
+mutation DeleteNotification($Id: String!) {
+  DeleteNotification(Id: $Id) {
+    Success
+    Error
+  }
+}

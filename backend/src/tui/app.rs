@@ -1,7 +1,6 @@
 //! Main TUI application
 
 use std::io::{self, Stdout};
-use std::sync::Arc;
 
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
@@ -13,14 +12,11 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use tokio::sync::broadcast;
 
-type DbPool = crate::db::Pool;
-
-use crate::services::{LogEvent, SharedMetrics, TorrentService};
+use crate::services::LogEvent;
 use crate::tui::input::{Action, InputHandler};
 use crate::tui::panels::{
     DatabasePanel, LibrariesPanel, LogsPanel, Panel, SystemPanel, TorrentsPanel,
     create_shared_libraries, create_shared_table_counts, create_shared_torrents,
-    spawn_libraries_updater, spawn_table_counts_updater, spawn_torrent_updater,
 };
 use crate::tui::ui::{PanelId, UiLayout, render_panels};
 
@@ -59,12 +55,9 @@ pub struct TuiApp {
 }
 
 impl TuiApp {
-    /// Create a new TUI application
+    /// Create a new TUI application (logs panel only has live data; other panels are empty/disabled)
     pub fn new(
-        metrics: SharedMetrics,
         log_rx: broadcast::Receiver<LogEvent>,
-        torrent_service: Arc<TorrentService>,
-        pool: DbPool,
         server_port: u16,
         config: TuiConfig,
     ) -> io::Result<Self> {
@@ -75,17 +68,10 @@ impl TuiApp {
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
 
-        // Create shared torrent stats and spawn updater task
+        // Shared state for panels; no updaters spawned (DB/entities/torrents commented out)
         let torrents = create_shared_torrents();
-        spawn_torrent_updater(torrent_service, torrents.clone());
-
-        // Create shared libraries list and spawn updater task
         let libraries = create_shared_libraries();
-        spawn_libraries_updater(pool.clone(), libraries.clone());
-
-        // Create shared table counts and spawn updater task
         let table_counts = create_shared_table_counts();
-        spawn_table_counts_updater(pool.clone(), table_counts.clone());
 
         Ok(Self {
             terminal,
@@ -93,9 +79,9 @@ impl TuiApp {
             layout: UiLayout::default(),
             logs_panel: LogsPanel::new(log_rx),
             torrents_panel: TorrentsPanel::new(torrents),
-            system_panel: SystemPanel::new(metrics, server_port),
+            system_panel: SystemPanel::new_stub(server_port),
             libraries_panel: LibrariesPanel::new(libraries),
-            database_panel: DatabasePanel::new(pool, table_counts),
+            database_panel: DatabasePanel::new_empty(table_counts),
             should_quit: false,
         })
     }

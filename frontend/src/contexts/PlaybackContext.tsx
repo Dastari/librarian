@@ -10,7 +10,8 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef, ty
 import { useRouteContext } from '@tanstack/react-router';
 import {
   graphqlClient,
-  PLAYBACK_SESSION_QUERY,
+  MeDocument,
+  PlaybackSessionsDocument,
   START_PLAYBACK_MUTATION,
   UPDATE_PLAYBACK_MUTATION,
   STOP_PLAYBACK_MUTATION,
@@ -31,6 +32,52 @@ import {
   type AlbumWithTracks,
   type AudiobookWithChapters,
 } from '../lib/graphql';
+
+/** Map GraphQL PlaybackSessions node (PascalCase) to app PlaybackSession (camelCase) */
+function mapNodeToSession(node: {
+  Id: string;
+  UserId: string;
+  MediaFileId?: string | null;
+  CurrentPosition: number;
+  Duration?: number | null;
+  Volume: number;
+  IsMuted: boolean;
+  IsPlaying: boolean;
+  StartedAt: string;
+  LastUpdatedAt: string;
+  CompletedAt?: string | null;
+  CreatedAt: string;
+  UpdatedAt: string;
+  ContentType?: string | null;
+  EpisodeId?: string | null;
+  MovieId?: string | null;
+  TrackId?: string | null;
+  AudiobookId?: string | null;
+  TvShowId?: string | null;
+  AlbumId?: string | null;
+}): PlaybackSession {
+  const ct = node.ContentType as PlaybackContentType | undefined;
+  return {
+    id: node.Id,
+    userId: node.UserId,
+    contentType: ct ?? null,
+    mediaFileId: node.MediaFileId ?? null,
+    contentId: node.EpisodeId ?? node.MovieId ?? node.TrackId ?? null,
+    episodeId: node.EpisodeId ?? null,
+    movieId: node.MovieId ?? null,
+    trackId: node.TrackId ?? null,
+    audiobookId: node.AudiobookId ?? null,
+    tvShowId: node.TvShowId ?? null,
+    albumId: node.AlbumId ?? null,
+    currentPosition: node.CurrentPosition,
+    duration: node.Duration ?? null,
+    volume: node.Volume,
+    isMuted: node.IsMuted,
+    isPlaying: node.IsPlaying,
+    startedAt: node.StartedAt,
+    lastUpdatedAt: node.LastUpdatedAt,
+  };
+}
 
 /** Metadata for the currently playing content */
 export interface CurrentContentMetadata {
@@ -171,14 +218,27 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   const refreshSession = useCallback(async () => {
     try {
+      const meResult = await graphqlClient.query(MeDocument, {}).toPromise();
+      const userId = meResult.data?.Me?.Id;
+      if (!userId) {
+        clearAllState();
+        setIsLoading(false);
+        return;
+      }
+
       const result = await graphqlClient
-        .query<{ playbackSession: PlaybackSession | null }>(PLAYBACK_SESSION_QUERY, {})
+        .query(PlaybackSessionsDocument, {
+          Where: { UserId: { Eq: userId } },
+          OrderBy: [{ LastUpdatedAt: "Desc" }],
+          Page: { Limit: 1, Offset: 0 },
+        })
         .toPromise();
-      
-      if (result.data?.playbackSession) {
-        const session = result.data.playbackSession;
+
+      const node = result.data?.PlaybackSessions?.Edges?.[0]?.Node;
+      if (node) {
+        const session = mapNodeToSession(node);
         setSession(session);
-        
+
         // For audio sessions, fetch the track/album or audiobook data
         if (session.contentType === 'TRACK' && session.albumId && session.trackId) {
           try {

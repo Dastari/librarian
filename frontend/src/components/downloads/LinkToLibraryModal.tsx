@@ -16,13 +16,13 @@ import {
 } from '@tabler/icons-react'
 import {
   graphqlClient,
-  LIBRARIES_QUERY,
   ORGANIZE_TORRENT_MUTATION,
-  type Library,
+  type LibraryNode,
   type Torrent,
   type OrganizeTorrentResult,
   type Album,
 } from '../../lib/graphql'
+import { LibrariesDocument } from '../../lib/graphql/generated/graphql'
 
 // Query to get albums for a library
 const ALBUMS_FOR_LIBRARY_QUERY = `
@@ -119,7 +119,7 @@ export function LinkToLibraryModal({
   torrent,
   onLinked,
 }: LinkToLibraryModalProps) {
-  const [libraries, setLibraries] = useState<Library[]>([])
+  const [libraries, setLibraries] = useState<LibraryNode[]>([])
   const [albums, setAlbums] = useState<Album[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingAlbums, setLoadingAlbums] = useState(false)
@@ -129,11 +129,11 @@ export function LinkToLibraryModal({
 
   // Get the selected library
   const selectedLibrary = useMemo(() => {
-    return libraries.find(l => l.id === selectedLibraryId)
+    return libraries.find((l) => l.Id === selectedLibraryId)
   }, [libraries, selectedLibraryId])
 
   // Check if selected library is music
-  const isMusicLibrary = selectedLibrary?.libraryType === 'MUSIC'
+  const isMusicLibrary = selectedLibrary?.LibraryType === 'MUSIC'
 
   // Fetch libraries
   useEffect(() => {
@@ -143,12 +143,10 @@ export function LinkToLibraryModal({
       setSelectedAlbumId(null)
       setAlbums([])
       graphqlClient
-        .query<{ libraries: Library[] }>(LIBRARIES_QUERY)
+        .query(LibrariesDocument, {})
         .toPromise()
         .then((result) => {
-          if (result.data?.libraries) {
-            setLibraries(result.data.libraries)
-          }
+          setLibraries(result.data?.Libraries.Edges.map((e) => e.Node) ?? [])
         })
         .finally(() => setLoading(false))
     }
@@ -184,8 +182,8 @@ export function LinkToLibraryModal({
   const sortedLibraries = useMemo(() => {
     if (!recommendedType) return libraries
     return [...libraries].sort((a, b) => {
-      if (a.libraryType === recommendedType && b.libraryType !== recommendedType) return -1
-      if (b.libraryType === recommendedType && a.libraryType !== recommendedType) return 1
+      if (a.LibraryType === recommendedType && b.LibraryType !== recommendedType) return -1
+      if (b.LibraryType === recommendedType && a.LibraryType !== recommendedType) return 1
       return 0
     })
   }, [libraries, recommendedType])
@@ -273,26 +271,26 @@ export function LinkToLibraryModal({
                 based on the library settings.
               </p>
               {sortedLibraries.map((library) => {
-                const Icon = getLibraryIcon(library.libraryType)
-                const isSelected = selectedLibraryId === library.id
-                const isRecommended = library.libraryType === recommendedType
+                const Icon = getLibraryIcon(library.LibraryType)
+                const isSelected = selectedLibraryId === library.Id
+                const isRecommended = library.LibraryType === recommendedType
 
                 return (
                   <Card
-                    key={library.id}
+                    key={library.Id}
                     isPressable
                     className={`transition-all ${
                       isSelected
                         ? 'ring-2 ring-primary bg-primary/10'
                         : 'hover:bg-content2'
                     }`}
-                    onPress={() => setSelectedLibraryId(library.id)}
+                    onPress={() => setSelectedLibraryId(library.Id)}
                   >
                     <CardBody className="flex-row items-center gap-3 py-3">
-                      <Icon size={24} className={getLibraryColor(library.libraryType)} />
+                      <Icon size={24} className={getLibraryColor(library.LibraryType)} />
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="font-medium">{library.name}</span>
+                          <span className="font-medium">{library.Name}</span>
                           {isRecommended && (
                             <span className="text-xs px-1.5 py-0.5 rounded bg-primary/20 text-primary">
                               Recommended
@@ -300,7 +298,7 @@ export function LinkToLibraryModal({
                           )}
                         </div>
                         <div className="text-xs text-default-500">
-                          {library.libraryType} • {library.path}
+                          {library.LibraryType} • {library.Path}
                         </div>
                       </div>
                       {isSelected && (

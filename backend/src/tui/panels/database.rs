@@ -1,4 +1,5 @@
 //! Database panel - displays connection pool statistics and table counts
+//! DB/entity access commented out; panel shows empty/disabled for now.
 
 use std::sync::Arc;
 
@@ -7,7 +8,6 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
-type DbPool = crate::db::Pool;
 
 use crate::tui::input::Action;
 use crate::tui::panels::Panel;
@@ -34,92 +34,41 @@ pub fn create_shared_table_counts() -> SharedTableCounts {
     Arc::new(RwLock::new(TableCounts::default()))
 }
 
-/// Spawn a background task to update table counts
-pub fn spawn_table_counts_updater(pool: DbPool, counts: SharedTableCounts) {
-    tokio::spawn(async move {
-        loop {
-            let new_counts = fetch_all_table_counts(&pool).await;
-            {
-                *counts.write() = new_counts;
-            }
-            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-        }
-    });
+/// Spawn a background task to update table counts (disabled: no DB access)
+#[allow(dead_code)]
+pub fn spawn_table_counts_updater(_pool: crate::db::DbPool, counts: SharedTableCounts) {
+    // Legacy: DB/entity access commented out; panel uses empty counts.
+    let _ = counts;
+    // tokio::spawn(async move {
+    //     loop {
+    //         let new_counts = fetch_all_table_counts(&pool).await;
+    //         *counts.write() = new_counts;
+    //         tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+    //     }
+    // });
 }
 
-/// Fetch counts for all tables from database
-async fn fetch_all_table_counts(pool: &DbPool) -> TableCounts {
-    // Get all table names from the database schema
-    let table_names = vec![
-        "albums",
-        "app_logs",
-        "app_settings",
-        "artists",
-        "audio_streams",
-        "authors",
-        "chapters",
-        "audiobooks",
-        "cast_devices",
-        "cast_sessions",
-        "cast_settings",
-        "chapters",
-        "episodes",
-        "indexer_configs",
-        "indexer_credentials",
-        "indexer_search_cache",
-        "indexer_settings",
-        "libraries",
-        "media_files",
-        "movies",
-        "naming_patterns",
-        "pending_file_matches",
-        "playback_sessions",
-        "rss_feed_items",
-        "rss_feeds",
-        "schedule_cache",
-        "schedule_sync_state",
-        "subtitles",
-        "torrents",
-        "torrent_files",
-        "torznab_categories",
-        "tracks",
-        "tv_shows",
-        "video_streams",
-        "watch_progress",
-    ];
-
-    let mut tables = Vec::new();
-    for name in table_names {
-        let query = format!("SELECT COUNT(*) FROM \"{}\"", name);
-        let count = sqlx::query_scalar::<_, i64>(&query)
-            .fetch_one(pool)
-            .await
-            .unwrap_or(0);
-        tables.push(TableCount {
-            name: name.to_string(),
-            count,
-        });
-    }
-
-    // Sort by count descending
-    tables.sort_by(|a, b| b.count.cmp(&a.count));
-
-    TableCounts { tables }
-}
+// /// Fetch counts for all tables from database
+// async fn fetch_all_table_counts(pool: &crate::db::DbPool) -> TableCounts { ... }
 
 /// Database panel showing connection pool stats and table counts
 pub struct DatabasePanel {
-    pool: DbPool,
     table_counts: SharedTableCounts,
     list_state: ListState,
 }
 
 impl DatabasePanel {
-    pub fn new(pool: DbPool, table_counts: SharedTableCounts) -> Self {
+    /// New panel with pool (legacy; not used when DB is disabled).
+    #[allow(dead_code)]
+    pub fn new(_pool: crate::db::DbPool, table_counts: SharedTableCounts) -> Self {
+        Self::new_empty(table_counts)
+    }
+
+    /// New panel with no DB connection; shows empty/disabled.
+    pub fn new_empty(table_counts: SharedTableCounts) -> Self {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
         Self {
-            pool,
             table_counts,
             list_state,
         }
@@ -165,18 +114,18 @@ impl Panel for DatabasePanel {
             return;
         }
 
-        // Split vertically: pool stats at top (1 row), table list below
+        let counts = self.get_counts();
+
+        // Split vertically: pool stats at top (disabled), table list below
         let chunks = Layout::vertical([
             Constraint::Length(3), // Pool stats box
             Constraint::Min(3),    // Table list
         ])
         .split(inner);
 
-        // Render pool stats in internal box
-        render_pool_stats(frame, chunks[0], &self.pool, border_style);
+        // Pool stats disabled (no DB connection in this build)
+        render_pool_stats_disabled(frame, chunks[0], border_style);
 
-        // Render table list
-        let counts = self.get_counts();
         let items: Vec<ListItem> = counts
             .tables
             .iter()
@@ -237,19 +186,8 @@ impl Panel for DatabasePanel {
     }
 }
 
-/// Render pool stats in a horizontal internal box
-fn render_pool_stats(
-    frame: &mut Frame,
-    area: Rect,
-    pool: &DbPool,
-    border_style: ratatui::style::Style,
-) {
-    let pool_size = pool.size();
-    let idle = pool.num_idle();
-    let active = pool_size - idle as u32;
-    let max_connections = pool.options().get_max_connections();
-
-    // Draw internal box
+/// Render pool stats as disabled (no DB in this build)
+fn render_pool_stats_disabled(frame: &mut Frame, area: Rect, border_style: ratatui::style::Style) {
     let inner_block = Block::default()
         .borders(Borders::ALL)
         .border_type(ratatui::widgets::BorderType::Rounded)
@@ -262,28 +200,10 @@ fn render_pool_stats(
         return;
     }
 
-    // Pool stats as horizontal line
-    let bar_width = 6;
-    let filled = if max_connections > 0 {
-        ((active as usize) * bar_width / max_connections as usize).min(bar_width)
-    } else {
-        0
-    };
-    let empty = bar_width - filled;
-    let bar = format!("{}{}", "\u{28FF}".repeat(filled), "\u{2880}".repeat(empty));
-
     let stats_line = Line::from(vec![
         Span::styled("pool ", Theme::dim()),
-        Span::styled(bar, Theme::progress_complete()),
-        Span::styled(format!(" {}/{}", active, max_connections), Theme::text()),
-        Span::styled("  │  ", border_style),
-        Span::styled("idle ", Theme::dim()),
-        Span::styled(format!("{}", idle), Theme::text()),
-        Span::styled("  │  ", border_style),
-        Span::styled("size ", Theme::dim()),
-        Span::styled(format!("{}", pool_size), Theme::text()),
+        Span::styled("disabled (no DB)", Theme::dim()),
     ]);
-
     frame.render_widget(Paragraph::new(stats_line), inner_area);
 }
 

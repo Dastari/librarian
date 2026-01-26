@@ -1,128 +1,167 @@
-//! External service integrations
+//! Service integrations and utilities
 //!
-//! Re-exports are provided for convenience, even if not all are used within the crate.
+//! ## Services (lifecycle: start/stop, optional routes)
+//!
+//! These are long-running or background components that register with
+//! [ServicesManager](manager::ServicesManager) and can start/stop:
+//!
+//! - **torrent** – librqbit session, progress monitor + DB sync loops
+//! - **cast** – mDNS device discovery loop
+//! - **logging** – DB writer task + broadcast (layer created at startup)
+//! - **scanner** – invoked by job scheduler (no own loop)
+//! - **notifications** – in-memory broadcast only (lightweight, no loop)
+//! - **artwork** – cache + optional HTTP routes for serving images
+//!
+//! ## Utilities (no lifecycle; use where needed)
+//!
+//! Stateless or on-demand helpers, not registered as services:
+//!
+//! - **metadata** (tmdb, tvmaze, musicbrainz) – API clients
+//! - **ffmpeg** – ffprobe runner for media analysis
+//! - **filesystem** – path validation + operations; can expose routes
+//! - **ollama** – LLM client for filename parsing
+//! - **auth** – JWT and user validation
+//! - **filename_parser**, **file_matcher**, **file_processor**, **organizer**
+//! - **queues** (MediaAnalysisQueue, etc.) – worker pools, often owned by a service
+//! - **torrent_completion_handler** – event-driven, started alongside torrent service
+//!
+//! Route wiring (e.g. `/api/artwork`, `/api/filesystem`) is done in `main` when
+//! building the app router; services that provide routes set [Service::provides_routes].
 
 #![allow(unused_imports)]
 
-pub mod artwork;
 pub mod auth;
-pub mod audible;
-pub mod cache;
-pub mod cast;
-pub mod download_source;
-pub mod extractor;
-pub mod ffmpeg;
-pub mod file_matcher;
-pub mod file_processor;
-pub mod file_utils;
-pub mod filename_parser;
-pub mod filesystem;
-pub mod fingerprint;
-pub mod hunt;
-pub mod job_queue;
+pub mod database;
+pub mod graphql;
+pub mod http_server;
 pub mod logging;
-pub mod match_scorer;
-pub mod metadata;
-pub mod metrics;
-pub mod musicbrainz;
-pub mod notifications;
-pub mod ollama;
-pub mod opensubtitles;
-pub mod organizer;
-pub mod quality_evaluator;
-pub mod queues;
-pub mod rate_limiter;
-pub mod rss;
-pub mod scanner;
-pub mod text_utils;
-pub mod tmdb;
-pub mod torrent;
-pub mod torrent_completion_handler;
-pub mod torrent_metadata;
-pub mod track_matcher;
-pub mod tvmaze;
-pub mod usenet;
+pub mod manager;
 
-pub use artwork::ArtworkService;
 pub use auth::{
     AccessTokenClaims, AuthConfig, AuthService, AuthTokens, AuthenticatedUser, LoginResult,
-    RefreshTokenClaims, RegisterInput, verify_token as verify_auth_token,
+    RefreshTokenClaims, RegisterInput,
 };
-pub use cast::{
-    CastDevicesEvent, CastPlayerState, CastService, CastServiceConfig, CastSessionEvent,
+
+pub use database::{DatabaseService, DatabaseServiceConfig};
+pub use graphql::{GraphqlService, GraphqlServiceConfig};
+pub use http_server::{HttpServerConfig, HttpServerService};
+pub use logging::{DatabaseLoggerConfig, LogEvent, LoggingService, LoggingServiceConfig};
+pub use manager::{
+    HealthStatus, IntoServiceRegistration, Service, ServiceHealth, ServicesManager,
+    ServicesManagerBuilder,
 };
-pub use ffmpeg::{
-    AudioStream, Chapter, FfmpegService, HdrType, MediaAnalysis, SubtitleStream, VideoStream,
-};
-pub use file_matcher::{
-    FileInfo, FileMatcher, KnownMatchTarget, MatchSummary, MediaMetadata, VerificationResult,
-    read_audio_metadata, read_video_metadata,
-};
-pub use file_processor::{FileProcessor, ProcessResult, ProcessTarget};
-pub use file_utils::{
-    ARCHIVE_EXTENSIONS, AUDIO_EXTENSIONS, SUBTITLE_EXTENSIONS, VIDEO_EXTENSIONS, format_bytes,
-    format_bytes_i64, get_container, is_archive_file, is_audio_file, is_subtitle_file,
-    is_video_file, sanitize_for_filename,
-};
-pub use filesystem::{DirectoryChangeEvent, FilesystemService, FilesystemServiceConfig};
-pub use fingerprint::{AcoustIdMatch, AudioFingerprint, FingerprintService};
-pub use job_queue::{
-    ConcurrencyLimiter, JobQueueConfig, MetadataQueue, WorkQueue, process_concurrent,
-    process_in_chunks,
-};
-pub use logging::{DatabaseLoggerConfig, LogEvent, create_database_layer};
-pub use metadata::{
-    AddMovieOptions, AddTvShowOptions, MetadataProvider, MetadataService, MetadataServiceConfig,
-    MovieDetails, MovieSearchResult, create_metadata_service_with_artwork,
-};
-pub use metrics::{
-    DatabaseSnapshot, MetricsCollector, SharedMetrics, SystemSnapshot, create_metrics_collector,
-    format_bytes_short, format_uptime,
-};
-pub use notifications::{
-    NotificationCountEvent, NotificationEvent, NotificationEventType, NotificationService,
-    NotificationServiceConfig, create_notification_service,
-};
-pub use ollama::{LlmParseResult, OllamaConfig, OllamaService};
-pub use opensubtitles::{
-    DownloadedSubtitle, OpenSubtitlesClient, SubtitleSearchQuery, SubtitleSearchResult,
-};
-pub use organizer::{
-    CleanupResult, ConsolidateResult, DeduplicationResult, OrganizerService, TorrentFileForOrganize,
-};
-pub use quality_evaluator::{
-    EffectiveQualitySettings, QualityEvaluation, QualityEvaluator, QualityStatus,
-};
-pub use queues::{
-    FingerprintJob, FingerprintQueue, MediaAnalysisJob, MediaAnalysisQueue,
-    SubtitleDownloadJob, SubtitleDownloadQueue, create_fingerprint_queue,
-    create_media_analysis_queue, create_subtitle_download_queue, fingerprint_queue_config,
-    media_analysis_queue_config, subtitle_download_queue_config,
-};
-pub use rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};
-pub use rss::{ParsedRssItem, RssService, validate_url_for_ssrf};
-pub use scanner::{
-    ScannerConfig, ScannerService, create_scanner_service, create_scanner_service_with_config,
-};
-pub use text_utils::{
-    levenshtein_distance, normalize_quality, normalize_show_name, normalize_show_name_no_articles,
-    normalize_title, normalize_track_title, show_name_similarity, string_similarity,
-};
-pub use tmdb::{
-    TmdbClient, TmdbCollection, TmdbCredits, TmdbMovie, TmdbMovieSearchResult, TmdbReleaseDates,
-    normalize_movie_status,
-};
-pub use torrent::{
-    PeerStats, TorrentDetails, TorrentEvent, TorrentFile, TorrentInfo, TorrentService,
-    TorrentServiceConfig, TorrentState,
-};
-pub use torrent_completion_handler::{
-    CompletionHandlerConfig, CompletionHandlerHandle, TorrentCompletionHandler,
-};
-pub use torrent_metadata::{
-    TorrentFileInfo, audio_summary, extract_audio_files, is_single_file_album, parse_torrent_files,
-};
-pub use track_matcher::{MatchType, TrackMatch, TrackMatchResult, match_tracks};
-pub use hunt::{HuntConfig, HuntSearchResult, HuntService};
-pub use download_source::{DownloadSource, DownloadSourceType, LinkedItem};
-pub use usenet::{UsenetDownloadInfo, UsenetEvent, UsenetService};
+
+// These are legacy mods moved to the legacy folder awaiting conversion to the new @servies.md format.
+// pub mod metadata;
+// pub mod artwork;
+// pub mod audible;
+// pub mod cache;
+// pub mod cast;
+// pub mod download_source;
+// pub mod extractor;
+// pub mod ffmpeg;
+// pub mod file_matcher;
+// pub mod file_processor;
+// pub mod file_utils;
+// pub mod filename_parser;
+// pub mod filesystem;
+// pub mod fingerprint;
+// pub mod hunt;
+// pub mod job_queue;
+// pub mod match_scorer;
+// pub mod metrics;
+// pub mod notifications;
+// pub mod ollama;
+// pub mod opensubtitles;
+// pub mod organizer;
+// pub mod quality_evaluator;
+// pub mod queues;
+// pub mod rate_limiter;
+// pub mod rss;
+// pub mod scanner;
+// pub mod text_utils;
+// pub mod tmdb;
+// pub mod torrent;
+// pub mod torrent_completion_handler;
+// pub mod torrent_metadata;
+// pub mod track_matcher;
+// pub mod tvmaze;
+// pub mod usenet;
+
+// pub use cast::{
+//     CastDevicesEvent, CastPlayerState, CastService, CastServiceConfig, CastSessionEvent,
+// };
+// pub use ffmpeg::{
+//     AudioStream, Chapter, FfmpegService, HdrType, MediaAnalysis, SubtitleStream, VideoStream,
+// };
+// pub use file_matcher::{
+//     FileInfo, FileMatcher, KnownMatchTarget, MatchSummary, MediaMetadata, VerificationResult,
+//     read_audio_metadata, read_video_metadata,
+// };
+// pub use file_processor::{FileProcessor, ProcessResult, ProcessTarget};
+// pub use file_utils::{
+//     ARCHIVE_EXTENSIONS, AUDIO_EXTENSIONS, SUBTITLE_EXTENSIONS, VIDEO_EXTENSIONS, format_bytes,
+//     format_bytes_i64, get_container, is_archive_file, is_audio_file, is_subtitle_file,
+//     is_video_file, sanitize_for_filename,
+// };
+// pub use filesystem::{DirectoryChangeEvent, FilesystemService, FilesystemServiceConfig};
+// pub use fingerprint::{AcoustIdMatch, AudioFingerprint, FingerprintService};
+// pub use job_queue::{
+//     ConcurrencyLimiter, JobQueueConfig, MetadataQueue, WorkQueue, process_concurrent,
+//     process_in_chunks,
+// };
+// pub use metadata::{
+//     AddMovieOptions, AddTvShowOptions, MetadataProvider, MetadataService, MetadataServiceConfig,
+//     MovieDetails, MovieSearchResult, create_metadata_service_with_artwork,
+// };
+// pub use metrics::{
+//     DatabaseSnapshot, MetricsCollector, SharedMetrics, SystemSnapshot, create_metrics_collector,
+//     format_bytes_short, format_uptime,
+// };
+// pub use notifications::{
+//     NotificationCountEvent, NotificationEvent, NotificationEventType, NotificationService,
+//     NotificationServiceConfig, create_notification_service,
+// };
+// pub use ollama::{LlmParseResult, OllamaConfig, OllamaService};
+// pub use opensubtitles::{
+//     DownloadedSubtitle, OpenSubtitlesClient, SubtitleSearchQuery, SubtitleSearchResult,
+// };
+// pub use organizer::{
+//     CleanupResult, ConsolidateResult, DeduplicationResult, OrganizerService, TorrentFileForOrganize,
+// };
+// pub use quality_evaluator::{
+//     EffectiveQualitySettings, QualityEvaluation, QualityEvaluator, QualityStatus,
+// };
+// pub use queues::{
+//     FingerprintJob, FingerprintQueue, MediaAnalysisJob, MediaAnalysisQueue,
+//     SubtitleDownloadJob, SubtitleDownloadQueue, create_fingerprint_queue,
+//     create_media_analysis_queue, create_subtitle_download_queue, fingerprint_queue_config,
+//     media_analysis_queue_config, subtitle_download_queue_config,
+// };
+// pub use rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};
+// pub use rss::{ParsedRssItem, RssService, validate_url_for_ssrf};
+// pub use scanner::{
+//     ScannerConfig, ScannerService, create_scanner_service, create_scanner_service_with_config,
+// };
+// pub use text_utils::{
+//     levenshtein_distance, normalize_quality, normalize_show_name, normalize_show_name_no_articles,
+//     normalize_title, normalize_track_title, show_name_similarity, string_similarity,
+// };
+// pub use tmdb::{
+//     TmdbClient, TmdbCollection, TmdbCredits, TmdbMovie, TmdbMovieSearchResult, TmdbReleaseDates,
+//     normalize_movie_status,
+// };
+// pub use torrent::{
+//     PeerStats, TorrentDetails, TorrentEvent, TorrentFile, TorrentInfo, TorrentService,
+//     TorrentServiceConfig, TorrentState,
+// };
+// pub use torrent_completion_handler::{
+//     CompletionHandlerConfig, CompletionHandlerHandle, TorrentCompletionHandler,
+// };
+// pub use torrent_metadata::{
+//     TorrentFileInfo, audio_summary, extract_audio_files, is_single_file_album, parse_torrent_files,
+// };
+// pub use track_matcher::{MatchType, TrackMatch, TrackMatchResult, match_tracks};
+// pub use hunt::{HuntConfig, HuntSearchResult, HuntService};
+// pub use download_source::{DownloadSource, DownloadSourceType, LinkedItem};
+// pub use usenet::{UsenetDownloadInfo, UsenetEvent, UsenetService};

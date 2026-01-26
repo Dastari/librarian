@@ -1,4 +1,5 @@
 //! Libraries panel - displays library statistics
+//! DB/entity access commented out; panel shows empty for now.
 
 use std::sync::Arc;
 
@@ -7,7 +8,6 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
-type DbPool = crate::db::Pool;
 
 use crate::tui::input::Action;
 use crate::tui::panels::Panel;
@@ -32,122 +32,21 @@ pub fn create_shared_libraries() -> SharedLibraries {
     Arc::new(RwLock::new(Vec::new()))
 }
 
-/// Spawn a background task to update library stats
-pub fn spawn_libraries_updater(pool: DbPool, libraries: SharedLibraries) {
-    tokio::spawn(async move {
-        loop {
-            // Query library stats
-            let stats = fetch_library_stats(&pool).await;
-            *libraries.write() = stats;
-            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-        }
-    });
+/// Spawn a background task to update library stats (disabled: no DB access)
+#[allow(dead_code)]
+pub fn spawn_libraries_updater(_pool: crate::db::DbPool, _libraries: SharedLibraries) {
+    // Legacy: DB/entity access commented out; panel uses empty list.
+    // tokio::spawn(async move {
+    //     loop {
+    //         let stats = fetch_library_stats(&pool).await;
+    //         *libraries.write() = stats;
+    //         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+    //     }
+    // });
 }
 
-/// Fetch library stats from database
-async fn fetch_library_stats(pool: &DbPool) -> Vec<LibraryStats> {
-    // Query libraries with id, name, type, path (id as TEXT for SQLite)
-    let result = sqlx::query_as::<_, (String, String, String, String)>(
-        r#"
-        SELECT id, name, library_type, path
-        FROM libraries
-        ORDER BY name
-        "#,
-    )
-    .fetch_all(pool)
-    .await;
-
-    let mut stats = Vec::new();
-
-    if let Ok(libs) = result {
-        for (library_id, name, library_type, path) in libs {
-            // Get total size from media_files (same as frontend)
-            let total_size = sqlx::query_scalar::<_, i64>(
-                "SELECT CAST(COALESCE(SUM(size), 0) AS INTEGER) FROM media_files WHERE library_id = ?1",
-            )
-            .bind(&library_id)
-            .fetch_one(pool)
-            .await
-            .unwrap_or(0);
-
-            // Get counts based on library type
-            let (item_count, missing_count) = match library_type.as_str() {
-                "movies" => {
-                    let count = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM movies WHERE library_id = ?1",
-                    )
-                    .bind(&library_id)
-                    .fetch_one(pool)
-                    .await
-                    .unwrap_or(0);
-
-                    let missing = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM movies WHERE library_id = ?1 AND has_file = 0",
-                    )
-                    .bind(&library_id)
-                    .fetch_one(pool)
-                    .await
-                    .unwrap_or(0);
-
-                    (count, missing)
-                }
-                "tv" => {
-                    let count = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM tv_shows WHERE library_id = ?1",
-                    )
-                    .bind(&library_id)
-                    .fetch_one(pool)
-                    .await
-                    .unwrap_or(0);
-
-                    let missing = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(DISTINCT e.id) FROM episodes e JOIN tv_shows s ON e.tv_show_id = s.id WHERE s.library_id = ?1 AND NOT EXISTS (SELECT 1 FROM media_files WHERE episode_id = e.id)"
-                    )
-                    .bind(&library_id)
-                    .fetch_one(pool)
-                    .await
-                    .unwrap_or(0);
-
-                    (count, missing)
-                }
-                "music" => {
-                    let count = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM albums WHERE library_id = ?1",
-                    )
-                    .bind(&library_id)
-                    .fetch_one(pool)
-                    .await
-                    .unwrap_or(0);
-
-                    (count, 0)
-                }
-                "audiobooks" => {
-                    let count = sqlx::query_scalar::<_, i64>(
-                        "SELECT COUNT(*) FROM audiobooks WHERE library_id = ?1",
-                    )
-                    .bind(&library_id)
-                    .fetch_one(pool)
-                    .await
-                    .unwrap_or(0);
-
-                    (count, 0)
-                }
-                _ => (0, 0),
-            };
-
-            stats.push(LibraryStats {
-                name,
-                library_type,
-                path,
-                item_count,
-                missing_count,
-                total_size_bytes: total_size,
-            });
-        }
-    }
-
-    stats
-}
+// /// Fetch library stats from database
+// async fn fetch_library_stats(pool: &crate::db::DbPool) -> Vec<LibraryStats> { ... }
 
 /// Get icon for library type
 fn library_icon(library_type: &str) -> &'static str {

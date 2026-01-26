@@ -1,47 +1,38 @@
 /**
- * Dashboard data cache with stale-while-revalidate pattern
- *
- * This hook provides cached dashboard data that loads instantly from cache
- * while fetching fresh data in the background. Uses React 19's concurrent
- * features for optimal performance.
+ * Dashboard data cache with stale-while-revalidate pattern.
+ * Uses codegen types only; all data is PascalCase (LibraryNode, ShowNode, ScheduleCacheNode).
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useRouterState } from '@tanstack/react-router'
+import { graphqlClient } from '../lib/graphql'
+import type { LibraryNode, ShowNode, ScheduleCacheNode } from '../lib/graphql'
 import {
-  graphqlClient,
-  LIBRARIES_QUERY,
-  TV_SHOWS_QUERY,
-  UPCOMING_EPISODES_QUERY,
-  LIBRARY_UPCOMING_EPISODES_QUERY,
-  LIBRARY_CHANGED_SUBSCRIPTION,
-  TORRENT_COMPLETED_SUBSCRIPTION,
-  type Library,
-  type TvShow,
-  type UpcomingEpisode,
-  type LibraryUpcomingEpisode,
-  type LibraryChangedEvent,
-} from '../lib/graphql'
+  LibrariesDocument,
+  LibraryChangedDocument,
+  DashboardShowsDocument,
+  DashboardScheduleCachesDocument,
+} from '../lib/graphql/generated/graphql'
+import { TORRENT_COMPLETED_SUBSCRIPTION } from '../lib/graphql/subscriptions'
 
-// Cache configuration
 const CACHE_KEY = 'librarian:dashboard_cache'
-const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
-const STALE_TTL_MS = 30 * 60 * 1000 // 30 minutes (serve stale data up to this long)
+const CACHE_TTL_MS = 5 * 60 * 1000
+const STALE_TTL_MS = 30 * 60 * 1000
 
 interface DashboardCache {
-  libraries: Library[]
-  recentShows: TvShow[]
-  libraryUpcoming: LibraryUpcomingEpisode[]
-  globalUpcoming: UpcomingEpisode[]
+  libraries: LibraryNode[]
+  recentShows: ShowNode[]
+  libraryUpcoming: ScheduleCacheNode[]
+  globalUpcoming: ScheduleCacheNode[]
   timestamp: number
   userId: string
 }
 
 interface DashboardData {
-  libraries: Library[]
-  recentShows: TvShow[]
-  libraryUpcoming: LibraryUpcomingEpisode[]
-  globalUpcoming: UpcomingEpisode[]
+  libraries: LibraryNode[]
+  recentShows: ShowNode[]
+  libraryUpcoming: ScheduleCacheNode[]
+  globalUpcoming: ScheduleCacheNode[]
 }
 
 interface UseDashboardCacheResult {
@@ -52,53 +43,38 @@ interface UseDashboardCacheResult {
   refetch: () => Promise<void>
 }
 
-// Read cache from localStorage
 function readCache(userId: string): DashboardCache | null {
   try {
     const cached = localStorage.getItem(CACHE_KEY)
     if (!cached) return null
-    
     const parsed: DashboardCache = JSON.parse(cached)
-    
-    // Check if cache belongs to current user
     if (parsed.userId !== userId) return null
-    
-    // Check if cache is too old to serve
-    const age = Date.now() - parsed.timestamp
-    if (age > STALE_TTL_MS) return null
-    
+    if (Date.now() - parsed.timestamp > STALE_TTL_MS) return null
     return parsed
   } catch {
     return null
   }
 }
 
-// Write cache to localStorage
 function writeCache(data: DashboardData, userId: string): void {
   try {
-    const cache: DashboardCache = {
-      ...data,
-      timestamp: Date.now(),
-      userId,
-    }
-    localStorage.setItem(CACHE_KEY, JSON.stringify(cache))
+    localStorage.setItem(
+      CACHE_KEY,
+      JSON.stringify({ ...data, timestamp: Date.now(), userId }),
+    )
   } catch {
-    // Ignore localStorage errors
+    // ignore
   }
 }
 
-// Check if cache is fresh
 function isCacheFresh(cache: DashboardCache | null): boolean {
-  if (!cache) return false
-  return Date.now() - cache.timestamp < CACHE_TTL_MS
+  return cache != null && Date.now() - cache.timestamp < CACHE_TTL_MS
 }
 
-/**
- * Hook for cached dashboard data with stale-while-revalidate pattern
- *
- * @param userId - Current user ID
- * @returns Dashboard data with loading states
- */
+function formatDateForFilter(d: Date): string {
+  return d.toISOString().slice(0, 10)
+}
+
 export function useDashboardCache(userId: string | null): UseDashboardCacheResult {
   const [data, setData] = useState<DashboardData>({
     libraries: [],
@@ -112,48 +88,59 @@ export function useDashboardCache(userId: string | null): UseDashboardCacheResul
   const fetchInProgress = useRef(false)
   const initialLoadDone = useRef(false)
 
-  // Fetch fresh data from the API
   const fetchData = useCallback(async (): Promise<DashboardData | null> => {
     if (!userId) return null
-    
     try {
-      // Fetch all data in parallel for maximum performance
-      const [librariesResult, libraryUpcomingResult, globalUpcomingResult] = await Promise.all([
-        graphqlClient.query<{ libraries: Library[] }>(LIBRARIES_QUERY).toPromise(),
-        graphqlClient.query<{ libraryUpcomingEpisodes: LibraryUpcomingEpisode[] }>(
-          LIBRARY_UPCOMING_EPISODES_QUERY,
-          { days: 7 }
-        ).toPromise(),
-        graphqlClient.query<{ upcomingEpisodes: UpcomingEpisode[] }>(
-          UPCOMING_EPISODES_QUERY,
-          { days: 7, country: 'US' }
-        ).toPromise(),
+      const today = new Date()
+      const endDate = new Date(today)
+      endDate.setDate(endDate.getDate() + 7)
+      const fromStr = formatDateForFilter(today)
+      const toStr = formatDateForFilter(endDate)
+
+      const librariesResult = await graphqlClient
+        .query(LibrariesDocument, {})
+        .toPromise()
+      const libraries: LibraryNode[] =
+        librariesResult.data?.Libraries.Edges.map((e) => e.Node) ?? []
+
+      const [libraryUpcomingResult, globalUpcomingResult] = await Promise.all([
+        graphqlClient.query(DashboardScheduleCachesDocument, {
+          Where: { AirDate: { Gte: fromStr, Lte: toStr } },
+          OrderBy: [{ AirDate: 'Asc' }],
+          Page: { Limit: 50, Offset: 0 },
+        }).toPromise(),
+        graphqlClient.query(DashboardScheduleCachesDocument, {
+          Where: {
+            AirDate: { Gte: fromStr, Lte: toStr },
+            CountryCode: { Eq: 'US' },
+          },
+          OrderBy: [{ AirDate: 'Asc' }],
+          Page: { Limit: 50, Offset: 0 },
+        }).toPromise(),
       ])
 
-      const libraries = librariesResult.data?.libraries ?? []
-      const libraryUpcoming = libraryUpcomingResult.data?.libraryUpcomingEpisodes ?? []
-      const globalUpcoming = globalUpcomingResult.data?.upcomingEpisodes ?? []
+      const libraryUpcoming: ScheduleCacheNode[] =
+        libraryUpcomingResult.data?.ScheduleCaches.Edges.map((e) => e.Node) ?? []
+      const globalUpcomingRaw: ScheduleCacheNode[] =
+        globalUpcomingResult.data?.ScheduleCaches.Edges.map((e) => e.Node) ?? []
 
-      // Fetch recent shows from TV libraries
-      const tvLibraries = libraries.filter((lib) => lib.libraryType === 'TV')
-      const allShows: TvShow[] = []
-
-      // Limit to 2 libraries for performance
+      const tvLibraries = libraries.filter((lib) => lib.LibraryType === 'TV')
+      const allShows: ShowNode[] = []
       for (const library of tvLibraries.slice(0, 2)) {
         const showsResult = await graphqlClient
-          .query<{ tvShows: TvShow[] }>(TV_SHOWS_QUERY, { libraryId: library.id })
+          .query(DashboardShowsDocument, {
+            Where: { LibraryId: { Eq: library.Id } },
+            Page: { Limit: 6, Offset: 0 },
+          })
           .toPromise()
-
-        if (showsResult.data?.tvShows) {
-          allShows.push(...showsResult.data.tvShows)
-        }
+        const nodes = showsResult.data?.Shows.Edges ?? []
+        allShows.push(...nodes.map((e) => e.Node))
       }
 
-      // Filter global upcoming to unique shows
       const seenShows = new Set<number>()
-      const filteredGlobalUpcoming = globalUpcoming.filter((ep) => {
-        if (seenShows.has(ep.show.tvmazeId)) return false
-        seenShows.add(ep.show.tvmazeId)
+      const filteredGlobalUpcoming = globalUpcomingRaw.filter((ep) => {
+        if (seenShows.has(ep.TvmazeShowId)) return false
+        seenShows.add(ep.TvmazeShowId)
         return true
       }).slice(0, 12)
 
@@ -169,36 +156,28 @@ export function useDashboardCache(userId: string | null): UseDashboardCacheResul
     }
   }, [userId])
 
-  // Refetch function exposed to components
   const refetch = useCallback(async () => {
     if (!userId || fetchInProgress.current) return
-
     fetchInProgress.current = true
     setIsFetching(true)
-
     const freshData = await fetchData()
     if (freshData) {
       setData(freshData)
       setIsStale(false)
       writeCache(freshData, userId)
     }
-
     setIsFetching(false)
     setIsLoading(false)
     fetchInProgress.current = false
   }, [userId, fetchData])
 
-  // Initial load with cache-first strategy
   useEffect(() => {
     if (!userId) {
       setIsLoading(false)
       return
     }
-
     if (initialLoadDone.current) return
     initialLoadDone.current = true
-
-    // Try to load from cache immediately
     const cached = readCache(userId)
     if (cached) {
       setData({
@@ -207,89 +186,47 @@ export function useDashboardCache(userId: string | null): UseDashboardCacheResul
         libraryUpcoming: cached.libraryUpcoming,
         globalUpcoming: cached.globalUpcoming,
       })
-      
-      const isFresh = isCacheFresh(cached)
-      setIsStale(!isFresh)
+      setIsStale(!isCacheFresh(cached))
       setIsLoading(false)
-
-      // If cache is stale, fetch in background
-      if (!isFresh) {
-        refetch()
-      }
+      if (!isCacheFresh(cached)) refetch()
     } else {
-      // No cache, fetch fresh data
       refetch()
     }
   }, [userId, refetch])
 
-  // Check if we're currently on the dashboard (home) route
   const routerState = useRouterState()
   const isOnDashboard = routerState.location.pathname === '/'
 
-  // Subscribe to real-time updates for library changes and torrent completions
-  // Only refetch if we're on the dashboard and the page is visible
   useEffect(() => {
-    // Don't set up subscriptions if not on dashboard or not logged in
     if (!userId || !isOnDashboard) return
-
     const handleEvent = () => {
-      // Only refetch if the document is visible (user is viewing this page)
-      if (document.visibilityState === 'visible') {
-        refetch()
-      } else {
-        // Mark cache as stale so it refreshes on next visit
-        setIsStale(true)
-      }
+      if (document.visibilityState === 'visible') refetch()
+      else setIsStale(true)
     }
-
-    // Subscribe to library changes (created, updated, deleted)
-    const librarySub = graphqlClient
-      .subscription<{ libraryChanged: LibraryChangedEvent }>(
-        LIBRARY_CHANGED_SUBSCRIPTION,
-        {}
-      )
-      .subscribe({
-        next: handleEvent,
-      })
-
-    // Subscribe to torrent completions (triggers media organization)
+    const librarySub = graphqlClient.subscription(LibraryChangedDocument, {}).subscribe({
+      next: (result) => {
+        if (result.data?.LibraryChanged) handleEvent()
+      },
+    })
     const torrentSub = graphqlClient
-      .subscription<{ torrentCompleted: { id: number } }>(
-        TORRENT_COMPLETED_SUBSCRIPTION,
-        {}
-      )
-      .subscribe({
-        next: handleEvent,
-      })
-
+      .subscription<{ torrentCompleted: { id: number } }>(TORRENT_COMPLETED_SUBSCRIPTION, {})
+      .subscribe({ next: handleEvent })
     return () => {
       librarySub.unsubscribe()
       torrentSub.unsubscribe()
     }
   }, [userId, refetch, isOnDashboard])
 
-  // Memoize the result to prevent unnecessary re-renders
-  const result = useMemo(
-    () => ({
-      data,
-      isLoading,
-      isStale,
-      isFetching,
-      refetch,
-    }),
-    [data, isLoading, isStale, isFetching, refetch]
+  return useMemo(
+    () => ({ data, isLoading, isStale, isFetching, refetch }),
+    [data, isLoading, isStale, isFetching, refetch],
   )
-
-  return result
 }
 
-/**
- * Clear the dashboard cache (call on logout)
- */
 export function clearDashboardCache(): void {
   try {
     localStorage.removeItem(CACHE_KEY)
   } catch {
-    // Ignore errors
+    // ignore
   }
 }

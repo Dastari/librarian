@@ -68,15 +68,15 @@ function CastingSettingsPage() {
     setIsLoading(true);
     try {
       const [devicesRes, settingsRes] = await Promise.all([
-        graphqlClient.query<{ castDevices: CastDevice[] }>(CAST_DEVICES_QUERY, {}).toPromise(),
-        graphqlClient.query<{ castSettings: CastSettings }>(CAST_SETTINGS_QUERY, {}).toPromise(),
+        graphqlClient.query<{ CastDevices: CastDevice[] }>(CAST_DEVICES_QUERY, {}).toPromise(),
+        graphqlClient.query<{ CastSettings: CastSettings }>(CAST_SETTINGS_QUERY, {}).toPromise(),
       ]);
 
-      if (devicesRes.data?.castDevices) {
-        setDevices(devicesRes.data.castDevices);
+      if (devicesRes.data?.CastDevices) {
+        setDevices(devicesRes.data.CastDevices);
       }
-      if (settingsRes.data?.castSettings) {
-        setSettings(settingsRes.data.castSettings);
+      if (settingsRes.data?.CastSettings) {
+        setSettings(settingsRes.data.CastSettings);
       }
     } finally {
       setIsLoading(false);

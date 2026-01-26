@@ -1,0 +1,79 @@
+# Libraries: query, subscription, create and delete
+# Used by codegen for TypedDocumentNode and types
+
+query Libraries($Where: LibraryWhereInput, $OrderBy: [LibraryOrderByInput!], $Page: PageInput) {
+  Libraries(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
+    Edges {
+      Node {
+        Id
+        Name
+        Path
+        LibraryType
+        Icon
+        Color
+        AutoScan
+        ScanIntervalMinutes
+        WatchForChanges
+        AutoAddDiscovered
+        AutoDownload
+        AutoHunt
+        Scanning
+        LastScannedAt
+        CreatedAt
+        UpdatedAt
+      }
+      Cursor
+    }
+    PageInfo {
+      HasNextPage
+      TotalCount
+    }
+  }
+}
+
+subscription LibraryChanged($Filter: SubscriptionFilterInput) {
+  LibraryChanged(Filter: $Filter) {
+    Action
+    Id
+    Library {
+      Id
+      Name
+      Path
+      LibraryType
+      Icon
+      Color
+      AutoScan
+      ScanIntervalMinutes
+      WatchForChanges
+      AutoAddDiscovered
+      AutoDownload
+      AutoHunt
+      Scanning
+      LastScannedAt
+      CreatedAt
+      UpdatedAt
+    }
+  }
+}
+
+mutation CreateLibrary($Input: CreateLibraryInput!) {
+  CreateLibrary(Input: $Input) {
+    Success
+    Error
+    Library {
+      Id
+      Name
+      Path
+      LibraryType
+      Icon
+      Color
+    }
+  }
+}
+
+mutation DeleteLibrary($Id: String!) {
+  DeleteLibrary(Id: $Id) {
+    Success
+    Error
+  }
+}

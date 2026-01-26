@@ -194,9 +194,9 @@ export function setTokens(session: AuthSession): void {
 
     // Reset Apollo cache first, then notify listeners
     // This ensures the cache is ready before components try to refetch
-    import("./graphql/client").then(({ resetApolloCache }) => {
+    import("./graphql/client").then(({ resetApolloCache, restartWebSocket }) => {
       resetApolloCache();
-      
+      restartWebSocket();
       // Small delay to let the cache reset complete before triggering refetches
       setTimeout(() => {
         // Dispatch custom event for same-tab listeners
@@ -212,9 +212,6 @@ export function setTokens(session: AuthSession): void {
         }
       }, 50);
     });
-    
-    // Note: We don't restart WebSocket here. The GraphQL subscriptions use lazy mode
-    // and will automatically reconnect with the new auth on the next subscription request.
   } catch (error) {
     console.error("[Auth] Failed to store tokens:", error);
   }
@@ -228,18 +225,13 @@ export function clearTokens(): void {
     deleteCookie(COOKIE_NAMES.EXPIRES_AT);
     deleteCookie(COOKIE_NAMES.USER);
 
-    // Reset Apollo cache first, then notify listeners
-    import("./graphql/client").then(({ resetApolloCache }) => {
+    import("./graphql/client").then(({ resetApolloCache, restartWebSocket }) => {
       resetApolloCache();
-      
-      // Small delay to let the cache reset complete
+      restartWebSocket();
       setTimeout(() => {
-        // Dispatch custom event for same-tab listeners
         window.dispatchEvent(
           new CustomEvent("auth-change", { detail: { type: "logout" } }),
         );
-
-        // Broadcast to other tabs
         try {
           new BroadcastChannel("librarian-auth").postMessage({ type: "logout" });
         } catch {
@@ -247,9 +239,6 @@ export function clearTokens(): void {
         }
       }, 50);
     });
-    
-    // Note: We don't restart WebSocket here. The subscriptions will fail with auth errors
-    // and the WebSocket will reconnect lazily when needed.
   } catch (error) {
     console.error("[Auth] Failed to clear tokens:", error);
   }

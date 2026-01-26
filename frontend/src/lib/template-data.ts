@@ -8,6 +8,7 @@ import type {
   Movie,
   TvShow,
   Library,
+  LibraryNode,
   AlbumWithTracks,
   AudiobookWithChapters,
   Episode,
@@ -269,12 +270,33 @@ export const libraryTemplate: Library = {
   releaseGroupWhitelist: [],
 }
 
-// Template for library grid (multiple cards)
+// Template for library grid (multiple cards) - legacy camelCase
 export const librariesTemplate: Library[] = Array.from({ length: 6 }, (_, i) => ({
   ...libraryTemplate,
   id: `template-${i}`,
   name: `Library ${i + 1}`,
 }))
+
+// Codegen PascalCase template for library grid shimmer
+const libraryNodeTemplate: LibraryNode = {
+  Id: 'template',
+  Name: 'Library',
+  Path: '/path',
+  LibraryType: 'TV',
+  AutoScan: true,
+  ScanIntervalMinutes: 60,
+  WatchForChanges: false,
+  AutoAddDiscovered: false,
+  AutoDownload: false,
+  AutoHunt: false,
+  Scanning: false,
+  CreatedAt: '',
+  UpdatedAt: '',
+}
+export const librariesTemplateNodes: LibraryNode[] = Array.from(
+  { length: 6 },
+  (_, i) => ({ ...libraryNodeTemplate, Id: `template-${i}`, Name: `Library ${i + 1}` }),
+)
 
 // =============================================================================
 // RSS Feed Template

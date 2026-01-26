@@ -17,7 +17,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::AppState;
-use crate::graphql::verify_token;
+use crate::services::graphql::verify_token;
 use crate::services::TorrentInfo as ServiceTorrentInfo;
 
 #[derive(Debug, Serialize)]
