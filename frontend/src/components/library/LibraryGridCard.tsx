@@ -5,16 +5,15 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/d
 import { Button } from '@heroui/button'
 import { Image } from '@heroui/image'
 import { IconDotsVertical, IconRefresh, IconSettings, IconTrash, IconEye } from '@tabler/icons-react'
-import type { Library, TvShow, Movie, Album, Audiobook } from '../../lib/graphql'
+import type { LibraryNode, LibraryType, TvShow, Movie, Album, Audiobook } from '../../lib/graphql'
 import { getLibraryTypeInfo } from '../../lib/graphql'
-import { formatBytes } from '../../lib/format'
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export interface LibraryGridCardProps {
-  library: Library
+  library: LibraryNode
   shows?: TvShow[]
   movies?: Movie[]
   albums?: Album[]
@@ -49,27 +48,25 @@ export function LibraryGridCard({
   onDelete,
 }: LibraryGridCardProps) {
   const navigate = useNavigate()
-  const typeInfo = getLibraryTypeInfo(library.libraryType)
-  const gradient = LIBRARY_GRADIENTS[library.libraryType] || LIBRARY_GRADIENTS.OTHER
+  const typeInfo = getLibraryTypeInfo(library.LibraryType as LibraryType)
+  const gradient = LIBRARY_GRADIENTS[library.LibraryType] || LIBRARY_GRADIENTS.OTHER
 
-  // Get artwork from shows, movies, albums, or audiobooks depending on library type
-  // Prefer poster/cover URLs for visual variety
   const artworks = (() => {
-    if (library.libraryType === 'MOVIES') {
+    if (library.LibraryType === 'MOVIES') {
       return movies
         .filter((movie) => movie.posterUrl || movie.backdropUrl)
         .map((movie) => movie.posterUrl || movie.backdropUrl)
         .filter((url): url is string => !!url)
         .slice(0, 6) // Max 6 for cycling
     }
-    if (library.libraryType === 'MUSIC') {
+    if (library.LibraryType === 'MUSIC') {
       return albums
         .filter((album) => album.coverUrl)
         .map((album) => album.coverUrl)
         .filter((url): url is string => !!url)
         .slice(0, 6) // Max 6 for cycling
     }
-    if (library.libraryType === 'AUDIOBOOKS') {
+    if (library.LibraryType === 'AUDIOBOOKS') {
       return audiobooks
         .filter((audiobook) => audiobook.coverUrl)
         .map((audiobook) => audiobook.coverUrl)
@@ -103,8 +100,8 @@ export function LibraryGridCard({
   }, [artworks.length])
 
   const handleCardClick = useCallback(() => {
-    navigate({ to: '/libraries/$libraryId', params: { libraryId: library.id } })
-  }, [navigate, library.id])
+    navigate({ to: '/libraries/$libraryId', params: { libraryId: library.Id } })
+  }, [navigate, library.Id])
 
   const currentArtwork = artworks[currentArtIndex]
 
@@ -117,7 +114,7 @@ export function LibraryGridCard({
         type="button"
         className="absolute inset-0 z-20 w-full h-full cursor-pointer bg-transparent border-none outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
         onClick={handleCardClick}
-        aria-label={`Open ${library.name} library`}
+        aria-label={`Open ${library.Name} library`}
       />
 
       {/* Background artwork with gradient overlay */}
@@ -126,7 +123,7 @@ export function LibraryGridCard({
           <>
             <Image
               src={currentArtwork}
-              alt={library.name}
+              alt={library.Name}
               classNames={{
                 wrapper: `absolute inset-0 w-full h-full !max-w-full transition-opacity duration-800 ${
                   isTransitioning ? 'opacity-0' : 'opacity-100'
@@ -173,18 +170,16 @@ export function LibraryGridCard({
       {/* Bottom content */}
       <div className="absolute bottom-0 left-0 right-0 z-10 p-3 pointer-events-none bg-black/50 backdrop-blur-sm">
         <h3 className="text-sm font-bold text-white mb-0.5 line-clamp-2 drop-shadow-lg">
-          {library.name}
+          {library.Name}
         </h3>
         <div className="flex items-center gap-1.5 text-xs text-white/70">
           <span>
-            {library.libraryType === 'TV'
-              ? `${library.showCount} Shows`
-              : library.libraryType === 'MOVIES'
-              ? `${library.movieCount} Movies`
-              : `${library.itemCount} Items`}
+            {library.LibraryType === 'TV'
+              ? 'Shows'
+              : library.LibraryType === 'MOVIES'
+              ? 'Movies'
+              : 'Items'}
           </span>
-          <span>•</span>
-          <span>{formatBytes(library.totalSizeBytes)}</span>
         </div>
       </div>
 
@@ -205,11 +200,11 @@ export function LibraryGridCard({
             aria-label="Library actions"
             onAction={(key) => {
               if (key === 'view') {
-                navigate({ to: '/libraries/$libraryId', params: { libraryId: library.id } })
+                navigate({ to: '/libraries/$libraryId', params: { libraryId: library.Id } })
               } else if (key === 'scan') {
                 onScan()
               } else if (key === 'settings') {
-                navigate({ to: '/libraries/$libraryId/settings', params: { libraryId: library.id } })
+                navigate({ to: '/libraries/$libraryId/settings', params: { libraryId: library.Id } })
               } else if (key === 'delete') {
                 onDelete()
               }

@@ -22,17 +22,17 @@ import {
 } from '@tabler/icons-react'
 import {
   graphqlClient,
-  LIBRARIES_QUERY,
   SEARCH_TV_SHOWS_QUERY,
   SEARCH_MOVIES_QUERY,
   ADD_TV_SHOW_MUTATION,
   ADD_MOVIE_MUTATION,
-  type Library,
+  type LibraryNode,
   type LibraryType,
   type TvShowSearchResult,
   type MovieSearchResult,
   type TorrentRelease,
 } from '../../lib/graphql'
+import { LibrariesDocument } from '../../lib/graphql/generated/graphql'
 // import { sanitizeError } from '../../lib/format'
 
 export interface AddToLibraryModalProps {
@@ -177,7 +177,7 @@ export function AddToLibraryModal({
   const [selectedType, setSelectedType] = useState<DetectedType>('movies')
   
   // Libraries
-  const [libraries, setLibraries] = useState<Library[]>([])
+  const [libraries, setLibraries] = useState<LibraryNode[]>([])
   const [selectedLibraryId, setSelectedLibraryId] = useState<string>('')
   const [loadingLibraries, setLoadingLibraries] = useState(false)
   
@@ -208,10 +208,10 @@ export function AddToLibraryModal({
     if (isOpen) {
       setLoadingLibraries(true)
       graphqlClient
-        .query<{ libraries: Library[] }>(LIBRARIES_QUERY, {})
+        .query(LibrariesDocument, {})
         .toPromise()
         .then(({ data }) => {
-          setLibraries(data?.libraries || [])
+          setLibraries(data?.Libraries.Edges.map((e) => e.Node) ?? [])
         })
         .finally(() => setLoadingLibraries(false))
     }
@@ -221,13 +221,13 @@ export function AddToLibraryModal({
   const filteredLibraries = useMemo(() => {
     const targetType = TYPE_TO_LIBRARY_TYPE[selectedType]
     if (!targetType) return libraries
-    return libraries.filter((lib) => lib.libraryType === targetType)
+    return libraries.filter((lib) => lib.LibraryType === targetType)
   }, [libraries, selectedType])
   
   // Auto-select first matching library
   useEffect(() => {
     if (filteredLibraries.length > 0 && !selectedLibraryId) {
-      setSelectedLibraryId(filteredLibraries[0].id)
+      setSelectedLibraryId(filteredLibraries[0].Id)
     } else if (filteredLibraries.length === 0) {
       setSelectedLibraryId('')
     }
@@ -485,8 +485,8 @@ export function AddToLibraryModal({
                 placeholder="Select a library"
               >
                 {filteredLibraries.map((lib) => (
-                  <SelectItem key={lib.id} textValue={lib.name}>
-                    {lib.name}
+                  <SelectItem key={lib.Id} textValue={lib.Name}>
+                    {lib.Name}
                   </SelectItem>
                 ))}
               </Select>

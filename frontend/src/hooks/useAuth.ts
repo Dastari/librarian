@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { graphqlClient } from "../lib/graphql/client";
 import {
-  LOGIN_MUTATION,
-  REGISTER_MUTATION,
-  REFRESH_TOKEN_MUTATION,
-  LOGOUT_MUTATION,
-} from "../lib/graphql";
+  LoginDocument,
+  RegisterDocument,
+  RefreshTokenDocument,
+  LogoutDocument,
+} from "../lib/graphql/generated/graphql";
 import {
   type AuthUser,
   type AuthSession,
@@ -15,43 +15,6 @@ import {
   getRefreshToken,
   hasValidToken,
 } from "../lib/auth";
-
-// ============================================================================
-// Types for GraphQL Responses
-// ============================================================================
-
-interface AuthTokens {
-  accessToken: string;
-  refreshToken: string;
-  expiresIn: number;
-  tokenType: string;
-}
-
-interface AuthUserResponse {
-  id: string;
-  email: string | null;
-  username: string;
-  role: string;
-  displayName: string | null;
-}
-
-interface AuthResponse {
-  success: boolean;
-  error: string | null;
-  user: AuthUserResponse | null;
-  tokens: AuthTokens | null;
-}
-
-interface RefreshResponse {
-  success: boolean;
-  error: string | null;
-  tokens: AuthTokens | null;
-}
-
-interface LogoutResponse {
-  success: boolean;
-  error: string | null;
-}
 
 // ============================================================================
 // Hook
@@ -78,23 +41,20 @@ export function useAuth() {
 
     try {
       const result = await graphqlClient
-        .mutation<{
-          refreshToken: RefreshResponse;
-        }>(REFRESH_TOKEN_MUTATION, { input: { refreshToken } })
+        .mutation(RefreshTokenDocument, {
+          input: { RefreshToken: refreshToken },
+        })
         .toPromise();
 
-      if (
-        result.data?.refreshToken.success &&
-        result.data.refreshToken.tokens
-      ) {
-        const tokens = result.data.refreshToken.tokens;
-        // Keep existing user, just update tokens
+      const payload = result.data?.RefreshToken;
+      if (payload?.Success && payload.Tokens) {
+        const tokens = payload.Tokens;
         const existingSession = getSession();
         if (existingSession) {
           const newSession: AuthSession = {
-            accessToken: tokens.accessToken,
-            refreshToken: tokens.refreshToken,
-            expiresAt: Date.now() + tokens.expiresIn * 1000,
+            accessToken: tokens.AccessToken,
+            refreshToken: tokens.RefreshToken,
+            expiresAt: Date.now() + tokens.ExpiresIn * 1000,
             user: existingSession.user,
           };
           setTokens(newSession);
@@ -147,14 +107,14 @@ export function useAuth() {
   // Listen for auth changes from other components (same-tab and cross-tab)
   useEffect(() => {
     const handleAuthChange = (data: { type: string }) => {
-      if (data?.type === 'login') {
+      if (data?.type === "login") {
         const newSession = getSession();
         if (newSession) {
           setSession(newSession);
           setUser(newSession.user);
           setLoading(false);
         }
-      } else if (data?.type === 'logout') {
+      } else if (data?.type === "logout") {
         setSession(null);
         setUser(null);
         setLoading(false);
@@ -169,7 +129,7 @@ export function useAuth() {
     // Cross-tab listener via BroadcastChannel
     let authChannel: BroadcastChannel | null = null;
     try {
-      authChannel = new BroadcastChannel('librarian-auth');
+      authChannel = new BroadcastChannel("librarian-auth");
       authChannel.onmessage = (e) => handleAuthChange(e.data);
     } catch {
       // BroadcastChannel not supported
@@ -191,8 +151,8 @@ export function useAuth() {
     setError(null);
 
     const result = await graphqlClient
-      .mutation<{ login: AuthResponse }>(LOGIN_MUTATION, {
-        input: { usernameOrEmail: email, password },
+      .mutation(LoginDocument, {
+        input: { UsernameOrEmail: email, Password: password },
       })
       .toPromise();
 
@@ -200,27 +160,27 @@ export function useAuth() {
       throw new Error(result.error.message || "Login failed");
     }
 
-    const authData = result.data?.login;
-    if (!authData?.success) {
-      throw new Error(authData?.error || "Login failed");
+    const authData = result.data?.Login;
+    if (!authData?.Success) {
+      throw new Error(authData?.Error ?? "Login failed");
     }
 
-    if (!authData.tokens || !authData.user) {
+    if (!authData.Tokens || !authData.User) {
       throw new Error("Invalid login response");
     }
 
     const authUser: AuthUser = {
-      id: authData.user.id,
-      email: authData.user.email || undefined,
-      username: authData.user.username,
-      role: authData.user.role,
-      displayName: authData.user.displayName || undefined,
+      id: authData.User.Id,
+      email: authData.User.Email ?? undefined,
+      username: authData.User.Username,
+      role: authData.User.Role,
+      displayName: authData.User.DisplayName ?? undefined,
     };
 
     const newSession: AuthSession = {
-      accessToken: authData.tokens.accessToken,
-      refreshToken: authData.tokens.refreshToken,
-      expiresAt: Date.now() + authData.tokens.expiresIn * 1000,
+      accessToken: authData.Tokens.AccessToken,
+      refreshToken: authData.Tokens.RefreshToken,
+      expiresAt: Date.now() + authData.Tokens.ExpiresIn * 1000,
       user: authUser,
     };
 
@@ -239,11 +199,11 @@ export function useAuth() {
     setError(null);
 
     const result = await graphqlClient
-      .mutation<{ register: AuthResponse }>(REGISTER_MUTATION, {
+      .mutation(RegisterDocument, {
         input: {
-          email,
-          name,
-          password,
+          Email: email,
+          Name: name,
+          Password: password,
         },
       })
       .toPromise();
@@ -252,27 +212,27 @@ export function useAuth() {
       throw new Error(result.error.message || "Registration failed");
     }
 
-    const authData = result.data?.register;
-    if (!authData?.success) {
-      throw new Error(authData?.error || "Registration failed");
+    const reg = result.data?.Register;
+    if (!reg?.Success) {
+      throw new Error(reg?.Error ?? "Registration failed");
     }
 
-    if (!authData.tokens || !authData.user) {
+    if (!reg.Tokens || !reg.User) {
       throw new Error("Invalid registration response");
     }
 
     const authUser: AuthUser = {
-      id: authData.user.id,
-      email: authData.user.email || undefined,
-      username: authData.user.username,
-      role: authData.user.role,
-      displayName: authData.user.displayName || undefined,
+      id: reg.User.Id,
+      email: reg.User.Email ?? undefined,
+      username: reg.User.Username,
+      role: reg.User.Role,
+      displayName: reg.User.DisplayName || undefined,
     };
 
     const newSession: AuthSession = {
-      accessToken: authData.tokens.accessToken,
-      refreshToken: authData.tokens.refreshToken,
-      expiresAt: Date.now() + authData.tokens.expiresIn * 1000,
+      accessToken: reg.Tokens.AccessToken,
+      refreshToken: reg.Tokens.RefreshToken,
+      expiresAt: Date.now() + reg.Tokens.ExpiresIn * 1000,
       user: authUser,
     };
 
@@ -283,13 +243,12 @@ export function useAuth() {
 
   const signOut = async () => {
     const refreshToken = getRefreshToken();
-    
+
     try {
-      // Call logout mutation to invalidate server-side session
       if (refreshToken) {
         await graphqlClient
-          .mutation<{ logout: LogoutResponse }>(LOGOUT_MUTATION, {
-            input: { refreshToken },
+          .mutation(LogoutDocument, {
+            input: { RefreshToken: refreshToken },
           })
           .toPromise();
       }

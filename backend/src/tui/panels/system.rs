@@ -1,40 +1,58 @@
 //! System panel - displays CPU, memory, and uptime statistics
+//! Metrics/entity access commented out; panel shows placeholder for now.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Sparkline};
 
-use crate::services::{SharedMetrics, SystemSnapshot, format_uptime};
 use crate::tui::input::Action;
 use crate::tui::panels::Panel;
 use crate::tui::theme::{PanelKind, Theme};
 
-/// System panel showing CPU, memory, uptime
+/// Stub snapshot when metrics service is disabled
+#[derive(Clone, Default)]
+struct StubSnapshot {
+    cpu_percent: f64,
+    memory_used: u64,
+    memory_total: u64,
+    uptime_secs: u64,
+    total_requests: u64,
+    active_requests: u64,
+    cpu_history: Vec<u64>,
+    mem_history: Vec<u64>,
+}
+
+fn format_uptime_stub(secs: u64) -> String {
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format!("{}h {}m {}s", h, m, s)
+    } else if m > 0 {
+        format!("{}m {}s", m, s)
+    } else {
+        format!("{}s", s)
+    }
+}
+
+/// System panel showing CPU, memory, uptime (or placeholder when disabled)
 pub struct SystemPanel {
-    /// Metrics collector reference
-    metrics: SharedMetrics,
-    /// Cached snapshot
-    snapshot: SystemSnapshot,
-    /// Server port for endpoint URLs
+    snapshot: StubSnapshot,
     port: u16,
 }
 
 impl SystemPanel {
-    /// Create a new system panel
-    pub fn new(metrics: SharedMetrics, port: u16) -> Self {
-        let snapshot = metrics.snapshot();
+    /// Create panel with no metrics; shows placeholder/URLs only.
+    pub fn new_stub(port: u16) -> Self {
         Self {
-            metrics,
-            snapshot,
+            snapshot: StubSnapshot::default(),
             port,
         }
     }
 
-    /// Refresh metrics snapshot
     fn refresh(&mut self) {
-        self.metrics.refresh();
-        self.snapshot = self.metrics.snapshot();
+        // No-op when using stub
     }
 }
 
@@ -102,13 +120,8 @@ impl Panel for SystemPanel {
             .split(inner)
         };
 
-        // CPU line with sparkline - use minimal label width for maximum graph space
-        let cpu_history: Vec<u64> = self
-            .snapshot
-            .cpu_history
-            .iter()
-            .map(|v| *v as u64)
-            .collect();
+        // CPU line with sparkline (empty when stub)
+        let cpu_history: Vec<u64> = self.snapshot.cpu_history.clone();
         let label_width = 14; // Reduced for more graph space
         let sparkline_width = inner.width.saturating_sub(label_width + 1) as usize;
         let cpu_data: Vec<u64> = if cpu_history.len() > sparkline_width {
@@ -170,7 +183,7 @@ impl Panel for SystemPanel {
         );
 
         // Uptime line
-        let uptime = format_uptime(self.snapshot.uptime_secs);
+        let uptime = format_uptime_stub(self.snapshot.uptime_secs);
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("UP  ", Theme::dim()),

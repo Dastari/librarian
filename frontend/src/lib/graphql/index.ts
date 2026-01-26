@@ -3,6 +3,9 @@
 // Client
 export { apolloClient, graphqlClient, onGraphQLError } from "./client";
 
+// Codegen node types (use these + PascalCase everywhere)
+export type { LibraryNode, ShowNode, ScheduleCacheNode } from "./codegen-nodes";
+
 // Types
 export type {
   // Auth Types
@@ -193,11 +196,23 @@ export type {
 // Constants
 export { LIBRARY_TYPES, getLibraryTypeInfo } from "./types";
 
+// Auth and app: generated TypedDocumentNodes (prefer importing from ./generated/graphql)
+export {
+  NeedsSetupDocument,
+  MeDocument,
+  LoginDocument,
+  RegisterDocument,
+  RefreshTokenDocument,
+  LogoutDocument,
+  PlaybackSyncIntervalDocument,
+  UpdateAppSettingDocument,
+  PlaybackSessionsDocument,
+  ActiveDownloadCountDocument,
+  TorrentChangedDocument,
+} from "./generated/graphql";
+
 // Queries
 export {
-  // Auth Queries
-  CHECK_SETUP_STATUS_QUERY,
-  ME_QUERY,
   // Torrent Queries
   TORRENTS_QUERY,
   TORRENT_QUERY,
@@ -281,12 +296,6 @@ export {
 
 // Mutations
 export {
-  // Auth Mutations
-  REGISTER_MUTATION,
-  LOGIN_MUTATION,
-  REFRESH_TOKEN_MUTATION,
-  LOGOUT_MUTATION,
-  NEEDS_SETUP_QUERY,
   // Torrent Mutations
   ADD_TORRENT_MUTATION,
   PAUSE_TORRENT_MUTATION,

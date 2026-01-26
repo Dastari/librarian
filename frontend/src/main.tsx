@@ -17,7 +17,11 @@ import {
   setTokens,
   clearTokens,
 } from "./lib/auth";
-import { graphqlClient, REFRESH_TOKEN_MUTATION, ME_QUERY } from "./lib/graphql";
+import { graphqlClient } from "./lib/graphql";
+import {
+  RefreshTokenDocument,
+  MeDocument,
+} from "./lib/graphql/generated/graphql";
 import { initializeTheme } from "./hooks/useTheme";
 
 import "./styles.css";
@@ -26,29 +30,6 @@ import reportWebVitals from "./reportWebVitals.ts";
 // Initialize theme immediately to prevent flash of wrong theme
 initializeTheme();
 
-// Types for GraphQL responses
-interface AuthTokens {
-  accessToken: string;
-  refreshToken: string;
-  expiresIn: number;
-  tokenType: string;
-}
-
-interface RefreshTokenResponse {
-  success: boolean;
-  error: string | null;
-  tokens: AuthTokens | null;
-}
-
-interface MeUser {
-  id: string;
-  email: string | null;
-  role: string | null;
-}
-
-interface MeResponse {
-  me: MeUser | null;
-}
 
 // Create a new router instance with auth context
 const router = createRouter({
@@ -92,23 +73,20 @@ function InnerApp() {
 
     try {
       const result = await graphqlClient
-        .mutation<{
-          refreshToken: RefreshTokenResponse;
-        }>(REFRESH_TOKEN_MUTATION, { input: { refreshToken } })
+        .mutation(RefreshTokenDocument, {
+          input: { RefreshToken: refreshToken },
+        })
         .toPromise();
 
-      if (
-        result.data?.refreshToken.success &&
-        result.data.refreshToken.tokens
-      ) {
-        const tokens = result.data.refreshToken.tokens;
-        // Keep existing user from stored session
+      const payload = result.data?.RefreshToken;
+      if (payload?.Success && payload.Tokens) {
+        const tokens = payload.Tokens;
         const existingSession = getSession();
         if (existingSession) {
           const newSession: AuthSession = {
-            accessToken: tokens.accessToken,
-            refreshToken: tokens.refreshToken,
-            expiresAt: Date.now() + tokens.expiresIn * 1000,
+            accessToken: tokens.AccessToken,
+            refreshToken: tokens.RefreshToken,
+            expiresAt: Date.now() + tokens.ExpiresIn * 1000,
             user: existingSession.user,
           };
           setTokens(newSession);
@@ -166,18 +144,17 @@ function InnerApp() {
           // Token is still valid, verify with server
           try {
             const result = await graphqlClient
-              .query<MeResponse>(ME_QUERY, {})
+              .query(MeDocument, {})
               .toPromise();
 
-            if (result.data?.me) {
-              // Convert MeUser to AuthUser format
-              const meUser = result.data.me;
+            if (result.data?.Me) {
+              const meUser = result.data.Me;
               const authUser: AuthUser = {
-                id: meUser.id,
-                email: meUser.email || undefined,
-                username: existingSession.user.username,
-                role: meUser.role || "member",
-                displayName: existingSession.user.displayName,
+                id: meUser.Id,
+                email: meUser.Email || undefined,
+                username: meUser.Username,
+                role: meUser.Role,
+                displayName: meUser.DisplayName || undefined,
               };
               setAuth({
                 isAuthenticated: true,

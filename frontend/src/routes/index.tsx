@@ -179,50 +179,46 @@ function HomePage() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {libraryUpcoming.slice(0, 8).map((ep) => (
-              <Link key={ep.id} to="/shows/$showId" params={{ showId: ep.show.id }}>
-                <Card 
-                  isPressable 
-                  className="bg-content1 hover:bg-content2 transition-colors overflow-hidden w-full"
-                >
-                  <div className="flex gap-3 p-3">
-                    {/* Show poster */}
-                    <div className="w-16 h-24 shrink-0 rounded-md overflow-hidden bg-default-200">
-                      {ep.show.posterUrl ? (
-                        <Image
-                          src={ep.show.posterUrl}
-                          alt={ep.show.name}
-                          classNames={{
-                            wrapper: "w-full h-full",
-                            img: "w-full h-full object-cover"
-                          }}
-                          radius="none"
-                          removeWrapper={false}
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                          <IconDeviceTv size={32} className="text-blue-400" />
-                        </div>
+              <Card
+                key={ep.Id}
+                className="bg-content1 overflow-hidden w-full"
+              >
+                <div className="flex gap-3 p-3">
+                  <div className="w-16 h-24 shrink-0 rounded-md overflow-hidden bg-default-200">
+                    {ep.ShowPosterUrl ? (
+                      <Image
+                        src={ep.ShowPosterUrl}
+                        alt={ep.ShowName}
+                        classNames={{
+                          wrapper: "w-full h-full",
+                          img: "w-full h-full object-cover"
+                        }}
+                        radius="none"
+                        removeWrapper={false}
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <IconDeviceTv size={32} className="text-blue-400" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0 text-left flex flex-col">
+                    <p className="font-semibold truncate">{ep.ShowName}</p>
+                    <p className="text-sm text-default-500 grow">
+                      S{ep.Season.toString().padStart(2, '0')}E{ep.EpisodeNumber.toString().padStart(2, '0')}
+                      {ep.EpisodeName && `: ${ep.EpisodeName}`}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Chip size="sm" variant="flat" color="primary">
+                        {formatAirDate(ep.AirDate)}
+                      </Chip>
+                      {ep.ShowNetwork && (
+                        <span className="text-xs text-default-400">{ep.ShowNetwork}</span>
                       )}
                     </div>
-                    {/* Episode info */}
-                    <div className='flex-1 min-w-0 text-left flex flex-col'>
-                      <p className="font-semibold truncate">{ep.show.name}</p>
-                      <p className="text-sm text-default-500 grow">
-                        S{ep.season.toString().padStart(2, '0')}E{ep.episode.toString().padStart(2, '0')}
-                        {ep.name && `: ${ep.name}`}
-                      </p>
-                      <div className="flex items-center gap-2">
-                        <Chip size="sm" variant="flat" color="primary">
-                          {formatAirDate(ep.airDate)}
-                        </Chip>
-                        {ep.show.network && (
-                          <span className="text-xs text-default-400">{ep.show.network}</span>
-                        )}
-                      </div>
-                    </div>
                   </div>
-                </Card>
-              </Link>
+                </div>
+              </Card>
             ))}
           </div>
         </section>
@@ -241,16 +237,15 @@ function HomePage() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
             {recentShows.map((show) => (
-              <Link key={show.id} to="/shows/$showId" params={{ showId: show.id }}>
+              <Link key={show.Id} to="/shows/$showId" params={{ showId: show.Id }}>
                 <div className="aspect-[2/3]">
                   <Card isPressable isHoverable className="bg-content1 overflow-hidden h-full w-full relative">
-                    {/* Background image */}
                     <div className="absolute inset-0">
-                      {show.posterUrl ? (
+                      {show.PosterUrl ? (
                         <>
                           <Image
-                            src={show.posterUrl}
-                            alt={show.name}
+                            src={show.PosterUrl}
+                            alt={show.Name}
                             classNames={{
                               wrapper: "absolute inset-0 w-full h-full !max-w-full",
                               img: "w-full h-full object-cover"
@@ -265,11 +260,10 @@ function HomePage() {
                         </div>
                       )}
                     </div>
-                    {/* Bottom text overlay */}
                     <div className="absolute bottom-0 left-0 right-0 p-2 bg-black/50 backdrop-blur-sm">
-                      <p className="text-sm font-medium truncate text-white">{show.name}</p>
+                      <p className="text-sm font-medium truncate text-white">{show.Name}</p>
                       <p className="text-xs text-white/70">
-                        {show.episodeFileCount ?? 0} / {show.episodeCount ?? 0} episodes
+                        {show.EpisodeFileCount ?? 0} / {show.EpisodeCount ?? 0} episodes
                       </p>
                     </div>
                   </Card>
@@ -291,18 +285,17 @@ function HomePage() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
             {globalUpcoming.map((ep) => (
-              <div key={`${ep.show.tvmazeId}-${ep.season}-${ep.episode}`} className="aspect-[2/3]">
-                <Card 
+              <div key={`${ep.TvmazeShowId}-${ep.Season}-${ep.EpisodeNumber}`} className="aspect-[2/3]">
+                <Card
                   isHoverable
                   className="bg-content1 overflow-hidden h-full w-full relative"
                 >
-                  {/* Background image */}
                   <div className="absolute inset-0">
-                    {ep.show.posterUrl ? (
+                    {ep.ShowPosterUrl ? (
                       <>
                         <Image
-                          src={ep.show.posterUrl}
-                          alt={ep.show.name}
+                          src={ep.ShowPosterUrl}
+                          alt={ep.ShowName}
                           classNames={{
                             wrapper: "absolute inset-0 w-full h-full !max-w-full",
                             img: "w-full h-full object-cover"
@@ -317,18 +310,16 @@ function HomePage() {
                       </div>
                     )}
                   </div>
-                  {/* Air date badge */}
                   <div className="absolute top-2 right-2 z-10">
                     <Chip size="sm" variant="solid" className="bg-black/70">
-                      {formatAirDate(ep.airDate)}
+                      {formatAirDate(ep.AirDate)}
                     </Chip>
                   </div>
-                  {/* Bottom text overlay */}
                   <div className="absolute bottom-0 left-0 right-0 p-2 bg-black/50 backdrop-blur-sm">
-                    <p className="text-sm font-medium truncate text-white">{ep.show.name}</p>
+                    <p className="text-sm font-medium truncate text-white">{ep.ShowName}</p>
                     <p className="text-xs text-white/70">
-                      S{ep.season.toString().padStart(2, '0')}E{ep.episode.toString().padStart(2, '0')}
-                      {ep.show.network && ` • ${ep.show.network}`}
+                      S{ep.Season.toString().padStart(2, '0')}E{ep.EpisodeNumber.toString().padStart(2, '0')}
+                      {ep.ShowNetwork && ` • ${ep.ShowNetwork}`}
                     </p>
                   </div>
                 </Card>

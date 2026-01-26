@@ -1,28 +1,98 @@
-//! Logging service for database persistence and real-time subscriptions
+//! Logging service: database persistence and real-time log subscriptions.
 //!
-//! This module provides:
-//! - A custom tracing layer that captures logs and stores them in the database
-//! - A broadcast channel for real-time log subscriptions (for GraphQL)
-//! - Batched database writes for performance
+//! Implements [Service](crate::services::manager::Service) and depends on the database service.
+//! The DB tracing layer is added as [OptionalDbLayer] in main (single subscriber init); the
+//! logging service injects/removes the inner layer via [LoggingServiceConfig::db_layer_state]
+//! when it starts/stops.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use anyhow::Result;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sqlx::SqlitePool;
 use time::OffsetDateTime;
-
-type DbPool = SqlitePool;
-use tokio::sync::{RwLock, broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
-use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
+use tracing_subscriber::Layer;
+use uuid::Uuid;
 
-use crate::db::{CreateLog, LogsRepository};
+use crate::db::operations;
+use crate::db::Database;
+use crate::services::graphql::entities::AppLog;
+use crate::services::manager::{Service, ServiceHealth};
 
-/// Log event for broadcasting to subscribers
+/// Shared state for the optional DB layer. Main builds the subscriber with [OptionalDbLayer] using
+/// this state; the logging service sets [Some] when it starts and [None] when it stops.
+pub type DbLayerState = Arc<Mutex<Option<Arc<DatabaseLoggingLayer>>>>;
+
+/// Wrapper that holds an optional [DatabaseLoggingLayer] via shared state so it can be set by the
+/// logging service after the subscriber is initialized.
+#[derive(Clone)]
+pub struct OptionalDbLayer(pub DbLayerState);
+
+impl OptionalDbLayer {
+    pub fn new(state: DbLayerState) -> Self {
+        Self(state)
+    }
+}
+
+impl<S> Layer<S> for OptionalDbLayer
+where
+    S: Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
+        if let Ok(guard) = self.0.lock() {
+            if let Some(ref inner) = *guard {
+                inner.on_event(event, ctx);
+            }
+        }
+    }
+}
+
+/// Configuration for the logging service (database batch size, levels, etc.).
+#[derive(Clone)]
+pub struct LoggingServiceConfig {
+    pub min_level: Level,
+    pub batch_size: usize,
+    pub flush_interval_ms: u64,
+    pub broadcast_capacity: usize,
+    /// If set, the logging service will set the inner DB layer when it starts and clear it when
+    /// it stops. Main adds [OptionalDbLayer] with this state to the subscriber at init.
+    pub db_layer_state: Option<DbLayerState>,
+}
+
+impl std::fmt::Debug for LoggingServiceConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoggingServiceConfig")
+            .field("min_level", &self.min_level)
+            .field("batch_size", &self.batch_size)
+            .field("flush_interval_ms", &self.flush_interval_ms)
+            .field("broadcast_capacity", &self.broadcast_capacity)
+            .field("db_layer_state", &self.db_layer_state.as_ref().map(|_| "..."))
+            .finish()
+    }
+}
+
+impl Default for LoggingServiceConfig {
+    fn default() -> Self {
+        Self {
+            min_level: Level::INFO,
+            batch_size: 100,
+            flush_interval_ms: 2000,
+            broadcast_capacity: 1000,
+            db_layer_state: None,
+        }
+    }
+}
+
+/// Alias for backward compatibility.
+pub type DatabaseLoggerConfig = LoggingServiceConfig;
+
+/// Log event for broadcasting to subscribers (e.g. GraphQL).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEvent {
     pub id: Option<String>,
@@ -34,125 +104,169 @@ pub struct LogEvent {
     pub span_name: Option<String>,
 }
 
-/// Configuration for the database logging layer
-#[derive(Debug, Clone)]
-pub struct DatabaseLoggerConfig {
-    /// Minimum level to log to database (default: INFO)
-    pub min_level: Level,
-    /// Batch size for database writes (default: 50)
-    pub batch_size: usize,
-    /// Flush interval in milliseconds (default: 1000)
-    pub flush_interval_ms: u64,
-    /// Broadcast channel capacity (default: 1000)
-    pub broadcast_capacity: usize,
-}
-
-impl Default for DatabaseLoggerConfig {
-    fn default() -> Self {
-        Self {
-            min_level: Level::INFO,
-            batch_size: 50,
-            flush_interval_ms: 1000,
-            broadcast_capacity: 1000,
-        }
-    }
-}
-
-/// Logging service that manages database persistence and subscriptions
+/// Logging service: depends on database, provides a tracing layer and broadcast for real-time logs.
 pub struct LoggingService {
-    /// Broadcast sender for real-time subscriptions
-    broadcast_tx: broadcast::Sender<LogEvent>,
-    /// Channel sender for batched database writes
-    db_tx: mpsc::Sender<CreateLog>,
+    services: Arc<crate::services::manager::ServicesManager>,
+    config: LoggingServiceConfig,
+    /// Set in start(); used by tracing_layer().
+    layer: parking_lot::RwLock<Option<Arc<DatabaseLoggingLayer>>>,
+    /// Used in stop() to signal the writer task.
+    shutdown_tx: parking_lot::RwLock<Option<oneshot::Sender<()>>>,
+    /// Writer task handle for orderly shutdown.
+    writer_handle: parking_lot::RwLock<Option<tokio::task::JoinHandle<()>>>,
+    /// Shared state to inject/clear the DB layer when this service starts/stops.
+    db_layer_state: Option<DbLayerState>,
 }
 
 impl LoggingService {
-    /// Create a new logging service
-    pub fn new(pool: DbPool, config: DatabaseLoggerConfig) -> Self {
-        let (broadcast_tx, _) = broadcast::channel(config.broadcast_capacity);
-        let (db_tx, db_rx) = mpsc::channel::<CreateLog>(config.batch_size * 10);
-
-        // Start the database writer task
-        let logs_repo = LogsRepository::new(pool);
-        tokio::spawn(database_writer_task(
-            db_rx,
-            logs_repo,
-            config.batch_size,
-            config.flush_interval_ms,
-        ));
-
+    pub fn new(
+        services: Arc<crate::services::manager::ServicesManager>,
+        config: LoggingServiceConfig,
+    ) -> Self {
         Self {
-            broadcast_tx,
-            db_tx,
+            db_layer_state: config.db_layer_state.clone(),
+            services,
+            config,
+            layer: parking_lot::RwLock::new(None),
+            shutdown_tx: parking_lot::RwLock::new(None),
+            writer_handle: parking_lot::RwLock::new(None),
         }
     }
 
-    /// Subscribe to real-time log events - for GraphQL subscriptions
-    #[allow(dead_code)]
-    pub fn subscribe(&self) -> broadcast::Receiver<LogEvent> {
-        self.broadcast_tx.subscribe()
+    /// Returns the tracing layer to add to the subscriber. Only [Some] after [Service::start] has run.
+    pub fn tracing_layer(&self) -> Option<Arc<DatabaseLoggingLayer>> {
+        self.layer.read().clone()
     }
 
-    /// Get the broadcast sender for the tracing layer
-    pub fn broadcast_sender(&self) -> broadcast::Sender<LogEvent> {
-        self.broadcast_tx.clone()
-    }
-
-    /// Get the database sender for the tracing layer
-    pub fn db_sender(&self) -> mpsc::Sender<CreateLog> {
-        self.db_tx.clone()
+    /// Subscribe to real-time log events (e.g. for GraphQL subscriptions).
+    pub fn subscribe(&self) -> Option<broadcast::Receiver<LogEvent>> {
+        self.layer.read().as_ref().map(|l| l.subscribe())
     }
 }
 
-/// Background task that batches and writes logs to the database
+#[async_trait]
+impl Service for LoggingService {
+    fn name(&self) -> &str {
+        "logging"
+    }
+
+    fn dependencies(&self) -> Vec<String> {
+        vec!["database".to_string()]
+    }
+
+    async fn start(&self) -> Result<()> {
+        tracing::info!(service = "logging", "Logging service starting");
+        let db = self
+            .services
+            .get_database()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("database service not started"))?;
+        let pool = db.pool().clone();
+
+        let (broadcast_tx, _) = broadcast::channel(self.config.broadcast_capacity);
+        let (db_tx, db_rx) = mpsc::channel::<AppLog>(self.config.batch_size * 10);
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
+        let handle = tokio::spawn(database_writer_task(
+            db_rx,
+            pool,
+            self.config.batch_size,
+            self.config.flush_interval_ms,
+            shutdown_rx,
+        ));
+
+        let layer = Arc::new(DatabaseLoggingLayer::new(
+            self.config.min_level,
+            broadcast_tx.clone(),
+            db_tx,
+        ));
+
+        *self.layer.write() = Some(Arc::clone(&layer));
+        *self.shutdown_tx.write() = Some(shutdown_tx);
+        *self.writer_handle.write() = Some(handle);
+
+        if let Some(ref state) = self.db_layer_state {
+            let _ = state.lock().map(|mut g| *g = Some(Arc::clone(&layer)));
+        }
+
+        tracing::info!(service = "logging", "Logging service started");
+        Ok(())
+    }
+
+    async fn stop(&self) -> Result<()> {
+        if let Some(ref state) = self.db_layer_state {
+            let _ = state.lock().map(|mut g| *g = None);
+        }
+
+        let handle = self.writer_handle.write().take();
+        let _ = self.shutdown_tx.write().take();
+        *self.layer.write() = None;
+
+        if let Some(h) = handle {
+            let _ = h.await;
+        }
+        tracing::info!(service = "logging", "Stopped");
+        Ok(())
+    }
+
+    async fn health(&self) -> Result<ServiceHealth> {
+        if self.layer.read().is_some() {
+            Ok(ServiceHealth::healthy())
+        } else {
+            Ok(ServiceHealth::unhealthy(
+                "logging layer not initialized (start not called)",
+            ))
+        }
+    }
+}
+
 async fn database_writer_task(
-    mut rx: mpsc::Receiver<CreateLog>,
-    logs_repo: LogsRepository,
+    mut rx: mpsc::Receiver<AppLog>,
+    pool: Database,
     batch_size: usize,
     flush_interval_ms: u64,
+    mut shutdown_rx: oneshot::Receiver<()>,
 ) {
-    let mut batch: Vec<CreateLog> = Vec::with_capacity(batch_size);
+    let mut batch: Vec<AppLog> = Vec::with_capacity(batch_size);
     let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(flush_interval_ms));
 
     loop {
         tokio::select! {
-            // Receive a log entry
+            _ = &mut shutdown_rx => break,
             Some(log) = rx.recv() => {
                 batch.push(log);
-
-                // Flush if batch is full
                 if batch.len() >= batch_size {
-                    if let Err(e) = logs_repo.create_batch(std::mem::take(&mut batch)).await {
-                        eprintln!("Failed to write logs to database: {}", e);
+                    if let Err(e) = operations::insert_app_logs_batch(&pool, &batch).await {
+                        tracing::error!(error = %e, "Failed to write logs to database");
                     }
-                    batch = Vec::with_capacity(batch_size);
+                    batch.clear();
                 }
             }
-            // Periodic flush
             _ = interval.tick() => {
                 if !batch.is_empty() {
-                    if let Err(e) = logs_repo.create_batch(std::mem::take(&mut batch)).await {
-                        eprintln!("Failed to write logs to database: {}", e);
+                    if let Err(e) = operations::insert_app_logs_batch(&pool, &batch).await {
+                        tracing::error!(error = %e, "Failed to write logs to database");
                     }
-                    batch = Vec::with_capacity(batch_size);
+                    batch.clear();
                 }
             }
         }
     }
 }
 
-/// Custom tracing layer that captures logs for database storage and broadcasting
+/// Tracing layer that sends events to the logging service (DB + broadcast).
+#[derive(Clone)]
 pub struct DatabaseLoggingLayer {
     min_level: Level,
     broadcast_tx: broadcast::Sender<LogEvent>,
-    db_tx: mpsc::Sender<CreateLog>,
+    db_tx: mpsc::Sender<AppLog>,
 }
 
 impl DatabaseLoggingLayer {
     pub fn new(
         min_level: Level,
         broadcast_tx: broadcast::Sender<LogEvent>,
-        db_tx: mpsc::Sender<CreateLog>,
+        db_tx: mpsc::Sender<AppLog>,
     ) -> Self {
         Self {
             min_level,
@@ -160,9 +274,12 @@ impl DatabaseLoggingLayer {
             db_tx,
         }
     }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<LogEvent> {
+        self.broadcast_tx.subscribe()
+    }
 }
 
-/// Helper to extract fields from a tracing event
 struct FieldVisitor {
     fields: HashMap<String, JsonValue>,
     message: Option<String>,
@@ -227,13 +344,11 @@ where
     S: Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
-        // Check minimum level
         let level = *event.metadata().level();
         if level > self.min_level {
             return;
         }
 
-        // Extract fields from the event
         let mut visitor = FieldVisitor::new();
         event.record(&mut visitor);
 
@@ -241,11 +356,9 @@ where
         let target = event.metadata().target().to_string();
         let level_str = level.as_str().to_uppercase();
 
-        // Get span info if available
         let span_name = ctx.event_span(event).map(|s| s.name().to_string());
         let span_id = ctx.event_span(event).map(|s| format!("{:?}", s.id()));
 
-        // Convert fields to JSON
         let fields = if visitor.fields.is_empty() {
             None
         } else {
@@ -257,7 +370,6 @@ where
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_default();
 
-        // Create log event for broadcasting
         let log_event = LogEvent {
             id: None,
             timestamp: timestamp_str.clone(),
@@ -268,57 +380,21 @@ where
             span_name: span_name.clone(),
         };
 
-        // Broadcast to subscribers (non-blocking)
         let _ = self.broadcast_tx.send(log_event);
 
-        // Send to database writer (non-blocking)
-        let create_log = CreateLog {
+        let fields_str = fields.as_ref().and_then(|v| serde_json::to_string(v).ok());
+        let app_log = AppLog {
+            id: Uuid::new_v4().to_string(),
+            timestamp: timestamp_str.clone(),
             level: level_str,
             target,
             message,
-            fields,
+            fields: fields_str,
             span_name,
             span_id,
+            created_at: timestamp_str,
         };
 
-        let _ = self.db_tx.try_send(create_log);
+        let _ = self.db_tx.try_send(app_log);
     }
-}
-
-/// Shared state for the logging service (thread-safe)
-pub type SharedLoggingService = Arc<RwLock<Option<LoggingService>>>;
-
-/// Global logging service accessor
-static LOGGING_SERVICE: std::sync::OnceLock<SharedLoggingService> = std::sync::OnceLock::new();
-
-/// Initialize the global logging service - for future global access pattern
-#[allow(dead_code)]
-pub fn init_logging_service(
-    pool: DbPool,
-    config: DatabaseLoggerConfig,
-) -> &'static SharedLoggingService {
-    LOGGING_SERVICE.get_or_init(|| {
-        let service = LoggingService::new(pool, config);
-        Arc::new(RwLock::new(Some(service)))
-    })
-}
-
-/// Get the global logging service - for future global access pattern
-#[allow(dead_code)]
-pub fn get_logging_service() -> Option<&'static SharedLoggingService> {
-    LOGGING_SERVICE.get()
-}
-
-/// Create a database logging layer for use with tracing_subscriber
-/// Returns (layer, broadcast_sender) - the sender is needed for GraphQL subscriptions
-pub fn create_database_layer(
-    pool: DbPool,
-    config: DatabaseLoggerConfig,
-) -> (DatabaseLoggingLayer, broadcast::Sender<LogEvent>) {
-    let min_level = config.min_level;
-    let service = LoggingService::new(pool, config);
-    let broadcast_sender = service.broadcast_sender();
-    let layer =
-        DatabaseLoggingLayer::new(min_level, service.broadcast_sender(), service.db_sender());
-    (layer, broadcast_sender)
 }

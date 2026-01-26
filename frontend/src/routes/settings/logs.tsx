@@ -25,18 +25,15 @@ import { Code } from "@heroui/code";
 import { Select, SelectItem } from "@heroui/select";
 import { Switch } from "@heroui/switch";
 import { ConfirmModal } from "../../components/ConfirmModal";
+import { graphqlClient } from "../../lib/graphql";
 import {
-  graphqlClient,
-  LOGS_QUERY,
-  LOG_TARGETS_QUERY,
-  CLEAR_ALL_LOGS_MUTATION,
-  CLEAR_OLD_LOGS_MUTATION,
-  LOG_EVENTS_SUBSCRIPTION,
-  type LogEntry,
-  type LogLevel,
-  type PaginatedLogResult,
-  type ClearLogsResult,
-} from "../../lib/graphql";
+  AppLogsDocument,
+  AppLogChangedDocument,
+  DeleteAppLogsDocument,
+  ChangeAction,
+  SortDirection,
+  type AppLogWhereInput,
+} from "../../lib/graphql/generated/graphql";
 import { sanitizeError } from "../../lib/format";
 import {
   DataTable,
@@ -53,6 +50,46 @@ import {
 export const Route = createFileRoute("/settings/logs")({
   component: LogsSettingsPage,
 });
+
+// Local types for UI (map from AppLog PascalCase)
+type LogLevel = "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR";
+interface LogEntry {
+  id: string;
+  timestamp: string;
+  level: LogLevel;
+  target: string;
+  message: string;
+  fields: Record<string, unknown> | null;
+  spanName: string | null;
+}
+
+function appLogNodeToEntry(node: {
+  Id: string;
+  Timestamp: string;
+  Level: string;
+  Target: string;
+  Message: string;
+  Fields?: string | null;
+  SpanName?: string | null;
+}): LogEntry {
+  let fields: Record<string, unknown> | null = null;
+  if (node.Fields) {
+    try {
+      fields = JSON.parse(node.Fields) as Record<string, unknown>;
+    } catch {
+      fields = null;
+    }
+  }
+  return {
+    id: node.Id,
+    timestamp: node.Timestamp,
+    level: node.Level as LogLevel,
+    target: node.Target,
+    message: node.Message,
+    fields,
+    spanName: node.SpanName ?? null,
+  };
+}
 
 // Log level colors and labels
 const LOG_LEVEL_INFO: Record<
@@ -98,16 +135,6 @@ function simplifyTarget(target: string): string {
   return parts.slice(-2).join("::");
 }
 
-// Live event from subscription (may have different field names)
-interface LiveLogEvent {
-  timestamp: string;
-  level: LogLevel;
-  target: string;
-  message: string;
-  fields?: Record<string, unknown>;
-  spanName?: string;
-}
-
 function LogsSettingsPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -121,7 +148,11 @@ function LogsSettingsPage() {
     onClose: onDetailClose,
   } = useDisclosure();
 
-  // Confirm modal state
+  // Live feed state
+  const [isLiveFeedEnabled, setIsLiveFeedEnabled] = useState(true);
+  const [liveEventCount, setLiveEventCount] = useState(0);
+
+  // Confirm modal for clear-all
   const {
     isOpen: isConfirmOpen,
     onOpen: onConfirmOpen,
@@ -132,11 +163,6 @@ function LogsSettingsPage() {
     message: string;
     onConfirm: () => Promise<void>;
   } | null>(null);
-
-  // Live feed state
-  const [isLiveFeedEnabled, setIsLiveFeedEnabled] = useState(true);
-  const [liveEventCount, setLiveEventCount] = useState(0);
-  const liveIdCounter = useRef(0);
 
   // Source filter - persisted in URL via nuqs
   const [sources, setSources] = useState<string[]>([]);
@@ -175,25 +201,6 @@ function LogsSettingsPage() {
   const pageSize = 50;
   const offsetRef = useRef(0);
 
-  // Fetch available sources/targets
-  const fetchSources = useCallback(async () => {
-    try {
-      const result = await graphqlClient
-        .query<{ logTargets: string[] }>(LOG_TARGETS_QUERY, { limit: 100 })
-        .toPromise();
-
-      if (result.data?.logTargets) {
-        setSources(result.data.logTargets);
-      }
-    } catch (e) {
-      // Silently ignore auth errors - they can happen during login race conditions
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      if (!errorMsg.toLowerCase().includes("authentication")) {
-        console.error("Failed to fetch log sources:", e);
-      }
-    }
-  }, []);
-
   // Create a ref to track if this is the initial mount
   const isInitialMount = useRef(true);
 
@@ -211,7 +218,7 @@ function LogsSettingsPage() {
     sortDirectionRef.current = sortDirection;
   }, [sortColumn, sortDirection]);
 
-  // Updated fetchLogs that reads from ref
+  // Fetch logs using AppLogs query
   const fetchLogsWithCurrentSource = useCallback(async (reset = true) => {
     try {
       if (reset) {
@@ -222,41 +229,46 @@ function LogsSettingsPage() {
       }
 
       const currentSource = selectedSourceRef.current;
-      const filter: { levels?: LogLevel[]; target?: string } = {};
-      if (currentSource) {
-        filter.target = currentSource;
-      }
+      const where: AppLogWhereInput | undefined = currentSource
+        ? { Target: { Eq: currentSource } }
+        : undefined;
 
-      // Build orderBy from current sort state
       const currentSortColumn = sortColumnRef.current;
       const currentSortDirection = sortDirectionRef.current;
-      const orderBy = {
-        field: currentSortColumn.toUpperCase(),
-        direction: currentSortDirection.toUpperCase(),
-      };
+      const orderBy =
+        currentSortColumn === "timestamp"
+          ? [{ Timestamp: currentSortDirection === "desc" ? SortDirection.Desc : SortDirection.Asc }]
+          : currentSortColumn === "level"
+            ? [{ Level: currentSortDirection === "desc" ? SortDirection.Desc : SortDirection.Asc }]
+            : [{ Target: currentSortDirection === "desc" ? SortDirection.Desc : SortDirection.Asc }];
 
       const result = await graphqlClient
-        .query<{ logs: PaginatedLogResult }>(LOGS_QUERY, {
-          filter: Object.keys(filter).length > 0 ? filter : null,
-          orderBy,
-          limit: pageSize,
-          offset: offsetRef.current,
+        .query(AppLogsDocument, {
+          Where: where,
+          OrderBy: orderBy,
+          Page: { Limit: pageSize, Offset: offsetRef.current },
         })
         .toPromise();
 
-      if (result.data?.logs) {
-        const newLogs = result.data.logs.logs;
+      if (result.data?.AppLogs) {
+        const connection = result.data.AppLogs;
+        const nodes = connection.Edges.map((e) => e.Node);
+        const newEntries = nodes.map(appLogNodeToEntry);
         if (reset) {
-          setLogs(newLogs);
+          setLogs(newEntries);
+          setSources((prev) => {
+            const merged = new Set(prev);
+            nodes.forEach((n) => merged.add(n.Target));
+            return Array.from(merged).sort();
+          });
         } else {
-          setLogs((prev) => [...prev, ...newLogs]);
+          setLogs((prev) => [...prev, ...newEntries]);
         }
-        setTotalCount(result.data.logs.totalCount);
-        setHasMore(result.data.logs.hasMore);
-        offsetRef.current += newLogs.length;
+        setTotalCount(connection.PageInfo.TotalCount ?? 0);
+        setHasMore(connection.PageInfo.HasNextPage);
+        offsetRef.current += newEntries.length;
       }
       if (result.error) {
-        // Silently ignore auth errors - they can happen during login race conditions
         const isAuthError = result.error.message
           ?.toLowerCase()
           .includes("authentication");
@@ -269,7 +281,6 @@ function LogsSettingsPage() {
         }
       }
     } catch (e) {
-      // Silently ignore auth errors
       const errorMsg = e instanceof Error ? e.message : String(e);
       if (!errorMsg.toLowerCase().includes("authentication")) {
         addToast({
@@ -293,9 +304,8 @@ function LogsSettingsPage() {
 
   // Initial load
   useEffect(() => {
-    fetchSources();
     fetchLogsWithCurrentSource(true);
-  }, [fetchLogsWithCurrentSource, fetchSources]);
+  }, [fetchLogsWithCurrentSource]);
 
   // Re-fetch when source filter or sort changes (skip initial mount)
   useEffect(() => {
@@ -306,44 +316,36 @@ function LogsSettingsPage() {
     fetchLogsWithCurrentSource(true);
   }, [selectedSource, sortColumn, sortDirection, fetchLogsWithCurrentSource]);
 
-  // Subscribe to live log events
+  // Subscribe to AppLogChanged for live updates
   useEffect(() => {
     if (!isLiveFeedEnabled) return;
 
     const subscription = graphqlClient
-      .subscription<{
-        logEvents: LiveLogEvent;
-      }>(LOG_EVENTS_SUBSCRIPTION, { levels: null })
+      .subscription(AppLogChangedDocument, {})
       .subscribe({
         next: (result) => {
-          if (result.data?.logEvents) {
-            const event = result.data.logEvents;
+          const event = result.data?.AppLogChanged;
+          if (!event || event.Action !== ChangeAction.Created || !event.AppLog) return;
 
-            // Filter by source if selected
-            if (
-              selectedSource &&
-              event.target !== selectedSource &&
-              !event.target.includes(selectedSource)
-            ) {
-              return;
-            }
+          const node = event.AppLog;
 
-            // Create a log entry from the live event
-            const newLog: LogEntry = {
-              id: `live-${++liveIdCounter.current}`,
-              timestamp: event.timestamp,
-              level: event.level,
-              target: event.target,
-              message: event.message,
-              fields: event.fields || null,
-              spanName: event.spanName || null,
-            };
-
-            // Prepend to logs (most recent first)
-            setLogs((prev) => [newLog, ...prev.slice(0, 499)]); // Keep max 500 live
-            setLiveEventCount((prev) => prev + 1);
-            setTotalCount((prev) => prev + 1);
+          // Filter by source if selected
+          if (
+            selectedSource &&
+            node.Target !== selectedSource &&
+            !node.Target.includes(selectedSource)
+          ) {
+            return;
           }
+
+          const newLog = appLogNodeToEntry(node);
+
+          setLogs((prev) => [newLog, ...prev.slice(0, 499)]);
+          setLiveEventCount((prev) => prev + 1);
+          setTotalCount((prev) => prev + 1);
+          setSources((prev) =>
+            prev.includes(node.Target) ? prev : [...prev, node.Target].sort(),
+          );
         },
       });
 
@@ -352,7 +354,7 @@ function LogsSettingsPage() {
     };
   }, [isLiveFeedEnabled, selectedSource]);
 
-  // Handle clear all logs
+  // Clear all logs (Where required: match all via Timestamp >= epoch)
   const handleClearAll = () => {
     setConfirmAction({
       title: "Clear All Logs",
@@ -361,15 +363,15 @@ function LogsSettingsPage() {
       onConfirm: async () => {
         try {
           const result = await graphqlClient
-            .mutation<{
-              clearAllLogs: ClearLogsResult;
-            }>(CLEAR_ALL_LOGS_MUTATION, {})
+            .mutation(DeleteAppLogsDocument, {
+              Where: { Timestamp: { Gte: "1970-01-01T00:00:00.000Z" } },
+            })
             .toPromise();
-
-          if (result.data?.clearAllLogs.success) {
+          const payload = result.data?.DeleteAppLogs;
+          if (payload?.success) {
             addToast({
               title: "Logs Cleared",
-              description: `Deleted ${result.data.clearAllLogs.deletedCount} logs`,
+              description: `Deleted ${payload.DeletedCount} logs`,
               color: "success",
             });
             setLogs([]);
@@ -379,7 +381,7 @@ function LogsSettingsPage() {
             addToast({
               title: "Error",
               description: sanitizeError(
-                result.data?.clearAllLogs.error || "Failed to clear logs",
+                payload?.error ?? result.error?.message ?? "Failed to clear logs",
               ),
               color: "danger",
             });
@@ -397,19 +399,22 @@ function LogsSettingsPage() {
     onConfirmOpen();
   };
 
-  // Handle clear old logs
+  // Clear logs older than N days
   const handleClearOld = async (days: number) => {
+    const date = new Date();
+    date.setDate(date.getDate() - days);
+    const isoBefore = date.toISOString();
     try {
       const result = await graphqlClient
-        .mutation<{
-          clearOldLogs: ClearLogsResult;
-        }>(CLEAR_OLD_LOGS_MUTATION, { days })
+        .mutation(DeleteAppLogsDocument, {
+          Where: { Timestamp: { Lt: isoBefore } },
+        })
         .toPromise();
-
-      if (result.data?.clearOldLogs.success) {
+      const payload = result.data?.DeleteAppLogs;
+      if (payload?.success) {
         addToast({
           title: "Old Logs Cleared",
-          description: `Deleted ${result.data.clearOldLogs.deletedCount} logs older than ${days} days`,
+          description: `Deleted ${payload.DeletedCount} logs older than ${days} days`,
           color: "success",
         });
         fetchLogsWithCurrentSource(true);
@@ -417,7 +422,7 @@ function LogsSettingsPage() {
         addToast({
           title: "Error",
           description: sanitizeError(
-            result.data?.clearOldLogs.error || "Failed to clear old logs",
+            payload?.error ?? result.error?.message ?? "Failed to clear old logs",
           ),
           color: "danger",
         });
@@ -842,13 +847,12 @@ function LogsSettingsPage() {
         </ModalContent>
       </Modal>
 
-      {/* Confirm Modal */}
       <ConfirmModal
         isOpen={isConfirmOpen}
         onClose={onConfirmClose}
         onConfirm={() => confirmAction?.onConfirm()}
-        title={confirmAction?.title || "Confirm"}
-        message={confirmAction?.message || ""}
+        title={confirmAction?.title ?? "Confirm"}
+        message={confirmAction?.message ?? ""}
         confirmLabel="Delete"
         confirmColor="danger"
       />

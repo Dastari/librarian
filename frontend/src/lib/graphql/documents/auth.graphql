@@ -1,0 +1,76 @@
+# Auth operations: login, register, logout, refresh, NeedsSetup, Me
+# Used by codegen to generate TypedDocumentNode and types
+
+query NeedsSetup {
+  NeedsSetup
+}
+
+query Me {
+  Me {
+    Id
+    Email
+    Username
+    Role
+    DisplayName
+  }
+}
+
+mutation Login($input: LoginInput!) {
+  Login(Input: $input) {
+    Success
+    Error
+    User {
+      Id
+      Email
+      Username
+      Role
+      DisplayName
+    }
+    Tokens {
+      AccessToken
+      RefreshToken
+      ExpiresIn
+      TokenType
+    }
+  }
+}
+
+mutation Register($input: RegisterUserInput!) {
+  Register(Input: $input) {
+    Success
+    Error
+    User {
+      Id
+      Email
+      Username
+      Role
+      DisplayName
+    }
+    Tokens {
+      AccessToken
+      RefreshToken
+      ExpiresIn
+      TokenType
+    }
+  }
+}
+
+mutation RefreshToken($input: RefreshTokenInput!) {
+  RefreshToken(Input: $input) {
+    Success
+    Error
+    Tokens {
+      AccessToken
+      RefreshToken
+      ExpiresIn
+      TokenType
+    }
+  }
+}
+
+mutation Logout($input: LogoutInput!) {
+  Logout(Input: $input) {
+    Success
+    Error
+  }
+}

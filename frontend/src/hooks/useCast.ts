@@ -1,13 +1,22 @@
 /**
- * Cast hook for managing Chromecast/media casting state
+ * Cast hook for managing Chromecast/media casting state.
+ * Uses codegen CastDevices, CastSessions, CastSettings queries.
+ * Legacy mutation strings kept for discover/castMedia/play/pause (custom backend ops).
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { graphqlClient } from '../lib/graphql';
 import {
-  graphqlClient,
-  CAST_DEVICES_QUERY,
-  CAST_SESSIONS_QUERY,
-  CAST_SETTINGS_QUERY,
+  CastDevicesDocument,
+  CastSessionsDocument,
+  CastSettingsDocument,
+} from '../lib/graphql/generated/graphql';
+import type {
+  CastDevicesQuery,
+  CastSessionsQuery,
+  CastSettingsQuery,
+} from '../lib/graphql/generated/graphql';
+import {
   DISCOVER_CAST_DEVICES_MUTATION,
   CAST_MEDIA_MUTATION,
   CAST_PLAY_MUTATION,
@@ -23,16 +32,59 @@ import {
   type CastSessionResult,
 } from '../lib/graphql';
 
+type DeviceNode = CastDevicesQuery['CastDevices']['Edges'][0]['Node'];
+type SessionNode = CastSessionsQuery['CastSessions']['Edges'][0]['Node'];
+type SettingNode = CastSettingsQuery['CastSettings']['Edges'][0]['Node'];
+
+function deviceNodeToApp(node: DeviceNode): CastDevice {
+  return {
+    id: node.Id,
+    name: node.Name,
+    address: node.Address,
+    port: node.Port,
+    model: node.Model ?? null,
+    deviceType: node.DeviceType as CastDevice['deviceType'],
+    isFavorite: node.IsFavorite,
+    isManual: node.IsManual,
+    isConnected: false,
+    lastSeenAt: node.LastSeenAt ?? null,
+  };
+}
+
+function sessionNodeToApp(node: SessionNode): CastSession {
+  return {
+    id: node.Id,
+    deviceId: node.DeviceId ?? null,
+    deviceName: null,
+    mediaFileId: node.MediaFileId ?? null,
+    episodeId: node.EpisodeId ?? null,
+    streamUrl: node.StreamUrl,
+    playerState: node.PlayerState as CastSession['playerState'],
+    currentTime: node.CurrentPosition,
+    duration: node.Duration ?? null,
+    volume: node.Volume,
+    isMuted: node.IsMuted,
+    startedAt: node.StartedAt,
+  };
+}
+
+function settingNodeToApp(node: SettingNode): CastSettings {
+  return {
+    autoDiscoveryEnabled: node.AutoDiscoveryEnabled,
+    discoveryIntervalSeconds: node.DiscoveryIntervalSeconds,
+    defaultVolume: node.DefaultVolume,
+    transcodeIncompatible: node.TranscodeIncompatible,
+    preferredQuality: node.PreferredQuality ?? null,
+  };
+}
+
 export interface UseCastResult {
-  // State
   devices: CastDevice[];
   activeSession: CastSession | null;
   settings: CastSettings | null;
   isLoading: boolean;
   isDiscovering: boolean;
   error: string | null;
-
-  // Actions
   refresh: () => Promise<void>;
   discoverDevices: () => Promise<void>;
   castMedia: (input: CastMediaInput) => Promise<CastSessionResult>;
@@ -52,24 +104,24 @@ export function useCast(): UseCastResult {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch all cast data
   const refresh = useCallback(async () => {
     try {
       setError(null);
       const [devicesRes, sessionsRes, settingsRes] = await Promise.all([
-        graphqlClient.query<{ castDevices: CastDevice[] }>(CAST_DEVICES_QUERY, {}).toPromise(),
-        graphqlClient.query<{ castSessions: CastSession[] }>(CAST_SESSIONS_QUERY, {}).toPromise(),
-        graphqlClient.query<{ castSettings: CastSettings }>(CAST_SETTINGS_QUERY, {}).toPromise(),
+        graphqlClient.query(CastDevicesDocument, {}).toPromise(),
+        graphqlClient.query(CastSessionsDocument, {}).toPromise(),
+        graphqlClient.query(CastSettingsDocument, { Page: { Limit: 1, Offset: 0 } }).toPromise(),
       ]);
 
-      if (devicesRes.data?.castDevices) {
-        setDevices(devicesRes.data.castDevices);
+      if (devicesRes.data?.CastDevices?.Edges) {
+        setDevices(devicesRes.data.CastDevices.Edges.map((e) => deviceNodeToApp(e.Node)));
       }
-      if (sessionsRes.data?.castSessions) {
-        setActiveSession(sessionsRes.data.castSessions[0] || null);
+      if (sessionsRes.data?.CastSessions?.Edges) {
+        const sessions = sessionsRes.data.CastSessions.Edges.map((e) => sessionNodeToApp(e.Node));
+        setActiveSession(sessions[0] ?? null);
       }
-      if (settingsRes.data?.castSettings) {
-        setSettings(settingsRes.data.castSettings);
+      if (settingsRes.data?.CastSettings?.Edges?.length) {
+        setSettings(settingNodeToApp(settingsRes.data.CastSettings.Edges[0].Node));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load cast data');
@@ -78,12 +130,10 @@ export function useCast(): UseCastResult {
     }
   }, []);
 
-  // Initial load
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  // Discover devices
   const discoverDevices = useCallback(async () => {
     setIsDiscovering(true);
     try {
@@ -93,15 +143,16 @@ export function useCast(): UseCastResult {
 
       if (result.data?.discoverCastDevices) {
         setDevices(result.data.discoverCastDevices);
+      } else {
+        await refresh();
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to discover devices');
+    } catch {
+      await refresh();
     } finally {
       setIsDiscovering(false);
     }
-  }, []);
+  }, [refresh]);
 
-  // Cast media
   const castMedia = useCallback(async (input: CastMediaInput): Promise<CastSessionResult> => {
     try {
       const result = await graphqlClient
@@ -112,21 +163,26 @@ export function useCast(): UseCastResult {
         setActiveSession(result.data.castMedia.session);
       }
 
-      return result.data?.castMedia || { success: false, session: null, error: 'Unknown error' };
+      return result.data?.castMedia ?? { success: false, session: null, error: 'Unknown error' };
     } catch (e) {
-      return { success: false, session: null, error: e instanceof Error ? e.message : 'Failed to cast' };
+      return {
+        success: false,
+        session: null,
+        error: e instanceof Error ? e.message : 'Failed to cast',
+      };
     }
   }, []);
 
-  // Playback controls
   const play = useCallback(async () => {
     if (!activeSession) return;
     try {
       const result = await graphqlClient
-        .mutation<{ castPlay: CastSessionResult }>(CAST_PLAY_MUTATION, { sessionId: activeSession.id })
+        .mutation<{ castPlay: CastSessionResult }>(CAST_PLAY_MUTATION, {
+          sessionId: activeSession.id,
+        })
         .toPromise();
-      if (result.data?.castPlay.session) {
-        setActiveSession(prev => prev ? { ...prev, ...result.data!.castPlay.session } : null);
+      if (result.data?.castPlay?.session) {
+        setActiveSession((prev) => (prev ? { ...prev, ...result.data!.castPlay!.session! } : null));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to play');
@@ -137,10 +193,12 @@ export function useCast(): UseCastResult {
     if (!activeSession) return;
     try {
       const result = await graphqlClient
-        .mutation<{ castPause: CastSessionResult }>(CAST_PAUSE_MUTATION, { sessionId: activeSession.id })
+        .mutation<{ castPause: CastSessionResult }>(CAST_PAUSE_MUTATION, {
+          sessionId: activeSession.id,
+        })
         .toPromise();
-      if (result.data?.castPause.session) {
-        setActiveSession(prev => prev ? { ...prev, ...result.data!.castPause.session } : null);
+      if (result.data?.castPause?.session) {
+        setActiveSession((prev) => (prev ? { ...prev, ...result.data!.castPause!.session! } : null));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to pause');
@@ -159,56 +217,71 @@ export function useCast(): UseCastResult {
     }
   }, [activeSession]);
 
-  const seek = useCallback(async (position: number) => {
-    if (!activeSession) return;
-    try {
-      const result = await graphqlClient
-        .mutation<{ castSeek: CastSessionResult }>(CAST_SEEK_MUTATION, { 
-          sessionId: activeSession.id, 
-          position 
-        })
-        .toPromise();
-      if (result.data?.castSeek.session) {
-        setActiveSession(prev => prev ? { ...prev, ...result.data!.castSeek.session } : null);
+  const seek = useCallback(
+    async (position: number) => {
+      if (!activeSession) return;
+      try {
+        const result = await graphqlClient
+          .mutation<{ castSeek: CastSessionResult }>(CAST_SEEK_MUTATION, {
+            sessionId: activeSession.id,
+            position,
+          })
+          .toPromise();
+        if (result.data?.castSeek?.session) {
+          setActiveSession((prev) =>
+            prev ? { ...prev, ...result.data!.castSeek!.session! } : null,
+          );
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to seek');
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to seek');
-    }
-  }, [activeSession]);
+    },
+    [activeSession],
+  );
 
-  const setVolume = useCallback(async (volume: number) => {
-    if (!activeSession) return;
-    try {
-      const result = await graphqlClient
-        .mutation<{ castSetVolume: CastSessionResult }>(CAST_SET_VOLUME_MUTATION, { 
-          sessionId: activeSession.id, 
-          volume 
-        })
-        .toPromise();
-      if (result.data?.castSetVolume.session) {
-        setActiveSession(prev => prev ? { ...prev, ...result.data!.castSetVolume.session } : null);
+  const setVolume = useCallback(
+    async (volume: number) => {
+      if (!activeSession) return;
+      try {
+        const result = await graphqlClient
+          .mutation<{ castSetVolume: CastSessionResult }>(CAST_SET_VOLUME_MUTATION, {
+            sessionId: activeSession.id,
+            volume,
+          })
+          .toPromise();
+        if (result.data?.castSetVolume?.session) {
+          setActiveSession((prev) =>
+            prev ? { ...prev, ...result.data!.castSetVolume!.session! } : null,
+          );
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to set volume');
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to set volume');
-    }
-  }, [activeSession]);
+    },
+    [activeSession],
+  );
 
-  const setMuted = useCallback(async (muted: boolean) => {
-    if (!activeSession) return;
-    try {
-      const result = await graphqlClient
-        .mutation<{ castSetMuted: CastSessionResult }>(CAST_SET_MUTED_MUTATION, { 
-          sessionId: activeSession.id, 
-          muted 
-        })
-        .toPromise();
-      if (result.data?.castSetMuted.session) {
-        setActiveSession(prev => prev ? { ...prev, ...result.data!.castSetMuted.session } : null);
+  const setMuted = useCallback(
+    async (muted: boolean) => {
+      if (!activeSession) return;
+      try {
+        const result = await graphqlClient
+          .mutation<{ castSetMuted: CastSessionResult }>(CAST_SET_MUTED_MUTATION, {
+            sessionId: activeSession.id,
+            muted,
+          })
+          .toPromise();
+        if (result.data?.castSetMuted?.session) {
+          setActiveSession((prev) =>
+            prev ? { ...prev, ...result.data!.castSetMuted!.session! } : null,
+          );
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to toggle mute');
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to toggle mute');
-    }
-  }, [activeSession]);
+    },
+    [activeSession],
+  );
 
   return {
     devices,

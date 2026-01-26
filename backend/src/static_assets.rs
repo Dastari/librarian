@@ -13,7 +13,8 @@ struct FrontendAssets;
 fn content_type_for(path: &str) -> HeaderValue {
     let mime: MimeGuess = mime_guess::from_path(path);
     let value = mime.first_or_octet_stream().to_string();
-    HeaderValue::from_str(&value).unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"))
+    HeaderValue::from_str(&value)
+        .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"))
 }
 
 fn asset_response(path: &str) -> Option<Response> {
@@ -28,7 +29,11 @@ fn asset_response(path: &str) -> Option<Response> {
 
 pub async fn embedded_fallback(uri: Uri) -> impl IntoResponse {
     let raw_path = uri.path().trim_start_matches('/');
-    let path = if raw_path.is_empty() { "index.html" } else { raw_path };
+    let path = if raw_path.is_empty() {
+        "index.html"
+    } else {
+        raw_path
+    };
 
     if let Some(response) = asset_response(path) {
         return response;

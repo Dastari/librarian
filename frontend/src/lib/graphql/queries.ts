@@ -1,24 +1,6 @@
 // ============================================================================
-// Auth Queries
+// Auth: use generated documents from ./generated/graphql (NeedsSetupDocument, MeDocument)
 // ============================================================================
-
-/** Check if the system needs first-time setup (no users exist) */
-export const CHECK_SETUP_STATUS_QUERY = `
-  query NeedsSetup {
-    needsSetup
-  }
-`;
-
-/** Get the current user (requires authentication) */
-export const ME_QUERY = `
-  query Me {
-    me {
-      id
-      email
-      role
-    }
-  }
-`;
 
 // ============================================================================
 // Torrent Queries
@@ -1462,7 +1444,7 @@ export const MEDIA_FILE_DETAILS_QUERY = `
 
 export const CAST_DEVICES_QUERY = `
   query CastDevices {
-    castDevices {
+    CastDevices {
       id
       name
       address
@@ -1479,7 +1461,7 @@ export const CAST_DEVICES_QUERY = `
 
 export const CAST_DEVICE_QUERY = `
   query CastDevice($id: ID!) {
-    castDevice(id: $id) {
+    CastDevice(id: $id) {
       id
       name
       address
@@ -1496,7 +1478,7 @@ export const CAST_DEVICE_QUERY = `
 
 export const CAST_SESSIONS_QUERY = `
   query CastSessions {
-    castSessions {
+    CastSessions {
       id
       deviceId
       deviceName
@@ -1515,7 +1497,7 @@ export const CAST_SESSIONS_QUERY = `
 
 export const CAST_SESSION_QUERY = `
   query CastSession($id: ID!) {
-    castSession(id: $id) {
+    CastSession(id: $id) {
       id
       deviceId
       deviceName
@@ -1534,7 +1516,7 @@ export const CAST_SESSION_QUERY = `
 
 export const CAST_SETTINGS_QUERY = `
   query CastSettings {
-    castSettings {
+    CastSettings {
       autoDiscoveryEnabled
       discoveryIntervalSeconds
       defaultVolume
@@ -1550,7 +1532,7 @@ export const CAST_SETTINGS_QUERY = `
 
 export const PLAYBACK_SESSION_QUERY = `
   query PlaybackSession {
-    playbackSession {
+    PlaybackSession {
       id
       userId
       contentType
@@ -1575,7 +1557,7 @@ export const PLAYBACK_SESSION_QUERY = `
 
 export const PLAYBACK_SETTINGS_QUERY = `
   query PlaybackSettings {
-    playbackSettings {
+    PlaybackSettings {
       syncIntervalSeconds
     }
   }

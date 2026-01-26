@@ -20,7 +20,7 @@ import { usePlaybackContext } from '../contexts/PlaybackContext';
 import { CastButton } from './cast';
 import { VolumeControl } from './VolumeControl';
 import { getMediaStreamUrl } from './VideoPlayer';
-import { graphqlClient, TV_SHOW_QUERY, EPISODES_QUERY, PLAYBACK_SETTINGS_QUERY, type TvShow, type Episode, type PlaybackSettings } from '../lib/graphql';
+import { graphqlClient, TV_SHOW_QUERY, EPISODES_QUERY, PlaybackSyncIntervalDocument, type TvShow, type Episode } from '../lib/graphql';
 import { useCast } from '../hooks/useCast';
 
 // Default sync interval (will be overridden by settings)
@@ -73,15 +73,16 @@ export function PersistentPlayer() {
   );
   const isCastingPlaying = isCastingThisMedia && castSession?.playerState === 'PLAYING';
 
-  // Fetch playback settings on mount
+  // Fetch playback sync interval from app settings
   useEffect(() => {
     graphqlClient
-      .query<{ playbackSettings: PlaybackSettings }>(PLAYBACK_SETTINGS_QUERY, {})
+      .query(PlaybackSyncIntervalDocument, { Key: 'playback_sync_interval' })
       .toPromise()
       .then((result) => {
-        if (result.data?.playbackSettings) {
-          // Convert seconds to milliseconds
-          setSyncInterval(result.data.playbackSettings.syncIntervalSeconds * 1000);
+        const value = result.data?.AppSettings?.Edges?.[0]?.Node?.Value;
+        if (value != null) {
+          const seconds = Number(value);
+          if (Number.isFinite(seconds)) setSyncInterval(seconds * 1000);
         }
       })
       .catch(() => {

@@ -1,4 +1,5 @@
 //! Torrents panel - displays active torrent progress with network rates and braille graph
+//! Torrent service/entity access commented out; panel shows empty list for now.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -14,10 +15,31 @@ use ratatui::widgets::{
     canvas::{Canvas, Points},
 };
 
-use crate::services::{TorrentInfo, TorrentService, TorrentState};
 use crate::tui::input::Action;
 use crate::tui::panels::Panel;
 use crate::tui::theme::{PanelKind, Theme};
+
+/// Stub type when torrent service is disabled
+#[derive(Debug, Clone, Default)]
+pub struct TorrentInfo {
+    pub name: String,
+    pub progress: f64,
+    pub state: TorrentState,
+    pub download_speed: u64,
+    pub upload_speed: u64,
+}
+
+/// Stub enum when torrent service is disabled
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TorrentState {
+    #[default]
+    Queued,
+    Downloading,
+    Checking,
+    Seeding,
+    Paused,
+    Error,
+}
 
 /// Maximum rate history samples
 const RATE_HISTORY_SIZE: usize = 120;
@@ -67,58 +89,10 @@ impl TorrentsPanel {
     }
 }
 
-/// Spawn a background task to update torrent list and rate history
-pub fn spawn_torrent_updater(torrent_service: Arc<TorrentService>, stats: SharedTorrentList) {
-    tokio::spawn(async move {
-        loop {
-            let mut list = torrent_service.list_torrents().await;
-            list.sort_by(|a, b| {
-                let state_order = |s: &TorrentState| match s {
-                    TorrentState::Downloading => 0,
-                    TorrentState::Checking => 1,
-                    TorrentState::Seeding => 2,
-                    TorrentState::Paused => 3,
-                    TorrentState::Error => 4,
-                    TorrentState::Queued => 5,
-                };
-                state_order(&a.state)
-                    .cmp(&state_order(&b.state))
-                    .then(a.name.cmp(&b.name))
-            });
-
-            // Calculate total rates
-            let total_down: u64 = list.iter().map(|t| t.download_speed).sum();
-            let total_up: u64 = list.iter().map(|t| t.upload_speed).sum();
-
-            // Update stats in a block to ensure lock is dropped before await
-            {
-                let mut s = stats.write();
-
-                // Update rate history
-                if s.download_history.len() >= RATE_HISTORY_SIZE {
-                    s.download_history.pop_front();
-                }
-                s.download_history.push_back(total_down as f64);
-
-                if s.upload_history.len() >= RATE_HISTORY_SIZE {
-                    s.upload_history.pop_front();
-                }
-                s.upload_history.push_back(total_up as f64);
-
-                // Update max rates (with some decay for better scaling)
-                let current_max_down =
-                    s.download_history.iter().cloned().fold(0.0_f64, f64::max) as u64;
-                let current_max_up =
-                    s.upload_history.iter().cloned().fold(0.0_f64, f64::max) as u64;
-                s.max_download_rate = current_max_down.max(1024 * 100); // Min 100 KB/s
-                s.max_upload_rate = current_max_up.max(1024 * 100);
-
-                s.torrents = list;
-            } // Lock dropped here
-
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        }
-    });
+/// Spawn a background task to update torrent list (disabled: no torrent service)
+#[allow(dead_code)]
+pub fn spawn_torrent_updater(_torrent_service: std::sync::Arc<()>, _stats: SharedTorrentList) {
+    // Legacy: torrent service commented out; panel shows empty list.
 }
 
 impl Panel for TorrentsPanel {

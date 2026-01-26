@@ -12,7 +12,8 @@ import { Spinner } from "@heroui/spinner";
 import { addToast } from "@heroui/toast";
 import { IconShieldCheck, IconAlertCircle } from "@tabler/icons-react";
 import { useAuth } from "../hooks/useAuth";
-import { graphqlClient, NEEDS_SETUP_QUERY } from "../lib/graphql";
+import { graphqlClient } from "../lib/graphql";
+import { NeedsSetupDocument } from "../lib/graphql/generated/graphql";
 
 interface SignInModalProps {
   isOpen: boolean;
@@ -51,13 +52,13 @@ export function SignInModal({
     setCheckingSetup(true);
     try {
       const result = await graphqlClient
-        .query<{ needsSetup: boolean }>(NEEDS_SETUP_QUERY, {})
+        .query(NeedsSetupDocument, {})
         .toPromise();
 
       if (result.data) {
-        setNeedsSetup(result.data.needsSetup);
+        setNeedsSetup(result.data.NeedsSetup);
         // If setup is needed, force sign-up mode
-        if (result.data.needsSetup) {
+        if (result.data.NeedsSetup) {
           setIsSignUp(true);
         }
       }

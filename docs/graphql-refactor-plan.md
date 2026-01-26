@@ -554,25 +554,621 @@ Resolved Direction (from discussion)
 
 Implementation Status (current branch)
 --------------------------------------
-Current direction (desired, not fully implemented yet):
-- Macro-first design as described above; one struct drives GraphQL + SQL + CRUD + subscriptions.
-- View models and utility operations are the only manual GraphQL surface.
+**Completed phases:**
 
-Notes on current branch state:
-- Existing work introduced manual table/workflow modules and extra boilerplate.
-- This does not yet match the intended single-source-of-truth macro model.
-- Future work should align the implementation with the `jim-service` pattern
-  and remove redundant/manual schema wiring.
-- Operations map documented in `docs/graphql-operations-map.md`.
+Phase 1: Macro Foundation (DONE)
+- Created `librarian-macros` crate with three derive macros:
+  - `#[derive(GraphQLEntity)]` - Generates WhereInput, OrderByInput, DatabaseEntity, DatabaseFilter, FromSqlRow impls
+  - `#[derive(GraphQLRelations)]` - Generates RelationLoader impl and ComplexObject resolvers for relations
+  - `#[derive(GraphQLOperations)]` - Generates Query/Mutation/Subscription structs, Connection/Edge types, Input types
 
-In progress:
-- Expand table-level mutations with per-table typed inputs (beyond shared column-value inputs).
-- Reintroduce view-model queries (aggregates) on top of table modules as needed.
-- Audit workflow endpoints for deprecation once table equivalents are stable.
+Phase 2: Query Builder (DONE)
+- Created `backend/src/graphql/orm/` module with:
+  - `EntityQuery<E>` builder for parameterized SQL queries
+  - Traits: `DatabaseEntity`, `DatabaseFilter`, `DatabaseOrderBy`, `FromSqlRow`, `RelationLoader`
+  - Pagination types: `PageInput`, `CursorInput`, `PageInfo`
+  - Filter types with full PascalCase naming
 
-Pending:
-- Frontend GraphQL type generation wiring.
-- Review and normalize list sorting/filtering/pagination across workflow queries.
+Phase 3: Entity Definitions (DONE)
+- Created macro-driven entities in `backend/src/graphql/entities/`:
+  - `LibraryEntity` with relations to Movies, TvShows, MediaFiles
+  - `MovieEntity` with relation to MediaFile
+  - `TvShowEntity` with relation to Episodes
+  - `EpisodeEntity` with relation to MediaFile
+  - `MediaFileEntity`
+- Each entity generates: WhereInput, OrderByInput, Connection, Edge, Queries, Mutations, Subscriptions
+
+Phase 4: Nested Relations with Filtering/Sorting/Pagination (DONE)
+- Relations are exposed as ComplexObject resolver methods
+- Each relation accepts: Where (filter), OrderBy (sort), Page (pagination)
+- Example query now supported:
+  ```graphql
+  query LibrariesWithMovies {
+    LibraryEntities(Where: { LibraryType: { Eq: "movies" } }) {
+      Edges {
+        Cursor
+        Node {
+          Id
+          Name
+          Movies(Where: { Year: { Gte: 2020 } }, OrderBy: [{ Year: Desc }], Page: { Limit: 10 }) {
+            Edges {
+              Node { Id, Title, Year, MediaFile { Id, Path, Size } }
+            }
+          }
+        }
+      }
+      PageInfo { EndCursor, HasNextPage }
+    }
+  }
+  ```
+
+Phase 5: Frontend Type Generation (DONE)
+- Added `@graphql-codegen/cli` and related packages to frontend
+- Created `codegen.ts` configuration file
+- Added `pnpm codegen` script to generate types from schema
+- Types are generated to `frontend/src/lib/graphql/generated/types.ts`
+- Introspection schema saved to `frontend/src/lib/graphql/generated/schema.json`
+
+Phase 6: Schema Integration (DONE)
+- Wired generated Query/Mutation/Subscription structs into schema MergedObject
+- Added all 15 entity modules to QueryRoot and MutationRoot
+- Increased recursion limit to 512 to handle large MergedObject types
+
+Phase 7: Full Entity Coverage (DONE)
+- Created all remaining entity definitions:
+  - `ArtistEntity` with relation to Albums
+  - `AlbumEntity` with relation to Tracks
+  - `TrackEntity` with relation to MediaFile
+  - `AudiobookEntity` with relation to Chapters
+  - `ChapterEntity` with relation to MediaFile
+  - `TorrentEntity` with relation to TorrentFiles
+  - `TorrentFileEntity`
+  - `UserEntity`
+  - `RssFeedEntity`
+  - `IndexerConfigEntity`
+- Updated `LibraryEntity` with relations to Artists, Albums, Audiobooks, Torrents, RssFeeds
+
+Phase 8: CRUD Mutations (DONE)
+- Implemented CREATE mutation with SQL INSERT generation
+- Implemented UPDATE mutation with dynamic SQL UPDATE generation
+- Uses `execute_with_binds` helper to handle sqlx query lifetimes
+- All fields properly converted to SqlValue for binding
+
+Phase 9: Subscriptions (DONE)
+- Generated subscription resolvers for all entities
+- Subscriptions gracefully return empty streams when broadcast channels not configured
+- Filter support for action types (Created, Updated, Deleted)
+
+Phase 10: ORM-like Auto-Migration (DONE)
+- Added `DatabaseSchema` trait to entities with column definitions
+- Entities define their columns with: name, SQL type, nullability, primary key, defaults
+- Created `schema_sync` module that:
+  - Queries SQLite `sqlite_master` and `PRAGMA table_info` for current schema
+  - Compares to entity definitions
+  - Creates missing tables automatically
+  - Adds missing columns automatically (using ALTER TABLE ADD COLUMN)
+- `db.sync_entity_schemas()` called at startup after manual migrations
+- Entity changes now auto-sync to database without manual .sql files
+
+**Note on coexistence:**
+- Manual migration files (`migrations_sqlite/*.sql`) still needed for:
+  - Non-entity tables (app_settings, torznab_categories, etc.)
+  - Seed data inserts
+  - Complex constraints and triggers
+- Domain queries (`LibraryQueries`, etc.) coexist with entity queries:
+  - Domain queries: business logic, computed stats, view models
+  - Entity queries: raw CRUD with filtering/sorting/pagination
+
+Phase 11: Repository Pattern for Internal Use (DONE)
+- Added internal query API to entity structs for service-layer use:
+  - `Entity::query(&pool)` - Returns `FindQuery` builder with filter/order/pagination
+  - `Entity::get(&pool, id)` - Find single entity by ID
+  - `Entity::count_query(&pool)` - Count entities with optional filter
+  - `Entity::search_similar(&pool, field, query, threshold, filter, limit)` - Fuzzy text search
+- Added helper constructors to filter types:
+  - `StringFilter::eq()`, `ne()`, `contains()`, `is_null()`, `similar()`
+  - `IntFilter::eq()`, `gte()`, `lte()`, `is_null()`
+  - `BoolFilter::is_true()`, `is_false()`, `is_null()`
+  - `DateFilter::recent_days()`, `within_days()`, `in_past()`, `in_future()`
+- Enables internal services to use the same generated queries as GraphQL
+
+Phase 12: Extended Filter Operators (DONE)
+- Added IsNull/IsNotNull to all filter types (StringFilter, IntFilter, BoolFilter, DateFilter)
+- Added fuzzy/similar text matching:
+  - `SimilarFilter` with value and threshold
+  - Uses strsim crate for Jaro-Winkler + Levenshtein scoring
+  - `FuzzyMatcher` class with normalization (handles media naming patterns)
+  - Normalization handles: dots, underscores, articles (the/a/an), brackets
+- Added date arithmetic operators:
+  - `InPast`, `InFuture`, `IsToday` - relative to today
+  - `RecentDays(n)` - within last N days
+  - `WithinDays(n)` - within next N days
+  - `GteRelative`, `LteRelative` - using RelativeDate input
+
+Phase 13: db/ Folder Migration (IN PROGRESS - ~10% complete)
+- Goal: Remove duplicate record types and manual SQL from db/ folder
+- Pattern: Replace manual SQL with generated entity queries via `Entity::query()`
+
+### Files to KEEP (essential infrastructure):
+| File | Reason |
+|------|--------|
+| `mod.rs` | Database connection, pool, migration runner (simplified) |
+| `schema_sync.rs` | Auto-migration logic for entity tables |
+| `sqlite_helpers.rs` | UUID/datetime/JSON conversion helpers |
+
+### Files to REMOVE (fully replaced by entities):
+| File | Replacement |
+|------|-------------|
+| `libraries.rs` | `LibraryEntity::query()`, `::get()`, mutations |
+| `movies.rs` | `MovieEntity::query()`, `::get()`, mutations |
+| `tv_shows.rs` | `TvShowEntity::query()`, `::get()`, mutations |
+| `episodes.rs` | `EpisodeEntity::query()`, `::get()`, mutations |
+| `albums.rs` | `AlbumEntity::query()`, `ArtistEntity::query()` |
+| `tracks.rs` | `TrackEntity::query()`, `::get()`, mutations |
+| `audiobooks.rs` | `AudiobookEntity::query()`, `ChapterEntity::query()` |
+| `torrents.rs` | `TorrentEntity::query()`, `::get()`, mutations |
+| `torrent_files.rs` | `TorrentFileEntity::query()` |
+| `media_files.rs` | `MediaFileEntity::query()`, `::get()` |
+| `pending_file_matches.rs` | `PendingFileMatchEntity::query()` |
+| `rss_feeds.rs` | `RssFeedEntity::query()`, `RssFeedItemEntity::query()` |
+| `logs.rs` | `AppLogEntity::query()` (with date filters) |
+| `users.rs` | `UserEntity::query()`, related entities |
+| `watch_progress.rs` | `WatchProgressEntity::query()` |
+| `playback.rs` | `PlaybackSessionEntity::query()` |
+| `cast.rs` | Cast entity queries |
+| `schedule.rs` | Schedule entity queries |
+| `notifications.rs` | `NotificationEntity::query()` |
+| `usenet_servers.rs` | `UsenetServerEntity::query()` |
+| `usenet_downloads.rs` | `UsenetDownloadEntity::query()` |
+| `indexers.rs` | Indexer entity queries |
+| `naming_patterns.rs` | `NamingPatternEntity::query()` |
+| `priority_rules.rs` | `SourcePriorityRuleEntity::query()` |
+| `subtitles.rs` | Subtitle/Stream entity queries |
+| `artwork.rs` | `ArtworkCacheEntity::query()` |
+
+### Operations requiring custom code (keep as utilities):
+Some operations need raw SQL because they involve:
+- **Aggregates**: COUNT with GROUP BY, SUM, AVG
+- **Complex JOINs**: Until JOIN filters are implemented
+- **Batch operations**: Multi-row INSERT with transactions
+- **Cleanup**: DELETE with date arithmetic, VACUUM
+- **Statistics**: Library stats, log counts by level
+
+These should be moved to a new `db/operations.rs` module or kept as helper functions within the entity's impl block.
+
+### Migration pattern for services:
+```rust
+// BEFORE (using db/ repository)
+let movies = db.movies().list_by_library(library_id).await?;
+
+// AFTER (using entity query)
+let movies = MovieEntity::query(db.pool())
+    .filter(MovieEntityWhereInput {
+        library_id: Some(StringFilter::eq(library_id.to_string())),
+        ..Default::default()
+    })
+    .fetch_all()
+    .await?;
+```
+
+### Simplified mod.rs after migration:
+```rust
+pub mod schema_sync;
+pub mod sqlite_helpers;
+pub mod operations; // Custom aggregate/batch operations
+
+pub struct Database {
+    pool: DbPool,
+}
+
+impl Database {
+    pub async fn connect(url: &str) -> Result<Self> { ... }
+    pub fn pool(&self) -> &DbPool { &self.pool }
+    pub async fn sync_entity_schemas(&self) -> ... { ... }
+    pub async fn migrate(&self) -> Result<()> { ... }
+}
+```
+
+**Pending:**
+- Complete db/ folder migration to entity queries
+- Add JOIN/nested filter support for cross-entity queries (see Future Improvements)
+- Configure broadcast channels for entities that need real-time updates
+- Migrate frontend to use generated types instead of manual types
+- Review and normalize list sorting/filtering/pagination across workflow queries
+
+Current Migration Status (Phase 13)
+-----------------------------------
+
+## Key Insight: Most Manual Queries Are Redundant
+
+The generated entity queries (`MovieEntities`, `LibraryEntities`, etc.) already provide:
+- Filtering via `Where` input
+- Sorting via `OrderBy` input  
+- Pagination via `Page` input
+- Get by ID via singular query (`MovieEntity(Id: "...")`)
+
+**Therefore, most manual queries in `graphql/queries/*.rs` are REDUNDANT and should be REMOVED.**
+
+### What to KEEP vs REMOVE
+
+**KEEP (not redundant):**
+- External API calls (e.g., `search_movies` calls TMDB API)
+- Complex aggregations that require custom SQL (use `db/operations.rs`)
+- Workflow operations (e.g., `ScanLibrary`, `ProcessTorrent`)
+
+**REMOVE (redundant with entity queries):**
+- `movies(library_id)` → use `MovieEntities(Where: {LibraryId: {Eq: "..."}})`
+- `movies_connection(...)` → use `MovieEntities(Where: ..., Page: ...)`
+- `movie(id)` → use `MovieEntity(Id: "...")`
+- `all_movies` → use `MovieEntities(Where: {UserId: {Eq: "..."}})`
+- Similar patterns for libraries, tv_shows, episodes, etc.
+
+**COMPUTED FIELDS: Add to Entity via ComplexObject**
+
+Some manual queries add computed fields (e.g., `download_progress`). These should be added directly to the entity:
+
+```rust
+// In movie.rs entity - add ComplexObject resolver
+#[async_graphql::ComplexObject]
+impl MovieEntity {
+    #[graphql(name = "DownloadProgress")]
+    async fn download_progress(&self, ctx: &Context<'_>) -> Option<f64> {
+        if self.media_file_id.is_some() { return None; }
+        let db = ctx.data_unchecked::<Database>();
+        if let Ok(id) = Uuid::parse_str(&self.id) {
+            db.torrent_files().get_download_progress_for_movie(id).await.ok().flatten()
+        } else { None }
+    }
+}
+```
+
+## Architecture: Consolidated Entity Files (Standard Practice)
+
+Each entity file (`graphql/entities/*.rs`) is the **single source of truth** containing everything related to that entity. This is the standard pattern all entities MUST follow.
+
+### Three-Part Entity File Structure
+
+Every entity file has exactly three parts:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ PART 1: Entity Struct                                           │
+│ - #[derive(GraphQLEntity, GraphQLOperations, SimpleObject)]     │
+│ - Generates: WhereInput, OrderByInput, Connection, CRUD         │
+├─────────────────────────────────────────────────────────────────┤
+│ PART 2: ComplexObject impl                                      │
+│ - Computed fields (ItemCount, DownloadProgress)                 │
+│ - Relations with Where/OrderBy/Page args                        │
+├─────────────────────────────────────────────────────────────────┤
+│ PART 3: CustomOperations struct                                 │
+│ - External API calls (Search*, AddFromProvider)                 │
+│ - Service triggers (ScanLibrary, ProcessTorrent)                │
+│ - Custom result types defined here                              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Complete Template
+
+```rust
+//! {Entity} Entity
+//!
+//! This module contains:
+//! - {Entity}Entity with computed fields and relations
+//! - {Entity}CustomOperations for non-CRUD operations
+//!
+//! CRUD operations are auto-generated by GraphQLOperations macro.
+
+use std::sync::Arc;
+
+use async_graphql::{Context, Object, Result, SimpleObject};
+use librarian_macros::{GraphQLEntity, GraphQLOperations};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::db::Database;
+use crate::graphql::auth::AuthExt;
+use crate::graphql::orm::{EntityQuery, SqlValue};
+
+// ============================================================================
+// PART 1: Entity Definition
+// ============================================================================
+
+/// {Entity} Entity
+///
+/// Note: We don't use GraphQLRelations here because we need custom ComplexObject.
+#[derive(GraphQLEntity, GraphQLOperations, SimpleObject, Clone, Debug, Serialize, Deserialize)]
+#[graphql(name = "{Entity}Entity", complex)]
+#[serde(rename_all = "PascalCase")]
+#[graphql_entity(table = "{table}", plural = "{Entity}Entities", default_sort = "{field}")]
+pub struct {Entity}Entity {
+    #[graphql(name = "Id")]
+    #[primary_key]
+    #[filterable(type = "string")]
+    #[sortable]
+    pub id: String,
+
+    // ... fields with #[filterable], #[sortable] ...
+
+    // Relations (skipped from DB, resolved via ComplexObject)
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    pub related_items: Vec<RelatedEntity>,
+}
+
+// ============================================================================
+// PART 2: ComplexObject Resolvers
+// ============================================================================
+
+#[async_graphql::ComplexObject]
+impl {Entity}Entity {
+    /// Computed field
+    #[graphql(name = "ItemCount")]
+    async fn item_count(&self, ctx: &async_graphql::Context<'_>) -> i64 {
+        let db = ctx.data_unchecked::<Database>();
+        // ... compute value using db/operations.rs helpers
+        0
+    }
+
+    /// Relation with filtering/sorting/pagination
+    #[graphql(name = "RelatedItems")]
+    async fn related_items_resolver(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+        #[graphql(name = "Where")] where_input: Option<RelatedEntityWhereInput>,
+        #[graphql(name = "OrderBy")] order_by: Option<Vec<RelatedEntityOrderByInput>>,
+        #[graphql(name = "Page")] page: Option<crate::graphql::orm::PageInput>,
+    ) -> async_graphql::Result<RelatedEntityConnection> {
+        let db = ctx.data_unchecked::<Database>();
+        let mut query = EntityQuery::<RelatedEntity>::new()
+            .where_clause("{entity}_id = ?", SqlValue::String(self.id.clone()));
+
+        if let Some(ref f) = where_input { query = query.filter(f); }
+        if let Some(ref o) = order_by { for ord in o { query = query.order_by(ord); } }
+        if query.order_clauses.is_empty() { query = query.default_order(); }
+        if let Some(ref p) = page { query = query.paginate(p); }
+
+        let conn = query.fetch_connection(db.pool()).await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(RelatedEntityConnection::from_generic(conn))
+    }
+}
+
+// ============================================================================
+// PART 3: Custom Operations
+// ============================================================================
+
+/// Result type for operations
+#[derive(Debug, SimpleObject)]
+pub struct {Entity}OperationResult {
+    pub success: bool,
+    pub {entity}: Option<ViewModelType>,
+    pub error: Option<String>,
+}
+
+/// Custom operations that CAN'T be replaced by generated CRUD
+#[derive(Default)]
+pub struct {Entity}CustomOperations;
+
+#[Object]
+impl {Entity}CustomOperations {
+    /// Search external API
+    #[graphql(name = "Search{Entity}s")]
+    async fn search(&self, ctx: &Context<'_>, query: String) -> Result<Vec<SearchResult>> {
+        let _user = ctx.auth_user()?;
+        let service = ctx.data_unchecked::<Arc<ExternalService>>();
+        // ... call external API
+        Ok(vec![])
+    }
+
+    /// Trigger service action
+    #[graphql(name = "Scan{Entity}")]
+    async fn scan(&self, ctx: &Context<'_>, id: String) -> Result<ScanResult> {
+        let _user = ctx.auth_user()?;
+        let service = ctx.data_unchecked::<Arc<ScannerService>>();
+        // ... trigger scan
+        Ok(ScanResult { ... })
+    }
+}
+```
+
+### Key Decisions
+
+**When to use `GraphQLRelations` macro vs manual `ComplexObject`:**
+| Scenario | Use |
+|----------|-----|
+| Entity has ONLY simple relations | `GraphQLRelations` macro |
+| Entity needs computed fields | Manual `ComplexObject` |
+| Entity needs custom relation logic | Manual `ComplexObject` |
+
+**When to add `*CustomOperations`:**
+- External API calls (TMDB, TVMaze, etc.)
+- Service triggers (ScanLibrary, ProcessTorrent)
+- Complex business logic that isn't simple CRUD
+
+**Naming conventions:**
+| Type | Pattern | Example |
+|------|---------|---------|
+| Entity struct | `{Entity}Entity` | `MovieEntity`, `LibraryEntity` |
+| Custom ops | `{Entity}CustomOperations` | `MovieCustomOperations` |
+| Result types | `{Entity}OperationResult` or specific | `ScanResult`, `ConsolidateResult` |
+
+### What Goes Where (Quick Reference)
+
+| Operation Type | Location | Example |
+|----------------|----------|---------|
+| List/filter/paginate | Generated by `GraphQLOperations` | `MovieEntities(Where: ...)` |
+| Get by ID | Generated by `GraphQLOperations` | `MovieEntity(Id: "...")` |
+| Create/Update/Delete | Generated by `GraphQLOperations` | `CreateMovieEntity` |
+| Relations | `ComplexObject` impl | `library.Movies(Where: ...)` |
+| Computed fields | `ComplexObject` impl | `library.ItemCount` |
+| External API calls | `*CustomOperations` struct | `SearchMovies`, `SearchTvShows` |
+| Service triggers | `*CustomOperations` struct | `ScanLibrary`, `ConsolidateLibrary` |
+
+### Schema Integration
+
+Export CustomOperations from `graphql/entities/mod.rs`:
+```rust
+pub use library::{LibraryEntity, ..., LibraryCustomOperations};
+pub use movie::{MovieEntity, ..., MovieCustomOperations};
+```
+
+Merge into schema root in `graphql/schema.rs`:
+```rust
+#[derive(MergedObject, Default)]
+pub struct QueryRoot(
+    // Generated entity queries
+    MovieEntityQueries, TvShowEntityQueries, LibraryEntityQueries, ...
+    
+    // Custom operations (includes both queries AND mutations)
+    MovieCustomOperations, TvShowCustomOperations, LibraryCustomOperations, ...
+);
+
+#[derive(MergedObject, Default)]
+pub struct MutationRoot(
+    // Generated entity mutations
+    MovieEntityMutations, TvShowEntityMutations, LibraryEntityMutations, ...
+    
+    // Custom operations (same structs, Object can have query+mutation methods)
+    MovieCustomOperations, TvShowCustomOperations, LibraryCustomOperations, ...
+);
+```
+
+### Reference Implementation
+
+**See `graphql/entities/library.rs`** for the canonical example with:
+- Entity with 20+ fields and proper attributes
+- ComplexObject with computed fields (`ItemCount`, `TotalSizeBytes`)
+- ComplexObject with paginated relations (`Movies`, `TvShows`, `MediaFiles`)
+- CustomOperations with service triggers (`ScanLibrary`, `ConsolidateLibrary`)
+- Proper result types (`ScanResult`, `ConsolidateResult`)
+
+## Migration Strategy (Revised)
+
+### Step 1: Consolidate into entity files
+For each domain, move custom operations from `graphql/queries/*.rs` and `graphql/mutations/*.rs` into the entity file:
+
+```
+graphql/queries/movies.rs (search_movies)     → entities/movie.rs (MovieCustomOperations)
+graphql/mutations/movies.rs (addMovie, etc.)  → entities/movie.rs (MovieCustomOperations)
+graphql/queries/tv_shows.rs (search_tv_shows) → entities/tv_show.rs (TvShowCustomOperations)
+graphql/mutations/tv_shows.rs (addTvShow)     → entities/tv_show.rs (TvShowCustomOperations)
+```
+
+### Step 2: Add computed fields to ComplexObject
+For each entity that needs computed fields:
+- `MovieEntity`: `DownloadProgress`, `MediaFile` relation
+- `TvShowEntity`: `Episodes` relation, `EpisodeCount`, `DownloadedEpisodeCount`
+- `LibraryEntity`: `ItemCount`, `TotalSizeBytes`, content relations
+- `EpisodeEntity`: `DownloadProgress`, `MediaFile` relation
+
+### Step 3: Remove redundant query/mutation files
+Once operations are consolidated, delete or gut the old files:
+- `graphql/queries/movies.rs` → DELETE (now in MovieCustomOperations)
+- `graphql/queries/tv_shows.rs` → DELETE (now in TvShowCustomOperations)
+- `graphql/queries/libraries.rs` → DELETE (now in LibraryCustomOperations)
+- `graphql/mutations/movies.rs` → DELETE (CRUD generated, custom in entity)
+- etc.
+
+### Step 4: Update frontend to use entity queries
+```graphql
+# Old manual query
+movies(libraryId: "...") { id, title }
+
+# New entity query
+MovieEntities(Where: {LibraryId: {Eq: "..."}}) { 
+  Edges { Node { Id, Title, DownloadProgress, MediaFile { Path } } }
+}
+
+# Custom operations unchanged
+SearchMovies(Query: "inception") { Title, Year, ProviderId }
+```
+
+### Step 5: Update internal services
+Services should use entity query pattern:
+```rust
+// Instead of: db.movies().list_by_library(lib_id)
+MovieEntity::query(db.pool())
+    .filter(MovieEntityWhereInput { library_id: Some(StringFilter::eq(&id)), ..Default::default() })
+    .fetch_all().await
+```
+
+### Step 6: Remove db/ repository files
+Once all callers are migrated, remove:
+- `db/movies.rs` (MovieRecord, MovieRepository)
+- `db/libraries.rs` (LibraryRecord, LibraryRepository)
+- `db/episodes.rs`, `db/tv_shows.rs`, etc.
+
+Keep only:
+- `db/mod.rs` (Database struct, connection)
+- `db/schema_sync.rs` (auto-migration)
+- `db/sqlite_helpers.rs` (type conversions)
+- `db/operations.rs` (aggregates, JOINs)
+- `db/settings.rs` (app_settings key-value store)
+
+## Files Status
+
+### Entity Consolidation Progress
+
+| Entity File | ComplexObject | CustomOperations | Status |
+|-------------|---------------|------------------|--------|
+| `library.rs` | ✅ ItemCount, TotalSizeBytes, Movies, TvShows, MediaFiles | ✅ ScanLibrary, ConsolidateLibrary | **DONE (Reference)** |
+| `movie.rs` | ✅ DownloadProgress, MediaFile | ✅ SearchMovies, AddMovieFromTmdb, RefreshMovieMetadata | DONE |
+| `tv_show.rs` | ✅ Episodes | ✅ SearchTvShows, AddTvShowFromProvider, RefreshTvShowMetadata | DONE |
+| `torrent.rs` | Uses GraphQLRelations | - (uses existing TorrentMutations) | DONE |
+| `episode.rs` | ? DownloadProgress, MediaFile | - | TODO |
+| `album.rs` | ? Tracks, DownloadedTrackCount | - | TODO |
+| `audiobook.rs` | ? Chapters, ChapterCount | - | TODO |
+
+### Old Query/Mutation Files to Remove
+
+After consolidation, these files become obsolete:
+
+| File | Current Content | Migrate To | Status |
+|------|-----------------|------------|--------|
+| `queries/movies.rs` | search_movies, movies, movie, all_movies | MovieCustomOperations | TODO - remove redundant |
+| `queries/tv_shows.rs` | search_tv_shows, tv_shows, tv_show | TvShowCustomOperations | TODO - remove redundant |
+| `queries/libraries.rs` | libraries, library, library_stats | LibraryCustomOperations | TODO |
+| `queries/episodes.rs` | episodes, episode | DELETE (use EpisodeEntities) | TODO |
+| `queries/upcoming.rs` | upcoming_episodes | LibraryCustomOperations or keep | EVALUATE |
+| `queries/music.rs` | artists, albums, tracks | DELETE (use entity queries) | TODO |
+| `queries/audiobooks.rs` | audiobooks, chapters | DELETE (use entity queries) | TODO |
+| `mutations/movies.rs` | addMovie, updateMovie, deleteMovie | DELETE (CRUD generated) | TODO |
+| `mutations/tv_shows.rs` | addTvShow, updateTvShow, deleteTvShow | TvShowCustomOperations | MIGRATED |
+| `mutations/libraries.rs` | createLibrary, updateLibrary, deleteLibrary, scanLibrary | LibraryCustomOperations | TODO |
+
+### Internal services to update (use Entity::query instead of db.*)
+
+- [ ] `services/file_matcher.rs` - uses db.movies(), db.episodes(), db.libraries()
+- [ ] `services/file_processor.rs` - uses db.movies().set_media_file()
+- [ ] `services/scanner.rs` - uses db.libraries(), db.movies(), db.episodes()
+- [ ] `services/organizer.rs` - uses db.libraries(), db.episodes()
+- [ ] `services/queues.rs` - uses db.movies(), db.libraries()
+- [ ] `services/metadata.rs` - uses db.movies(), db.episodes()
+- [ ] `jobs/content_progress.rs` - uses db.movies(), db.episodes()
+- [ ] `jobs/rss_poller.rs` - uses db.libraries(), db.episodes()
+
+Future Improvements (TODO)
+--------------------------
+### JOIN/Nested Relation Filters
+Enable filtering entities by their related entity fields without fetching the relation:
+```graphql
+# Filter episodes by their TV show's library
+Episodes(Where: { 
+  TvShow: { LibraryId: { Eq: "..." }, Monitored: { Eq: true } }
+  MediaFileId: { IsNull: true }
+})
+```
+Would generate:
+```sql
+SELECT e.* FROM episodes e 
+JOIN tv_shows ts ON ts.id = e.tv_show_id 
+WHERE ts.library_id = ? AND ts.monitored = 1 AND e.media_file_id IS NULL
+```
+Use cases:
+- `list_wanted_by_library` - episodes without files, filtered by tv_show.library_id
+- `list_upcoming_by_user` - episodes airing soon, filtered through tv_show.library.user_id
+- `list_needing_files` - any content type without associated media files
 
 Legacy Code Still in Place (by design for now)
 ----------------------------------------------

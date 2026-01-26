@@ -1,0 +1,14 @@
+query ActiveDownloadCount($Where: TorrentWhereInput, $Page: PageInput) {
+  Torrents(Where: $Where, Page: $Page) {
+    PageInfo {
+      TotalCount
+    }
+  }
+}
+
+subscription TorrentChanged($Filter: SubscriptionFilterInput) {
+  TorrentChanged(Filter: $Filter) {
+    Action
+    Id
+  }
+}

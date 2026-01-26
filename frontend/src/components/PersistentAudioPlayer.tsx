@@ -24,7 +24,7 @@ import {
 import { usePlaybackContext, type RepeatMode } from '../contexts/PlaybackContext';
 import { VolumeControl } from './VolumeControl';
 import { getMediaStreamUrl } from './VideoPlayer';
-import { graphqlClient, PLAYBACK_SETTINGS_QUERY, type PlaybackSettings } from '../lib/graphql';
+import { graphqlClient, PlaybackSyncIntervalDocument } from '../lib/graphql';
 
 // Default sync interval (will be overridden by settings)
 const DEFAULT_SYNC_INTERVAL = 15000;
@@ -72,14 +72,16 @@ export function PersistentAudioPlayer() {
   // Determine if this is an audio session
   const isAudioSession = session?.contentType === 'TRACK' || session?.contentType === 'AUDIOBOOK';
 
-  // Fetch playback settings on mount
+  // Fetch playback sync interval from app settings
   useEffect(() => {
     graphqlClient
-      .query<{ playbackSettings: PlaybackSettings }>(PLAYBACK_SETTINGS_QUERY, {})
+      .query(PlaybackSyncIntervalDocument, { Key: 'playback_sync_interval' })
       .toPromise()
       .then((result) => {
-        if (result.data?.playbackSettings) {
-          setSyncInterval(result.data.playbackSettings.syncIntervalSeconds * 1000);
+        const value = result.data?.AppSettings?.Edges?.[0]?.Node?.Value;
+        if (value != null) {
+          const seconds = Number(value);
+          if (Number.isFinite(seconds)) setSyncInterval(seconds * 1000);
         }
       })
       .catch(() => {

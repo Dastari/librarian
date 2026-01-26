@@ -162,22 +162,28 @@ impl LogsPanel {
     /// Poll for new log events (non-blocking)
     fn poll_logs(&mut self) {
         if self.paused {
-            // Still receive but don't display
-            while self.log_rx.try_recv().is_ok() {}
+            // Drain so we don't lag the channel
+            while let Ok(_) = self.log_rx.try_recv() {}
             return;
         }
 
-        // Receive all pending log events
-        while let Ok(event) = self.log_rx.try_recv() {
-            self.logs.push_back(LogLine::from(event));
-
-            // Trim if over capacity
-            while self.logs.len() > MAX_LOGS {
-                self.logs.pop_front();
+        use tokio::sync::broadcast::error::TryRecvError;
+        loop {
+            match self.log_rx.try_recv() {
+                Ok(event) => {
+                    self.logs.push_back(LogLine::from(event));
+                    while self.logs.len() > MAX_LOGS {
+                        self.logs.pop_front();
+                    }
+                }
+                Err(TryRecvError::Lagged(n)) => {
+                    // Skip lagged messages and continue receiving
+                    let _ = n;
+                }
+                Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
             }
         }
 
-        // Auto-scroll to bottom if enabled
         if self.auto_scroll {
             self.scroll_to_bottom();
         }

@@ -1,0 +1,71 @@
+# Dashboard: Shows and ScheduleCaches using Where/Page API
+
+query DashboardShows($Where: ShowWhereInput, $Page: PageInput) {
+  Shows(Where: $Where, Page: $Page) {
+    Edges {
+      Node {
+        Id
+        LibraryId
+        Name
+        SortName
+        Year
+        Status
+        TvmazeId
+        TmdbId
+        TvdbId
+        ImdbId
+        Overview
+        Network
+        Runtime
+        PosterUrl
+        BackdropUrl
+        Monitored
+        MonitorType
+        Path
+        EpisodeCount
+        EpisodeFileCount
+        SizeBytes
+        Genres
+      }
+      Cursor
+    }
+    PageInfo {
+      TotalCount
+    }
+  }
+}
+
+query DashboardScheduleCaches(
+  $Where: ScheduleCacheWhereInput
+  $OrderBy: [ScheduleCacheOrderByInput!]
+  $Page: PageInput
+) {
+  ScheduleCaches(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
+    Edges {
+      Node {
+        Id
+        TvmazeEpisodeId
+        EpisodeName
+        Season
+        EpisodeNumber
+        EpisodeType
+        AirDate
+        AirTime
+        AirStamp
+        Runtime
+        EpisodeImageUrl
+        Summary
+        TvmazeShowId
+        ShowName
+        ShowNetwork
+        ShowPosterUrl
+        ShowGenres
+        CountryCode
+      }
+      Cursor
+    }
+    PageInfo {
+      TotalCount
+    }
+  }
+}

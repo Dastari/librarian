@@ -1,0 +1,82 @@
+# Cast: devices, sessions, settings (connection-based)
+# Used by codegen for TypedDocumentNode and types
+
+query CastDevices(
+  $Where: CastDeviceWhereInput
+  $OrderBy: [CastDeviceOrderByInput!]
+  $Page: PageInput
+) {
+  CastDevices(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
+    Edges {
+      Node {
+        Id
+        Name
+        Address
+        Port
+        Model
+        DeviceType
+        IsFavorite
+        IsManual
+        LastSeenAt
+      }
+      Cursor
+    }
+    PageInfo {
+      HasNextPage
+      TotalCount
+    }
+  }
+}
+
+query CastSessions(
+  $Where: CastSessionWhereInput
+  $OrderBy: [CastSessionOrderByInput!]
+  $Page: PageInput
+) {
+  CastSessions(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
+    Edges {
+      Node {
+        Id
+        DeviceId
+        MediaFileId
+        EpisodeId
+        StreamUrl
+        PlayerState
+        CurrentPosition
+        Duration
+        Volume
+        IsMuted
+        StartedAt
+      }
+      Cursor
+    }
+    PageInfo {
+      HasNextPage
+      TotalCount
+    }
+  }
+}
+
+query CastSettings(
+  $Where: CastSettingWhereInput
+  $OrderBy: [CastSettingOrderByInput!]
+  $Page: PageInput
+) {
+  CastSettings(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
+    Edges {
+      Node {
+        Id
+        AutoDiscoveryEnabled
+        DiscoveryIntervalSeconds
+        DefaultVolume
+        TranscodeIncompatible
+        PreferredQuality
+      }
+      Cursor
+    }
+    PageInfo {
+      HasNextPage
+      TotalCount
+    }
+  }
+}
