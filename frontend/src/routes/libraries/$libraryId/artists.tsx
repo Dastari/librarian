@@ -13,12 +13,12 @@ function ArtistsPage() {
   const handleSelectArtist = (_artistId: string) => {
     // Navigate to albums tab filtered by artist (future enhancement)
     // For now, just navigate to albums
-    navigate({ to: '/libraries/$libraryId/albums', params: { libraryId: library.id } })
+    navigate({ to: '/libraries/$libraryId/albums', params: { libraryId: library.Id } })
   }
 
   return (
     <LibraryArtistsTab
-      libraryId={library.id}
+      libraryId={library.Id}
       loading={loading}
       onSelectArtist={handleSelectArtist}
     />

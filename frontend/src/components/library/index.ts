@@ -1,6 +1,10 @@
 export { LibraryCard, type LibraryCardProps } from './LibraryCard'
 export { LibraryGridCard, type LibraryGridCardProps } from './LibraryGridCard'
-export { AddLibraryModal, type AddLibraryModalProps } from './AddLibraryModal'
+export {
+  AddLibraryModal,
+  type AddLibraryModalProps,
+  type CreateLibraryFormInput,
+} from './AddLibraryModal'
 export { TvShowCard, type TvShowCardProps } from './TvShowCard'
 export { MovieCard, type MovieCardProps } from './MovieCard'
 export { MediaCardSkeleton, SquareCardSkeleton } from './MediaCardSkeleton'

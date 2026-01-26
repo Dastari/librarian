@@ -239,42 +239,30 @@ export const audiobookTemplate: AudiobookWithChapters = {
 // =============================================================================
 
 export const libraryTemplate: Library = {
-  id: 'template',
-  name: 'Loading Library',
-  path: '/path/to/library',
-  libraryType: 'TV',
-  icon: '',
-  color: '',
-  autoScan: false,
-  scanIntervalMinutes: 60,
-  watchForChanges: false,
-  organizeFiles: false,
-  renameStyle: '',
-  namingPattern: null,
-  autoAddDiscovered: false,
-  autoDownload: false,
-  autoHunt: false,
-  scanning: false,
-  itemCount: 0,
-  showCount: 0,
-  movieCount: 0,
-  totalSizeBytes: 0,
-  lastScannedAt: null,
-  allowedResolutions: [],
-  allowedVideoCodecs: [],
-  allowedAudioFormats: [],
-  requireHdr: false,
-  allowedHdrTypes: [],
-  allowedSources: [],
-  releaseGroupBlacklist: [],
-  releaseGroupWhitelist: [],
+  Id: 'template',
+  Name: 'Loading Library',
+  Path: '/path/to/library',
+  LibraryType: 'TV',
+  Icon: null,
+  Color: null,
+  AutoScan: false,
+  ScanIntervalMinutes: 60,
+  WatchForChanges: false,
+  AutoAddDiscovered: false,
+  AutoDownload: false,
+  AutoHunt: false,
+  Scanning: false,
+  LastScannedAt: null,
+  CreatedAt: '',
+  UpdatedAt: '',
+  UserId: '',
 }
 
-// Template for library grid (multiple cards) - legacy camelCase
+// Template for library grid (multiple cards)
 export const librariesTemplate: Library[] = Array.from({ length: 6 }, (_, i) => ({
   ...libraryTemplate,
-  id: `template-${i}`,
-  name: `Library ${i + 1}`,
+  Id: `template-${i}`,
+  Name: `Library ${i + 1}`,
 }))
 
 // Codegen PascalCase template for library grid shimmer

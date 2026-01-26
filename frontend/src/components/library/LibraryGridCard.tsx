@@ -5,7 +5,8 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/d
 import { Button } from '@heroui/button'
 import { Image } from '@heroui/image'
 import { IconDotsVertical, IconRefresh, IconSettings, IconTrash, IconEye } from '@tabler/icons-react'
-import type { LibraryNode, LibraryType, TvShow, Movie, Album, Audiobook } from '../../lib/graphql'
+import type { Movie, Show } from '../../lib/graphql/generated/graphql'
+import type { LibraryNode, LibraryType, Album, Audiobook } from '../../lib/graphql'
 import { getLibraryTypeInfo } from '../../lib/graphql'
 
 // ============================================================================
@@ -14,7 +15,7 @@ import { getLibraryTypeInfo } from '../../lib/graphql'
 
 export interface LibraryGridCardProps {
   library: LibraryNode
-  shows?: TvShow[]
+  shows?: Show[]
   movies?: Movie[]
   albums?: Album[]
   audiobooks?: Audiobook[]
@@ -54,8 +55,8 @@ export function LibraryGridCard({
   const artworks = (() => {
     if (library.LibraryType === 'MOVIES') {
       return movies
-        .filter((movie) => movie.posterUrl || movie.backdropUrl)
-        .map((movie) => movie.posterUrl || movie.backdropUrl)
+        .filter((movie) => movie.PosterUrl || movie.BackdropUrl)
+        .map((movie) => movie.PosterUrl || movie.BackdropUrl)
         .filter((url): url is string => !!url)
         .slice(0, 6) // Max 6 for cycling
     }
@@ -75,8 +76,8 @@ export function LibraryGridCard({
     }
     // TV shows or other library types
     return shows
-      .filter((show) => show.posterUrl || show.backdropUrl)
-      .map((show) => show.posterUrl || show.backdropUrl)
+      .filter((show) => show.PosterUrl || show.BackdropUrl)
+      .map((show) => show.PosterUrl || show.BackdropUrl)
       .filter((url): url is string => !!url)
       .slice(0, 6) // Max 6 for cycling
   })()

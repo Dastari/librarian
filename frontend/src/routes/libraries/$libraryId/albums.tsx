@@ -73,7 +73,7 @@ function AlbumsPage() {
     <>
       <LibraryAlbumsTab
         key={refreshKey}
-        libraryId={library.id}
+        libraryId={library.Id}
         loading={loading}
         onAddAlbum={onOpen}
         onDeleteAlbum={handleDeleteAlbum}
@@ -81,7 +81,7 @@ function AlbumsPage() {
       <AddAlbumModal
         isOpen={isOpen}
         onClose={onClose}
-        libraryId={library.id}
+        libraryId={library.Id}
         onAlbumAdded={handleAlbumAdded}
       />
 

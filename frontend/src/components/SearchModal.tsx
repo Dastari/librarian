@@ -1,142 +1,148 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useNavigate } from '@tanstack/react-router'
-import { Modal, ModalContent, ModalHeader, ModalBody } from '@heroui/modal'
-import { Input } from '@heroui/input'
-import { Chip } from '@heroui/chip'
-import { Spinner } from '@heroui/spinner'
-import { Kbd } from '@heroui/kbd'
-import { Image } from '@heroui/image'
-import { ScrollShadow } from '@heroui/scroll-shadow'
-import {
-  IconSearch,
-  IconDeviceTv,
-  IconMovie,
-} from '@tabler/icons-react'
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { Modal, ModalContent, ModalHeader, ModalBody } from "@heroui/modal";
+import { Input } from "@heroui/input";
+import { Chip } from "@heroui/chip";
+import { Spinner } from "@heroui/spinner";
+import { Image } from "@heroui/image";
+import { ScrollShadow } from "@heroui/scroll-shadow";
+import { IconSearch, IconDeviceTv, IconMovie } from "@tabler/icons-react";
+import type { Movie, Show } from "../lib/graphql/generated/graphql";
 import {
   graphqlClient,
   ALL_TV_SHOWS_QUERY,
   ALL_MOVIES_QUERY,
-  type TvShow,
-  type Movie,
-} from '../lib/graphql'
+} from "../lib/graphql";
 
 export interface SearchModalProps {
-  isOpen: boolean
-  onClose: () => void
+  isOpen: boolean;
+  onClose: () => void;
 }
 
 interface SearchResult {
-  id: string
-  type: 'show' | 'movie'
-  title: string
-  year: number | null
-  posterUrl: string | null
-  status: string | null
-  libraryId: string
+  id: string;
+  type: "show" | "movie";
+  title: string;
+  year: number | null;
+  posterUrl: string | null;
+  status: string | null;
+  libraryId: string;
 }
 
 export function SearchModal({ isOpen, onClose }: SearchModalProps) {
-  const navigate = useNavigate()
-  const [searchQuery, setSearchQuery] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [shows, setShows] = useState<TvShow[]>([])
-  const [movies, setMovies] = useState<Movie[]>([])
+  const navigate = useNavigate();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [shows, setShows] = useState<Show[]>([]);
+  const [movies, setMovies] = useState<Movie[]>([]);
 
   // Fetch all content when modal opens
   useEffect(() => {
     if (isOpen && shows.length === 0 && movies.length === 0) {
-      fetchAllContent()
+      fetchAllContent();
     }
-  }, [isOpen])
+  }, [isOpen]);
 
   // Reset search when modal closes
   useEffect(() => {
     if (!isOpen) {
-      setSearchQuery('')
+      setSearchQuery("");
     }
-  }, [isOpen])
+  }, [isOpen]);
 
   const fetchAllContent = async () => {
-    setIsLoading(true)
+    setIsLoading(true);
     try {
       const [showsResult, moviesResult] = await Promise.all([
-        graphqlClient.query<{ allTvShows: TvShow[] }>(ALL_TV_SHOWS_QUERY, {}).toPromise(),
-        graphqlClient.query<{ allMovies: Movie[] }>(ALL_MOVIES_QUERY, {}).toPromise(),
-      ])
+        graphqlClient
+          .query<{
+            Shows: { Edges: Array<{ Node: Show }> };
+          }>(ALL_TV_SHOWS_QUERY, {})
+          .toPromise(),
+        graphqlClient
+          .query<{
+            Movies: { Edges: Array<{ Node: Movie }> };
+          }>(ALL_MOVIES_QUERY, {})
+          .toPromise(),
+      ]);
 
-      setShows(showsResult.data?.allTvShows || [])
-      setMovies(moviesResult.data?.allMovies || [])
+      const showNodes =
+        showsResult.data?.Shows?.Edges?.map((e) => e.Node) ?? [];
+      setShows(showNodes);
+      const movieNodes =
+        moviesResult.data?.Movies?.Edges?.map((e) => e.Node) ?? [];
+      setMovies(movieNodes);
     } catch (err) {
-      console.error('Failed to fetch content:', err)
+      console.error("Failed to fetch content:", err);
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  };
 
   // Convert to search results and filter
   const searchResults = useMemo<SearchResult[]>(() => {
-    const queryLower = searchQuery.toLowerCase().trim()
-    const results: SearchResult[] = []
+    const queryLower = searchQuery.toLowerCase().trim();
+    const results: SearchResult[] = [];
 
     // Filter shows
     for (const show of shows) {
-      if (!queryLower || show.name.toLowerCase().includes(queryLower)) {
+      if (!queryLower || show.Name.toLowerCase().includes(queryLower)) {
         results.push({
-          id: show.id,
-          type: 'show',
-          title: show.name,
-          year: show.year,
-          posterUrl: show.posterUrl,
-          status: show.status,
-          libraryId: show.libraryId,
-        })
+          id: show.Id,
+          type: "show",
+          title: show.Name,
+          year: show.Year ?? null,
+          posterUrl: show.PosterUrl ?? null,
+          status: show.Status ?? null,
+          libraryId: show.LibraryId,
+        });
       }
     }
 
     // Filter movies
     for (const movie of movies) {
-      if (!queryLower || movie.title.toLowerCase().includes(queryLower)) {
+      if (!queryLower || movie.Title.toLowerCase().includes(queryLower)) {
         results.push({
-          id: movie.id,
-          type: 'movie',
-          title: movie.title,
-          year: movie.year,
-          posterUrl: movie.posterUrl,
-          status: movie.status,
-          libraryId: movie.libraryId,
-        })
+          id: movie.Id,
+          type: "movie",
+          title: movie.Title,
+          year: movie.Year ?? null,
+          posterUrl: movie.PosterUrl ?? null,
+          status: movie.Status ?? null,
+          libraryId: movie.LibraryId,
+        });
       }
     }
 
     // Sort by title
-    results.sort((a, b) => a.title.localeCompare(b.title))
+    results.sort((a, b) => a.title.localeCompare(b.title));
 
-    return results
-  }, [searchQuery, shows, movies])
+    return results;
+  }, [searchQuery, shows, movies]);
 
   // Navigate to item on click
   const handleItemClick = useCallback(
     (item: SearchResult) => {
-      onClose()
-      if (item.type === 'show') {
-        navigate({ to: '/shows/$showId', params: { showId: item.id } })
-      } else if (item.type === 'movie') {
-        navigate({ to: '/movies/$movieId', params: { movieId: item.id } })
+      onClose();
+      if (item.type === "show") {
+        navigate({ to: "/shows/$showId", params: { showId: item.id } });
+      } else if (item.type === "movie") {
+        navigate({ to: "/movies/$movieId", params: { movieId: item.id } });
       }
     },
-    [navigate, onClose]
-  )
+    [navigate, onClose],
+  );
 
   // Navigate to hunt page
   const handleHuntClick = () => {
-    onClose()
+    onClose();
     navigate({
-      to: '/hunt',
-      search: { q: searchQuery, type: 'all' },
-    })
-  }
+      to: "/hunt",
+      search: { q: searchQuery, type: "all" },
+    });
+  };
 
-  const totalCount = shows.length + movies.length
+  const totalCount = shows.length + movies.length;
 
   return (
     <Modal
@@ -145,11 +151,11 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
       size="2xl"
       scrollBehavior="inside"
       classNames={{
-        base: 'max-h-[80vh]',
+        base: "max-h-[80vh]",
       }}
     >
       <ModalContent>
-        <ModalHeader className="flex flex-col gap-1 pb-0">
+        <ModalHeader className="flex flex-col gap-1 pb-0 py-6">
           <Input
             label="Search"
             labelPlacement="inside"
@@ -158,22 +164,17 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             startContent={<IconSearch size={18} className="text-default-400" />}
-            endContent={
-              <Kbd keys={['escape']} className="hidden sm:inline-flex">
-                ESC
-              </Kbd>
-            }
             size="lg"
             autoFocus
             classNames={{
-              inputWrapper: 'bg-default-100',
-              label: 'text-sm font-medium text-primary!',
+              inputWrapper: "bg-default-100",
+              label: "text-sm font-medium text-primary!",
             }}
           />
           <div className="flex items-center gap-2 text-xs text-default-500 mt-2">
             <span>
               {searchQuery
-                ? `${searchResults.length} result${searchResults.length !== 1 ? 's' : ''}`
+                ? `${searchResults.length} result${searchResults.length !== 1 ? "s" : ""}`
                 : `${totalCount} items in library`}
             </span>
             {searchQuery && searchResults.length === 0 && (
@@ -210,26 +211,32 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
                           className="w-full h-full object-cover"
                           removeWrapper
                         />
-                      ) : result.type === 'show' ? (
+                      ) : result.type === "show" ? (
                         <IconDeviceTv size={20} className="text-blue-400" />
                       ) : (
                         <IconMovie size={20} className="text-purple-400" />
                       )}
                     </div>
                     <div className="flex flex-col min-w-0 flex-1">
-                      <span className="font-medium truncate">{result.title}</span>
+                      <span className="font-medium truncate">
+                        {result.title}
+                      </span>
                       <div className="flex items-center gap-2 text-xs text-default-500">
                         <Chip
                           size="sm"
                           variant="flat"
-                          color={result.type === 'show' ? 'primary' : 'secondary'}
+                          color={
+                            result.type === "show" ? "primary" : "secondary"
+                          }
                           className="h-5"
                         >
-                          {result.type === 'show' ? 'TV Show' : 'Movie'}
+                          {result.type === "show" ? "TV Show" : "Movie"}
                         </Chip>
                         {result.year && <span>{result.year}</span>}
                         {result.status && (
-                          <span className="capitalize">{result.status.toLowerCase()}</span>
+                          <span className="capitalize">
+                            {result.status.toLowerCase()}
+                          </span>
                         )}
                       </div>
                     </div>
@@ -267,5 +274,5 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
         </ModalBody>
       </ModalContent>
     </Modal>
-  )
+  );
 }

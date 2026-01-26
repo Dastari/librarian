@@ -24,7 +24,6 @@ import {
   type PlaybackContentType,
   type Episode,
   type TvShow,
-  type Movie,
   type Track,
   type Album,
   type Audiobook,
@@ -32,6 +31,7 @@ import {
   type AlbumWithTracks,
   type AudiobookWithChapters,
 } from '../lib/graphql';
+import type { Movie } from '../lib/graphql/generated/graphql';
 
 /** Map GraphQL PlaybackSessions node (PascalCase) to app PlaybackSession (camelCase) */
 function mapNodeToSession(node: {
@@ -423,10 +423,10 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
     const metadata: CurrentContentMetadata | undefined = movie ? {
       contentType: 'MOVIE',
-      title: movie.title,
-      subtitle: movie.year ? `${movie.year}` : undefined,
-      posterUrl: movie.posterUrl,
-      backdropUrl: movie.backdropUrl,
+      title: movie.Title,
+      subtitle: movie.Year != null ? `${movie.Year}` : undefined,
+      posterUrl: movie.PosterUrl ?? undefined,
+      backdropUrl: movie.BackdropUrl ?? undefined,
     } : undefined;
 
     const success = await startPlayback(input, metadata);

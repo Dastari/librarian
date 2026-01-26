@@ -60,7 +60,7 @@ function MoviesPage() {
   return (
     <>
       <LibraryMoviesTab
-        libraryId={library.id}
+        libraryId={library.Id}
         loading={loading}
         onDeleteMovie={handleDeleteMovieClick}
         onAddMovie={onAddOpen}
@@ -70,7 +70,7 @@ function MoviesPage() {
       <AddMovieModal
         isOpen={isAddOpen}
         onClose={onAddClose}
-        libraryId={library.id}
+        libraryId={library.Id}
         onAdded={fetchData}
       />
 

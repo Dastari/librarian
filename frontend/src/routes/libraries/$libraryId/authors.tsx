@@ -13,12 +13,12 @@ function AuthorsPage() {
   const handleSelectAuthor = (_authorId: string) => {
     // Navigate to books tab filtered by author (future enhancement)
     // For now, just navigate to books
-    navigate({ to: '/libraries/$libraryId/books', params: { libraryId: library.id } })
+    navigate({ to: '/libraries/$libraryId/books', params: { libraryId: library.Id } })
   }
 
   return (
     <LibraryAuthorsTab
-      libraryId={library.id}
+      libraryId={library.Id}
       loading={loading}
       onSelectAuthor={handleSelectAuthor}
     />

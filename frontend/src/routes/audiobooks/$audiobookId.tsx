@@ -230,12 +230,14 @@ function AudiobookDetailPage() {
 
         // Fetch library info
         const libResult = await graphqlClient
-          .query<{ library: Library | null }>(LIBRARY_QUERY, {
-            id: result.data.audiobookWithChapters.audiobook.libraryId,
+          .query<{
+            Library: import('../../lib/graphql/generated/graphql').Library | null
+          }>(LIBRARY_QUERY, {
+            Id: result.data.audiobookWithChapters.audiobook.libraryId,
           })
           .toPromise()
-        if (libResult.data?.library) {
-          setLibrary(libResult.data.library)
+        if (libResult.data?.Library) {
+          setLibrary(libResult.data.Library)
         }
       } else {
         setError('Audiobook not found')
@@ -360,8 +362,8 @@ function AudiobookDetailPage() {
             <Link to="/libraries">Libraries</Link>
           </BreadcrumbItem>
           <BreadcrumbItem>
-            <Link to="/libraries/$libraryId" params={{ libraryId: displayLibrary.id }}>
-              {displayLibrary.name}
+            <Link to="/libraries/$libraryId" params={{ libraryId: displayLibrary.Id }}>
+              {displayLibrary.Name}
             </Link>
           </BreadcrumbItem>
           <BreadcrumbItem>{audiobook.title}</BreadcrumbItem>

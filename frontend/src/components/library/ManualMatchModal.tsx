@@ -24,21 +24,21 @@ import {
   type ManualMatchResult,
 } from '../../lib/graphql'
 
-// Queries for fetching library items
+// Queries for fetching library items (PascalCase schema)
 const TV_SHOWS_QUERY = `
   query TvShows($libraryId: String!) {
-    tvShows(libraryId: $libraryId) {
-      id
-      name
-      year
-      seasons {
-        id
-        seasonNumber
-        episodeCount
-        episodes {
-          id
-          episodeNumber
-          name
+    Shows(Where: { LibraryId: { Eq: $libraryId } }) {
+      Edges {
+        Node {
+          Id
+          Name
+          Year
+          Episodes {
+            Id
+            Season
+            Episode
+            Title
+          }
         }
       }
     }
@@ -47,10 +47,14 @@ const TV_SHOWS_QUERY = `
 
 const MOVIES_QUERY = `
   query Movies($libraryId: String!) {
-    movies(libraryId: $libraryId) {
-      id
-      title
-      year
+    Movies(Where: { LibraryId: { Eq: $libraryId } }) {
+      Edges {
+        Node {
+          Id
+          Title
+          Year
+        }
+      }
     }
   }
 `
@@ -93,6 +97,14 @@ interface TvShow {
   seasons: Season[]
 }
 
+/** Raw show node from GraphQL (Shows.Edges[].Node with Episodes) */
+interface ShowNode {
+  Id: string
+  Name: string
+  Year: number | null
+  Episodes: Array< { Id: string; Season: number; Episode: number; Title: string | null } >
+}
+
 interface Season {
   id: string
   seasonNumber: number
@@ -107,9 +119,9 @@ interface Episode {
 }
 
 interface Movie {
-  id: string
-  title: string
-  year: number | null
+  Id: string
+  Title: string
+  Year: number | null
 }
 
 interface Album {
@@ -190,14 +202,45 @@ export function ManualMatchModal({
 
       try {
         if (normalizedType === 'TV') {
-          const result = await graphqlClient.query<{ tvShows: TvShow[] }>(TV_SHOWS_QUERY, { libraryId }).toPromise()
-          if (result.data?.tvShows) {
-            setTvShows(result.data.tvShows)
+          const result = await graphqlClient
+            .query<{ Shows: { Edges: Array<{ Node: ShowNode }> } }>(TV_SHOWS_QUERY, { libraryId })
+            .toPromise()
+          if (result.data?.Shows?.Edges) {
+            const list: TvShow[] = result.data.Shows.Edges.map((e) => {
+              const n = e.Node
+              const bySeason = new Map<number, Episode[]>()
+              for (const ep of n.Episodes) {
+                const list = bySeason.get(ep.Season) ?? []
+                list.push({
+                  id: ep.Id,
+                  episodeNumber: ep.Episode,
+                  name: ep.Title ?? null,
+                })
+                bySeason.set(ep.Season, list)
+              }
+              const seasons: Season[] = Array.from(bySeason.entries())
+                .sort((a, b) => a[0] - b[0])
+                .map(([seasonNumber, episodes]) => ({
+                  id: `s${seasonNumber}`,
+                  seasonNumber,
+                  episodeCount: episodes.length,
+                  episodes: episodes.sort((a, b) => a.episodeNumber - b.episodeNumber),
+                }))
+              return {
+                id: n.Id,
+                name: n.Name,
+                year: n.Year ?? null,
+                seasons,
+              }
+            })
+            setTvShows(list)
           }
         } else if (normalizedType === 'MOVIES') {
-          const result = await graphqlClient.query<{ movies: Movie[] }>(MOVIES_QUERY, { libraryId }).toPromise()
-          if (result.data?.movies) {
-            setMovies(result.data.movies)
+          const result = await graphqlClient
+            .query<{ Movies: { Edges: Array<{ Node: Movie }> } }>(MOVIES_QUERY, { libraryId })
+            .toPromise()
+          if (result.data?.Movies?.Edges) {
+            setMovies(result.data.Movies.Edges.map((e) => e.Node))
           }
         } else if (normalizedType === 'MUSIC') {
           const result = await graphqlClient.query<{ albums: Album[] }>(ALBUMS_QUERY, { libraryId }).toPromise()
@@ -251,7 +294,7 @@ export function ManualMatchModal({
   const filteredMovies = useMemo(() => {
     if (!searchQuery) return movies
     const q = searchQuery.toLowerCase()
-    return movies.filter(m => m.title.toLowerCase().includes(q))
+    return movies.filter(m => m.Title.toLowerCase().includes(q))
   }, [movies, searchQuery])
 
   const filteredAlbums = useMemo(() => {
@@ -455,8 +498,8 @@ export function ManualMatchModal({
                   startContent={<IconMovie size={16} className="text-purple-400" />}
                 >
                   {filteredMovies.map((movie) => (
-                    <SelectItem key={movie.id} textValue={movie.title}>
-                      {movie.title} {movie.year && `(${movie.year})`}
+                    <SelectItem key={movie.Id} textValue={movie.Title}>
+                      {movie.Title} {movie.Year && `(${movie.Year})`}
                     </SelectItem>
                   ))}
                 </Select>

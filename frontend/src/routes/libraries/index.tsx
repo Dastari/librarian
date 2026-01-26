@@ -8,7 +8,11 @@ import { librariesTemplateNodes } from "../../lib/template-data";
 import { Tooltip } from "@heroui/tooltip";
 import { addToast } from "@heroui/toast";
 import { ConfirmModal } from "../../components/ConfirmModal";
-import { AddLibraryModal, LibraryGridCard } from "../../components/library";
+import {
+  AddLibraryModal,
+  LibraryGridCard,
+  type CreateLibraryFormInput,
+} from "../../components/library";
 import { IconPlus } from "@tabler/icons-react";
 import { RouteError } from "../../components/RouteError";
 import { sanitizeError } from "../../lib/format";
@@ -22,6 +26,7 @@ import {
   ChangeAction,
   type CreateLibraryInput as GenCreateLibraryInput,
 } from "../../lib/graphql/generated/graphql";
+import type { Movie, Show } from "../../lib/graphql/generated/graphql";
 import {
   TV_SHOWS_QUERY,
   MOVIES_QUERY,
@@ -29,11 +34,8 @@ import {
   AUDIOBOOKS_QUERY,
   SCAN_LIBRARY_MUTATION,
   type LibraryNode,
-  type TvShow,
-  type Movie,
   type Album,
   type Audiobook,
-  type CreateLibraryInput,
 } from "../../lib/graphql";
 import { Image } from "@heroui/image";
 
@@ -66,7 +68,7 @@ function LibrariesPage() {
   } = useDisclosure();
   const [libraries, setLibraries] = useState<LibraryNode[]>([]);
   const [showsByLibrary, setShowsByLibrary] = useState<
-    Record<string, TvShow[]>
+    Record<string, Show[]>
   >({});
   const [moviesByLibrary, setMoviesByLibrary] = useState<
     Record<string, Movie[]>
@@ -125,18 +127,17 @@ function LibrariesPage() {
         const showsPromises = tvLibraries.map(async (lib) => {
           try {
             const result = await graphqlClient
-              .query<{
-                tvShows: TvShow[];
-              }>(TV_SHOWS_QUERY, { libraryId: lib.Id })
+              .query<{ Shows: { Edges: Array<{ Node: Show }> } }>(TV_SHOWS_QUERY, { libraryId: lib.Id })
               .toPromise();
-            return { libraryId: lib.Id, shows: result.data?.tvShows || [] };
+            const shows = result.data?.Shows?.Edges?.map((e) => e.Node) ?? [];
+            return { libraryId: lib.Id, shows };
           } catch {
             return { libraryId: lib.Id, shows: [] };
           }
         });
 
         const showsResults = await Promise.all(showsPromises);
-        const showsMap: Record<string, TvShow[]> = {};
+        const showsMap: Record<string, Show[]> = {};
         for (const result of showsResults) {
           showsMap[result.libraryId] = result.shows;
         }
@@ -146,9 +147,10 @@ function LibrariesPage() {
         const moviesPromises = movieLibraries.map(async (lib) => {
           try {
             const result = await graphqlClient
-              .query<{ movies: Movie[] }>(MOVIES_QUERY, { libraryId: lib.Id })
+              .query<{ Movies: { Edges: Array<{ Node: Movie }> } }>(MOVIES_QUERY, { libraryId: lib.Id })
               .toPromise();
-            return { libraryId: lib.Id, movies: result.data?.movies || [] };
+            const movies = result.data?.Movies?.Edges?.map((e) => e.Node) ?? [];
+            return { libraryId: lib.Id, movies };
           } catch {
             return { libraryId: lib.Id, movies: [] };
           }
@@ -263,7 +265,7 @@ function LibrariesPage() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const handleAddLibrary = async (input: CreateLibraryInput) => {
+  const handleAddLibrary = async (input: CreateLibraryFormInput) => {
     if (!currentUserId) {
       addToast({
         title: "Error",
@@ -274,22 +276,10 @@ function LibrariesPage() {
     }
     const now = new Date().toISOString();
     const genInput: GenCreateLibraryInput = {
+      ...input,
       UserId: currentUserId,
-      Name: input.name,
-      Path: input.path,
-      LibraryType: input.libraryType,
-      Icon: input.icon ?? null,
-      Color: input.color ?? null,
-      AutoScan: input.autoScan ?? true,
-      ScanIntervalMinutes: input.scanIntervalMinutes ?? 60,
-      WatchForChanges: input.watchForChanges ?? false,
-      AutoAddDiscovered: input.autoAddDiscovered ?? false,
-      AutoDownload: input.autoDownload ?? false,
-      AutoHunt: input.autoHunt ?? false,
-      Scanning: false,
       CreatedAt: now,
       UpdatedAt: now,
-      LastScannedAt: null,
     };
     try {
       setActionLoading(true);
@@ -310,7 +300,7 @@ function LibrariesPage() {
 
       addToast({
         title: "Success",
-        description: `Library "${input.name}" created`,
+        description: `Library "${input.Name}" created`,
         color: "success",
       });
 

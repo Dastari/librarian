@@ -9,5 +9,5 @@ export const Route = createFileRoute('/libraries/$libraryId/tracks')({
 function TracksPage() {
   const { library, loading } = useLibraryContext()
 
-  return <LibraryTracksTab libraryId={library.id} loading={loading} />
+  return <LibraryTracksTab libraryId={library.Id} loading={loading} />
 }

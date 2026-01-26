@@ -30,7 +30,7 @@ export interface UseContentDownloadProgressOptions {
  * @example
  * ```tsx
  * const progressMap = useContentDownloadProgress({
- *   libraryId: library.id,
+ *   libraryId: library.Id,
  *   contentType: ContentDownloadType.TRACK,
  * })
  *

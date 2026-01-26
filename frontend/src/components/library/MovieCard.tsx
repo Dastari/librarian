@@ -3,7 +3,7 @@ import { Card } from '@heroui/card'
 import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
 import { Button } from '@heroui/button'
 import { Image } from '@heroui/image'
-import type { Movie } from '../../lib/graphql'
+import type { Movie } from '../../lib/graphql/generated/graphql'
 import { IconEye, IconTrash, IconMovie, IconCheck, IconDotsVertical, IconClock } from '@tabler/icons-react'
 
 // ============================================================================
@@ -30,18 +30,18 @@ export function MovieCard({ movie, onDelete }: MovieCardProps) {
       {/* Clickable overlay for navigation - covers the entire card */}
       <Link
         to="/movies/$movieId"
-        params={{ movieId: movie.id }}
+        params={{ movieId: movie.Id }}
         className="absolute inset-0 z-20 w-full h-full cursor-pointer bg-transparent border-none outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-        aria-label={`View ${movie.title}`}
+        aria-label={`View ${movie.Title}`}
       />
 
       {/* Background artwork with gradient overlay */}
       <div className="absolute inset-0 w-full h-full">
-        {movie.posterUrl ? (
+        {movie.PosterUrl ? (
           <>
             <Image
-              src={movie.posterUrl}
-              alt={movie.title}
+              src={movie.PosterUrl}
+              alt={movie.Title}
               classNames={{
                 wrapper: "absolute inset-0 w-full h-full !max-w-full",
                 img: "w-full h-full object-cover"
@@ -66,28 +66,28 @@ export function MovieCard({ movie, onDelete }: MovieCardProps) {
       <div className="absolute top-2 left-2 z-10 pointer-events-none">
         <div
           className={`px-2 py-1 rounded-md backdrop-blur-sm text-xs font-medium ${
-            movie.mediaFileId
+            movie.MediaFileId
               ? 'bg-success/80 text-success-foreground'
               : 'bg-warning/80 text-warning-foreground'
           }`}
         >
-          {movie.mediaFileId ? <><IconCheck size={12} className="inline mr-1 text-green-400" />Downloaded</> : 'Missing'}
+          {movie.MediaFileId ? <><IconCheck size={12} className="inline mr-1 text-green-400" />Downloaded</> : 'Missing'}
         </div>
       </div>
 
       {/* Rating badge - top right */}
-      {movie.tmdbRating && movie.tmdbRating > 0 && (
+      {movie.TmdbRating && Number(movie.TmdbRating) > 0 && (
         <div className="absolute top-2 right-2 z-10 pointer-events-none">
           <div
             className={`px-2 py-1 rounded-md backdrop-blur-sm text-xs font-semibold ${
-              movie.tmdbRating >= 7
+              Number(movie.TmdbRating) >= 7
                 ? 'bg-success/80 text-success-foreground'
-                : movie.tmdbRating >= 5
+                : Number(movie.TmdbRating) >= 5
                 ? 'bg-warning/80 text-warning-foreground'
                 : 'bg-danger/80 text-danger-foreground'
             }`}
           >
-            {movie.tmdbRating.toFixed(1)}
+            {Number(movie.TmdbRating).toFixed(1)}
           </div>
         </div>
       )}
@@ -95,26 +95,26 @@ export function MovieCard({ movie, onDelete }: MovieCardProps) {
       {/* Bottom content */}
       <div className="absolute bottom-0 left-0 right-0 z-10 p-3 pointer-events-none bg-black/50 backdrop-blur-sm h-20 flex flex-col">
         <h3 className="text-sm font-bold text-white mb-0.5 line-clamp-2 drop-shadow-lg grow">
-          {movie.title}
-          {movie.year && <span className="font-normal opacity-70"> ({movie.year})</span>}
+          {movie.Title}
+          {movie.Year != null && <span className="font-normal opacity-70"> ({movie.Year})</span>}
         </h3>
         <div className="flex items-center gap-1.5 text-xs text-white/70">
-          {movie.runtime && (
+          {movie.Runtime != null && (
             <>
               <IconClock size={12} />
-              <span>{Math.floor(movie.runtime / 60)}h {movie.runtime % 60}m</span>
+              <span>{Math.floor(movie.Runtime / 60)}h {movie.Runtime % 60}m</span>
             </>
           )}
-          {movie.mediaFileId && (
+          {movie.MediaFileId && (
             <>
               <span>•</span>
               <IconCheck size={12} className="text-success" />
             </>
           )}
-          {movie.genres.length > 0 && (
+          {movie.Genres.length > 0 && (
             <>
               <span>•</span>
-              <span className="truncate">{movie.genres[0]}</span>
+              <span className="truncate">{movie.Genres[0]}</span>
             </>
           )}
         </div>
@@ -138,7 +138,7 @@ export function MovieCard({ movie, onDelete }: MovieCardProps) {
             aria-label="Movie actions"
             onAction={(key) => {
               if (key === 'view') {
-                navigate({ to: '/movies/$movieId', params: { movieId: movie.id } })
+                navigate({ to: '/movies/$movieId', params: { movieId: movie.Id } })
               } else if (key === 'delete') {
                 onDelete()
               }

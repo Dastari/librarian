@@ -11,27 +11,27 @@ interface LibrarySettingsTabProps {
 }
 
 export function LibrarySettingsTab({ library, onSave, isLoading }: LibrarySettingsTabProps) {
-  // Convert library to form values
+  // Convert codegen Library to form values (only fields present on schema; rest defaulted)
   const libraryToValues = useCallback((lib: Library): LibrarySettingsValues => ({
-    name: lib.name,
-    path: lib.path,
-    libraryType: lib.libraryType,
-    autoScan: lib.autoScan,
-    scanIntervalMinutes: lib.scanIntervalMinutes,
-    watchForChanges: lib.watchForChanges,
-    organizeFiles: lib.organizeFiles,
-    namingPattern: lib.namingPattern,
-    autoAddDiscovered: lib.autoAddDiscovered,
-    autoDownload: lib.autoDownload,
-    autoHunt: lib.autoHunt,
-    allowedResolutions: lib.allowedResolutions || [],
-    allowedVideoCodecs: lib.allowedVideoCodecs || [],
-    allowedAudioFormats: lib.allowedAudioFormats || [],
-    requireHdr: lib.requireHdr || false,
-    allowedHdrTypes: lib.allowedHdrTypes || [],
-    allowedSources: lib.allowedSources || [],
-    releaseGroupBlacklist: lib.releaseGroupBlacklist || [],
-    releaseGroupWhitelist: lib.releaseGroupWhitelist || [],
+    name: lib.Name,
+    path: lib.Path,
+    libraryType: lib.LibraryType as LibrarySettingsValues['libraryType'],
+    autoScan: lib.AutoScan,
+    scanIntervalMinutes: lib.ScanIntervalMinutes,
+    watchForChanges: lib.WatchForChanges,
+    organizeFiles: false,
+    namingPattern: null,
+    autoAddDiscovered: lib.AutoAddDiscovered,
+    autoDownload: lib.AutoDownload,
+    autoHunt: lib.AutoHunt,
+    allowedResolutions: [],
+    allowedVideoCodecs: [],
+    allowedAudioFormats: [],
+    requireHdr: false,
+    allowedHdrTypes: [],
+    allowedSources: [],
+    releaseGroupBlacklist: [],
+    releaseGroupWhitelist: [],
   }), [])
 
   const [values, setValues] = useState<LibrarySettingsValues>(() => libraryToValues(library))
@@ -88,25 +88,15 @@ export function LibrarySettingsTab({ library, onSave, isLoading }: LibrarySettin
     }
 
     await onSave({
-      name: values.name,
-      path: values.path,
-      autoScan: values.autoScan,
-      scanIntervalMinutes: values.scanIntervalMinutes,
-      watchForChanges: values.watchForChanges,
-      organizeFiles: values.organizeFiles,
-      namingPattern: values.namingPattern || undefined,
-      autoAddDiscovered: values.autoAddDiscovered,
-      autoDownload: values.autoDownload,
-      autoHunt: values.autoHunt,
-      // Quality settings
-      allowedResolutions: values.allowedResolutions,
-      allowedVideoCodecs: values.allowedVideoCodecs,
-      allowedAudioFormats: values.allowedAudioFormats,
-      requireHdr: values.requireHdr,
-      allowedHdrTypes: values.allowedHdrTypes,
-      allowedSources: values.allowedSources,
-      releaseGroupBlacklist: values.releaseGroupBlacklist,
-      releaseGroupWhitelist: values.releaseGroupWhitelist,
+      Name: values.name,
+      Path: values.path,
+      LibraryType: values.libraryType,
+      AutoScan: values.autoScan,
+      ScanIntervalMinutes: values.scanIntervalMinutes,
+      WatchForChanges: values.watchForChanges,
+      AutoAddDiscovered: values.autoAddDiscovered,
+      AutoDownload: values.autoDownload,
+      AutoHunt: values.autoHunt,
     })
   }
 

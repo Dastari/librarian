@@ -411,24 +411,50 @@ function ShowDetailPage() {
 
       // First fetch the show to get libraryId
       const showResult = await graphqlClient
-        .query<{ tvShow: TvShow | null }>(TV_SHOW_QUERY, { id: showId })
+        .query<{ Show: import('../../lib/graphql/generated/graphql').Show | null }>(TV_SHOW_QUERY, { Id: showId })
         .toPromise()
 
-      if (showResult.data?.tvShow) {
-        setShow(showResult.data.tvShow)
+      if (showResult.data?.Show) {
+        const showData = showResult.data.Show
+        setShow({
+          id: showData.Id,
+          libraryId: showData.LibraryId,
+          name: showData.Name,
+          sortName: showData.SortName ?? null,
+          year: showData.Year ?? null,
+          status: showData.Status ?? null,
+          tvmazeId: showData.TvmazeId ?? null,
+          tmdbId: showData.TmdbId ?? null,
+          tvdbId: showData.TvdbId ?? null,
+          imdbId: showData.ImdbId ?? null,
+          overview: showData.Overview ?? null,
+          network: showData.Network ?? null,
+          runtime: showData.Runtime ?? null,
+          genres: showData.Genres ?? [],
+          posterUrl: showData.PosterUrl ?? null,
+          backdropUrl: showData.BackdropUrl ?? null,
+          monitored: showData.Monitored,
+          monitorType: showData.MonitorType,
+          path: showData.Path ?? null,
+          episodeCount: showData.EpisodeCount ?? null,
+          episodeFileCount: showData.EpisodeFileCount ?? null,
+          sizeBytes: showData.SizeBytes ?? null,
+        } as TvShow)
 
         // Now fetch library and episodes in parallel
         const [libraryResult, episodesResult] = await Promise.all([
           graphqlClient
-            .query<{ library: Library | null }>(LIBRARY_QUERY, { id: showResult.data.tvShow.libraryId })
+            .query<{
+              Library: import('../../lib/graphql/generated/graphql').Library | null
+            }>(LIBRARY_QUERY, { Id: showData.LibraryId })
             .toPromise(),
           graphqlClient
             .query<{ episodes: Episode[] }>(EPISODES_QUERY, { tvShowId: showId })
             .toPromise(),
         ])
 
-        if (libraryResult.data?.library) {
-          setLibrary(libraryResult.data.library)
+        if (libraryResult.data?.Library) {
+          setLibrary(libraryResult.data.Library)
         }
         if (episodesResult.data?.episodes) {
           setEpisodes(episodesResult.data.episodes)
@@ -772,7 +798,7 @@ function ShowDetailPage() {
             <Breadcrumbs className="mb-2">
               <BreadcrumbItem href="/libraries">Libraries</BreadcrumbItem>
               <BreadcrumbItem href={`/libraries/${displayShow.libraryId}`}>
-                {displayLibrary.name}
+                {displayLibrary.Name}
               </BreadcrumbItem>
               <BreadcrumbItem isCurrent>{displayShow.name}</BreadcrumbItem>
             </Breadcrumbs>
@@ -869,7 +895,7 @@ function ShowDetailPage() {
                 const downloadInherited = displayShow.autoDownloadOverride === null
                 const isInherited = huntInherited && downloadInherited
                 
-                const libraryEnabled = (displayLibrary.autoHunt ?? false) || (displayLibrary.autoDownload ?? false)
+                const libraryEnabled = (displayLibrary.AutoHunt ?? false) || (displayLibrary.AutoDownload ?? false)
                 const showHuntEnabled = displayShow.autoHuntOverride === true
                 const showDownloadEnabled = displayShow.autoDownloadOverride === true
                 
@@ -890,7 +916,7 @@ function ShowDetailPage() {
               {/* File Organization Badge */}
               {(() => {
                 const isInherited = displayShow.organizeFilesOverride === null
-                const effectiveValue = isInherited ? (displayLibrary.organizeFiles ?? false) : displayShow.organizeFilesOverride
+                const effectiveValue = isInherited ? false : displayShow.organizeFilesOverride
                 const isEnabled = effectiveValue === true
 
                 return (
@@ -908,13 +934,13 @@ function ShowDetailPage() {
               {(() => {
                 const isInherited = displayShow.allowedResolutionsOverride === null
                 const resolutions = isInherited
-                  ? (displayLibrary.allowedResolutions || [])
+                  ? []
                   : (displayShow.allowedResolutionsOverride || [])
                 const codecs = isInherited
-                  ? (displayLibrary.allowedVideoCodecs || [])
+                  ? []
                   : (displayShow.allowedVideoCodecsOverride || [])
                 const requireHdr = isInherited
-                  ? (displayLibrary.requireHdr || false)
+                  ? false
                   : (displayShow.requireHdrOverride || false)
 
                 return (

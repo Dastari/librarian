@@ -18,11 +18,7 @@ import { Card, CardBody } from "@heroui/card";
 import { useDisclosure } from "@heroui/modal";
 import { ShimmerLoader } from "../../components/shared/ShimmerLoader";
 import { libraryTemplate } from "../../lib/template-data";
-import {
-  AutoHuntBadge,
-  FileOrganizationBadge,
-  QualityFilterBadge,
-} from "../../components/shared";
+import { AutoHuntBadge } from "../../components/shared";
 import { addToast } from "@heroui/toast";
 import { Breadcrumbs, BreadcrumbItem } from "@heroui/breadcrumbs";
 import { ConfirmModal } from "../../components/ConfirmModal";
@@ -38,6 +34,7 @@ import {
   type LibraryTab,
 } from "../../components/library";
 import { sanitizeError } from "../../lib/format";
+import type { Show } from "../../lib/graphql/generated/graphql";
 import {
   graphqlClient,
   LIBRARY_QUERY,
@@ -48,17 +45,15 @@ import {
   LIBRARY_CHANGED_SUBSCRIPTION,
   getLibraryTypeInfo,
   type Library,
-  type TvShow,
+  type LibraryType,
   type UpdateLibraryInput,
-  type LibraryChangedEvent,
 } from "../../lib/graphql";
-import { formatBytes } from "../../lib/format";
 
 // Context for sharing library data with subroutes
 export interface LibraryContextValue {
   library: Library;
   loading: boolean;
-  tvShows: TvShow[];
+  tvShows: Show[];
   fetchData: (isBackgroundRefresh?: boolean) => Promise<void>;
   actionLoading: boolean;
   handleDeleteShowClick: (showId: string, showName: string) => void;
@@ -114,7 +109,7 @@ function LibraryDetailLayout() {
     onClose: onConfirmClose,
   } = useDisclosure();
   const [library, setLibrary] = useState<Library | null>(null);
-  const [tvShows, setTvShows] = useState<TvShow[]>([]);
+  const [tvShows, setTvShows] = useState<Show[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [showToDelete, setShowToDelete] = useState<{
@@ -145,7 +140,7 @@ function LibraryDetailLayout() {
 
     // Return default based on library type
     if (library) {
-      switch (library.libraryType) {
+      switch (library.LibraryType) {
         case "MOVIES":
           return "movies";
         case "TV":
@@ -176,19 +171,19 @@ function LibraryDetailLayout() {
         const [libraryResult, showsResult] = await Promise.all([
           graphqlClient
             .query<{
-              library: Library | null;
-            }>(LIBRARY_QUERY, { id: libraryId })
+              Library: import("../../lib/graphql/generated/graphql").Library | null;
+            }>(LIBRARY_QUERY, { Id: libraryId } as { Id: string })
             .toPromise(),
           graphqlClient
-            .query<{ tvShows: TvShow[] }>(TV_SHOWS_QUERY, { libraryId })
+            .query<{ Shows: { Edges: Array<{ Node: Show }> } }>(TV_SHOWS_QUERY, { libraryId })
             .toPromise(),
         ]);
 
-        if (libraryResult.data?.library) {
-          setLibrary(libraryResult.data.library);
+        if (libraryResult.data?.Library) {
+          setLibrary(libraryResult.data.Library);
         }
-        if (showsResult.data?.tvShows) {
-          setTvShows(showsResult.data.tvShows);
+        if (showsResult.data?.Shows?.Edges) {
+          setTvShows(showsResult.data.Shows.Edges.map((e) => e.Node));
         }
       } catch (err) {
         console.error("Failed to fetch data:", err);
@@ -206,19 +201,19 @@ function LibraryDetailLayout() {
 
   // Sync local scanning state with library scanning state
   useEffect(() => {
-    if (library && !library.scanning && isScanning) {
+    if (library && !library.Scanning && isScanning) {
       // Library finished scanning, update local state
       setIsScanning(false);
-    } else if (library?.scanning && !isScanning) {
+    } else if (library?.Scanning && !isScanning) {
       // Library is scanning (e.g., started from elsewhere), sync local state
       setIsScanning(true);
     }
-  }, [library?.scanning, isScanning]);
+  }, [library?.Scanning, isScanning]);
 
   // Update page title when library data is loaded
   useEffect(() => {
     if (library) {
-      document.title = `Librarian - ${library.name}`;
+      document.title = `Librarian - ${library.Name}`;
     }
     return () => {
       document.title = "Librarian";
@@ -288,17 +283,17 @@ function LibraryDetailLayout() {
       setActionLoading(true);
       const { data, error } = await graphqlClient
         .mutation<{
-          updateLibrary: {
-            success: boolean;
-            library: Library | null;
-            error: string | null;
+          UpdateLibrary: {
+            Success: boolean;
+            Library: Library | null;
+            Error: string | null;
           };
-        }>(UPDATE_LIBRARY_MUTATION, { id: library.id, input })
+        }>(UPDATE_LIBRARY_MUTATION, { Id: library.Id, Input: input })
         .toPromise();
 
-      if (error || !data?.updateLibrary.success) {
+      if (error || !data?.UpdateLibrary.Success) {
         const errorMsg =
-          data?.updateLibrary.error || error?.message || "Unknown error";
+          data?.UpdateLibrary.Error || error?.message || "Unknown error";
         addToast({
           title: "Error",
           description: `Failed to update library: ${errorMsg}`,
@@ -334,8 +329,8 @@ function LibraryDetailLayout() {
     try {
       const { data, error } = await graphqlClient
         .mutation<{
-          scanLibrary: { status: string; message: string | null };
-        }>(SCAN_LIBRARY_MUTATION, { id: library.id })
+          ScanLibrary: { Status: string; Message: string | null };
+        }>(SCAN_LIBRARY_MUTATION, { Id: library.Id })
         .toPromise();
 
       if (error) {
@@ -350,7 +345,7 @@ function LibraryDetailLayout() {
 
       addToast({
         title: "Scan Started",
-        description: data?.scanLibrary.message || `Scanning ${library.name}...`,
+        description: data?.ScanLibrary.Message || `Scanning ${library.Name}...`,
         color: "primary",
       });
       // Scan completion will be detected via subscription
@@ -361,7 +356,7 @@ function LibraryDetailLayout() {
   };
 
   // Track previous scanning state to detect transitions
-  const prevScanningRef = useRef(library?.scanning);
+  const prevScanningRef = useRef(library?.Scanning);
 
   // Subscribe to library changes to refresh data on any change
   useEffect(() => {
@@ -369,19 +364,19 @@ function LibraryDetailLayout() {
 
     const sub = graphqlClient
       .subscription<{
-        libraryChanged: LibraryChangedEvent;
+        LibraryChanged: { Action: string; Id: string; Library?: Library | null };
       }>(LIBRARY_CHANGED_SUBSCRIPTION, {})
       .subscribe({
         next: (result) => {
-          if (result.data?.libraryChanged) {
-            const event = result.data.libraryChanged;
+          if (result.data?.LibraryChanged) {
+            const event = result.data.LibraryChanged;
             // Only handle events for this library
-            if (event.libraryId === library.id && event.library) {
+            if (event.Id === library.Id && event.Library) {
               const wasScanning = prevScanningRef.current;
-              const nowScanning = event.library.scanning;
+              const nowScanning = event.Library.Scanning;
 
               // Update local library state
-              setLibrary(event.library);
+              setLibrary(event.Library);
               prevScanningRef.current = nowScanning;
 
               // Handle scan state transitions for UI feedback
@@ -389,11 +384,11 @@ function LibraryDetailLayout() {
                 setIsScanning(false);
                 addToast({
                   title: "Scan Complete",
-                  description: `Finished scanning ${library.name}`,
+                  description: `Finished scanning ${library.Name}`,
                   color: "success",
                 });
               } else if (!wasScanning && nowScanning) {
-                // Scan started (e.g., from another client)
+                // Scan started (e.g. from another client)
                 setIsScanning(true);
               }
 
@@ -406,7 +401,7 @@ function LibraryDetailLayout() {
       });
 
     return () => sub.unsubscribe();
-  }, [library?.id, library?.name, fetchData]);
+  }, [library?.Id, library?.Name, fetchData]);
 
   // Show not found state only after loading is complete
   if (!loading && !library) {
@@ -426,7 +421,7 @@ function LibraryDetailLayout() {
 
   // Use template data during loading, real data when available
   const displayLibrary = library ?? libraryTemplate;
-  const typeInfo = getLibraryTypeInfo(displayLibrary.libraryType);
+  const typeInfo = getLibraryTypeInfo(displayLibrary.LibraryType as LibraryType);
 
   // Always provide context with loading state so subroutes can show shimmer
   const contextValue: LibraryContextValue = {
@@ -453,7 +448,7 @@ function LibraryDetailLayout() {
             {/* Breadcrumb */}
             <Breadcrumbs className="mb-2">
               <BreadcrumbItem href="/libraries">Libraries</BreadcrumbItem>
-              <BreadcrumbItem isCurrent>{displayLibrary.name}</BreadcrumbItem>
+              <BreadcrumbItem isCurrent>{displayLibrary.Name}</BreadcrumbItem>
             </Breadcrumbs>
 
             {/* Title and Stats */}
@@ -461,45 +456,26 @@ function LibraryDetailLayout() {
               <div className="flex items-center gap-4">
                 <typeInfo.Icon className="w-10 h-10" />
                 <div>
-                  <h1 className="text-2xl font-bold">{displayLibrary.name}</h1>
+                  <h1 className="text-2xl font-bold">{displayLibrary.Name}</h1>
                   <div className="flex items-center gap-3 text-sm text-default-500 mt-1">
-                    <span>
-                      {displayLibrary.libraryType === "TV"
-                        ? `${displayLibrary.showCount} shows`
-                        : displayLibrary.libraryType === "MOVIES"
-                          ? `${displayLibrary.movieCount} movies`
-                          : `${displayLibrary.itemCount} items`}
-                    </span>
-                    <span>•</span>
-                    <span>{formatBytes(displayLibrary.totalSizeBytes)}</span>
-                    <span>•</span>
                     <span className="font-mono text-xs">
-                      {displayLibrary.path}
+                      {displayLibrary.Path}
                     </span>
                   </div>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
-                {/* Setting Badges - Auto Hunt covers both search and RSS download */}
-                <AutoHuntBadge isEnabled={displayLibrary.autoHunt || displayLibrary.autoDownload} />
-                <FileOrganizationBadge
-                  isEnabled={displayLibrary.organizeFiles}
-                />
-                <QualityFilterBadge
-                  resolutions={displayLibrary.allowedResolutions || []}
-                  codecs={displayLibrary.allowedVideoCodecs || []}
-                  requireHdr={displayLibrary.requireHdr || false}
-                />
+                <AutoHuntBadge isEnabled={displayLibrary.AutoHunt || displayLibrary.AutoDownload} />
                 <Button
                   color="primary"
                   variant="flat"
                   size="sm"
                   onPress={handleScanLibrary}
-                  isLoading={isScanning || displayLibrary.scanning}
-                  isDisabled={loading || isScanning || displayLibrary.scanning}
+                  isLoading={isScanning || displayLibrary.Scanning}
+                  isDisabled={loading || isScanning || displayLibrary.Scanning}
                 >
-                  {isScanning || displayLibrary.scanning
+                  {isScanning || displayLibrary.Scanning
                     ? "Scanning..."
                     : "Scan Now"}
                 </Button>
@@ -512,7 +488,7 @@ function LibraryDetailLayout() {
         <LibraryLayout
           activeTab={getActiveTab()}
           libraryId={libraryId}
-          libraryType={displayLibrary.libraryType}
+          libraryType={displayLibrary.LibraryType as LibraryType}
         >
           <Outlet />
         </LibraryLayout>

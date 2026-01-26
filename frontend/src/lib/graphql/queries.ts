@@ -223,37 +223,25 @@ export const LIBRARIES_QUERY = `
 `;
 
 export const LIBRARY_QUERY = `
-  query Library($id: String!) {
-    library(id: $id) {
-      id
-      name
-      path
-      libraryType
-      icon
-      color
-      autoScan
-      scanIntervalMinutes
-      watchForChanges
-      organizeFiles
-      renameStyle
-      namingPattern
-      autoAddDiscovered
-      autoDownload
-      autoHunt
-      scanning
-      itemCount
-      totalSizeBytes
-      showCount
-      movieCount
-      lastScannedAt
-      allowedResolutions
-      allowedVideoCodecs
-      allowedAudioFormats
-      requireHdr
-      allowedHdrTypes
-      allowedSources
-      releaseGroupBlacklist
-      releaseGroupWhitelist
+  query Library($Id: String!) {
+    Library(Id: $Id) {
+      Id
+      Name
+      Path
+      LibraryType
+      Icon
+      Color
+      AutoScan
+      ScanIntervalMinutes
+      WatchForChanges
+      AutoAddDiscovered
+      AutoDownload
+      AutoHunt
+      Scanning
+      LastScannedAt
+      CreatedAt
+      UpdatedAt
+      UserId
     }
   }
 `;
@@ -264,116 +252,118 @@ export const LIBRARY_QUERY = `
 
 export const ALL_TV_SHOWS_QUERY = `
   query AllTvShows {
-    allTvShows {
-      id
-      libraryId
-      name
-      sortName
-      year
-      status
-      posterUrl
-      monitored
+    Shows {
+      Edges {
+        Node {
+          Id
+          LibraryId
+          Name
+          SortName
+          Year
+          Status
+          PosterUrl
+          Monitored
+        }
+      }
     }
   }
 `;
 
 export const TV_SHOWS_QUERY = `
   query TvShows($libraryId: String!) {
-    tvShows(libraryId: $libraryId) {
-      id
-      libraryId
-      name
-      sortName
-      year
-      status
-      tvmazeId
-      tmdbId
-      tvdbId
-      imdbId
-      overview
-      network
-      runtime
-      genres
-      posterUrl
-      backdropUrl
-      monitored
-      monitorType
-      path
-      episodeCount
-      episodeFileCount
-      sizeBytes
+    Shows(Where: { LibraryId: { Eq: $libraryId } }) {
+      Edges {
+        Node {
+          Id
+          LibraryId
+          Name
+          SortName
+          Year
+          Status
+          TvmazeId
+          TmdbId
+          TvdbId
+          ImdbId
+          Overview
+          Network
+          Runtime
+          Genres
+          PosterUrl
+          BackdropUrl
+          Monitored
+          MonitorType
+          Path
+          EpisodeCount
+          EpisodeFileCount
+          SizeBytes
+        }
+      }
     }
   }
 `;
 
 export const TV_SHOWS_CONNECTION_QUERY = `
-  query TvShowsConnection($libraryId: String!, $first: Int, $after: String, $where: TvShowWhereInput, $orderBy: TvShowOrderByInput) {
-    tvShowsConnection(libraryId: $libraryId, first: $first, after: $after, where: $where, orderBy: $orderBy) {
-      edges {
-        node {
-          id
-          libraryId
-          name
-          sortName
-          year
-          status
-          posterUrl
-          backdropUrl
-          monitored
-          episodeCount
-          episodeFileCount
+  query TvShowsConnection(
+    $Where: ShowWhereInput
+    $Page: PageInput
+    $OrderBy: [ShowOrderByInput]
+  ) {
+    Shows(Where: $Where, Page: $Page, OrderBy: $OrderBy) {
+      Edges {
+        Node {
+          Id
+          LibraryId
+          Name
+          SortName
+          Year
+          Status
+          PosterUrl
+          BackdropUrl
+          Monitored
+          EpisodeCount
+          EpisodeFileCount
         }
-        cursor
+        Cursor
       }
-      pageInfo {
-        hasNextPage
-        hasPreviousPage
-        startCursor
-        endCursor
-        totalCount
+      PageInfo {
+        HasNextPage
+        HasPreviousPage
+        StartCursor
+        EndCursor
+        TotalCount
       }
     }
   }
 `;
 
 export const TV_SHOW_QUERY = `
-  query TvShow($id: String!) {
-    tvShow(id: $id) {
-      id
-      libraryId
-      name
-      sortName
-      year
-      status
-      tvmazeId
-      tmdbId
-      tvdbId
-      imdbId
-      overview
-      network
-      runtime
-      genres
-      posterUrl
-      backdropUrl
-      monitored
-      monitorType
-      path
-      autoDownloadOverride
-      backfillExisting
-      organizeFilesOverride
-      renameStyleOverride
-      autoHuntOverride
-      episodeCount
-      episodeFileCount
-      sizeBytes
-      allowedResolutionsOverride
-      allowedVideoCodecsOverride
-      allowedAudioFormatsOverride
-      requireHdrOverride
-      allowedHdrTypesOverride
-      allowedSourcesOverride
-      releaseGroupBlacklistOverride
-      releaseGroupWhitelistOverride
+  query TvShow($Id: String!) {
+    Show(Id: $Id) {
+      Id
+      LibraryId
+      Name
+      SortName
+      Year
+      Status
+      TvmazeId
+      TmdbId
+      TvdbId
+      ImdbId
+      Overview
+      Network
+      Runtime
+      Genres
+      PosterUrl
+      BackdropUrl
+      Monitored
+      MonitorType
+      Path
+      EpisodeCount
+      EpisodeFileCount
+      SizeBytes
+      CreatedAt
+      UpdatedAt
+      UserId
     }
   }
 `;
@@ -402,133 +392,133 @@ export const SEARCH_TV_SHOWS_QUERY = `
 
 export const ALL_MOVIES_QUERY = `
   query AllMovies {
-    allMovies {
-      id
-      libraryId
-      title
-      sortTitle
-      year
-      status
-      posterUrl
-      monitored
-      mediaFileId
+    Movies {
+      Edges {
+        Node {
+          Id
+          LibraryId
+          Title
+          SortTitle
+          Year
+          Status
+          PosterUrl
+          Monitored
+          MediaFileId
+        }
+      }
     }
   }
 `;
 
 export const MOVIES_QUERY = `
   query Movies($libraryId: String!) {
-    movies(libraryId: $libraryId) {
-      id
-      libraryId
-      title
-      sortTitle
-      originalTitle
-      year
-      tmdbId
-      imdbId
-      status
-      overview
-      tagline
-      runtime
-      genres
-      director
-      castNames
-      posterUrl
-      backdropUrl
-      monitored
-      mediaFileId
-      collectionId
-      collectionName
-      collectionPosterUrl
-      tmdbRating
-      tmdbVoteCount
-      certification
-      releaseDate
+    Movies(Where: { LibraryId: { Eq: $libraryId } }) {
+      Edges {
+        Node {
+          Id
+          LibraryId
+          Title
+          SortTitle
+          OriginalTitle
+          Year
+          TmdbId
+          ImdbId
+          Status
+          Overview
+          Tagline
+          Runtime
+          Genres
+          Director
+          CastNames
+          PosterUrl
+          BackdropUrl
+          Monitored
+          MediaFileId
+          CollectionId
+          CollectionName
+          CollectionPosterUrl
+          TmdbRating
+          TmdbVoteCount
+          Certification
+          ReleaseDate
+        }
+      }
     }
   }
 `;
 
-/** Movies query with cursor-based pagination and filtering */
+/** Movies query with pagination and filtering */
 export const MOVIES_CONNECTION_QUERY = `
   query MoviesConnection(
-    $libraryId: String!
-    $first: Int
-    $after: String
-    $where: MovieWhereInput
-    $orderBy: MovieOrderByInput
+    $Where: MovieWhereInput
+    $Page: PageInput
+    $OrderBy: [MovieOrderByInput]
   ) {
-    moviesConnection(
-      libraryId: $libraryId
-      first: $first
-      after: $after
-      where: $where
-      orderBy: $orderBy
-    ) {
-      edges {
-        node {
-          id
-          libraryId
-          title
-          sortTitle
-          originalTitle
-          year
-          tmdbId
-          imdbId
-          status
-          overview
-          runtime
-          genres
-          director
-          posterUrl
-          backdropUrl
-          monitored
-          mediaFileId
-          tmdbRating
-          releaseDate
+    Movies(Where: $Where, Page: $Page, OrderBy: $OrderBy) {
+      Edges {
+        Node {
+          Id
+          LibraryId
+          Title
+          SortTitle
+          OriginalTitle
+          Year
+          TmdbId
+          ImdbId
+          Status
+          Overview
+          Runtime
+          Genres
+          Director
+          PosterUrl
+          BackdropUrl
+          Monitored
+          MediaFileId
+          TmdbRating
+          ReleaseDate
         }
-        cursor
+        Cursor
       }
-      pageInfo {
-        hasNextPage
-        hasPreviousPage
-        startCursor
-        endCursor
-        totalCount
+      PageInfo {
+        HasNextPage
+        HasPreviousPage
+        StartCursor
+        EndCursor
+        TotalCount
       }
     }
   }
 `;
 
 export const MOVIE_QUERY = `
-  query Movie($id: String!) {
-    movie(id: $id) {
-      id
-      libraryId
-      title
-      sortTitle
-      originalTitle
-      year
-      tmdbId
-      imdbId
-      status
-      overview
-      tagline
-      runtime
-      genres
-      director
-      castNames
-      posterUrl
-      backdropUrl
-      monitored
-      mediaFileId
-      collectionId
-      collectionName
-      collectionPosterUrl
-      tmdbRating
-      tmdbVoteCount
-      certification
-      releaseDate
+  query Movie($Id: String!) {
+    Movie(Id: $Id) {
+      Id
+      LibraryId
+      Title
+      SortTitle
+      OriginalTitle
+      Year
+      TmdbId
+      ImdbId
+      Status
+      Overview
+      Tagline
+      Runtime
+      Genres
+      Director
+      CastNames
+      PosterUrl
+      BackdropUrl
+      Monitored
+      MediaFileId
+      CollectionId
+      CollectionName
+      CollectionPosterUrl
+      TmdbRating
+      TmdbVoteCount
+      Certification
+      ReleaseDate
     }
   }
 `;
@@ -1093,14 +1083,18 @@ export const WANTED_EPISODES_QUERY = `
 
 export const NAMING_PATTERNS_QUERY = `
   query NamingPatterns {
-    namingPatterns {
-      id
-      name
-      pattern
-      description
-      isDefault
-      isSystem
-      libraryType
+    NamingPatterns {
+      Edges {
+        Node {
+          Id
+          Name
+          Pattern
+          Description
+          IsDefault
+          IsSystem
+          LibraryType
+        }
+      }
     }
   }
 `;

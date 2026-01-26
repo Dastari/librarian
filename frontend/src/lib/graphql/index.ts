@@ -3,8 +3,16 @@
 // Client
 export { apolloClient, graphqlClient, onGraphQLError } from "./client";
 
-// Codegen node types (use these + PascalCase everywhere)
+// Codegen node types and Library types (source of truth)
 export type { LibraryNode, ShowNode, ScheduleCacheNode } from "./codegen-nodes";
+export type {
+  Library,
+  LibraryResult,
+  LibraryChangedEvent,
+  CreateLibraryInput,
+  UpdateLibraryInput,
+  ChangeAction,
+} from "./generated/graphql";
 
 // Types
 export type {
@@ -59,15 +67,9 @@ export type {
   PathValidationResult,
   RawFileEntry,
   RawBrowseResponse,
-  // Library
+  // Library (Library, LibraryResult, etc. from generated/graphql above)
   LibraryType,
   PostDownloadAction,
-  Library,
-  LibraryResult,
-  LibraryChangeType,
-  LibraryChangedEvent,
-  CreateLibraryInput,
-  UpdateLibraryInput,
   // TV Show
   TvShowStatus,
   MonitorType,
@@ -193,7 +195,7 @@ export type {
   ContentDownloadProgressEvent,
 } from "./types";
 
-// Constants
+// Constants and helpers
 export { LIBRARY_TYPES, getLibraryTypeInfo } from "./types";
 
 // Auth and app: generated TypedDocumentNodes (prefer importing from ./generated/graphql)

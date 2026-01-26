@@ -20,7 +20,8 @@ import { usePlaybackContext } from '../contexts/PlaybackContext';
 import { CastButton } from './cast';
 import { VolumeControl } from './VolumeControl';
 import { getMediaStreamUrl } from './VideoPlayer';
-import { graphqlClient, TV_SHOW_QUERY, EPISODES_QUERY, PlaybackSyncIntervalDocument, type TvShow, type Episode } from '../lib/graphql';
+import type { Show } from '../lib/graphql/generated/graphql';
+import { graphqlClient, TV_SHOW_QUERY, EPISODES_QUERY, PlaybackSyncIntervalDocument, type Episode } from '../lib/graphql';
 import { useCast } from '../hooks/useCast';
 
 // Default sync interval (will be overridden by settings)
@@ -102,10 +103,10 @@ export function PersistentPlayer() {
   useEffect(() => {
     if (session?.tvShowId && session?.episodeId && !currentShow) {
       Promise.all([
-        graphqlClient.query<{ tvShow: TvShow | null }>(TV_SHOW_QUERY, { id: session.tvShowId }).toPromise(),
+        graphqlClient.query<{ Show: Show | null }>(TV_SHOW_QUERY, { Id: session.tvShowId }).toPromise(),
         graphqlClient.query<{ episodes: Episode[] }>(EPISODES_QUERY, { tvShowId: session.tvShowId }).toPromise(),
       ]).then(([showRes, epRes]) => {
-        if (showRes.data?.tvShow) setCurrentShow(showRes.data.tvShow);
+        if (showRes.data?.Show) setCurrentShow(showRes.data.Show as unknown as Parameters<typeof setCurrentShow>[0]);
         const ep = epRes.data?.episodes?.find(e => e.id === session.episodeId);
         if (ep) setCurrentEpisode(ep);
       });
@@ -450,7 +451,7 @@ export function PersistentPlayer() {
                 <div className={`absolute inset-x-0 top-0 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                   <div className="bg-gradient-to-b from-black/70 to-transparent p-4 flex items-center justify-between">
                     <div className="flex-1 min-w-0">
-                      <h2 className="text-white text-lg font-semibold truncate">{currentShow?.name || 'Show'}</h2>
+                      <h2 className="text-white text-lg font-semibold truncate">{(currentShow as Show | null)?.Name || 'Show'}</h2>
                       <p className="text-white/70 text-sm truncate">{epTitle}</p>
                     </div>
                     <div className="flex items-center">
@@ -540,7 +541,7 @@ export function PersistentPlayer() {
               </Button>
             </div>
             <div className="flex items-center gap-2 min-w-0">
-              <span className="text-xs text-default-400 truncate">{currentShow?.name || 'Playing'}</span>
+              <span className="text-xs text-default-400 truncate">{(currentShow as Show | null)?.Name || 'Playing'}</span>
               <span className="text-xs text-default-500 font-mono flex-shrink-0">
                 -{formatTime(Math.max(0, duration - currentTime))}
               </span>

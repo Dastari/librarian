@@ -29,7 +29,7 @@ function CollectionsPage() {
               as you add movies that belong to collections.
             </p>
             <p className="text-xs text-default-400">
-              Library: {library.name}
+              Library: {library.Name}
             </p>
           </CardBody>
         </Card>
