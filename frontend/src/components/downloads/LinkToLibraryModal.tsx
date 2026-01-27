@@ -1,10 +1,16 @@
-import { useState, useEffect, useMemo } from 'react'
-import { Button } from '@heroui/button'
-import { Card, CardBody } from '@heroui/card'
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
-import { Spinner } from '@heroui/spinner'
-import { addToast } from '@heroui/toast'
-import { Select, SelectItem } from '@heroui/select'
+import { useState, useEffect, useMemo } from "react";
+import { Button } from "@heroui/button";
+import { Card, CardBody } from "@heroui/card";
+import {
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+} from "@heroui/modal";
+import { Spinner } from "@heroui/spinner";
+import { addToast } from "@heroui/toast";
+import { Select, SelectItem } from "@heroui/select";
 import {
   IconDeviceTv,
   IconMovie,
@@ -13,7 +19,7 @@ import {
   IconFolder,
   IconCheck,
   IconDisc,
-} from '@tabler/icons-react'
+} from "@tabler/icons-react";
 import {
   graphqlClient,
   ORGANIZE_TORRENT_MUTATION,
@@ -21,8 +27,8 @@ import {
   type DownloadsTorrentRow,
   type OrganizeTorrentResult,
   type Album,
-} from '../../lib/graphql'
-import { LibrariesDocument } from '../../lib/graphql/generated/graphql'
+} from "../../lib/graphql";
+import { LibrariesDocument } from "../../lib/graphql/generated/graphql";
 
 // Query to get albums for a library
 const ALBUMS_FOR_LIBRARY_QUERY = `
@@ -34,83 +40,83 @@ const ALBUMS_FOR_LIBRARY_QUERY = `
       coverUrl
     }
   }
-`
+`;
 
 export interface LinkToLibraryModalProps {
-  isOpen: boolean
-  onClose: () => void
-  torrent: DownloadsTorrentRow | null
-  onLinked: () => void
+  isOpen: boolean;
+  onClose: () => void;
+  torrent: DownloadsTorrentRow | null;
+  onLinked: () => void;
 }
 
 // Get icon for library type
 function getLibraryIcon(type: string) {
   switch (type) {
-    case 'TV':
-      return IconDeviceTv
-    case 'MOVIES':
-      return IconMovie
-    case 'MUSIC':
-      return IconMusic
-    case 'AUDIOBOOKS':
-      return IconHeadphones
+    case "TV":
+      return IconDeviceTv;
+    case "MOVIES":
+      return IconMovie;
+    case "MUSIC":
+      return IconMusic;
+    case "AUDIOBOOKS":
+      return IconHeadphones;
     default:
-      return IconFolder
+      return IconFolder;
   }
 }
 
 // Get color for library type
 function getLibraryColor(type: string) {
   switch (type) {
-    case 'TV':
-      return 'text-blue-400'
-    case 'MOVIES':
-      return 'text-purple-400'
-    case 'MUSIC':
-      return 'text-green-400'
-    case 'AUDIOBOOKS':
-      return 'text-orange-400'
+    case "TV":
+      return "text-blue-400";
+    case "MOVIES":
+      return "text-purple-400";
+    case "MUSIC":
+      return "text-green-400";
+    case "AUDIOBOOKS":
+      return "text-orange-400";
     default:
-      return 'text-default-400'
+      return "text-default-400";
   }
 }
 
 // Detect media type from torrent name
-function detectMediaType(name: string): 'TV' | 'MOVIES' | 'MUSIC' | 'AUDIOBOOKS' | null {
-  const cleaned = name.replace(/\./g, ' ').replace(/_/g, ' ')
-  
+function detectMediaType(
+  name: string,
+): "TV" | "MOVIES" | "MUSIC" | "AUDIOBOOKS" | null {
+  const cleaned = name.replace(/\./g, " ").replace(/_/g, " ");
+
   // TV patterns
   const tvPatterns = [
     /[Ss](\d{1,2})[Ee](\d{1,2})/,
     /(\d{1,2})x(\d{2})/,
     /[Ss]eason\s*(\d+)/i,
-  ]
+  ];
   for (const pattern of tvPatterns) {
-    if (pattern.test(cleaned)) return 'TV'
+    if (pattern.test(cleaned)) return "TV";
   }
-  
+
   // Music patterns
   const musicPatterns = [
     /\b(FLAC|MP3|320kbps|V0|ALAC)\b/i,
     /\b(Discography|Album|EP|Single)\b/i,
-  ]
+  ];
   for (const pattern of musicPatterns) {
-    if (pattern.test(cleaned)) return 'MUSIC'
+    if (pattern.test(cleaned)) return "MUSIC";
   }
-  
+
   // Audiobook patterns
-  const audiobookPatterns = [
-    /\b(Audiobook|M4B|Audible)\b/i,
-  ]
+  const audiobookPatterns = [/\b(Audiobook|M4B|Audible)\b/i];
   for (const pattern of audiobookPatterns) {
-    if (pattern.test(cleaned)) return 'AUDIOBOOKS'
+    if (pattern.test(cleaned)) return "AUDIOBOOKS";
   }
-  
+
   // Movie patterns - if it has year and quality but no season/episode
-  const moviePattern = /[\s\.\(]*((?:19|20)\d{2})[\s\)\]\.]/
-  if (moviePattern.test(cleaned)) return 'MOVIES'
-  
-  return null
+  const moviePattern = /[\s\.\(]*((?:19|20)\d{2})[\s\)\]\.]/;
+  if (moviePattern.test(cleaned)) return "MOVIES";
+
+  return null;
 }
 
 export function LinkToLibraryModal({
@@ -119,141 +125,157 @@ export function LinkToLibraryModal({
   torrent,
   onLinked,
 }: LinkToLibraryModalProps) {
-  const [libraries, setLibraries] = useState<LibraryNode[]>([])
-  const [albums, setAlbums] = useState<Album[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadingAlbums, setLoadingAlbums] = useState(false)
-  const [organizing, setOrganizing] = useState(false)
-  const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(null)
-  const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null)
+  const [libraries, setLibraries] = useState<LibraryNode[]>([]);
+  const [albums, setAlbums] = useState<Album[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingAlbums, setLoadingAlbums] = useState(false);
+  const [organizing, setOrganizing] = useState(false);
+  const [selectedLibraryId, setSelectedLibraryId] = useState<string | null>(
+    null,
+  );
+  const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null);
 
   // Get the selected library
   const selectedLibrary = useMemo(() => {
-    return libraries.find((l) => l.Id === selectedLibraryId)
-  }, [libraries, selectedLibraryId])
+    return libraries.find((l) => l.Id === selectedLibraryId);
+  }, [libraries, selectedLibraryId]);
 
   // Check if selected library is music
-  const isMusicLibrary = selectedLibrary?.LibraryType === 'MUSIC'
+  const isMusicLibrary = selectedLibrary?.LibraryType === "MUSIC";
 
   // Fetch libraries
   useEffect(() => {
     if (isOpen) {
-      setLoading(true)
-      setSelectedLibraryId(null)
-      setSelectedAlbumId(null)
-      setAlbums([])
+      setLoading(true);
+      setSelectedLibraryId(null);
+      setSelectedAlbumId(null);
+      setAlbums([]);
       graphqlClient
         .query(LibrariesDocument, {})
         .toPromise()
         .then((result) => {
-          setLibraries(result.data?.Libraries.Edges.map((e) => e.Node) ?? [])
+          setLibraries(result.data?.Libraries.Edges.map((e) => e.Node) ?? []);
         })
-        .finally(() => setLoading(false))
+        .finally(() => setLoading(false));
     }
-  }, [isOpen])
+  }, [isOpen]);
 
   // Fetch albums when a music library is selected
   useEffect(() => {
     if (selectedLibraryId && isMusicLibrary) {
-      setLoadingAlbums(true)
-      setSelectedAlbumId(null)
+      setLoadingAlbums(true);
+      setSelectedAlbumId(null);
       graphqlClient
-        .query<{ albums: Album[] }>(ALBUMS_FOR_LIBRARY_QUERY, { libraryId: selectedLibraryId })
+        .query<{ albums: Album[] }>(ALBUMS_FOR_LIBRARY_QUERY, {
+          libraryId: selectedLibraryId,
+        })
         .toPromise()
         .then((result) => {
           if (result.data?.albums) {
-            setAlbums(result.data.albums)
+            setAlbums(result.data.albums);
           }
         })
-        .finally(() => setLoadingAlbums(false))
+        .finally(() => setLoadingAlbums(false));
     } else {
-      setAlbums([])
-      setSelectedAlbumId(null)
+      setAlbums([]);
+      setSelectedAlbumId(null);
     }
-  }, [selectedLibraryId, isMusicLibrary])
+  }, [selectedLibraryId, isMusicLibrary]);
 
   // Detect recommended library type
   const recommendedType = useMemo(() => {
-    if (!torrent) return null
-    return detectMediaType(torrent.name)
-  }, [torrent])
+    if (!torrent) return null;
+    return detectMediaType(torrent.name);
+  }, [torrent]);
 
   // Sort libraries - recommended type first
   const sortedLibraries = useMemo(() => {
-    if (!recommendedType) return libraries
+    if (!recommendedType) return libraries;
     return [...libraries].sort((a, b) => {
-      if (a.LibraryType === recommendedType && b.LibraryType !== recommendedType) return -1
-      if (b.LibraryType === recommendedType && a.LibraryType !== recommendedType) return 1
-      return 0
-    })
-  }, [libraries, recommendedType])
+      if (
+        a.LibraryType === recommendedType &&
+        b.LibraryType !== recommendedType
+      )
+        return -1;
+      if (
+        b.LibraryType === recommendedType &&
+        a.LibraryType !== recommendedType
+      )
+        return 1;
+      return 0;
+    });
+  }, [libraries, recommendedType]);
 
   const handleLink = async () => {
-    if (!torrent || !selectedLibraryId) return
+    if (!torrent || !selectedLibraryId) return;
     // For music libraries, require album selection
     if (isMusicLibrary && !selectedAlbumId) {
       addToast({
-        title: 'Select Album',
-        description: 'Please select an album to link this music to',
-        color: 'warning',
-      })
-      return
+        title: "Select Album",
+        description: "Please select an album to link this music to",
+        color: "warning",
+      });
+      return;
     }
 
-    setOrganizing(true)
+    setOrganizing(true);
     try {
       // Legacy OrganizeTorrent expects Int (session id). We only have entity id (string); backend would need OrganizeTorrentByInfoHash to support this.
-      const numericId = typeof torrent.id === 'number' ? torrent.id : null
+      const numericId = typeof torrent.id === "number" ? torrent.id : null;
       if (numericId === null) {
         addToast({
-          title: 'Linking not available',
-          description: 'Organize by info hash is not yet supported. Use the legacy torrent ID for now.',
-          color: 'warning',
-        })
-        setOrganizing(false)
-        return
+          title: "Linking not available",
+          description:
+            "Organize by info hash is not yet supported. Use the legacy torrent ID for now.",
+          color: "warning",
+        });
+        setOrganizing(false);
+        return;
       }
 
       const result = await graphqlClient
-        .mutation<{ organizeTorrent: OrganizeTorrentResult }>(ORGANIZE_TORRENT_MUTATION, {
-          id: numericId,
-          libraryId: selectedLibraryId,
-          albumId: selectedAlbumId,
-        })
-        .toPromise()
+        .mutation<{ organizeTorrent: OrganizeTorrentResult }>(
+          ORGANIZE_TORRENT_MUTATION,
+          {
+            id: numericId,
+            libraryId: selectedLibraryId,
+            albumId: selectedAlbumId,
+          },
+        )
+        .toPromise();
 
       if (result.data?.organizeTorrent) {
-        const { success, messages } = result.data.organizeTorrent
+        const { success, messages } = result.data.organizeTorrent;
 
         if (success) {
           addToast({
-            title: 'Linked Successfully',
-            description: messages[0] || 'Torrent linked to library',
-            color: 'success',
-          })
-          onLinked()
-          onClose()
+            title: "Linked Successfully",
+            description: messages[0] || "Torrent linked to library",
+            color: "success",
+          });
+          onLinked();
+          onClose();
         } else {
           // Show messages even on "failure" - they may be informational
           addToast({
-            title: 'Link Result',
-            description: messages[0] || 'Linking completed with notes',
-            color: messages.length > 0 ? 'warning' : 'success',
-          })
-          onLinked()
-          onClose()
+            title: "Link Result",
+            description: messages[0] || "Linking completed with notes",
+            color: messages.length > 0 ? "warning" : "success",
+          });
+          onLinked();
+          onClose();
         }
       }
     } catch (e) {
       addToast({
-        title: 'Error',
-        description: 'Failed to link torrent to library',
-        color: 'danger',
-      })
+        title: "Error",
+        description: "Failed to link torrent to library",
+        color: "danger",
+      });
     } finally {
-      setOrganizing(false)
+      setOrganizing(false);
     }
-  }
+  };
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="lg">
@@ -279,13 +301,13 @@ export function LinkToLibraryModal({
           ) : (
             <div className="flex flex-col gap-2">
               <p className="text-sm text-default-500 mb-2">
-                Select a library to link this torrent to. The files will be matched and organized
-                based on the library settings.
+                Select a library to link this torrent to. The files will be
+                matched and organized based on the library settings.
               </p>
               {sortedLibraries.map((library) => {
-                const Icon = getLibraryIcon(library.LibraryType)
-                const isSelected = selectedLibraryId === library.Id
-                const isRecommended = library.LibraryType === recommendedType
+                const Icon = getLibraryIcon(library.LibraryType);
+                const isSelected = selectedLibraryId === library.Id;
+                const isRecommended = library.LibraryType === recommendedType;
 
                 return (
                   <Card
@@ -293,13 +315,16 @@ export function LinkToLibraryModal({
                     isPressable
                     className={`transition-all ${
                       isSelected
-                        ? 'ring-2 ring-primary bg-primary/10'
-                        : 'hover:bg-content2'
+                        ? "ring-2 ring-primary bg-primary/10"
+                        : "hover:bg-content2"
                     }`}
                     onPress={() => setSelectedLibraryId(library.Id)}
                   >
                     <CardBody className="flex-row items-center gap-3 py-3">
-                      <Icon size={24} className={getLibraryColor(library.LibraryType)} />
+                      <Icon
+                        size={24}
+                        className={getLibraryColor(library.LibraryType)}
+                      />
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
                           <span className="font-medium">{library.Name}</span>
@@ -318,7 +343,7 @@ export function LinkToLibraryModal({
                       )}
                     </CardBody>
                   </Card>
-                )
+                );
               })}
 
               {/* Album selection for music libraries */}
@@ -334,7 +359,8 @@ export function LinkToLibraryModal({
                     </div>
                   ) : albums.length === 0 ? (
                     <div className="text-sm text-default-500 py-2">
-                      No albums found in this library. Add an album first from the library page.
+                      No albums found in this library. Add an album first from
+                      the library page.
                     </div>
                   ) : (
                     <Select
@@ -342,11 +368,11 @@ export function LinkToLibraryModal({
                       placeholder="Select an album"
                       selectedKeys={selectedAlbumId ? [selectedAlbumId] : []}
                       onSelectionChange={(keys) => {
-                        const selected = Array.from(keys)[0] as string
-                        setSelectedAlbumId(selected || null)
+                        const selected = Array.from(keys)[0] as string;
+                        setSelectedAlbumId(selected || null);
                       }}
                       classNames={{
-                        trigger: 'bg-content2',
+                        trigger: "bg-content2",
                       }}
                     >
                       {albums.map((album) => (
@@ -376,13 +402,16 @@ export function LinkToLibraryModal({
             color="primary"
             onPress={handleLink}
             isLoading={organizing}
-            isDisabled={!selectedLibraryId || organizing || (isMusicLibrary && !selectedAlbumId)}
+            isDisabled={
+              !selectedLibraryId ||
+              organizing ||
+              (isMusicLibrary && !selectedAlbumId)
+            }
           >
             Link & Organize
           </Button>
         </ModalFooter>
       </ModalContent>
     </Modal>
-  )
-}
+  );
 }
