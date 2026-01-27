@@ -267,7 +267,14 @@ export type AppSettingWhereInput = {
 
 export type Artist = {
   AlbumCount?: Maybe<Scalars["Int"]["output"]>;
-  /** Get related #graphql_name with optional filtering, sorting, and pagination */
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
   Albums: AlbumConnection;
   Bio?: Maybe<Scalars["String"]["output"]>;
   CreatedAt: Scalars["String"]["output"];
@@ -285,7 +292,7 @@ export type Artist = {
 };
 
 export type ArtistAlbumsArgs = {
-  OrderBy?: InputMaybe<Array<AlbumOrderByInput>>;
+  OrderBy?: InputMaybe<AlbumOrderByInput>;
   Page?: InputMaybe<PageInput>;
   Where?: InputMaybe<AlbumWhereInput>;
 };
@@ -500,7 +507,14 @@ export type Audiobook = {
   AudibleId?: Maybe<Scalars["String"]["output"]>;
   AuthorName?: Maybe<Scalars["String"]["output"]>;
   ChapterCount?: Maybe<Scalars["Int"]["output"]>;
-  /** Get related #graphql_name with optional filtering, sorting, and pagination */
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
   Chapters: ChapterConnection;
   CoverUrl?: Maybe<Scalars["String"]["output"]>;
   CreatedAt: Scalars["String"]["output"];
@@ -525,7 +539,7 @@ export type Audiobook = {
 };
 
 export type AudiobookChaptersArgs = {
-  OrderBy?: InputMaybe<Array<ChapterOrderByInput>>;
+  OrderBy?: InputMaybe<ChapterOrderByInput>;
   Page?: InputMaybe<PageInput>;
   Where?: InputMaybe<ChapterWhereInput>;
 };
@@ -2471,7 +2485,31 @@ export type InviteTokenWhereInput = {
   UseCount?: InputMaybe<IntFilter>;
 };
 
+/**
+ * Library entity representing a media library.
+ *
+ * Relations (Shows, Movies, Artists, etc.) are automatically generated
+ * by the GraphQLRelations macro and use DataLoader for N+1 prevention.
+ */
 export type Library = {
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  Albums: AlbumConnection;
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  Audiobooks: AudiobookConnection;
   AutoAddDiscovered: Scalars["Boolean"]["output"];
   AutoDownload: Scalars["Boolean"]["output"];
   AutoHunt: Scalars["Boolean"]["output"];
@@ -2482,13 +2520,100 @@ export type Library = {
   Id: Scalars["String"]["output"];
   LastScannedAt?: Maybe<Scalars["String"]["output"]>;
   LibraryType: Scalars["String"]["output"];
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  MediaFiles: MediaFileConnection;
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  Movies: MovieConnection;
   Name: Scalars["String"]["output"];
   Path: Scalars["String"]["output"];
   ScanIntervalMinutes: Scalars["Int"]["output"];
   Scanning: Scalars["Boolean"]["output"];
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  Shows: ShowConnection;
   UpdatedAt: Scalars["String"]["output"];
   UserId: Scalars["String"]["output"];
   WatchForChanges: Scalars["Boolean"]["output"];
+};
+
+/**
+ * Library entity representing a media library.
+ *
+ * Relations (Shows, Movies, Artists, etc.) are automatically generated
+ * by the GraphQLRelations macro and use DataLoader for N+1 prevention.
+ */
+export type LibraryAlbumsArgs = {
+  OrderBy?: InputMaybe<AlbumOrderByInput>;
+  Page?: InputMaybe<PageInput>;
+  Where?: InputMaybe<AlbumWhereInput>;
+};
+
+/**
+ * Library entity representing a media library.
+ *
+ * Relations (Shows, Movies, Artists, etc.) are automatically generated
+ * by the GraphQLRelations macro and use DataLoader for N+1 prevention.
+ */
+export type LibraryAudiobooksArgs = {
+  OrderBy?: InputMaybe<AudiobookOrderByInput>;
+  Page?: InputMaybe<PageInput>;
+  Where?: InputMaybe<AudiobookWhereInput>;
+};
+
+/**
+ * Library entity representing a media library.
+ *
+ * Relations (Shows, Movies, Artists, etc.) are automatically generated
+ * by the GraphQLRelations macro and use DataLoader for N+1 prevention.
+ */
+export type LibraryMediaFilesArgs = {
+  OrderBy?: InputMaybe<MediaFileOrderByInput>;
+  Page?: InputMaybe<PageInput>;
+  Where?: InputMaybe<MediaFileWhereInput>;
+};
+
+/**
+ * Library entity representing a media library.
+ *
+ * Relations (Shows, Movies, Artists, etc.) are automatically generated
+ * by the GraphQLRelations macro and use DataLoader for N+1 prevention.
+ */
+export type LibraryMoviesArgs = {
+  OrderBy?: InputMaybe<MovieOrderByInput>;
+  Page?: InputMaybe<PageInput>;
+  Where?: InputMaybe<MovieWhereInput>;
+};
+
+/**
+ * Library entity representing a media library.
+ *
+ * Relations (Shows, Movies, Artists, etc.) are automatically generated
+ * by the GraphQLRelations macro and use DataLoader for N+1 prevention.
+ */
+export type LibraryShowsArgs = {
+  OrderBy?: InputMaybe<ShowOrderByInput>;
+  Page?: InputMaybe<PageInput>;
+  Where?: InputMaybe<ShowWhereInput>;
 };
 
 /** Event for #struct_name changes (subscriptions) */
@@ -5403,14 +5528,18 @@ export type ScheduleSyncStateWhereInput = {
   UpdatedAt?: InputMaybe<DateFilter>;
 };
 
+/**
+ * Show entity representing a TV show.
+ *
+ * The Episodes relation is automatically generated by the GraphQLRelations macro
+ * and uses DataLoader for N+1 prevention.
+ */
 export type Show = {
   BackdropUrl?: Maybe<Scalars["String"]["output"]>;
   ContentRating?: Maybe<Scalars["String"]["output"]>;
   CreatedAt: Scalars["String"]["output"];
   EpisodeCount?: Maybe<Scalars["Int"]["output"]>;
   EpisodeFileCount?: Maybe<Scalars["Int"]["output"]>;
-  /** Episodes in this show */
-  Episodes: Array<Episode>;
   Genres: Array<Scalars["String"]["output"]>;
   Id: Scalars["String"]["output"];
   ImdbId?: Maybe<Scalars["String"]["output"]>;
@@ -5962,7 +6091,14 @@ export type Torrent = {
   DownloadPath?: Maybe<Scalars["String"]["output"]>;
   DownloadedBytes: Scalars["Int"]["output"];
   ExcludedFiles: Array<Scalars["Int"]["output"]>;
-  /** Get related #graphql_name with optional filtering, sorting, and pagination */
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
   Files: TorrentFileConnection;
   Id: Scalars["String"]["output"];
   InfoHash: Scalars["String"]["output"];
@@ -5984,7 +6120,7 @@ export type Torrent = {
 };
 
 export type TorrentFilesArgs = {
-  OrderBy?: InputMaybe<Array<TorrentFileOrderByInput>>;
+  OrderBy?: InputMaybe<TorrentFileOrderByInput>;
   Page?: InputMaybe<PageInput>;
   Where?: InputMaybe<TorrentFileWhereInput>;
 };
@@ -7622,6 +7758,10 @@ export type LibrariesQuery = {
         LastScannedAt?: string | null;
         CreatedAt: string;
         UpdatedAt: string;
+        Shows: { PageInfo: { TotalCount?: number | null } };
+        Movies: { PageInfo: { TotalCount?: number | null } };
+        Albums: { PageInfo: { TotalCount?: number | null } };
+        Audiobooks: { PageInfo: { TotalCount?: number | null } };
       };
     }>;
     PageInfo: { HasNextPage: boolean; TotalCount?: number | null };
@@ -9754,6 +9894,106 @@ export const LibrariesDocument = {
                             {
                               kind: "Field",
                               name: { kind: "Name", value: "UpdatedAt" },
+                            },
+                            {
+                              kind: "Field",
+                              name: { kind: "Name", value: "Shows" },
+                              selectionSet: {
+                                kind: "SelectionSet",
+                                selections: [
+                                  {
+                                    kind: "Field",
+                                    name: { kind: "Name", value: "PageInfo" },
+                                    selectionSet: {
+                                      kind: "SelectionSet",
+                                      selections: [
+                                        {
+                                          kind: "Field",
+                                          name: {
+                                            kind: "Name",
+                                            value: "TotalCount",
+                                          },
+                                        },
+                                      ],
+                                    },
+                                  },
+                                ],
+                              },
+                            },
+                            {
+                              kind: "Field",
+                              name: { kind: "Name", value: "Movies" },
+                              selectionSet: {
+                                kind: "SelectionSet",
+                                selections: [
+                                  {
+                                    kind: "Field",
+                                    name: { kind: "Name", value: "PageInfo" },
+                                    selectionSet: {
+                                      kind: "SelectionSet",
+                                      selections: [
+                                        {
+                                          kind: "Field",
+                                          name: {
+                                            kind: "Name",
+                                            value: "TotalCount",
+                                          },
+                                        },
+                                      ],
+                                    },
+                                  },
+                                ],
+                              },
+                            },
+                            {
+                              kind: "Field",
+                              name: { kind: "Name", value: "Albums" },
+                              selectionSet: {
+                                kind: "SelectionSet",
+                                selections: [
+                                  {
+                                    kind: "Field",
+                                    name: { kind: "Name", value: "PageInfo" },
+                                    selectionSet: {
+                                      kind: "SelectionSet",
+                                      selections: [
+                                        {
+                                          kind: "Field",
+                                          name: {
+                                            kind: "Name",
+                                            value: "TotalCount",
+                                          },
+                                        },
+                                      ],
+                                    },
+                                  },
+                                ],
+                              },
+                            },
+                            {
+                              kind: "Field",
+                              name: { kind: "Name", value: "Audiobooks" },
+                              selectionSet: {
+                                kind: "SelectionSet",
+                                selections: [
+                                  {
+                                    kind: "Field",
+                                    name: { kind: "Name", value: "PageInfo" },
+                                    selectionSet: {
+                                      kind: "SelectionSet",
+                                      selections: [
+                                        {
+                                          kind: "Field",
+                                          name: {
+                                            kind: "Name",
+                                            value: "TotalCount",
+                                          },
+                                        },
+                                      ],
+                                    },
+                                  },
+                                ],
+                              },
                             },
                           ],
                         },

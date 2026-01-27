@@ -2121,23 +2121,15 @@
           },
           {
             "name": "Albums",
-            "description": "Get related #graphql_name with optional filtering, sorting, and pagination",
+            "description": "Get related #graphql_name with optional filtering, sorting, and pagination.\n\nWhen no arguments are provided, uses DataLoader to batch queries and\navoid N+1 when loading relations for multiple parent entities.\nWhen filter/sort/pagination arguments are provided, uses direct\ndatabase query for full SQL support.",
             "args": [
               {
                 "name": "OrderBy",
                 "description": null,
                 "type": {
-                  "kind": "LIST",
-                  "name": null,
-                  "ofType": {
-                    "kind": "NON_NULL",
-                    "name": null,
-                    "ofType": {
-                      "kind": "INPUT_OBJECT",
-                      "name": "AlbumOrderByInput",
-                      "ofType": null
-                    }
-                  }
+                  "kind": "INPUT_OBJECT",
+                  "name": "AlbumOrderByInput",
+                  "ofType": null
                 },
                 "defaultValue": null,
                 "isDeprecated": false,
@@ -4230,23 +4222,15 @@
           },
           {
             "name": "Chapters",
-            "description": "Get related #graphql_name with optional filtering, sorting, and pagination",
+            "description": "Get related #graphql_name with optional filtering, sorting, and pagination.\n\nWhen no arguments are provided, uses DataLoader to batch queries and\navoid N+1 when loading relations for multiple parent entities.\nWhen filter/sort/pagination arguments are provided, uses direct\ndatabase query for full SQL support.",
             "args": [
               {
                 "name": "OrderBy",
                 "description": null,
                 "type": {
-                  "kind": "LIST",
-                  "name": null,
-                  "ofType": {
-                    "kind": "NON_NULL",
-                    "name": null,
-                    "ofType": {
-                      "kind": "INPUT_OBJECT",
-                      "name": "ChapterOrderByInput",
-                      "ofType": null
-                    }
-                  }
+                  "kind": "INPUT_OBJECT",
+                  "name": "ChapterOrderByInput",
+                  "ofType": null
                 },
                 "defaultValue": null,
                 "isDeprecated": false,
@@ -23609,9 +23593,115 @@
       {
         "kind": "OBJECT",
         "name": "Library",
-        "description": null,
+        "description": "Library entity representing a media library.\n\nRelations (Shows, Movies, Artists, etc.) are automatically generated\nby the GraphQLRelations macro and use DataLoader for N+1 prevention.",
         "isOneOf": null,
         "fields": [
+          {
+            "name": "Albums",
+            "description": "Get related #graphql_name with optional filtering, sorting, and pagination.\n\nWhen no arguments are provided, uses DataLoader to batch queries and\navoid N+1 when loading relations for multiple parent entities.\nWhen filter/sort/pagination arguments are provided, uses direct\ndatabase query for full SQL support.",
+            "args": [
+              {
+                "name": "OrderBy",
+                "description": null,
+                "type": {
+                  "kind": "INPUT_OBJECT",
+                  "name": "AlbumOrderByInput",
+                  "ofType": null
+                },
+                "defaultValue": null,
+                "isDeprecated": false,
+                "deprecationReason": null
+              },
+              {
+                "name": "Page",
+                "description": null,
+                "type": {
+                  "kind": "INPUT_OBJECT",
+                  "name": "PageInput",
+                  "ofType": null
+                },
+                "defaultValue": null,
+                "isDeprecated": false,
+                "deprecationReason": null
+              },
+              {
+                "name": "Where",
+                "description": null,
+                "type": {
+                  "kind": "INPUT_OBJECT",
+                  "name": "AlbumWhereInput",
+                  "ofType": null
+                },
+                "defaultValue": null,
+                "isDeprecated": false,
+                "deprecationReason": null
+              }
+            ],
+            "type": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "OBJECT",
+                "name": "AlbumConnection",
+                "ofType": null
+              }
+            },
+            "isDeprecated": false,
+            "deprecationReason": null
+          },
+          {
+            "name": "Audiobooks",
+            "description": "Get related #graphql_name with optional filtering, sorting, and pagination.\n\nWhen no arguments are provided, uses DataLoader to batch queries and\navoid N+1 when loading relations for multiple parent entities.\nWhen filter/sort/pagination arguments are provided, uses direct\ndatabase query for full SQL support.",
+            "args": [
+              {
+                "name": "OrderBy",
+                "description": null,
+                "type": {
+                  "kind": "INPUT_OBJECT",
+                  "name": "AudiobookOrderByInput",
+                  "ofType": null
+                },
+                "defaultValue": null,
+                "isDeprecated": false,
+                "deprecationReason": null
+              },
+              {
+                "name": "Page",
+                "description": null,
+                "type": {
+                  "kind": "INPUT_OBJECT",
+                  "name": "PageInput",
+                  "ofType": null
+                },
+                "defaultValue": null,
+                "isDeprecated": false,
+                "deprecationReason": null
+              },
+              {
+                "name": "Where",
+                "description": null,
+                "type": {
+                  "kind": "INPUT_OBJECT",
+                  "name": "AudiobookWhereInput",
+                  "ofType": null
+                },
+                "defaultValue": null,
+                "isDeprecated": false,
+                "deprecationReason": null
+              }
+            ],
+            "type": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "OBJECT",
+                "name": "AudiobookConnection",
+                "ofType": null
+              }
+            },
+            "isDeprecated": false,
+            "deprecationReason": null
+          },
           {
             "name": "AutoAddDiscovered",
             "description": null,
@@ -23761,6 +23851,112 @@
             "deprecationReason": null
           },
           {
+            "name": "MediaFiles",
+            "description": "Get related #graphql_name with optional filtering, sorting, and pagination.\n\nWhen no arguments are provided, uses DataLoader to batch queries and\navoid N+1 when loading relations for multiple parent entities.\nWhen filter/sort/pagination arguments are provided, uses direct\ndatabase query for full SQL support.",
+            "args": [
+              {
+                "name": "OrderBy",
+                "description": null,
+                "type": {
+                  "kind": "INPUT_OBJECT",
+                  "name": "MediaFileOrderByInput",
+                  "ofType": null
+                },
+                "defaultValue": null,
+                "isDeprecated": false,
+                "deprecationReason": null
+              },
+              {
+                "name": "Page",
+                "description": null,
+                "type": {
+                  "kind": "INPUT_OBJECT",
+                  "name": "PageInput",
+                  "ofType": null
+                },
+                "defaultValue": null,
+                "isDeprecated": false,
+                "deprecationReason": null
+              },
+              {
+                "name": "Where",
+                "description": null,
+                "type": {
+                  "kind": "INPUT_OBJECT",
+                  "name": "MediaFileWhereInput",
+                  "ofType": null
+                },
+                "defaultValue": null,
+                "isDeprecated": false,
+                "deprecationReason": null
+              }
+            ],
+            "type": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "OBJECT",
+                "name": "MediaFileConnection",
+                "ofType": null
+              }
+            },
+            "isDeprecated": false,
+            "deprecationReason": null
+          },
+          {
+            "name": "Movies",
+            "description": "Get related #graphql_name with optional filtering, sorting, and pagination.\n\nWhen no arguments are provided, uses DataLoader to batch queries and\navoid N+1 when loading relations for multiple parent entities.\nWhen filter/sort/pagination arguments are provided, uses direct\ndatabase query for full SQL support.",
+            "args": [
+              {
+                "name": "OrderBy",
+                "description": null,
+                "type": {
+                  "kind": "INPUT_OBJECT",
+                  "name": "MovieOrderByInput",
+                  "ofType": null
+                },
+                "defaultValue": null,
+                "isDeprecated": false,
+                "deprecationReason": null
+              },
+              {
+                "name": "Page",
+                "description": null,
+                "type": {
+                  "kind": "INPUT_OBJECT",
+                  "name": "PageInput",
+                  "ofType": null
+                },
+                "defaultValue": null,
+                "isDeprecated": false,
+                "deprecationReason": null
+              },
+              {
+                "name": "Where",
+                "description": null,
+                "type": {
+                  "kind": "INPUT_OBJECT",
+                  "name": "MovieWhereInput",
+                  "ofType": null
+                },
+                "defaultValue": null,
+                "isDeprecated": false,
+                "deprecationReason": null
+              }
+            ],
+            "type": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "OBJECT",
+                "name": "MovieConnection",
+                "ofType": null
+              }
+            },
+            "isDeprecated": false,
+            "deprecationReason": null
+          },
+          {
             "name": "Name",
             "description": null,
             "args": [],
@@ -23818,6 +24014,59 @@
               "ofType": {
                 "kind": "SCALAR",
                 "name": "Boolean",
+                "ofType": null
+              }
+            },
+            "isDeprecated": false,
+            "deprecationReason": null
+          },
+          {
+            "name": "Shows",
+            "description": "Get related #graphql_name with optional filtering, sorting, and pagination.\n\nWhen no arguments are provided, uses DataLoader to batch queries and\navoid N+1 when loading relations for multiple parent entities.\nWhen filter/sort/pagination arguments are provided, uses direct\ndatabase query for full SQL support.",
+            "args": [
+              {
+                "name": "OrderBy",
+                "description": null,
+                "type": {
+                  "kind": "INPUT_OBJECT",
+                  "name": "ShowOrderByInput",
+                  "ofType": null
+                },
+                "defaultValue": null,
+                "isDeprecated": false,
+                "deprecationReason": null
+              },
+              {
+                "name": "Page",
+                "description": null,
+                "type": {
+                  "kind": "INPUT_OBJECT",
+                  "name": "PageInput",
+                  "ofType": null
+                },
+                "defaultValue": null,
+                "isDeprecated": false,
+                "deprecationReason": null
+              },
+              {
+                "name": "Where",
+                "description": null,
+                "type": {
+                  "kind": "INPUT_OBJECT",
+                  "name": "ShowWhereInput",
+                  "ofType": null
+                },
+                "defaultValue": null,
+                "isDeprecated": false,
+                "deprecationReason": null
+              }
+            ],
+            "type": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "OBJECT",
+                "name": "ShowConnection",
                 "ofType": null
               }
             },
@@ -45213,7 +45462,7 @@
       {
         "kind": "OBJECT",
         "name": "Show",
-        "description": null,
+        "description": "Show entity representing a TV show.\n\nThe Episodes relation is automatically generated by the GraphQLRelations macro\nand uses DataLoader for N+1 prevention.",
         "isOneOf": null,
         "fields": [
           {
@@ -45276,30 +45525,6 @@
               "kind": "SCALAR",
               "name": "Int",
               "ofType": null
-            },
-            "isDeprecated": false,
-            "deprecationReason": null
-          },
-          {
-            "name": "Episodes",
-            "description": "Episodes in this show",
-            "args": [],
-            "type": {
-              "kind": "NON_NULL",
-              "name": null,
-              "ofType": {
-                "kind": "LIST",
-                "name": null,
-                "ofType": {
-                  "kind": "NON_NULL",
-                  "name": null,
-                  "ofType": {
-                    "kind": "OBJECT",
-                    "name": "Episode",
-                    "ofType": null
-                  }
-                }
-              }
             },
             "isDeprecated": false,
             "deprecationReason": null
@@ -49059,23 +49284,15 @@
           },
           {
             "name": "Files",
-            "description": "Get related #graphql_name with optional filtering, sorting, and pagination",
+            "description": "Get related #graphql_name with optional filtering, sorting, and pagination.\n\nWhen no arguments are provided, uses DataLoader to batch queries and\navoid N+1 when loading relations for multiple parent entities.\nWhen filter/sort/pagination arguments are provided, uses direct\ndatabase query for full SQL support.",
             "args": [
               {
                 "name": "OrderBy",
                 "description": null,
                 "type": {
-                  "kind": "LIST",
-                  "name": null,
-                  "ofType": {
-                    "kind": "NON_NULL",
-                    "name": null,
-                    "ofType": {
-                      "kind": "INPUT_OBJECT",
-                      "name": "TorrentFileOrderByInput",
-                      "ofType": null
-                    }
-                  }
+                  "kind": "INPUT_OBJECT",
+                  "name": "TorrentFileOrderByInput",
+                  "ofType": null
                 },
                 "defaultValue": null,
                 "isDeprecated": false,

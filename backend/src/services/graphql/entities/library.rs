@@ -1,10 +1,11 @@
-use async_graphql::{Result, SimpleObject};
-use librarian_macros::{GraphQLEntity, GraphQLOperations};
-use serde::{Deserialize, Serialize};
+//! Library Entity
+//!
+//! This module contains the Library entity with macro-generated relations.
+//! Relations use DataLoader batching to avoid N+1 queries.
 
-use crate::db::Database;
-use crate::services::graphql::entities::{ShowOrderByInput, ShowWhereInput};
-use crate::services::graphql::orm::{EntityQuery, StringFilter};
+use async_graphql::SimpleObject;
+use librarian_macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use serde::{Deserialize, Serialize};
 
 use super::album::Album;
 use super::artist::Artist;
@@ -13,7 +14,13 @@ use super::media_file::MediaFile;
 use super::movie::Movie;
 use super::show::Show;
 
-#[derive(GraphQLEntity, GraphQLOperations, SimpleObject, Clone, Debug, Serialize, Deserialize)]
+/// Library entity representing a media library.
+///
+/// Relations (Shows, Movies, Artists, etc.) are automatically generated
+/// by the GraphQLRelations macro and use DataLoader for N+1 prevention.
+#[derive(
+    GraphQLEntity, GraphQLRelations, GraphQLOperations, SimpleObject, Clone, Debug, Serialize, Deserialize,
+)]
 #[graphql(name = "Library", complex)]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(table = "libraries", plural = "Libraries", default_sort = "name")]
@@ -91,311 +98,53 @@ pub struct Library {
     #[sortable]
     pub updated_at: String,
 
-    #[graphql(skip)]
-    #[serde(skip)]
-    #[skip_db]
-    pub movies: Vec<Movie>,
+    // ========================================================================
+    // Relations - These generate ComplexObject resolvers via GraphQLRelations
+    // ========================================================================
+    //
+    // Each relation:
+    // - Exposes a GraphQL field with Where/OrderBy/Page args
+    // - Uses DataLoader for batching when no args provided (N+1 free)
+    // - Falls back to direct SQL query when args provided (full filter support)
 
+    /// Shows in this library
     #[graphql(skip)]
     #[serde(skip)]
     #[skip_db]
+    #[relation(target = "Show", to = "library_id", multiple)]
     pub shows: Vec<Show>,
 
+    /// Movies in this library
     #[graphql(skip)]
     #[serde(skip)]
     #[skip_db]
-    pub artists: Vec<Artist>,
+    #[relation(target = "Movie", to = "library_id", multiple)]
+    pub movies: Vec<Movie>,
 
+    /// Albums in this library
     #[graphql(skip)]
     #[serde(skip)]
     #[skip_db]
+    #[relation(target = "Album", to = "library_id", multiple)]
     pub albums: Vec<Album>,
 
+    /// Audiobooks in this library
     #[graphql(skip)]
     #[serde(skip)]
     #[skip_db]
+    #[relation(target = "Audiobook", to = "library_id", multiple)]
     pub audiobooks: Vec<Audiobook>,
 
+    /// Media files in this library
     #[graphql(skip)]
     #[serde(skip)]
     #[skip_db]
+    #[relation(target = "MediaFile", to = "library_id", multiple)]
     pub media_files: Vec<MediaFile>,
-
-
-}
-
-#[async_graphql::ComplexObject]
-impl Library {
-    #[graphql(name = "Shows")]
-    async fn shows(&self, ctx: &async_graphql::Context<'_>) -> async_graphql::Result<Vec<Show>> {
-        let where_input = ShowWhereInput {
-            library_id: Some(StringFilter::eq(&self.id)),
-            ..Default::default()
-        };
-        let order_by = ShowOrderByInput::default();
-        let shows = EntityQuery::<Show>::new()
-            .filter(&where_input)
-            .order_by(&order_by)
-            .fetch_all(ctx.data_unchecked::<Database>())
-            .await?;
-
-        Ok(shows)
-    }
 }
 
 #[derive(Default)]
 pub struct LibraryCustomOperations;
 
-// // ============================================================================
-// // ComplexObject Resolvers (relations + computed fields)
-// // ============================================================================
-
-// #[async_graphql::ComplexObject]
-// impl LibraryEntity {
-//     /// Total item count in this library
-//     #[graphql(name = "ItemCount")]
-//     async fn item_count(&self, ctx: &async_graphql::Context<'_>) -> i64 {
-//         let db = ctx.data_unchecked::<Database>();
-
-//         if let Ok(id) = uuid::Uuid::parse_str(&self.id) {
-//             if let Ok(stats) = crate::db::operations::get_library_stats(db.pool(), id).await {
-//                 return stats.movie_count
-//                     + stats.tv_show_count
-//                     + stats.artist_count
-//                     + stats.album_count
-//                     + stats.audiobook_count;
-//             }
-//         }
-//         0
-//     }
-
-//     /// Total size of media files in bytes
-//     #[graphql(name = "TotalSizeBytes")]
-//     async fn total_size_bytes(&self, ctx: &async_graphql::Context<'_>) -> i64 {
-//         let db = ctx.data_unchecked::<Database>();
-
-//         if let Ok(id) = uuid::Uuid::parse_str(&self.id) {
-//             if let Ok(stats) = crate::db::operations::get_library_stats(db.pool(), id).await {
-//                 return stats.total_size_bytes;
-//             }
-//         }
-//         0
-//     }
-
-//     /// Movies in this library
-//     #[graphql(name = "Movies")]
-//     async fn movies_resolver(
-//         &self,
-//         ctx: &async_graphql::Context<'_>,
-//         #[graphql(name = "Where")] where_input: Option<super::movie::MovieEntityWhereInput>,
-//         #[graphql(name = "OrderBy")] order_by: Option<Vec<super::movie::MovieEntityOrderByInput>>,
-//         #[graphql(name = "Page")] page: Option<crate::graphql::orm::PageInput>,
-//     ) -> async_graphql::Result<super::movie::MovieEntityConnection> {
-//         let db = ctx.data_unchecked::<Database>();
-//         let pool = db.pool();
-
-//         let mut query = EntityQuery::<MovieEntity>::new()
-//             .where_clause("library_id = ?", SqlValue::String(self.id.clone()));
-
-//         if let Some(ref filter) = where_input {
-//             query = query.filter(filter);
-//         }
-//         if let Some(ref orders) = order_by {
-//             for order in orders {
-//                 query = query.order_by(order);
-//             }
-//         }
-//         if query.order_clauses.is_empty() {
-//             query = query.default_order();
-//         }
-//         if let Some(ref p) = page {
-//             query = query.paginate(p);
-//         }
-
-//         let conn = query
-//             .fetch_connection(pool)
-//             .await
-//             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-//         Ok(super::movie::MovieEntityConnection::from_generic(conn))
-//     }
-
-//     /// TV Shows in this library
-//     #[graphql(name = "TvShows")]
-//     async fn tv_shows_resolver(
-//         &self,
-//         ctx: &async_graphql::Context<'_>,
-//         #[graphql(name = "Where")] where_input: Option<super::tv_show::TvShowEntityWhereInput>,
-//         #[graphql(name = "OrderBy")] order_by: Option<Vec<super::tv_show::TvShowEntityOrderByInput>>,
-//         #[graphql(name = "Page")] page: Option<crate::graphql::orm::PageInput>,
-//     ) -> async_graphql::Result<super::tv_show::TvShowEntityConnection> {
-//         let db = ctx.data_unchecked::<Database>();
-//         let pool = db.pool();
-
-//         let mut query = EntityQuery::<TvShowEntity>::new()
-//             .where_clause("library_id = ?", SqlValue::String(self.id.clone()));
-
-//         if let Some(ref filter) = where_input {
-//             query = query.filter(filter);
-//         }
-//         if let Some(ref orders) = order_by {
-//             for order in orders {
-//                 query = query.order_by(order);
-//             }
-//         }
-//         if query.order_clauses.is_empty() {
-//             query = query.default_order();
-//         }
-//         if let Some(ref p) = page {
-//             query = query.paginate(p);
-//         }
-
-//         let conn = query
-//             .fetch_connection(pool)
-//             .await
-//             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-//         Ok(super::tv_show::TvShowEntityConnection::from_generic(conn))
-//     }
-
-//     /// Media files in this library
-//     #[graphql(name = "MediaFiles")]
-//     async fn media_files_resolver(
-//         &self,
-//         ctx: &async_graphql::Context<'_>,
-//         #[graphql(name = "Where")] where_input: Option<super::media_file::MediaFileEntityWhereInput>,
-//         #[graphql(name = "OrderBy")]
-//         order_by: Option<Vec<super::media_file::MediaFileEntityOrderByInput>>,
-//         #[graphql(name = "Page")] page: Option<crate::graphql::orm::PageInput>,
-//     ) -> async_graphql::Result<super::media_file::MediaFileEntityConnection> {
-//         let db = ctx.data_unchecked::<Database>();
-//         let pool = db.pool();
-
-//         let mut query = EntityQuery::<MediaFileEntity>::new()
-//             .where_clause("library_id = ?", SqlValue::String(self.id.clone()));
-
-//         if let Some(ref filter) = where_input {
-//             query = query.filter(filter);
-//         }
-//         if let Some(ref orders) = order_by {
-//             for order in orders {
-//                 query = query.order_by(order);
-//             }
-//         }
-//         if query.order_clauses.is_empty() {
-//             query = query.default_order();
-//         }
-//         if let Some(ref p) = page {
-//             query = query.paginate(p);
-//         }
-
-//         let conn = query
-//             .fetch_connection(pool)
-//             .await
-//             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-//         Ok(super::media_file::MediaFileEntityConnection::from_generic(
-//             conn,
-//         ))
-//     }
-// }
-
-// // ============================================================================
-// // Custom Operations (non-CRUD - service calls)
-// // ============================================================================
-
-// /// Result of scan operation
-// #[derive(Debug, SimpleObject)]
-// pub struct ScanResult {
-//     pub library_id: String,
-//     pub status: String,
-//     pub message: Option<String>,
-// }
-
-// /// Result of consolidation
-// #[derive(Debug, SimpleObject)]
-// pub struct ConsolidateResult {
-//     pub success: bool,
-//     pub folders_removed: i32,
-//     pub files_moved: i32,
-//     pub messages: Vec<String>,
-// }
-
-// /// Custom library operations that require external services
-// ///
-// /// These operations CAN'T be replaced by generated CRUD:
-// /// - ScanLibrary: Triggers scanner service
-// /// - ConsolidateLibrary: File reorganization
-// #[derive(Default)]
-// pub struct LibraryCustomOperations;
-
-// #[Object]
-// impl LibraryCustomOperations {
-//     /// Trigger a library scan
-//     #[graphql(name = "ScanLibrary")]
-//     async fn scan_library(&self, ctx: &Context<'_>, id: String) -> Result<ScanResult> {
-//         let _user = ctx.auth_user()?;
-//         let scanner = ctx.data_unchecked::<Arc<ScannerService>>();
-//         let db = ctx.data_unchecked::<Database>().clone();
-
-//         let library_id = Uuid::parse_str(&id)
-//             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
-
-//         tracing::info!(library_id = %id, "Scan requested for library");
-
-//         let id_clone = id.clone();
-//         let scanner = scanner.clone();
-//         tokio::spawn(async move {
-//             match scanner.scan_library(library_id).await {
-//                 Ok(progress) => {
-//                     tracing::info!(
-//                         library_id = %library_id,
-//                         total_files = progress.total_files,
-//                         new_files = progress.new_files,
-//                         "Library scan completed"
-//                     );
-//                 }
-//                 Err(e) => {
-//                     tracing::error!(library_id = %library_id, error = %e, "Library scan failed");
-//                     // Update scanning status using raw SQL
-//                     let _ = sqlx::query(
-//                         "UPDATE libraries SET is_scanning = false, updated_at = datetime('now') WHERE id = ?",
-//                     )
-//                     .bind(&id_clone)
-//                     .execute(db.pool())
-//                     .await;
-//                 }
-//             }
-//         });
-
-//         Ok(ScanResult {
-//             library_id: id,
-//             status: "started".to_string(),
-//             message: Some("Scan has been started".to_string()),
-//         })
-//     }
-
-//     /// Consolidate library folders
-//     #[graphql(name = "ConsolidateLibrary")]
-//     async fn consolidate_library(&self, ctx: &Context<'_>, id: String) -> Result<ConsolidateResult> {
-//         let _user = ctx.auth_user()?;
-//         let db = ctx.data_unchecked::<Database>();
-
-//         let library_id = Uuid::parse_str(&id)
-//             .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
-
-//         let organizer = crate::services::OrganizerService::new(db.clone());
-
-//         match organizer.consolidate_library(library_id).await {
-//             Ok(result) => Ok(ConsolidateResult {
-//                 success: result.success,
-//                 folders_removed: result.folders_removed,
-//                 files_moved: result.files_moved,
-//                 messages: result.messages,
-//             }),
-//             Err(e) => Ok(ConsolidateResult {
-//                 success: false,
-//                 folders_removed: 0,
-//                 files_moved: 0,
-//                 messages: vec![format!("Consolidation failed: {}", e)],
-//             }),
-//         }
-//     }
-// }
+// Custom operations (ScanLibrary, ConsolidateLibrary, etc.) can be added here
+// as an #[Object] impl on LibraryCustomOperations when needed.

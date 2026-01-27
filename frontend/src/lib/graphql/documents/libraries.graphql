@@ -1,7 +1,11 @@
 # Libraries: query, subscription, create and delete
 # Used by codegen for TypedDocumentNode and types
 
-query Libraries($Where: LibraryWhereInput, $OrderBy: [LibraryOrderByInput!], $Page: PageInput) {
+query Libraries(
+  $Where: LibraryWhereInput
+  $OrderBy: [LibraryOrderByInput!]
+  $Page: PageInput
+) {
   Libraries(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
     Edges {
       Node {
@@ -21,6 +25,26 @@ query Libraries($Where: LibraryWhereInput, $OrderBy: [LibraryOrderByInput!], $Pa
         LastScannedAt
         CreatedAt
         UpdatedAt
+        Shows {
+          PageInfo {
+            TotalCount
+          }
+        }
+        Movies {
+          PageInfo {
+            TotalCount
+          }
+        }
+        Albums {
+          PageInfo {
+            TotalCount
+          }
+        }
+        Audiobooks {
+          PageInfo {
+            TotalCount
+          }
+        }
       }
       Cursor
     }

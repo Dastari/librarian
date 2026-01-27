@@ -55,13 +55,15 @@ const httpLink = new HttpLink({
 // Auth context link - adds Authorization header to every request
 const authLink = setContext(async (operation, { headers }) => {
   const token = await getAuthTokenAsync();
-  
+
   // Only log when token is found - no token is normal for unauthenticated users
   if (import.meta.env.DEV && token) {
-    const opName = operation.operationName || 'unknown';
-    console.debug(`[GraphQL] Sending auth token for ${opName}: ${token.substring(0, 20)}...`);
+    const opName = operation.operationName || "unknown";
+    console.debug(
+      `[GraphQL] Sending auth token for ${opName}: ${token.substring(0, 20)}...`,
+    );
   }
-  
+
   return {
     headers: {
       ...headers,
@@ -215,10 +217,7 @@ export const graphqlClient = {
   }),
 
   subscription: <TData = unknown, TVariables = OperationVariables>(
-    subscription:
-      | TypedDocumentNode<TData, TVariables>
-      | string
-      | DocumentNode,
+    subscription: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
     variables?: TVariables,
   ) => {
     const doc =

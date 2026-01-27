@@ -1,43 +1,35 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useTransition } from "react";
 import { Button } from "@heroui/button";
 import { Card, CardBody } from "@heroui/card";
 import { useDisclosure } from "@heroui/modal";
-import { ShimmerLoader } from "../../components/shared/ShimmerLoader";
-import { librariesTemplateNodes } from "../../lib/template-data";
-import { Tooltip } from "@heroui/tooltip";
+import { Skeleton } from "@heroui/skeleton";
 import { addToast } from "@heroui/toast";
-import { ConfirmModal } from "../../components/ConfirmModal";
+import { IconPlus } from "@tabler/icons-react";
+import { Image } from "@heroui/image";
+
+import { RouteError } from "../../components/RouteError";
+import { DataTable } from "../../components/data-table/DataTable";
 import {
   AddLibraryModal,
+  DeleteLibraryModal,
+  ScanLibraryModal,
   LibraryGridCard,
   type CreateLibraryFormInput,
 } from "../../components/library";
-import { IconPlus } from "@tabler/icons-react";
-import { RouteError } from "../../components/RouteError";
-import { sanitizeError } from "../../lib/format";
 import { graphqlClient } from "../../lib/graphql";
 import {
-  LibrariesDocument,
   LibraryChangedDocument,
   CreateLibraryDocument,
-  DeleteLibraryDocument,
   MeDocument,
   ChangeAction,
   type CreateLibraryInput as GenCreateLibraryInput,
+  type Library,
 } from "../../lib/graphql/generated/graphql";
-import type { Movie, Show } from "../../lib/graphql/generated/graphql";
-import {
-  TV_SHOWS_QUERY,
-  MOVIES_QUERY,
-  ALBUMS_QUERY,
-  AUDIOBOOKS_QUERY,
-  SCAN_LIBRARY_MUTATION,
-  type LibraryNode,
-  type Album,
-  type Audiobook,
-} from "../../lib/graphql";
-import { Image } from "@heroui/image";
+
+// ============================================================================
+// Route Config
+// ============================================================================
 
 export const Route = createFileRoute("/libraries/")({
   beforeLoad: ({ context, location }) => {
@@ -55,181 +47,158 @@ export const Route = createFileRoute("/libraries/")({
   errorComponent: RouteError,
 });
 
+// ============================================================================
+// Types
+// ============================================================================
+
+interface LibraryWithCounts extends Library {
+  _showCount?: number;
+  _movieCount?: number;
+  _albumCount?: number;
+  _audiobookCount?: number;
+}
+
+// ============================================================================
+// GraphQL Query with Counts
+// ============================================================================
+
+const LIBRARIES_WITH_COUNTS_QUERY = `
+  query LibrariesWithCounts {
+    Libraries {
+      Edges {
+        Node {
+          Id
+          UserId
+          Name
+          Path
+          LibraryType
+          Icon
+          Color
+          AutoScan
+          ScanIntervalMinutes
+          WatchForChanges
+          AutoAddDiscovered
+          AutoDownload
+          AutoHunt
+          Scanning
+          LastScannedAt
+          CreatedAt
+          UpdatedAt
+          Shows {
+            PageInfo {
+              TotalCount
+            }
+          }
+          Movies {
+            PageInfo {
+              TotalCount
+            }
+          }
+          Albums {
+            PageInfo {
+              TotalCount
+            }
+          }
+          Audiobooks {
+            PageInfo {
+              TotalCount
+            }
+          }
+        }
+      }
+      PageInfo {
+        TotalCount
+      }
+    }
+  }
+`;
+
+// ============================================================================
+// Component
+// ============================================================================
+
 function LibrariesPage() {
+  // State
+  const [isPending, startTransition] = useTransition();
+  const [libraries, setLibraries] = useState<LibraryWithCounts[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  // Modal states
   const {
     isOpen: isAddOpen,
     onOpen: onAddOpen,
     onClose: onAddClose,
   } = useDisclosure();
   const {
-    isOpen: isConfirmOpen,
-    onOpen: onConfirmOpen,
-    onClose: onConfirmClose,
+    isOpen: isDeleteOpen,
+    onOpen: onDeleteOpen,
+    onClose: onDeleteClose,
   } = useDisclosure();
-  const [libraries, setLibraries] = useState<LibraryNode[]>([]);
-  const [showsByLibrary, setShowsByLibrary] = useState<
-    Record<string, Show[]>
-  >({});
-  const [moviesByLibrary, setMoviesByLibrary] = useState<
-    Record<string, Movie[]>
-  >({});
-  const [albumsByLibrary, setAlbumsByLibrary] = useState<
-    Record<string, Album[]>
-  >({});
-  const [audiobooksByLibrary, setAudiobooksByLibrary] = useState<
-    Record<string, Audiobook[]>
-  >({});
-  const [libraryToDelete, setLibraryToDelete] = useState<{
+  const {
+    isOpen: isScanOpen,
+    onOpen: onScanOpen,
+    onClose: onScanClose,
+  } = useDisclosure();
+
+  // Track which library is being acted upon
+  const [targetLibrary, setTargetLibrary] = useState<{
     id: string;
     name: string;
   } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState(false);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
-  // Track if initial load is done to avoid showing spinner on background refreshes
-  const initialLoadDone = useRef(false);
-
-  const fetchLibraries = useCallback(async (isBackgroundRefresh = false) => {
-    try {
-      // Only show loading spinner on initial load
-      if (!isBackgroundRefresh) {
-        setLoading(true);
-      }
-      const { data, error } = await graphqlClient
-        .query(LibrariesDocument, {})
-        .toPromise();
-
-      if (error) {
-        // Silently ignore auth errors - they can happen during login race conditions
-        const isAuthError = error.message
-          ?.toLowerCase()
-          .includes("authentication");
-        if (!isAuthError) {
-          console.error("Failed to fetch libraries:", error);
-          if (!isBackgroundRefresh) {
-            addToast({
-              title: "Error",
-              description: "Failed to load libraries",
-              color: "danger",
-            });
-          }
-        }
-        return;
-      }
-
-      const connection = data?.Libraries;
-      if (connection) {
-        const list = connection.Edges.map((e) => e.Node);
-        setLibraries(list);
-
-        const tvLibraries = list.filter((l) => l.LibraryType === "TV");
-        const showsPromises = tvLibraries.map(async (lib) => {
-          try {
-            const result = await graphqlClient
-              .query<{ Shows: { Edges: Array<{ Node: Show }> } }>(TV_SHOWS_QUERY, { libraryId: lib.Id })
-              .toPromise();
-            const shows = result.data?.Shows?.Edges?.map((e) => e.Node) ?? [];
-            return { libraryId: lib.Id, shows };
-          } catch {
-            return { libraryId: lib.Id, shows: [] };
-          }
-        });
-
-        const showsResults = await Promise.all(showsPromises);
-        const showsMap: Record<string, Show[]> = {};
-        for (const result of showsResults) {
-          showsMap[result.libraryId] = result.shows;
-        }
-        setShowsByLibrary(showsMap);
-
-        const movieLibraries = list.filter((l) => l.LibraryType === "MOVIES");
-        const moviesPromises = movieLibraries.map(async (lib) => {
-          try {
-            const result = await graphqlClient
-              .query<{ Movies: { Edges: Array<{ Node: Movie }> } }>(MOVIES_QUERY, { libraryId: lib.Id })
-              .toPromise();
-            const movies = result.data?.Movies?.Edges?.map((e) => e.Node) ?? [];
-            return { libraryId: lib.Id, movies };
-          } catch {
-            return { libraryId: lib.Id, movies: [] };
-          }
-        });
-
-        const moviesResults = await Promise.all(moviesPromises);
-        const moviesMap: Record<string, Movie[]> = {};
-        for (const result of moviesResults) {
-          moviesMap[result.libraryId] = result.movies;
-        }
-        setMoviesByLibrary(moviesMap);
-
-        const musicLibraries = list.filter((l) => l.LibraryType === "MUSIC");
-        const albumsPromises = musicLibraries.map(async (lib) => {
-          try {
-            const result = await graphqlClient
-              .query<{ albums: Album[] }>(ALBUMS_QUERY, { libraryId: lib.Id })
-              .toPromise();
-            return { libraryId: lib.Id, albums: result.data?.albums || [] };
-          } catch {
-            return { libraryId: lib.Id, albums: [] };
-          }
-        });
-
-        const albumsResults = await Promise.all(albumsPromises);
-        const albumsMap: Record<string, Album[]> = {};
-        for (const result of albumsResults) {
-          albumsMap[result.libraryId] = result.albums;
-        }
-        setAlbumsByLibrary(albumsMap);
-
-        const audiobookLibraries = list.filter(
-          (l) => l.LibraryType === "AUDIOBOOKS",
-        );
-        const audiobooksPromises = audiobookLibraries.map(async (lib) => {
-          try {
-            const result = await graphqlClient
-              .query<{
-                audiobooks: Audiobook[];
-              }>(AUDIOBOOKS_QUERY, { libraryId: lib.Id })
-              .toPromise();
-            return {
-              libraryId: lib.Id,
-              audiobooks: result.data?.audiobooks || [],
-            };
-          } catch {
-            return { libraryId: lib.Id, audiobooks: [] };
-          }
-        });
-
-        const audiobooksResults = await Promise.all(audiobooksPromises);
-        const audiobooksMap: Record<string, Audiobook[]> = {};
-        for (const result of audiobooksResults) {
-          audiobooksMap[result.libraryId] = result.audiobooks;
-        }
-        setAudiobooksByLibrary(audiobooksMap);
-      }
-    } catch (err) {
-      console.error("Failed to fetch libraries:", err);
-    } finally {
-      setLoading(false);
-      initialLoadDone.current = true;
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchLibraries();
-  }, [fetchLibraries]);
-
-  // Fetch current user Id for CreateLibrary (required by schema)
+  // Fetch current user
   useEffect(() => {
     graphqlClient
       .query(MeDocument, {})
       .toPromise()
-      .then((res) => {
-        if (res.data?.Me?.Id) setCurrentUserId(res.data.Me.Id);
-      })
-      .catch(() => {});
+      .then((result) => {
+        if (result.data?.Me) {
+          setCurrentUserId(result.data.Me.Id);
+        }
+      });
   }, []);
+
+  // Fetch libraries with counts
+  const fetchLibraries = useCallback(async () => {
+    startTransition(async () => {
+      const { data, error } = await graphqlClient
+        .query<{
+          Libraries: {
+            Edges: Array<{
+              Node: Library & {
+                Shows: { PageInfo: { TotalCount: number } };
+                Movies: { PageInfo: { TotalCount: number } };
+                Albums: { PageInfo: { TotalCount: number } };
+                Audiobooks: { PageInfo: { TotalCount: number } };
+              };
+            }>;
+          };
+        }>(LIBRARIES_WITH_COUNTS_QUERY, {})
+        .toPromise();
+
+      if (error) {
+        console.error("Failed to fetch libraries:", error);
+        return;
+      }
+
+      const libs =
+        data?.Libraries?.Edges.map((edge) => ({
+          ...edge.Node,
+          _showCount: edge.Node.Shows?.PageInfo?.TotalCount ?? 0,
+          _movieCount: edge.Node.Movies?.PageInfo?.TotalCount ?? 0,
+          _albumCount: edge.Node.Albums?.PageInfo?.TotalCount ?? 0,
+          _audiobookCount: edge.Node.Audiobooks?.PageInfo?.TotalCount ?? 0,
+        })) ?? [];
+
+      setLibraries(libs);
+    });
+  }, []);
+
+  // Initial fetch
+  useEffect(() => {
+    fetchLibraries();
+  }, [fetchLibraries]);
 
   // Subscribe to library changes for real-time updates
   useEffect(() => {
@@ -242,18 +211,9 @@ function LibrariesPage() {
 
           switch (event.Action) {
             case ChangeAction.Created:
-              if (event.Library) {
-                setLibraries((prev) => [...prev, event.Library!]);
-              }
-              break;
             case ChangeAction.Updated:
-              if (event.Library) {
-                setLibraries((prev) =>
-                  prev.map((lib) =>
-                    lib.Id === event.Id ? event.Library! : lib,
-                  ),
-                );
-              }
+              // Refetch to get updated counts
+              fetchLibraries();
               break;
             case ChangeAction.Deleted:
               setLibraries((prev) => prev.filter((lib) => lib.Id !== event.Id));
@@ -263,8 +223,9 @@ function LibrariesPage() {
       });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [fetchLibraries]);
 
+  // Handlers
   const handleAddLibrary = async (input: CreateLibraryFormInput) => {
     if (!currentUserId) {
       addToast({
@@ -274,6 +235,7 @@ function LibrariesPage() {
       });
       return;
     }
+
     const now = new Date().toISOString();
     const genInput: GenCreateLibraryInput = {
       ...input,
@@ -281,6 +243,7 @@ function LibrariesPage() {
       CreatedAt: now,
       UpdatedAt: now,
     };
+
     try {
       setActionLoading(true);
       const { data, error } = await graphqlClient
@@ -288,11 +251,10 @@ function LibrariesPage() {
         .toPromise();
 
       if (error || !data?.CreateLibrary.Success) {
-        const errorMsg =
-          data?.CreateLibrary.Error || error?.message || "Unknown error";
         addToast({
           title: "Error",
-          description: `Failed to create library: ${errorMsg}`,
+          description:
+            data?.CreateLibrary.Error || error?.message || "Unknown error",
           color: "danger",
         });
         return;
@@ -304,7 +266,7 @@ function LibrariesPage() {
         color: "success",
       });
 
-      // Refresh libraries
+      onAddClose();
       await fetchLibraries();
     } catch (err) {
       console.error("Failed to create library:", err);
@@ -318,146 +280,117 @@ function LibrariesPage() {
     }
   };
 
-  const handleScan = async (libraryId: string, libraryName: string) => {
-    try {
-      const { data, error } = await graphqlClient
-        .mutation<{
-          scanLibrary: { status: string; message: string | null };
-        }>(SCAN_LIBRARY_MUTATION, { id: libraryId })
-        .toPromise();
-
-      if (error) {
-        addToast({
-          title: "Error",
-          description: sanitizeError(error),
-          color: "danger",
-        });
-        return;
-      }
-
-      addToast({
-        title: "Scan Started",
-        description: data?.scanLibrary.message || `Scanning ${libraryName}...`,
-        color: "primary",
-      });
-    } catch (err) {
-      console.error("Failed to scan library:", err);
-    }
+  const handleScanClick = (id: string, name: string) => {
+    setTargetLibrary({ id, name });
+    onScanOpen();
   };
 
-  const handleDeleteClick = (libraryId: string, libraryName: string) => {
-    setLibraryToDelete({ id: libraryId, name: libraryName });
-    onConfirmOpen();
+  const handleDeleteClick = (id: string, name: string) => {
+    setTargetLibrary({ id, name });
+    onDeleteOpen();
   };
 
-  const handleDelete = async () => {
-    if (!libraryToDelete) return;
+  // Empty state
+  const emptyContent = (
+    <Card className="bg-content1/50 border-default-300 border-dashed border-2">
+      <CardBody className="py-16 text-center">
+        <div className="mx-auto w-20 h-20 flex items-center justify-center mb-6">
+          <Image src="/logo.svg" alt="Library" width={80} height={80} />
+        </div>
+        <h3 className="text-xl font-semibold mb-2">No libraries yet</h3>
+        <p className="text-default-500 mb-6 max-w-md mx-auto">
+          Libraries help you organize your media. Add a library to start
+          managing your movies, TV shows, music, and more.
+        </p>
+        <Button color="primary" size="lg" onPress={onAddOpen}>
+          Add Your First Library
+        </Button>
+      </CardBody>
+    </Card>
+  );
 
-    try {
-      const { data, error } = await graphqlClient
-        .mutation(DeleteLibraryDocument, { Id: libraryToDelete.id })
-        .toPromise();
-
-      if (error || !data?.DeleteLibrary.Success) {
-        addToast({
-          title: "Error",
-          description: sanitizeError(
-            data?.DeleteLibrary.Error || "Failed to delete library",
-          ),
-          color: "danger",
-        });
-        onConfirmClose();
-        return;
-      }
-
-      addToast({
-        title: "Deleted",
-        description: `Library "${libraryToDelete.name}" deleted`,
-        color: "success",
-      });
-
-      // Refresh libraries
-      await fetchLibraries();
-    } catch (err) {
-      console.error("Failed to delete library:", err);
-    }
-    onConfirmClose();
-  };
+  // Card skeleton
+  const cardSkeleton = () => (
+    <Card className="relative overflow-hidden aspect-[2/3] bg-content2">
+      <Skeleton className="absolute inset-0 w-full h-full" />
+      <div className="absolute bottom-0 left-0 right-0 p-3 bg-black/50">
+        <Skeleton className="h-4 w-3/4 mb-2 rounded" />
+        <Skeleton className="h-3 w-1/2 rounded" />
+      </div>
+    </Card>
+  );
 
   return (
     <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header with title and add button */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">Libraries</h1>
-          <p className="text-default-500">
-            Organize and manage your media collections
-          </p>
-        </div>
-        <Tooltip content="Add Library">
-          <Button isIconOnly color="primary" size="sm" onPress={onAddOpen}>
-            <IconPlus size={16} />
-          </Button>
-        </Tooltip>
-      </div>
-
-      {/* Content */}
-      {!loading && libraries.length === 0 ? (
-        <Card className="bg-content1/50 border-default-300 border-dashed border-2">
-          <CardBody className="py-16 text-center">
-            <div className="mx-auto w-20 h-20 flex items-center justify-center mb-6">
-              <Image src="/logo.svg" alt="Library" width={80} height={80} />
+      <DataTable
+        stateKey="libraries"
+        data={libraries}
+        columns={[]}
+        getRowKey={(lib) => lib.Id}
+        isLoading={isPending && libraries.length === 0}
+        skeletonDelay={300}
+        emptyContent={emptyContent}
+        // Card view only
+        defaultViewMode="cards"
+        cardRenderer={({ item }) => (
+          <LibraryGridCard
+            library={item}
+            showCount={item._showCount}
+            movieCount={item._movieCount}
+            albumCount={item._albumCount}
+            audiobookCount={item._audiobookCount}
+            onScan={() => handleScanClick(item.Id, item.Name)}
+            onDelete={() => handleDeleteClick(item.Id, item.Name)}
+          />
+        )}
+        cardSkeleton={cardSkeleton}
+        skeletonCardCount={6}
+        cardGridClassName="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
+        // Header with title, description, and add button
+        headerContent={
+          <div className="flex items-start justify-between mb-6">
+            <div>
+              <h1 className="text-2xl font-bold">Libraries</h1>
+              <p className="text-default-500">
+                Organize and manage your media collections
+              </p>
             </div>
-            <h3 className="text-xl font-semibold mb-2">No libraries yet</h3>
-            <p className="text-default-500 mb-6 max-w-md mx-auto">
-              Libraries help you organize your media. Add a library to start
-              managing your movies, TV shows, music, and more.
-            </p>
-            <Button color="primary" size="lg" onPress={onAddOpen}>
-              Add Your First Library
+            <Button
+              color="primary"
+              size="sm"
+              startContent={<IconPlus size={16} />}
+              onPress={onAddOpen}
+            >
+              Add Library
             </Button>
-          </CardBody>
-        </Card>
-      ) : (
-        <ShimmerLoader
-          loading={loading}
-          delay={500}
-          templateProps={{ libraries: librariesTemplateNodes }}
-        >
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-            {(loading ? librariesTemplateNodes : libraries).map((library) => (
-              <LibraryGridCard
-                key={library.Id}
-                library={library}
-                shows={showsByLibrary[library.Id] || []}
-                movies={moviesByLibrary[library.Id] || []}
-                albums={albumsByLibrary[library.Id] || []}
-                audiobooks={audiobooksByLibrary[library.Id] || []}
-                onScan={() => handleScan(library.Id, library.Name)}
-                onDelete={() => handleDeleteClick(library.Id, library.Name)}
-              />
-            ))}
           </div>
-        </ShimmerLoader>
-      )}
-
-      {/* Confirm Delete Modal */}
-      <ConfirmModal
-        isOpen={isConfirmOpen}
-        onClose={onConfirmClose}
-        onConfirm={handleDelete}
-        title="Delete Library"
-        message={`Are you sure you want to delete "${libraryToDelete?.name}"?`}
-        description="This will remove the library and all associated shows from your collection. Downloaded files will not be deleted."
-        confirmLabel="Delete"
-        confirmColor="danger"
+        }
+        // Hide default toolbar (search, etc.) and item count
+        hideToolbar
+        showItemCount={false}
       />
 
+      {/* Modals */}
       <AddLibraryModal
         isOpen={isAddOpen}
         onClose={onAddClose}
         onAdd={handleAddLibrary}
         isLoading={actionLoading}
+      />
+
+      <DeleteLibraryModal
+        isOpen={isDeleteOpen}
+        onClose={onDeleteClose}
+        libraryId={targetLibrary?.id ?? null}
+        libraryName={targetLibrary?.name ?? null}
+        onDeleted={fetchLibraries}
+      />
+
+      <ScanLibraryModal
+        isOpen={isScanOpen}
+        onClose={onScanClose}
+        libraryId={targetLibrary?.id ?? null}
+        libraryName={targetLibrary?.name ?? null}
       />
     </div>
   );
