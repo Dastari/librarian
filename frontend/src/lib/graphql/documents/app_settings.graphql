@@ -10,6 +10,30 @@ query PlaybackSyncInterval($Key: String!) {
   }
 }
 
+query TorrentAppSettings {
+  AppSettings(Where: { Category: { Eq: "torrent" } }, Page: { Limit: 20, Offset: 0 }) {
+    Edges {
+      Node {
+        Id
+        Key
+        Value
+      }
+    }
+  }
+}
+
+mutation CreateAppSetting($Input: CreateAppSettingInput!) {
+  CreateAppSetting(Input: $Input) {
+    Success
+    Error
+    AppSetting {
+      Id
+      Key
+      Value
+    }
+  }
+}
+
 mutation UpdateAppSetting($Id: String!, $Input: UpdateAppSettingInput!) {
   UpdateAppSetting(Id: $Id, Input: $Input) {
     Success

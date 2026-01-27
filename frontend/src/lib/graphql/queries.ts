@@ -6,6 +6,7 @@
 // Torrent Queries
 // ============================================================================
 
+/** Legacy root-field torrents list (camelCase). Prefer DOWNLOADS_TORRENTS_QUERY for the downloads page. */
 export const TORRENTS_QUERY = `
   query Torrents {
     torrents {
@@ -26,6 +27,32 @@ export const TORRENTS_QUERY = `
       peers
       eta
       addedAt
+    }
+  }
+`;
+
+/** Entity Torrents list (codegen) for downloads page. Uses Torrents(Where, Page) with PascalCase fields. */
+export const DOWNLOADS_TORRENTS_QUERY = `
+  query DownloadsTorrents($Where: TorrentWhereInput, $Page: PageInput) {
+    Torrents(Where: $Where, Page: $Page) {
+      Edges {
+        Node {
+          Id
+          InfoHash
+          Name
+          State
+          Progress
+          TotalBytes
+          DownloadedBytes
+          UploadedBytes
+          SavePath
+          AddedAt
+        }
+      }
+      PageInfo {
+        TotalCount
+        HasNextPage
+      }
     }
   }
 `;
@@ -1558,34 +1585,8 @@ export const PLAYBACK_SETTINGS_QUERY = `
 `;
 
 // ============================================================================
-// Filesystem Queries
+// Filesystem Queries (BrowseDirectory uses codegen: see documents/filesystem.graphql)
 // ============================================================================
-
-export const BROWSE_DIRECTORY_QUERY = `
-  query BrowseDirectory($input: BrowseDirectoryInput) {
-    browseDirectory(input: $input) {
-      currentPath
-      parentPath
-      entries {
-        name
-        path
-        isDir
-        size
-        sizeFormatted
-        readable
-        writable
-        mimeType
-        modifiedAt
-      }
-      quickPaths {
-        name
-        path
-      }
-      isLibraryPath
-      libraryId
-    }
-  }
-`;
 
 export const QUICK_PATHS_QUERY = `
   query QuickPaths {

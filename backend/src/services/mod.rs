@@ -36,6 +36,7 @@ pub mod graphql;
 pub mod http_server;
 pub mod logging;
 pub mod manager;
+pub mod torrent;
 
 pub use auth::{
     AccessTokenClaims, AuthConfig, AuthService, AuthTokens, AuthenticatedUser, LoginResult,
@@ -49,6 +50,10 @@ pub use logging::{DatabaseLoggerConfig, LogEvent, LoggingService, LoggingService
 pub use manager::{
     HealthStatus, IntoServiceRegistration, Service, ServiceHealth, ServicesManager,
     ServicesManagerBuilder,
+};
+pub use torrent::{
+    TorrentDetails, TorrentEvent, TorrentFile, TorrentInfo, TorrentService, TorrentServiceConfig,
+    TorrentState,
 };
 
 // These are legacy mods moved to the legacy folder awaiting conversion to the new @servies.md format.

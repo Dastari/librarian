@@ -12,19 +12,16 @@ import { Spinner } from '@heroui/spinner'
 import { IconDownload, IconServer, IconPlayerPause, IconPlayerPlay, IconTrash, IconRefresh } from '@tabler/icons-react'
 import {
   graphqlClient,
-  TORRENTS_QUERY,
+  DOWNLOADS_TORRENTS_QUERY,
   ADD_TORRENT_MUTATION,
-  PAUSE_TORRENT_MUTATION,
-  RESUME_TORRENT_MUTATION,
-  REMOVE_TORRENT_MUTATION,
+  PAUSE_TORRENT_BY_INFO_HASH_MUTATION,
+  RESUME_TORRENT_BY_INFO_HASH_MUTATION,
+  REMOVE_TORRENT_BY_INFO_HASH_MUTATION,
   ORGANIZE_TORRENT_MUTATION,
   PROCESS_SOURCE_MUTATION,
   REMATCH_SOURCE_MUTATION,
-  TORRENT_PROGRESS_SUBSCRIPTION,
-  TORRENT_ADDED_SUBSCRIPTION,
-  TORRENT_REMOVED_SUBSCRIPTION,
-  type Torrent,
-  type TorrentProgress,
+  TorrentChangedDocument,
+  type DownloadsTorrentRow,
   type AddTorrentResult,
   type TorrentActionResult,
   type OrganizeTorrentResult,
@@ -110,7 +107,7 @@ export const Route = createFileRoute('/downloads/')({
 
 function DownloadsPage() {
   const [activeTab, setActiveTab] = useState<'torrents' | 'usenet'>('torrents')
-  const [torrents, setTorrents] = useState<Torrent[]>([])
+  const [torrents, setTorrents] = useState<DownloadsTorrentRow[]>([])
   const [usenetDownloads, setUsenetDownloads] = useState<UsenetDownload[]>([])
   const [isAdding, setIsAdding] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
@@ -118,18 +115,49 @@ function DownloadsPage() {
   const { isOpen, onOpen, onClose } = useDisclosure()
   const { isOpen: isInfoOpen, onOpen: onInfoOpen, onClose: onInfoClose } = useDisclosure()
   const { isOpen: isLinkOpen, onOpen: onLinkOpen, onClose: onLinkClose } = useDisclosure()
-  const [selectedTorrentId, setSelectedTorrentId] = useState<number | null>(null)
-  const [torrentToLink, setTorrentToLink] = useState<Torrent | null>(null)
+  const [selectedTorrentInfoHash, setSelectedTorrentInfoHash] = useState<string | null>(null)
+  const [torrentToLink, setTorrentToLink] = useState<DownloadsTorrentRow | null>(null)
 
   const fetchTorrents = useCallback(async () => {
     try {
-      const result = await graphqlClient.query<{ torrents: Torrent[] }>(TORRENTS_QUERY, {}).toPromise()
-      if (result.data?.torrents) {
-        setTorrents(result.data.torrents)
+      const result = await graphqlClient
+        .query<{
+          Torrents: {
+            Edges: Array<{
+              Node: {
+                Id: string
+                InfoHash: string
+                Name: string
+                State: string
+                Progress: number
+                TotalBytes: number
+                DownloadedBytes: number
+                UploadedBytes: number
+                SavePath: string
+                AddedAt: string
+              }
+            }>
+          }
+        }>(DOWNLOADS_TORRENTS_QUERY, {
+          Page: { Limit: 500, Offset: 0 },
+        })
+        .toPromise()
+      if (result.data?.Torrents?.Edges) {
+        const rows: DownloadsTorrentRow[] = result.data.Torrents.Edges.map(({ Node }) => ({
+          id: Node.Id,
+          infoHash: Node.InfoHash,
+          name: Node.Name,
+          state: (Node.State ?? '').toUpperCase(),
+          progress: Node.Progress,
+          size: Node.TotalBytes,
+          downloaded: Node.DownloadedBytes,
+          uploaded: Node.UploadedBytes,
+          addedAt: Node.AddedAt,
+        }))
+        setTorrents(rows)
       }
       if (result.error) {
-        // Silently ignore auth errors - they can happen during login race conditions
-        const isAuthError = result.error.message?.toLowerCase().includes('authentication');
+        const isAuthError = result.error.message?.toLowerCase().includes('authentication')
         if (!isAuthError) {
           addToast({
             title: 'Error',
@@ -139,8 +167,7 @@ function DownloadsPage() {
         }
       }
     } catch (e) {
-      // Silently ignore auth errors
-      const errorMsg = e instanceof Error ? e.message : String(e);
+      const errorMsg = e instanceof Error ? e.message : String(e)
       if (!errorMsg.toLowerCase().includes('authentication')) {
         addToast({
           title: 'Error',
@@ -170,56 +197,21 @@ function DownloadsPage() {
     }
   }, [])
 
-  // Fetch torrents and usenet downloads, subscribe to updates
+  // Fetch torrents and usenet downloads; subscribe to TorrentChanged to refetch list
   useEffect(() => {
     fetchTorrents()
     fetchUsenetDownloads()
 
-    // Apollo subscriptions return Observables
-    const progressSub = graphqlClient.subscription<{ torrentProgress: TorrentProgress }>(
-      TORRENT_PROGRESS_SUBSCRIPTION,
-      {}
-    ).subscribe({
-      next: (result) => {
-        if (result.data?.torrentProgress) {
-          const p = result.data.torrentProgress
-          setTorrents((prev) =>
-            prev.map((t) =>
-              t.id === p.id
-                ? {
-                  ...t,
-                  progress: p.progress,
-                  downloadSpeed: p.downloadSpeed,
-                  uploadSpeed: p.uploadSpeed,
-                  peers: p.peers,
-                  state: p.state,
-                }
-                : t
-            )
-          )
-        }
-      },
-    })
-
-    const addedSub = graphqlClient.subscription(TORRENT_ADDED_SUBSCRIPTION, {}).subscribe({
-      next: () => fetchTorrents(),
-    })
-
-    const removedSub = graphqlClient.subscription<{ torrentRemoved: { id: number } }>(
-      TORRENT_REMOVED_SUBSCRIPTION,
-      {}
-    ).subscribe({
-      next: (result) => {
-        if (result.data?.torrentRemoved) {
-          setTorrents((prev) => prev.filter((t) => t.id !== result.data!.torrentRemoved.id))
-        }
-      },
-    })
+    const sub = graphqlClient
+      .subscription({ query: TorrentChangedDocument }, {})
+      .subscribe({
+        next: () => {
+          fetchTorrents()
+        },
+      })
 
     return () => {
-      progressSub.unsubscribe()
-      addedSub.unsubscribe()
-      removedSub.unsubscribe()
+      sub.unsubscribe()
     }
   }, [fetchTorrents, fetchUsenetDownloads])
 
@@ -265,21 +257,26 @@ function DownloadsPage() {
     setIsAdding(true)
     try {
       const result = await graphqlClient
-        .mutation<{ addTorrent: AddTorrentResult }>(ADD_TORRENT_MUTATION, {
+        .mutation<{ addTorrent?: AddTorrentResult; AddTorrent?: AddTorrentResult }>(ADD_TORRENT_MUTATION, {
           input: { magnet },
         })
         .toPromise()
-      if (result.data?.addTorrent.success && result.data.addTorrent.torrent) {
-        setTorrents((prev) => [result.data!.addTorrent.torrent!, ...prev])
+      const data = result.data?.addTorrent ?? result.data?.AddTorrent
+      const success = data?.success ?? data?.Success
+      const torrent = data?.torrent ?? data?.Torrent
+      const err = data?.error ?? data?.Error
+      if (success && torrent) {
+        const name = torrent.name ?? torrent.Name
         addToast({
           title: 'Torrent Added',
-          description: `Started downloading: ${result.data.addTorrent.torrent.name}`,
+          description: `Started downloading: ${name}`,
           color: 'success',
         })
+        fetchTorrents()
       } else {
         addToast({
           title: 'Error',
-          description: sanitizeError(result.data?.addTorrent.error || result.error?.message || 'Failed'),
+          description: sanitizeError(err ?? result.error?.message ?? 'Failed'),
           color: 'danger',
         })
       }
@@ -298,21 +295,26 @@ function DownloadsPage() {
     setIsAdding(true)
     try {
       const result = await graphqlClient
-        .mutation<{ addTorrent: AddTorrentResult }>(ADD_TORRENT_MUTATION, {
+        .mutation<{ addTorrent?: AddTorrentResult; AddTorrent?: AddTorrentResult }>(ADD_TORRENT_MUTATION, {
           input: { url },
         })
         .toPromise()
-      if (result.data?.addTorrent.success && result.data.addTorrent.torrent) {
-        setTorrents((prev) => [result.data!.addTorrent.torrent!, ...prev])
+      const data = result.data?.addTorrent ?? result.data?.AddTorrent
+      const success = data?.success ?? data?.Success
+      const torrent = data?.torrent ?? data?.Torrent
+      const err = data?.error ?? data?.Error
+      if (success && torrent) {
+        const name = torrent.name ?? torrent.Name
         addToast({
           title: 'Torrent Added',
-          description: `Started downloading: ${result.data.addTorrent.torrent.name}`,
+          description: `Started downloading: ${name}`,
           color: 'success',
         })
+        fetchTorrents()
       } else {
         addToast({
           title: 'Error',
-          description: sanitizeError(result.data?.addTorrent.error || result.error?.message || 'Failed'),
+          description: sanitizeError(err ?? result.error?.message ?? 'Failed'),
           color: 'danger',
         })
       }
@@ -373,38 +375,45 @@ function DownloadsPage() {
     }
   }
 
-  // Single torrent actions
-  const handlePause = async (id: number) => {
+  // Single torrent actions (by infoHash – entity Torrents list)
+  const handlePause = async (infoHash: string) => {
     const result = await graphqlClient
-      .mutation<{ pauseTorrent: TorrentActionResult }>(PAUSE_TORRENT_MUTATION, { id })
-      .toPromise()
-    if (result.data?.pauseTorrent.success) {
-      setTorrents((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, state: 'PAUSED' as const } : t))
-      )
-    }
-  }
-
-  const handleResume = async (id: number) => {
-    const result = await graphqlClient
-      .mutation<{ resumeTorrent: TorrentActionResult }>(RESUME_TORRENT_MUTATION, { id })
-      .toPromise()
-    if (result.data?.resumeTorrent.success) {
-      setTorrents((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, state: 'DOWNLOADING' as const } : t))
-      )
-    }
-  }
-
-  const handleRemove = async (id: number) => {
-    const result = await graphqlClient
-      .mutation<{ removeTorrent: TorrentActionResult }>(REMOVE_TORRENT_MUTATION, {
-        id,
-        deleteFiles: false,
+      .mutation<{ PauseTorrentByInfoHash?: { Success: boolean; Error?: string } }>(PAUSE_TORRENT_BY_INFO_HASH_MUTATION, {
+        InfoHash: infoHash,
       })
       .toPromise()
-    if (result.data?.removeTorrent.success) {
-      setTorrents((prev) => prev.filter((t) => t.id !== id))
+    const data = result.data?.PauseTorrentByInfoHash
+    if (data?.Success) {
+      setTorrents((prev) =>
+        prev.map((t) => (t.infoHash === infoHash ? { ...t, state: 'paused' } : t))
+      )
+    }
+  }
+
+  const handleResume = async (infoHash: string) => {
+    const result = await graphqlClient
+      .mutation<{ ResumeTorrentByInfoHash?: { Success: boolean; Error?: string } }>(RESUME_TORRENT_BY_INFO_HASH_MUTATION, {
+        InfoHash: infoHash,
+      })
+      .toPromise()
+    const data = result.data?.ResumeTorrentByInfoHash
+    if (data?.Success) {
+      setTorrents((prev) =>
+        prev.map((t) => (t.infoHash === infoHash ? { ...t, state: 'downloading' } : t))
+      )
+    }
+  }
+
+  const handleRemove = async (infoHash: string) => {
+    const result = await graphqlClient
+      .mutation<{ RemoveTorrentByInfoHash?: { Success: boolean; Error?: string } }>(REMOVE_TORRENT_BY_INFO_HASH_MUTATION, {
+        InfoHash: infoHash,
+        DeleteFiles: false,
+      })
+      .toPromise()
+    const data = result.data?.RemoveTorrentByInfoHash
+    if (data?.Success) {
+      setTorrents((prev) => prev.filter((t) => t.infoHash !== infoHash))
       addToast({
         title: 'Torrent Removed',
         description: 'The torrent has been removed.',
@@ -413,49 +422,21 @@ function DownloadsPage() {
     }
   }
 
-  const handleInfo = (id: number) => {
-    setSelectedTorrentId(id)
+  const handleInfo = (infoHash: string) => {
+    setSelectedTorrentInfoHash(infoHash)
     onInfoOpen()
   }
 
-  const handleOrganize = async (id: number) => {
-    const result = await graphqlClient
-      .mutation<{ organizeTorrent: OrganizeTorrentResult }>(ORGANIZE_TORRENT_MUTATION, {
-        id,
-        libraryId: null, // Will use first TV library
-      })
-      .toPromise()
-
-    if (result.data?.organizeTorrent) {
-      const org = result.data.organizeTorrent
-      if (org.success) {
-        addToast({
-          title: 'Files Organized',
-          description: `Organized ${org.organizedCount} file(s)${org.failedCount > 0 ? `, ${org.failedCount} failed` : ''}`,
-          color: 'success',
-        })
-        // Show detailed messages if any
-        if (org.messages.length > 0) {
-          console.log('Organize messages:', org.messages)
-        }
-      } else {
-        addToast({
-          title: 'Organization Failed',
-          description: org.messages[0] || 'Failed to organize files',
-          color: 'danger',
-        })
-      }
-    } else if (result.error) {
-      addToast({
-        title: 'Error',
-        description: sanitizeError(result.error),
-        color: 'danger',
-      })
-    }
+  const handleOrganize = async (_infoHash: string) => {
+    addToast({
+      title: 'Organize',
+      description: 'Organize by info hash is not yet available from this view.',
+      color: 'default',
+    })
   }
 
   // Process pending file matches (copy files to library)
-  const handleProcess = async (torrent: Torrent) => {
+  const handleProcess = async (torrent: DownloadsTorrentRow) => {
     const result = await graphqlClient
       .mutation<{ processSource: ProcessSourceResult }>(PROCESS_SOURCE_MUTATION, {
         sourceType: 'torrent',
@@ -488,7 +469,7 @@ function DownloadsPage() {
   }
 
   // Re-match files against library items
-  const handleRematch = async (torrent: Torrent) => {
+  const handleRematch = async (torrent: DownloadsTorrentRow) => {
     const result = await graphqlClient
       .mutation<{ rematchSource: RematchSourceResult }>(REMATCH_SOURCE_MUTATION, {
         sourceType: 'torrent',
@@ -521,64 +502,68 @@ function DownloadsPage() {
     }
   }
 
-  // Bulk actions
-  const handleBulkPause = async (ids: number[]) => {
+  // Bulk actions (by infoHash)
+  const handleBulkPause = async (infoHashes: string[]) => {
     let successCount = 0
-    for (const id of ids) {
+    for (const infoHash of infoHashes) {
       const result = await graphqlClient
-        .mutation<{ pauseTorrent: TorrentActionResult }>(PAUSE_TORRENT_MUTATION, { id })
+        .mutation<{ PauseTorrentByInfoHash?: { Success: boolean } }>(PAUSE_TORRENT_BY_INFO_HASH_MUTATION, {
+          InfoHash: infoHash,
+        })
         .toPromise()
-      if (result.data?.pauseTorrent.success) {
+      if (result.data?.PauseTorrentByInfoHash?.Success) {
         successCount++
         setTorrents((prev) =>
-          prev.map((t) => (t.id === id ? { ...t, state: 'PAUSED' as const } : t))
+          prev.map((t) => (t.infoHash === infoHash ? { ...t, state: 'paused' } : t))
         )
       }
     }
     addToast({
       title: 'Paused Torrents',
-      description: `Paused ${successCount} of ${ids.length} torrent(s)`,
+      description: `Paused ${successCount} of ${infoHashes.length} torrent(s)`,
       color: 'success',
     })
   }
 
-  const handleBulkResume = async (ids: number[]) => {
+  const handleBulkResume = async (infoHashes: string[]) => {
     let successCount = 0
-    for (const id of ids) {
+    for (const infoHash of infoHashes) {
       const result = await graphqlClient
-        .mutation<{ resumeTorrent: TorrentActionResult }>(RESUME_TORRENT_MUTATION, { id })
+        .mutation<{ ResumeTorrentByInfoHash?: { Success: boolean } }>(RESUME_TORRENT_BY_INFO_HASH_MUTATION, {
+          InfoHash: infoHash,
+        })
         .toPromise()
-      if (result.data?.resumeTorrent.success) {
+      if (result.data?.ResumeTorrentByInfoHash?.Success) {
         successCount++
         setTorrents((prev) =>
-          prev.map((t) => (t.id === id ? { ...t, state: 'DOWNLOADING' as const } : t))
+          prev.map((t) => (t.infoHash === infoHash ? { ...t, state: 'downloading' } : t))
         )
       }
     }
     addToast({
       title: 'Resumed Torrents',
-      description: `Resumed ${successCount} of ${ids.length} torrent(s)`,
+      description: `Resumed ${successCount} of ${infoHashes.length} torrent(s)`,
       color: 'success',
     })
   }
 
-  const handleBulkRemove = async (ids: number[]) => {
+  const handleBulkRemove = async (infoHashes: string[]) => {
     let successCount = 0
-    for (const id of ids) {
+    for (const infoHash of infoHashes) {
       const result = await graphqlClient
-        .mutation<{ removeTorrent: TorrentActionResult }>(REMOVE_TORRENT_MUTATION, {
-          id,
-          deleteFiles: false,
+        .mutation<{ RemoveTorrentByInfoHash?: { Success: boolean } }>(REMOVE_TORRENT_BY_INFO_HASH_MUTATION, {
+          InfoHash: infoHash,
+          DeleteFiles: false,
         })
         .toPromise()
-      if (result.data?.removeTorrent.success) {
+      if (result.data?.RemoveTorrentByInfoHash?.Success) {
         successCount++
-        setTorrents((prev) => prev.filter((t) => t.id !== id))
+        setTorrents((prev) => prev.filter((t) => t.infoHash !== infoHash))
       }
     }
     addToast({
       title: 'Removed Torrents',
-      description: `Removed ${successCount} of ${ids.length} torrent(s)`,
+      description: `Removed ${successCount} of ${infoHashes.length} torrent(s)`,
       color: 'success',
     })
   }
@@ -780,7 +765,7 @@ function DownloadsPage() {
 
       {/* Torrent Info Modal */}
       <TorrentInfoModal
-        torrentId={selectedTorrentId}
+        torrentInfoHash={selectedTorrentInfoHash}
         isOpen={isInfoOpen}
         onClose={onInfoClose}
       />

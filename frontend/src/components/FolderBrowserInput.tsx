@@ -8,8 +8,8 @@ import { Chip } from '@heroui/chip'
 import {
   browseDirectory,
   createDirectory,
-  type FileEntry,
-  type QuickPath,
+  type BrowseDirectoryEntry,
+  type BrowseQuickPath,
 } from '../lib/graphql'
 import { IconFolder, IconFile } from '@tabler/icons-react'
 import { InlineError } from './shared'
@@ -46,8 +46,8 @@ export function FolderBrowserInput({
 }: FolderBrowserInputProps) {
   const { isOpen, onOpen, onClose } = useDisclosure()
   const [currentPath, setCurrentPath] = useState('')
-  const [entries, setEntries] = useState<FileEntry[]>([])
-  const [quickPaths, setQuickPaths] = useState<QuickPath[]>([])
+  const [entries, setEntries] = useState<BrowseDirectoryEntry[]>([])
+  const [quickPaths, setQuickPaths] = useState<BrowseQuickPath[]>([])
   const [parentPath, setParentPath] = useState<string | null>(null)
   const [isBrowsing, setIsBrowsing] = useState(false)
   const [browseError, setBrowseError] = useState<string | null>(null)
@@ -60,10 +60,10 @@ export function FolderBrowserInput({
     setBrowseError(null)
     try {
       const result = await browseDirectory(path, true)
-      setCurrentPath(result.currentPath || '/')
-      setParentPath(result.parentPath ?? null)
-      setEntries(result.entries || [])
-      setQuickPaths(result.quickPaths || [])
+      setCurrentPath(result.CurrentPath || '/')
+      setParentPath(result.ParentPath ?? null)
+      setEntries(result.Entries ?? [])
+      setQuickPaths(result.QuickPaths ?? [])
       return true
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : String(e);
@@ -189,12 +189,12 @@ export function FolderBrowserInput({
               <div className="flex flex-wrap gap-2 mb-4">
                 {quickPaths.map((qp) => (
                   <Button
-                    key={qp.path}
+                    key={qp.Path}
                     size="sm"
                     variant="flat"
-                    onPress={() => browse(qp.path)}
+                    onPress={() => browse(qp.Path)}
                   >
-                    {qp.name}
+                    {qp.Name}
                   </Button>
                 ))}
               </div>
@@ -228,22 +228,22 @@ export function FolderBrowserInput({
                 {/* Directory entries */}
                 {entries.map((entry) => (
                   <Button
-                    key={entry.path}
+                    key={entry.Path}
                     variant="light"
-                    onPress={() => entry.isDir && entry.readable && browse(entry.path)}
+                    onPress={() => entry.IsDir && entry.Readable && browse(entry.Path)}
                     className={`w-full justify-start px-3 py-2 h-auto ${
-                      !entry.readable ? 'opacity-50' : ''
+                      !entry.Readable ? 'opacity-50' : ''
                     }`}
-                    isDisabled={!entry.isDir || !entry.readable}
+                    isDisabled={!entry.IsDir || !entry.Readable}
                   >
-                    {entry.isDir ? <IconFolder size={20} className="text-amber-400" /> : <IconFile size={20} className="text-default-400" />}
-                    <span className="flex-1 truncate text-left">{entry.name}</span>
-                    {entry.isDir && entry.writable && (
+                    {entry.IsDir ? <IconFolder size={20} className="text-amber-400" /> : <IconFile size={20} className="text-default-400" />}
+                    <span className="flex-1 truncate text-left">{entry.Name}</span>
+                    {entry.IsDir && entry.Writable && (
                       <Chip size="sm" color="success" variant="flat">
                         writable
                       </Chip>
                     )}
-                    {entry.isDir && !entry.writable && entry.readable && (
+                    {entry.IsDir && !entry.Writable && entry.Readable && (
                       <Chip size="sm" color="warning" variant="flat">
                         read-only
                       </Chip>

@@ -167,6 +167,7 @@ export function NamingPatternSelector({
         />
       ) : (
         <Select
+          aria-label={label}
           selectedKeys={selectedPatternId ? [selectedPatternId] : []}
           onSelectionChange={(keys) => {
             const selected = Array.from(keys)[0] as string

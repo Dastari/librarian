@@ -52,6 +52,36 @@ export const REMOVE_TORRENT_MUTATION = `
   }
 `;
 
+/** Pause by info hash (for use with entity Torrents list). */
+export const PAUSE_TORRENT_BY_INFO_HASH_MUTATION = `
+  mutation PauseTorrentByInfoHash($InfoHash: String!) {
+    PauseTorrentByInfoHash(InfoHash: $InfoHash) {
+      Success
+      Error
+    }
+  }
+`;
+
+/** Resume by info hash (for use with entity Torrents list). */
+export const RESUME_TORRENT_BY_INFO_HASH_MUTATION = `
+  mutation ResumeTorrentByInfoHash($InfoHash: String!) {
+    ResumeTorrentByInfoHash(InfoHash: $InfoHash) {
+      Success
+      Error
+    }
+  }
+`;
+
+/** Remove by info hash (for use with entity Torrents list). */
+export const REMOVE_TORRENT_BY_INFO_HASH_MUTATION = `
+  mutation RemoveTorrentByInfoHash($InfoHash: String!, $DeleteFiles: Boolean) {
+    RemoveTorrentByInfoHash(InfoHash: $InfoHash, DeleteFiles: $DeleteFiles) {
+      Success
+      Error
+    }
+  }
+`;
+
 export const ORGANIZE_TORRENT_MUTATION = `
   mutation OrganizeTorrent($id: Int!, $libraryId: String, $albumId: String) {
     organizeTorrent(id: $id, libraryId: $libraryId, albumId: $albumId) {
@@ -839,65 +869,65 @@ export const UPDATE_PLAYBACK_SETTINGS_MUTATION = `
 `;
 
 // ============================================================================
-// Filesystem Mutations
+// Filesystem Mutations (PascalCase per graphql-refactor-plan)
 // ============================================================================
 
 export const CREATE_DIRECTORY_MUTATION = `
-  mutation CreateDirectory($input: CreateDirectoryInput!) {
-    createDirectory(input: $input) {
-      success
-      error
-      affectedCount
-      messages
-      path
+  mutation CreateDirectory($Input: CreateDirectoryInput!) {
+    CreateDirectory(Input: $Input) {
+      Success
+      Error
+      AffectedCount
+      Messages
+      Path
     }
   }
 `;
 
 export const DELETE_FILES_MUTATION = `
-  mutation DeleteFiles($input: DeleteFilesInput!) {
-    deleteFiles(input: $input) {
-      success
-      error
-      affectedCount
-      messages
-      path
+  mutation DeleteFiles($Input: DeleteFilesInput!) {
+    DeleteFiles(Input: $Input) {
+      Success
+      Error
+      AffectedCount
+      Messages
+      Path
     }
   }
 `;
 
 export const COPY_FILES_MUTATION = `
-  mutation CopyFiles($input: CopyFilesInput!) {
-    copyFiles(input: $input) {
-      success
-      error
-      affectedCount
-      messages
-      path
+  mutation CopyFiles($Input: CopyFilesInput!) {
+    CopyFiles(Input: $Input) {
+      Success
+      Error
+      AffectedCount
+      Messages
+      Path
     }
   }
 `;
 
 export const MOVE_FILES_MUTATION = `
-  mutation MoveFiles($input: MoveFilesInput!) {
-    moveFiles(input: $input) {
-      success
-      error
-      affectedCount
-      messages
-      path
+  mutation MoveFiles($Input: MoveFilesInput!) {
+    MoveFiles(Input: $Input) {
+      Success
+      Error
+      AffectedCount
+      Messages
+      Path
     }
   }
 `;
 
 export const RENAME_FILE_MUTATION = `
-  mutation RenameFile($input: RenameFileInput!) {
-    renameFile(input: $input) {
-      success
-      error
-      affectedCount
-      messages
-      path
+  mutation RenameFile($Input: RenameFileInput!) {
+    RenameFile(Input: $Input) {
+      Success
+      Error
+      AffectedCount
+      Messages
+      Path
     }
   }
 `;

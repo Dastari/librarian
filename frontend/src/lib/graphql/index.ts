@@ -12,6 +12,8 @@ export type {
   CreateLibraryInput,
   UpdateLibraryInput,
   ChangeAction,
+  BrowseDirectoryEntry,
+  BrowseQuickPath,
 } from "./generated/graphql";
 
 // Types
@@ -28,6 +30,7 @@ export type {
   MediaItem,
   // Torrent
   Torrent,
+  DownloadsTorrentRow,
   TorrentState,
   TorrentProgress,
   ActiveDownloadCount,
@@ -50,12 +53,10 @@ export type {
   // UPnP and Port Testing
   UpnpResult,
   PortTestResult,
-  // Filesystem
+  // Filesystem (BrowseDirectoryResult from filesystem; entry/quick path from generated)
   FileEntry,
   QuickPath,
   BrowseResponse,
-  BrowseDirectoryResult,
-  BrowseDirectoryInput,
   FileOperationResult,
   CreateDirectoryInput,
   DeleteFilesInput,
@@ -217,6 +218,7 @@ export {
 export {
   // Torrent Queries
   TORRENTS_QUERY,
+  DOWNLOADS_TORRENTS_QUERY,
   TORRENT_QUERY,
   TORRENT_DETAILS_QUERY,
   PENDING_FILE_MATCHES_QUERY,
@@ -277,8 +279,7 @@ export {
   CAST_SESSIONS_QUERY,
   CAST_SESSION_QUERY,
   CAST_SETTINGS_QUERY,
-  // Filesystem Queries
-  BROWSE_DIRECTORY_QUERY,
+  // Filesystem Queries (BrowseDirectory uses codegen document)
   QUICK_PATHS_QUERY,
   VALIDATE_PATH_QUERY,
   // Playback Queries
@@ -303,6 +304,9 @@ export {
   PAUSE_TORRENT_MUTATION,
   RESUME_TORRENT_MUTATION,
   REMOVE_TORRENT_MUTATION,
+  PAUSE_TORRENT_BY_INFO_HASH_MUTATION,
+  RESUME_TORRENT_BY_INFO_HASH_MUTATION,
+  REMOVE_TORRENT_BY_INFO_HASH_MUTATION,
   ORGANIZE_TORRENT_MUTATION,
   // File Match Mutations (Source-Agnostic)
   REMATCH_SOURCE_MUTATION,
@@ -412,3 +416,4 @@ export {
   moveFiles,
   renameFile,
 } from "./filesystem";
+export type { BrowseDirectoryResult } from "./filesystem";

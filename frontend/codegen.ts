@@ -8,6 +8,7 @@ const schemaUrl =
 const config: CodegenConfig = {
   schema: schemaUrl,
   documents: ['src/**/*.tsx', 'src/**/*.ts', 'src/lib/graphql/documents/**/*.graphql'],
+  ignore: ['src/lib/graphql/generated/**', 'src/routeTree.gen.ts'],
   ignoreNoDocuments: true,
   generates: {
     // TypedDocumentNode + operation types from .graphql documents (auth, etc.)

@@ -27,6 +27,19 @@ export type Scalars = {
   Float: { input: number; output: number };
 };
 
+/** Input for adding a torrent */
+export type AddTorrentInput = {
+  Magnet?: InputMaybe<Scalars["String"]["input"]>;
+  Url?: InputMaybe<Scalars["String"]["input"]>;
+};
+
+/** Result of add torrent mutation */
+export type AddTorrentResult = {
+  Error?: Maybe<Scalars["String"]["output"]>;
+  Success: Scalars["Boolean"]["output"];
+  Torrent?: Maybe<LiveTorrent>;
+};
+
 /** Album Entity */
 export type Album = {
   AlbumType?: Maybe<Scalars["String"]["output"]>;
@@ -624,6 +637,45 @@ export type BoolFilter = {
   Ne?: InputMaybe<Scalars["Boolean"]["input"]>;
 };
 
+/** A single file or directory entry (PascalCase for GraphQL). */
+export type BrowseDirectoryEntry = {
+  IsDir: Scalars["Boolean"]["output"];
+  MimeType?: Maybe<Scalars["String"]["output"]>;
+  ModifiedAt?: Maybe<Scalars["String"]["output"]>;
+  Name: Scalars["String"]["output"];
+  Path: Scalars["String"]["output"];
+  Readable: Scalars["Boolean"]["output"];
+  Size: Scalars["Int"]["output"];
+  SizeFormatted: Scalars["String"]["output"];
+  Writable: Scalars["Boolean"]["output"];
+};
+
+/** Input for the BrowseDirectory query (PascalCase for GraphQL). */
+export type BrowseDirectoryInput = {
+  /** Only show directories. */
+  DirsOnly: Scalars["Boolean"]["input"];
+  /** Path to browse (defaults to root or home). */
+  Path?: InputMaybe<Scalars["String"]["input"]>;
+  /** Include hidden entries (files/dirs starting with .). */
+  ShowHidden: Scalars["Boolean"]["input"];
+};
+
+/** Result of browsing a directory (PascalCase for GraphQL). */
+export type BrowseDirectoryResult = {
+  CurrentPath: Scalars["String"]["output"];
+  Entries: Array<BrowseDirectoryEntry>;
+  IsLibraryPath: Scalars["Boolean"]["output"];
+  LibraryId?: Maybe<Scalars["String"]["output"]>;
+  ParentPath?: Maybe<Scalars["String"]["output"]>;
+  QuickPaths: Array<BrowseQuickPath>;
+};
+
+/** Quick-access path shortcut (PascalCase for GraphQL). */
+export type BrowseQuickPath = {
+  Name: Scalars["String"]["output"];
+  Path: Scalars["String"]["output"];
+};
+
 export type CastDevice = {
   Address: Scalars["String"]["output"];
   CreatedAt: Scalars["String"]["output"];
@@ -912,6 +964,12 @@ export type ChapterWhereInput = {
   UpdatedAt?: InputMaybe<DateFilter>;
 };
 
+export type CopyFilesInput = {
+  Destination: Scalars["String"]["input"];
+  Overwrite?: InputMaybe<Scalars["Boolean"]["input"]>;
+  Sources: Array<Scalars["String"]["input"]>;
+};
+
 /** Input for creating a new #struct_name */
 export type CreateAlbumInput = {
   AlbumType?: InputMaybe<Scalars["String"]["input"]>;
@@ -1091,6 +1149,10 @@ export type CreateChapterInput = {
   StartTimeSecs: Scalars["Float"]["input"];
   Title?: InputMaybe<Scalars["String"]["input"]>;
   UpdatedAt: Scalars["String"]["input"];
+};
+
+export type CreateDirectoryInput = {
+  Path: Scalars["String"]["input"];
 };
 
 /** Input for creating a new #struct_name */
@@ -1344,15 +1406,22 @@ export type CreatePlaybackProgressInput = {
 
 /** Input for creating a new #struct_name */
 export type CreatePlaybackSessionInput = {
+  AlbumId?: InputMaybe<Scalars["String"]["input"]>;
+  AudiobookId?: InputMaybe<Scalars["String"]["input"]>;
   CompletedAt?: InputMaybe<Scalars["String"]["input"]>;
+  ContentType?: InputMaybe<Scalars["String"]["input"]>;
   CreatedAt: Scalars["String"]["input"];
   CurrentPosition: Scalars["Float"]["input"];
   Duration?: InputMaybe<Scalars["Float"]["input"]>;
+  EpisodeId?: InputMaybe<Scalars["String"]["input"]>;
   IsMuted: Scalars["Boolean"]["input"];
   IsPlaying: Scalars["Boolean"]["input"];
   LastUpdatedAt: Scalars["String"]["input"];
   MediaFileId?: InputMaybe<Scalars["String"]["input"]>;
+  MovieId?: InputMaybe<Scalars["String"]["input"]>;
   StartedAt: Scalars["String"]["input"];
+  TrackId?: InputMaybe<Scalars["String"]["input"]>;
+  TvShowId?: InputMaybe<Scalars["String"]["input"]>;
   UpdatedAt: Scalars["String"]["input"];
   UserId: Scalars["String"]["input"];
   Volume: Scalars["Float"]["input"];
@@ -1783,6 +1852,11 @@ export type DeleteEpisodesResult = {
   success: Scalars["Boolean"]["output"];
 };
 
+export type DeleteFilesInput = {
+  Paths: Array<Scalars["String"]["input"]>;
+  Recursive?: InputMaybe<Scalars["Boolean"]["input"]>;
+};
+
 /** Result of bulk delete by Where filter */
 export type DeleteIndexerConfigsResult = {
   DeletedCount: Scalars["Int"]["output"];
@@ -2065,6 +2139,23 @@ export type EpisodeWhereInput = {
   TvdbId?: InputMaybe<IntFilter>;
   TvmazeId?: InputMaybe<IntFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
+};
+
+export type FileOperationPayload = {
+  AffectedCount: Scalars["Int"]["output"];
+  Error?: Maybe<Scalars["String"]["output"]>;
+  Messages: Array<Scalars["String"]["output"]>;
+  Path?: Maybe<Scalars["String"]["output"]>;
+  Success: Scalars["Boolean"]["output"];
+};
+
+/** Event emitted when a filesystem mutation completes (PascalCase for GraphQL). */
+export type FilesystemChangeEvent = {
+  ChangeType: Scalars["String"]["output"];
+  Name?: Maybe<Scalars["String"]["output"]>;
+  NewName?: Maybe<Scalars["String"]["output"]>;
+  Path: Scalars["String"]["output"];
+  Timestamp: Scalars["String"]["output"];
 };
 
 export type IndexerConfig = {
@@ -2462,6 +2553,31 @@ export type LibraryWhereInput = {
   WatchForChanges?: InputMaybe<BoolFilter>;
 };
 
+/** Live torrent (from torrent client, not DB) */
+export type LiveTorrent = {
+  DownloadSpeed: Scalars["Int"]["output"];
+  Downloaded: Scalars["Int"]["output"];
+  Files: Array<LiveTorrentFile>;
+  Id: Scalars["Int"]["output"];
+  InfoHash: Scalars["String"]["output"];
+  Name: Scalars["String"]["output"];
+  Peers: Scalars["Int"]["output"];
+  Progress: Scalars["Float"]["output"];
+  SavePath: Scalars["String"]["output"];
+  Size: Scalars["Int"]["output"];
+  State: Scalars["String"]["output"];
+  UploadSpeed: Scalars["Int"]["output"];
+  Uploaded: Scalars["Int"]["output"];
+};
+
+/** Live torrent file (from torrent client) */
+export type LiveTorrentFile = {
+  Index: Scalars["Int"]["output"];
+  Path: Scalars["String"]["output"];
+  Progress: Scalars["Float"]["output"];
+  Size: Scalars["Int"]["output"];
+};
+
 /** GraphQL input for login (username or email + password). */
 export type LoginInput = {
   Password: Scalars["String"]["input"];
@@ -2640,6 +2756,12 @@ export type MediaFileWhereInput = {
   Width?: InputMaybe<IntFilter>;
 };
 
+export type MoveFilesInput = {
+  Destination: Scalars["String"]["input"];
+  Overwrite?: InputMaybe<Scalars["Boolean"]["input"]>;
+  Sources: Array<Scalars["String"]["input"]>;
+};
+
 export type Movie = {
   BackdropUrl?: Maybe<Scalars["String"]["output"]>;
   CastNames: Array<Scalars["String"]["output"]>;
@@ -2747,6 +2869,9 @@ export type MovieWhereInput = {
 };
 
 export type MutationRoot = {
+  /** Add a torrent from a magnet link or URL */
+  AddTorrent: AddTorrentResult;
+  CopyFiles: FileOperationPayload;
   /** Create a new #struct_name_str */
   CreateAlbum: AlbumResult;
   /** Create a new #struct_name_str */
@@ -2769,6 +2894,7 @@ export type MutationRoot = {
   CreateCastSetting: CastSettingResult;
   /** Create a new #struct_name_str */
   CreateChapter: ChapterResult;
+  CreateDirectory: FileOperationPayload;
   /** Create a new #struct_name_str */
   CreateEpisode: EpisodeResult;
   /** Create a new #struct_name_str */
@@ -2877,6 +3003,7 @@ export type MutationRoot = {
   DeleteEpisode: EpisodeResult;
   /** Delete multiple #plural_name matching the given Where filter */
   DeleteEpisodes: DeleteEpisodesResult;
+  DeleteFiles: FileOperationPayload;
   /** Delete a #struct_name_str */
   DeleteIndexerConfig: IndexerConfigResult;
   /** Delete multiple #plural_name matching the given Where filter */
@@ -2993,14 +3120,18 @@ export type MutationRoot = {
   DeleteVideoStream: VideoStreamResult;
   /** Delete multiple #plural_name matching the given Where filter */
   DeleteVideoStreams: DeleteVideoStreamsResult;
-  /** Login with username or email and password. */
   Login: AuthPayload;
-  /** Logout: invalidate the given refresh token. */
   Logout: LogoutPayload;
-  /** Refresh access token using a valid refresh token. */
+  MoveFiles: FileOperationPayload;
+  /** Pause a torrent */
+  PauseTorrent: TorrentActionResult;
   RefreshToken: AuthPayload;
-  /** Register a new user. First user becomes admin; subsequent users are members. */
   Register: AuthPayload;
+  /** Remove a torrent */
+  RemoveTorrent: TorrentActionResult;
+  RenameFile: FileOperationPayload;
+  /** Resume a paused torrent */
+  ResumeTorrent: TorrentActionResult;
   /** Update an existing #struct_name_str */
   UpdateAlbum: AlbumResult;
   /** Update an existing #struct_name_str */
@@ -3085,6 +3216,14 @@ export type MutationRoot = {
   UpdateVideoStream: VideoStreamResult;
 };
 
+export type MutationRootAddTorrentArgs = {
+  Input: AddTorrentInput;
+};
+
+export type MutationRootCopyFilesArgs = {
+  Input: CopyFilesInput;
+};
+
 export type MutationRootCreateAlbumArgs = {
   Input: CreateAlbumInput;
 };
@@ -3127,6 +3266,10 @@ export type MutationRootCreateCastSettingArgs = {
 
 export type MutationRootCreateChapterArgs = {
   Input: CreateChapterInput;
+};
+
+export type MutationRootCreateDirectoryArgs = {
+  Input: CreateDirectoryInput;
 };
 
 export type MutationRootCreateEpisodeArgs = {
@@ -3343,6 +3486,10 @@ export type MutationRootDeleteEpisodeArgs = {
 
 export type MutationRootDeleteEpisodesArgs = {
   Where?: InputMaybe<EpisodeWhereInput>;
+};
+
+export type MutationRootDeleteFilesArgs = {
+  Input: DeleteFilesInput;
 };
 
 export type MutationRootDeleteIndexerConfigArgs = {
@@ -3585,12 +3732,33 @@ export type MutationRootLogoutArgs = {
   Input: LogoutInput;
 };
 
+export type MutationRootMoveFilesArgs = {
+  Input: MoveFilesInput;
+};
+
+export type MutationRootPauseTorrentArgs = {
+  Id: Scalars["Int"]["input"];
+};
+
 export type MutationRootRefreshTokenArgs = {
   Input: RefreshTokenInput;
 };
 
 export type MutationRootRegisterArgs = {
   Input: RegisterUserInput;
+};
+
+export type MutationRootRemoveTorrentArgs = {
+  DeleteFiles?: Scalars["Boolean"]["input"];
+  Id: Scalars["Int"]["input"];
+};
+
+export type MutationRootRenameFileArgs = {
+  Input: RenameFileInput;
+};
+
+export type MutationRootResumeTorrentArgs = {
+  Id: Scalars["Int"]["input"];
 };
 
 export type MutationRootUpdateAlbumArgs = {
@@ -4133,16 +4301,23 @@ export type PlaybackProgressWhereInput = {
 };
 
 export type PlaybackSession = {
+  AlbumId?: Maybe<Scalars["String"]["output"]>;
+  AudiobookId?: Maybe<Scalars["String"]["output"]>;
   CompletedAt?: Maybe<Scalars["String"]["output"]>;
+  ContentType?: Maybe<Scalars["String"]["output"]>;
   CreatedAt: Scalars["String"]["output"];
   CurrentPosition: Scalars["Float"]["output"];
   Duration?: Maybe<Scalars["Float"]["output"]>;
+  EpisodeId?: Maybe<Scalars["String"]["output"]>;
   Id: Scalars["String"]["output"];
   IsMuted: Scalars["Boolean"]["output"];
   IsPlaying: Scalars["Boolean"]["output"];
   LastUpdatedAt: Scalars["String"]["output"];
   MediaFileId?: Maybe<Scalars["String"]["output"]>;
+  MovieId?: Maybe<Scalars["String"]["output"]>;
   StartedAt: Scalars["String"]["output"];
+  TrackId?: Maybe<Scalars["String"]["output"]>;
+  TvShowId?: Maybe<Scalars["String"]["output"]>;
   UpdatedAt: Scalars["String"]["output"];
   UserId: Scalars["String"]["output"];
   Volume: Scalars["Float"]["output"];
@@ -4186,28 +4361,37 @@ export type PlaybackSessionResult = {
 };
 
 export type PlaybackSessionWhereInput = {
+  AlbumId?: InputMaybe<StringFilter>;
   /** Logical AND of conditions */
   And?: InputMaybe<Array<PlaybackSessionWhereInput>>;
+  AudiobookId?: InputMaybe<StringFilter>;
   CompletedAt?: InputMaybe<DateFilter>;
+  ContentType?: InputMaybe<StringFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   CurrentPosition?: InputMaybe<IntFilter>;
   Duration?: InputMaybe<IntFilter>;
+  EpisodeId?: InputMaybe<StringFilter>;
   Id?: InputMaybe<StringFilter>;
   IsMuted?: InputMaybe<BoolFilter>;
   IsPlaying?: InputMaybe<BoolFilter>;
   LastUpdatedAt?: InputMaybe<DateFilter>;
   MediaFileId?: InputMaybe<StringFilter>;
+  MovieId?: InputMaybe<StringFilter>;
   /** Logical NOT of condition */
   Not?: InputMaybe<PlaybackSessionWhereInput>;
   /** Logical OR of conditions */
   Or?: InputMaybe<Array<PlaybackSessionWhereInput>>;
   StartedAt?: InputMaybe<DateFilter>;
+  TrackId?: InputMaybe<StringFilter>;
+  TvShowId?: InputMaybe<StringFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   UserId?: InputMaybe<StringFilter>;
   Volume?: InputMaybe<IntFilter>;
 };
 
 export type QueryRoot = {
+  /** Count of active (downloading/checking) torrents */
+  ActiveDownloadCount: Scalars["Int"]["output"];
   /** Get a single #struct_name_str by ID */
   Album?: Maybe<Album>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
@@ -4236,6 +4420,8 @@ export type QueryRoot = {
   Audiobook?: Maybe<Audiobook>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
   Audiobooks: AudiobookConnection;
+  /** Browse a directory on the server. Requires authentication. */
+  BrowseDirectory: BrowseDirectoryResult;
   /** Get a single #struct_name_str by ID */
   CastDevice?: Maybe<CastDevice>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
@@ -4276,6 +4462,10 @@ export type QueryRoot = {
   Libraries: LibraryConnection;
   /** Get a single #struct_name_str by ID */
   Library?: Maybe<Library>;
+  /** Get a single live torrent by numeric id */
+  LiveTorrent?: Maybe<LiveTorrent>;
+  /** Get all torrents with live state from the torrent client */
+  LiveTorrents: Array<LiveTorrent>;
   /** Current authenticated user (requires valid JWT). Returns null if not authenticated. */
   Me?: Maybe<MeUser>;
   /** Get a single #struct_name_str by ID */
@@ -4448,6 +4638,10 @@ export type QueryRootAudiobooksArgs = {
   Where?: InputMaybe<AudiobookWhereInput>;
 };
 
+export type QueryRootBrowseDirectoryArgs = {
+  Input?: InputMaybe<BrowseDirectoryInput>;
+};
+
 export type QueryRootCastDeviceArgs = {
   Id: Scalars["String"]["input"];
 };
@@ -4546,6 +4740,10 @@ export type QueryRootLibrariesArgs = {
 
 export type QueryRootLibraryArgs = {
   Id: Scalars["String"]["input"];
+};
+
+export type QueryRootLiveTorrentArgs = {
+  Id: Scalars["Int"]["input"];
 };
 
 export type QueryRootMediaChapterArgs = {
@@ -4869,6 +5067,11 @@ export type RelativeDate = {
   DaysFromNow?: InputMaybe<Scalars["Int"]["input"]>;
   /** Use today's date */
   Today?: InputMaybe<Scalars["Boolean"]["input"]>;
+};
+
+export type RenameFileInput = {
+  NewName: Scalars["String"]["input"];
+  Path: Scalars["String"]["input"];
 };
 
 export type RssFeed = {
@@ -5425,6 +5628,11 @@ export type SubscriptionRoot = {
   ChapterChanged: ChapterChangedEvent;
   /** Subscribe to #struct_name_str changes */
   EpisodeChanged: EpisodeChangedEvent;
+  /**
+   * Subscribe to filesystem change events (create/delete/copy/move/rename).
+   * Fires when any filesystem mutation completes. Optional path filter.
+   */
+  FilesystemChanged: FilesystemChangeEvent;
   /** Subscribe to #struct_name_str changes */
   IndexerConfigChanged: IndexerConfigChangedEvent;
   /** Subscribe to #struct_name_str changes */
@@ -5531,6 +5739,10 @@ export type SubscriptionRootChapterChangedArgs = {
 
 export type SubscriptionRootEpisodeChangedArgs = {
   Filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRootFilesystemChangedArgs = {
+  Path?: InputMaybe<Scalars["String"]["input"]>;
 };
 
 export type SubscriptionRootIndexerConfigChangedArgs = {
@@ -5758,6 +5970,12 @@ export type TorrentFilesArgs = {
   OrderBy?: InputMaybe<Array<TorrentFileOrderByInput>>;
   Page?: InputMaybe<PageInput>;
   Where?: InputMaybe<TorrentFileWhereInput>;
+};
+
+/** Result of pause/resume/remove */
+export type TorrentActionResult = {
+  Error?: Maybe<Scalars["String"]["output"]>;
+  Success: Scalars["Boolean"]["output"];
 };
 
 /** Event for #struct_name changes (subscriptions) */
@@ -6428,14 +6646,21 @@ export type UpdatePlaybackProgressInput = {
 
 /** Input for updating an existing #struct_name */
 export type UpdatePlaybackSessionInput = {
+  AlbumId?: InputMaybe<Scalars["String"]["input"]>;
+  AudiobookId?: InputMaybe<Scalars["String"]["input"]>;
   CompletedAt?: InputMaybe<Scalars["String"]["input"]>;
+  ContentType?: InputMaybe<Scalars["String"]["input"]>;
   CurrentPosition?: InputMaybe<Scalars["Float"]["input"]>;
   Duration?: InputMaybe<Scalars["Float"]["input"]>;
+  EpisodeId?: InputMaybe<Scalars["String"]["input"]>;
   IsMuted?: InputMaybe<Scalars["Boolean"]["input"]>;
   IsPlaying?: InputMaybe<Scalars["Boolean"]["input"]>;
   LastUpdatedAt?: InputMaybe<Scalars["String"]["input"]>;
   MediaFileId?: InputMaybe<Scalars["String"]["input"]>;
+  MovieId?: InputMaybe<Scalars["String"]["input"]>;
   StartedAt?: InputMaybe<Scalars["String"]["input"]>;
+  TrackId?: InputMaybe<Scalars["String"]["input"]>;
+  TvShowId?: InputMaybe<Scalars["String"]["input"]>;
   UserId?: InputMaybe<Scalars["String"]["input"]>;
   Volume?: InputMaybe<Scalars["Float"]["input"]>;
 };
@@ -7050,6 +7275,26 @@ export type PlaybackSyncIntervalQuery = {
   };
 };
 
+export type TorrentAppSettingsQueryVariables = Exact<{ [key: string]: never }>;
+
+export type TorrentAppSettingsQuery = {
+  AppSettings: {
+    Edges: Array<{ Node: { Id: string; Key: string; Value: string } }>;
+  };
+};
+
+export type CreateAppSettingMutationVariables = Exact<{
+  Input: CreateAppSettingInput;
+}>;
+
+export type CreateAppSettingMutation = {
+  CreateAppSetting: {
+    Success: boolean;
+    Error?: string | null;
+    AppSetting?: { Id: string; Key: string; Value: string } | null;
+  };
+};
+
 export type UpdateAppSettingMutationVariables = Exact<{
   Id: Scalars["String"]["input"];
   Input: UpdateAppSettingInput;
@@ -7305,6 +7550,31 @@ export type DashboardScheduleCachesQuery = {
       };
     }>;
     PageInfo: { TotalCount?: number | null };
+  };
+};
+
+export type BrowseDirectoryQueryVariables = Exact<{
+  Input?: InputMaybe<BrowseDirectoryInput>;
+}>;
+
+export type BrowseDirectoryQuery = {
+  BrowseDirectory: {
+    CurrentPath: string;
+    ParentPath?: string | null;
+    IsLibraryPath: boolean;
+    LibraryId?: string | null;
+    Entries: Array<{
+      Name: string;
+      Path: string;
+      IsDir: boolean;
+      Size: number;
+      SizeFormatted: string;
+      Readable: boolean;
+      Writable: boolean;
+      MimeType?: string | null;
+      ModifiedAt?: string | null;
+    }>;
+    QuickPaths: Array<{ Name: string; Path: string }>;
   };
 };
 
