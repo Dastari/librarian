@@ -4,11 +4,13 @@
 
 use std::sync::Arc;
 
+use async_graphql::dataloader::DataLoader;
 use async_graphql::Schema;
 use librarian_macros::schema_roots;
 
 use crate::db::Database;
 use crate::services::graphql::entities::*;
+use crate::services::graphql::loaders::RelationLoader;
 use crate::services::graphql::mutations::{AuthMutations, FilesystemMutations};
 use crate::services::graphql::queries::FilesystemQueries;
 use crate::services::graphql::subscriptions::filesystem::FilesystemChangeBroker;
@@ -74,6 +76,66 @@ pub fn build_schema<E>(db: Database, auth_service: E, services: Arc<ServicesMana
 where
     E: Send + Sync + Clone + 'static,
 {
+    // Create DataLoaders for batching relation queries.
+    // Each loader batches queries for a specific (entity_type, fk_column) pair.
+    // When multiple parents request their children in the same GraphQL request,
+    // all requests are batched into a single SQL query with IN clause.
+    //
+    // The loaders are keyed by parent ID and return Vec<ChildEntity>.
+    // Filtering, sorting, and pagination are applied in-memory after loading.
+
+    // Library -> children
+    let shows_loader = DataLoader::new(
+        RelationLoader::<Show>::new(db.clone(), "library_id"),
+        tokio::spawn,
+    );
+    let movies_loader = DataLoader::new(
+        RelationLoader::<Movie>::new(db.clone(), "library_id"),
+        tokio::spawn,
+    );
+    let artists_loader = DataLoader::new(
+        RelationLoader::<Artist>::new(db.clone(), "library_id"),
+        tokio::spawn,
+    );
+    let albums_by_library_loader = DataLoader::new(
+        RelationLoader::<Album>::new(db.clone(), "library_id"),
+        tokio::spawn,
+    );
+    let audiobooks_loader = DataLoader::new(
+        RelationLoader::<Audiobook>::new(db.clone(), "library_id"),
+        tokio::spawn,
+    );
+
+    // Show -> Episodes
+    let episodes_loader = DataLoader::new(
+        RelationLoader::<Episode>::new(db.clone(), "show_id"),
+        tokio::spawn,
+    );
+
+    // Artist -> Albums
+    let albums_by_artist_loader = DataLoader::new(
+        RelationLoader::<Album>::new(db.clone(), "artist_id"),
+        tokio::spawn,
+    );
+
+    // Album -> Tracks
+    let tracks_loader = DataLoader::new(
+        RelationLoader::<Track>::new(db.clone(), "album_id"),
+        tokio::spawn,
+    );
+
+    // Audiobook -> Chapters
+    let chapters_loader = DataLoader::new(
+        RelationLoader::<Chapter>::new(db.clone(), "audiobook_id"),
+        tokio::spawn,
+    );
+
+    // Torrent -> TorrentFiles
+    let torrent_files_loader = DataLoader::new(
+        RelationLoader::<TorrentFile>::new(db.clone(), "torrent_id"),
+        tokio::spawn,
+    );
+
     Schema::build(
         QueryRoot::default(),
         MutationRoot::default(),
@@ -83,5 +145,16 @@ where
     .data(auth_service)
     .data(services)
     .data(FilesystemChangeBroker::new(64))
+    // Register all relation DataLoaders
+    .data(shows_loader)
+    .data(movies_loader)
+    .data(artists_loader)
+    .data(albums_by_library_loader)
+    .data(albums_by_artist_loader)
+    .data(audiobooks_loader)
+    .data(episodes_loader)
+    .data(tracks_loader)
+    .data(chapters_loader)
+    .data(torrent_files_loader)
     .finish()
 }

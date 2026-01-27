@@ -2,6 +2,7 @@ pub mod auth;
 pub mod entities;
 pub mod filters;
 //pub mod helpers;
+pub mod loaders;
 pub mod mutations;
 pub mod orm;
 pub mod pagination;
@@ -11,5 +12,6 @@ pub mod service;
 pub mod subscriptions;
 
 pub use auth::{AuthUser, verify_token};
+pub use loaders::RelationLoader;
 pub use schema::{LibrarianSchema, build_schema};
 pub use service::{GraphqlService, GraphqlServiceConfig};

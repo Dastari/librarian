@@ -23,7 +23,7 @@ tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["io"] }
 
 # GraphQL with subscriptions
-async-graphql = { version = "7", features = ["uuid", "time", "tracing", "chrono"] }
+async-graphql = { version = "7", features = ["uuid", "time", "tracing", "chrono", "dataloader"] }
 async-graphql-axum = "7"
 futures = "0.3"
 

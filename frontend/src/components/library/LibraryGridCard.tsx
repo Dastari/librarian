@@ -1,26 +1,35 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from '@tanstack/react-router'
-import { Card } from '@heroui/card'
-import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
-import { Button } from '@heroui/button'
-import { Image } from '@heroui/image'
-import { IconDotsVertical, IconRefresh, IconSettings, IconTrash, IconEye } from '@tabler/icons-react'
-import type { Movie, Show } from '../../lib/graphql/generated/graphql'
-import type { LibraryNode, LibraryType, Album, Audiobook } from '../../lib/graphql'
-import { getLibraryTypeInfo } from '../../lib/graphql'
+import { useCallback } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { Card } from "@heroui/card";
+import {
+  Dropdown,
+  DropdownTrigger,
+  DropdownMenu,
+  DropdownItem,
+} from "@heroui/dropdown";
+import { Button } from "@heroui/button";
+import {
+  IconDotsVertical,
+  IconRefresh,
+  IconSettings,
+  IconTrash,
+  IconEye,
+} from "@tabler/icons-react";
+import type { LibraryNode, LibraryType } from "../../lib/graphql";
+import { getLibraryTypeInfo } from "../../lib/graphql";
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export interface LibraryGridCardProps {
-  library: LibraryNode
-  shows?: Show[]
-  movies?: Movie[]
-  albums?: Album[]
-  audiobooks?: Audiobook[]
-  onScan: () => void
-  onDelete: () => void
+  library: LibraryNode;
+  showCount?: number;
+  movieCount?: number;
+  albumCount?: number;
+  audiobookCount?: number;
+  onScan: () => void;
+  onDelete: () => void;
 }
 
 // ============================================================================
@@ -28,12 +37,12 @@ export interface LibraryGridCardProps {
 // ============================================================================
 
 const LIBRARY_GRADIENTS: Record<string, string> = {
-  MOVIES: 'from-violet-900 via-purple-800 to-fuchsia-900',
-  TV: 'from-blue-900 via-indigo-800 to-cyan-900',
-  MUSIC: 'from-emerald-900 via-green-800 to-teal-900',
-  AUDIOBOOKS: 'from-amber-900 via-orange-800 to-yellow-900',
-  OTHER: 'from-slate-800 via-gray-700 to-zinc-800',
-}
+  MOVIES: "from-violet-900 via-purple-800 to-fuchsia-900",
+  TV: "from-blue-900 via-indigo-800 to-cyan-900",
+  MUSIC: "from-emerald-900 via-green-800 to-teal-900",
+  AUDIOBOOKS: "from-amber-900 via-orange-800 to-yellow-900",
+  OTHER: "from-slate-800 via-gray-700 to-zinc-800",
+};
 
 // ============================================================================
 // Component
@@ -41,75 +50,36 @@ const LIBRARY_GRADIENTS: Record<string, string> = {
 
 export function LibraryGridCard({
   library,
-  shows = [],
-  movies = [],
-  albums = [],
-  audiobooks = [],
+  showCount,
+  movieCount,
+  albumCount,
+  audiobookCount,
   onScan,
   onDelete,
 }: LibraryGridCardProps) {
-  const navigate = useNavigate()
-  const typeInfo = getLibraryTypeInfo(library.LibraryType as LibraryType)
-  const gradient = LIBRARY_GRADIENTS[library.LibraryType] || LIBRARY_GRADIENTS.OTHER
-
-  const artworks = (() => {
-    if (library.LibraryType === 'MOVIES') {
-      return movies
-        .filter((movie) => movie.PosterUrl || movie.BackdropUrl)
-        .map((movie) => movie.PosterUrl || movie.BackdropUrl)
-        .filter((url): url is string => !!url)
-        .slice(0, 6) // Max 6 for cycling
-    }
-    if (library.LibraryType === 'MUSIC') {
-      return albums
-        .filter((album) => album.coverUrl)
-        .map((album) => album.coverUrl)
-        .filter((url): url is string => !!url)
-        .slice(0, 6) // Max 6 for cycling
-    }
-    if (library.LibraryType === 'AUDIOBOOKS') {
-      return audiobooks
-        .filter((audiobook) => audiobook.coverUrl)
-        .map((audiobook) => audiobook.coverUrl)
-        .filter((url): url is string => !!url)
-        .slice(0, 6) // Max 6 for cycling
-    }
-    // TV shows or other library types
-    return shows
-      .filter((show) => show.PosterUrl || show.BackdropUrl)
-      .map((show) => show.PosterUrl || show.BackdropUrl)
-      .filter((url): url is string => !!url)
-      .slice(0, 6) // Max 6 for cycling
-  })()
-
-  const [currentArtIndex, setCurrentArtIndex] = useState(0)
-  const [isTransitioning, setIsTransitioning] = useState(false)
-
-  // Cycle through artwork
-  useEffect(() => {
-    if (artworks.length <= 1) return
-
-    const interval = setInterval(() => {
-      setIsTransitioning(true)
-      setTimeout(() => {
-        setCurrentArtIndex((prev) => (prev + 1) % artworks.length)
-        setIsTransitioning(false)
-      }, 400)
-    }, 4000) // Change every 4 seconds
-
-    return () => clearInterval(interval)
-  }, [artworks.length])
+  const navigate = useNavigate();
+  const typeInfo = getLibraryTypeInfo(library.LibraryType as LibraryType);
+  const gradient =
+    LIBRARY_GRADIENTS[library.LibraryType] || LIBRARY_GRADIENTS.OTHER;
 
   const handleCardClick = useCallback(() => {
-    navigate({ to: '/libraries/$libraryId', params: { libraryId: library.Id } })
-  }, [navigate, library.Id])
+    navigate({
+      to: "/libraries/$libraryId",
+      params: { libraryId: library.Id },
+    });
+  }, [navigate, library.Id]);
 
-  const currentArtwork = artworks[currentArtIndex]
+  // Get count based on library type
+  const itemCount = (() => {
+    if (library.LibraryType === "TV") return showCount ?? 0;
+    if (library.LibraryType === "MOVIES") return movieCount ?? 0;
+    if (library.LibraryType === "MUSIC") return albumCount ?? 0;
+    if (library.LibraryType === "AUDIOBOOKS") return audiobookCount ?? 0;
+    return 0;
+  })();
 
   return (
-    <Card
-      className="relative overflow-hidden aspect-[2/3] group border-none bg-content2"
-    >
+    <Card className="relative overflow-hidden aspect-[2/3] group border-none bg-content2">
       {/* Clickable overlay for navigation - covers the entire card */}
       <button
         type="button"
@@ -118,55 +88,22 @@ export function LibraryGridCard({
         aria-label={`Open ${library.Name} library`}
       />
 
-      {/* Background artwork with gradient overlay */}
+      {/* Background gradient with icon */}
       <div className="absolute inset-0 w-full h-full">
-        {currentArtwork ? (
-          <>
-            <Image
-              src={currentArtwork}
-              alt={library.Name}
-              classNames={{
-                wrapper: `absolute inset-0 w-full h-full !max-w-full transition-opacity duration-800 ${
-                  isTransitioning ? 'opacity-0' : 'opacity-100'
-                }`,
-                img: "w-full h-full object-cover"
-              }}
-              radius="none"
-              removeWrapper={false}
-            />
-            {/* Dark gradient overlay for text readability */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/40" />
-          </>
-        ) : (
-          // Fallback gradient background with icon
-          <div className={`absolute inset-0 bg-gradient-to-br ${gradient}`}>
-            <div className="absolute inset-0 flex items-center justify-center opacity-30">
-              <typeInfo.Icon size={80} />
-            </div>
+        <div className={`absolute inset-0 bg-gradient-to-br ${gradient}`}>
+          <div className="absolute inset-0 flex items-center justify-center opacity-30">
+            <typeInfo.Icon size={80} />
           </div>
-        )}
+        </div>
       </div>
 
       {/* Type badge - top left */}
       <div className="absolute top-2 left-2 z-10 pointer-events-none">
         <div className="px-2 py-1 rounded-md bg-black/50 backdrop-blur-sm text-xs font-medium text-white/90">
-          <typeInfo.Icon size={16} className="inline mr-1" />{typeInfo.label}
+          <typeInfo.Icon size={16} className="inline mr-1" />
+          {typeInfo.label}
         </div>
       </div>
-
-      {/* Artwork indicator dots - only if multiple artworks */}
-      {artworks.length > 1 && (
-        <div className="absolute top-2 right-2 z-10 flex gap-1 pointer-events-none">
-          {artworks.map((_, idx) => (
-            <div
-              key={idx}
-              className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${
-                idx === currentArtIndex ? 'bg-white' : 'bg-white/40'
-              }`}
-            />
-          ))}
-        </div>
-      )}
 
       {/* Bottom content */}
       <div className="absolute bottom-0 left-0 right-0 z-10 p-3 pointer-events-none bg-black/50 backdrop-blur-sm">
@@ -175,11 +112,24 @@ export function LibraryGridCard({
         </h3>
         <div className="flex items-center gap-1.5 text-xs text-white/70">
           <span>
-            {library.LibraryType === 'TV'
-              ? 'Shows'
-              : library.LibraryType === 'MOVIES'
-              ? 'Movies'
-              : 'Items'}
+            {itemCount}{" "}
+            {library.LibraryType === "TV"
+              ? itemCount === 1
+                ? "Show"
+                : "Shows"
+              : library.LibraryType === "MOVIES"
+                ? itemCount === 1
+                  ? "Movie"
+                  : "Movies"
+                : library.LibraryType === "MUSIC"
+                  ? itemCount === 1
+                    ? "Album"
+                    : "Albums"
+                  : library.LibraryType === "AUDIOBOOKS"
+                    ? itemCount === 1
+                      ? "Audiobook"
+                      : "Audiobooks"
+                    : "Items"}
           </span>
         </div>
       </div>
@@ -200,14 +150,20 @@ export function LibraryGridCard({
           <DropdownMenu
             aria-label="Library actions"
             onAction={(key) => {
-              if (key === 'view') {
-                navigate({ to: '/libraries/$libraryId', params: { libraryId: library.Id } })
-              } else if (key === 'scan') {
-                onScan()
-              } else if (key === 'settings') {
-                navigate({ to: '/libraries/$libraryId/settings', params: { libraryId: library.Id } })
-              } else if (key === 'delete') {
-                onDelete()
+              if (key === "view") {
+                navigate({
+                  to: "/libraries/$libraryId",
+                  params: { libraryId: library.Id },
+                });
+              } else if (key === "scan") {
+                onScan();
+              } else if (key === "settings") {
+                navigate({
+                  to: "/libraries/$libraryId/settings",
+                  params: { libraryId: library.Id },
+                });
+              } else if (key === "delete") {
+                onDelete();
               }
             }}
           >
@@ -217,7 +173,10 @@ export function LibraryGridCard({
             <DropdownItem key="scan" startContent={<IconRefresh size={16} />}>
               Scan
             </DropdownItem>
-            <DropdownItem key="settings" startContent={<IconSettings size={16} />}>
+            <DropdownItem
+              key="settings"
+              startContent={<IconSettings size={16} />}
+            >
               Settings
             </DropdownItem>
             <DropdownItem
@@ -232,5 +191,5 @@ export function LibraryGridCard({
         </Dropdown>
       </div>
     </Card>
-  )
+  );
 }
