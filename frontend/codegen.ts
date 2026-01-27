@@ -7,7 +7,8 @@ const schemaUrl =
 
 const config: CodegenConfig = {
   schema: schemaUrl,
-  documents: ['src/**/*.tsx', 'src/**/*.ts', 'src/lib/graphql/documents/**/*.graphql'],
+  // Only .graphql at root to avoid Babel parse of .ts/.tsx (fixes "Unexpected token (388:0)" in pluck).
+  documents: ['src/lib/graphql/documents/**/*.graphql'],
   ignore: ['src/lib/graphql/generated/**', 'src/routeTree.gen.ts'],
   ignoreNoDocuments: true,
   generates: {
@@ -29,9 +30,9 @@ const config: CodegenConfig = {
         },
       },
     },
-    // Legacy: TypeScript types from schema (other documents)
+    // Legacy: TypeScript types from schema. Use .graphql only to avoid Babel parse errors on .ts/.tsx (e.g. (388:0) in pluck).
     './src/lib/graphql/generated/types.ts': {
-      documents: ['src/**/*.tsx', 'src/**/*.ts'],
+      documents: ['src/lib/graphql/documents/**/*.graphql'],
       plugins: ['typescript', 'typescript-operations'],
       config: {
         namingConvention: { typeNames: 'pascal-case#pascalCase', enumValues: 'keep' },
@@ -50,6 +51,7 @@ const config: CodegenConfig = {
       },
     },
     './src/lib/graphql/generated/schema.json': {
+      documents: ['src/lib/graphql/documents/**/*.graphql'],
       plugins: ['introspection'],
       config: { minify: false },
     },

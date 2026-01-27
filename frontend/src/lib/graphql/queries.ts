@@ -57,6 +57,31 @@ export const DOWNLOADS_TORRENTS_QUERY = `
   }
 `;
 
+/** Single Torrent by InfoHash (for TorrentInfoModal). */
+export const TORRENT_BY_INFO_HASH_QUERY = `
+  query TorrentByInfoHash($Where: TorrentWhereInput, $Page: PageInput) {
+    Torrents(Where: $Where, Page: $Page) {
+      Edges {
+        Node {
+          Id
+          InfoHash
+          Name
+          State
+          Progress
+          TotalBytes
+          DownloadedBytes
+          UploadedBytes
+          SavePath
+          AddedAt
+          Files(Page: { Limit: 500 }) {
+            Edges { Node { FileIndex FilePath FileSize DownloadedBytes Progress } }
+          }
+        }
+      }
+    }
+  }
+`;
+
 export const TORRENT_QUERY = `
   query Torrent($id: Int!) {
     torrent(id: $id) {
