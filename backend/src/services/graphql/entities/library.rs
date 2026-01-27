@@ -14,7 +14,7 @@ use super::movie::Movie;
 use super::show::Show;
 
 #[derive(GraphQLEntity, GraphQLOperations, SimpleObject, Clone, Debug, Serialize, Deserialize)]
-#[graphql(name = "Library")]
+#[graphql(name = "Library", complex)]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(table = "libraries", plural = "Libraries", default_sort = "name")]
 pub struct Library {
@@ -120,6 +120,8 @@ pub struct Library {
     #[serde(skip)]
     #[skip_db]
     pub media_files: Vec<MediaFile>,
+
+
 }
 
 #[async_graphql::ComplexObject]
