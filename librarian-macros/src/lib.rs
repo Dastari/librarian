@@ -2346,13 +2346,14 @@ pub fn schema_roots(input: TokenStream) -> TokenStream {
 
     // Use mixed_site so generated idents don't trigger "proc-macro map is missing error entry for crate"
     let span = proc_macro2::Span::mixed_site();
-    // Types for QueryRoot: XCustomOperations for each in query_custom_ops, then XQueries for each entity
+    // Types for QueryRoot: XCustomOperations for each in query_custom_ops, then extra_query_types, then XQueries for each entity
     let custom_op_types: Vec<proc_macro2::TokenStream> = query_custom_ops
         .iter()
         .map(|e| {
             let name = syn::Ident::new(&format!("{}CustomOperations", e), span);
             quote! { #name }
         })
+        .chain(args.extra_query_types.iter().map(|e| quote! { #e }))
         .collect();
     let query_types: Vec<proc_macro2::TokenStream> = entities
         .iter()
@@ -2381,7 +2382,17 @@ pub fn schema_roots(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    // Types for SubscriptionRoot: XSubscriptions for each entity (macro-generated entity-changed streams)
+    // Types for SubscriptionRoot: extra_subscription_types first, then XSubscriptions for each entity
+    let extra_subscription_type_streams: Vec<proc_macro2::TokenStream> = args
+        .extra_subscription_types
+        .iter()
+        .map(|e| quote! { #e })
+        .collect();
+    let subscription_custom_ops = if extra_subscription_type_streams.is_empty() {
+        None
+    } else {
+        Some(extra_subscription_type_streams.as_slice())
+    };
     let subscription_types: Vec<proc_macro2::TokenStream> = entities
         .iter()
         .map(|e| {
@@ -2391,9 +2402,14 @@ pub fn schema_roots(input: TokenStream) -> TokenStream {
         .collect();
 
     // Chunk types to avoid exceeding async-graphql's MergedObject recursion limit (~15–20 deep).
+    let query_custom_chunk = if custom_op_types.is_empty() {
+        None
+    } else {
+        Some(custom_op_types.as_slice())
+    };
     let query_root = emit_chunked_merged(
         "Query",
-        Some(&custom_op_types),
+        query_custom_chunk.as_deref(),
         &query_types,
         async_graphql_merged_object_derive(),
     );
@@ -2405,6 +2421,7 @@ pub fn schema_roots(input: TokenStream) -> TokenStream {
     );
     let subscription_root = emit_chunked_merged_subscription(
         "Subscription",
+        subscription_custom_ops,
         &subscription_types,
     );
 
@@ -2474,16 +2491,19 @@ fn emit_chunked_merged(
 
 fn emit_chunked_merged_subscription(
     name: &str,
+    custom_ops: Option<&[proc_macro2::TokenStream]>,
     types: &[proc_macro2::TokenStream],
 ) -> proc_macro2::TokenStream {
     let derive_macro = quote! { async_graphql::MergedSubscription };
-    emit_chunked_merged(name, None, types, derive_macro)
+    emit_chunked_merged(name, custom_ops, types, derive_macro)
 }
 
 struct SchemaRootsArgs {
     query_custom_ops: Vec<Ident>,
     entities: Vec<Ident>,
     extra_mutation_types: Vec<Ident>,
+    extra_query_types: Vec<Ident>,
+    extra_subscription_types: Vec<Ident>,
 }
 
 impl Parse for SchemaRootsArgs {
@@ -2515,9 +2535,11 @@ impl Parse for SchemaRootsArgs {
         let entities = parse_list(&content)?;
         let _: Option<Token![,]> = input.parse().ok();
 
-        // optional extra_mutation_types: [ ... ]
+        // optional extra_mutation_types, extra_query_types, extra_subscription_types
         let mut extra_mutation_types = Vec::new();
-        if input.peek(Ident) {
+        let mut extra_query_types = Vec::new();
+        let mut extra_subscription_types = Vec::new();
+        while input.peek(Ident) {
             let label: Ident = input.parse()?;
             if label.to_string() == "extra_mutation_types" {
                 input.parse::<Token![:]>()?;
@@ -2525,6 +2547,20 @@ impl Parse for SchemaRootsArgs {
                 syn::bracketed!(content in input);
                 extra_mutation_types = parse_list(&content)?;
                 let _: Option<Token![,]> = input.parse().ok();
+            } else if label.to_string() == "extra_query_types" {
+                input.parse::<Token![:]>()?;
+                let content;
+                syn::bracketed!(content in input);
+                extra_query_types = parse_list(&content)?;
+                let _: Option<Token![,]> = input.parse().ok();
+            } else if label.to_string() == "extra_subscription_types" {
+                input.parse::<Token![:]>()?;
+                let content;
+                syn::bracketed!(content in input);
+                extra_subscription_types = parse_list(&content)?;
+                let _: Option<Token![,]> = input.parse().ok();
+            } else {
+                return Err(syn::Error::new(label.span(), "expected `extra_mutation_types`, `extra_query_types`, or `extra_subscription_types`"));
             }
         }
 
@@ -2532,6 +2568,8 @@ impl Parse for SchemaRootsArgs {
             query_custom_ops,
             entities,
             extra_mutation_types,
+            extra_query_types,
+            extra_subscription_types,
         })
     }
 }

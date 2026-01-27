@@ -425,11 +425,6 @@ impl TorrentService {
             .session
             .with_torrents(|iter| iter.map(|(id, h)| (id, h.clone())).collect());
 
-        info!(
-            count = session_torrents.len(),
-            "Syncing session torrents to database"
-        );
-
         for (_id, handle) in session_torrents {
             let info_hash = get_info_hash_hex(&handle);
             let name = handle.name().unwrap_or_else(|| "Unknown".to_string());

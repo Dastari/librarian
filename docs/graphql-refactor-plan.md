@@ -100,7 +100,7 @@ SQLite-specific macro requirements
 Real Schema Example - Libraries
 -------------------------------
 Based on `backend/migrations_sqlite/001_initial_schema.sql`, the `libraries` table and
-its real `library_id` relationships (e.g. `movies`, `tv_shows`, `artists`, `albums`,
+its real `library_id` relationships (e.g. `movies`, `shows`, `artists`, `albums`,
 `tracks`, `audiobooks`, `media_files`, `torrents`, `rss_feeds`, `user_library_access`).
 
 Example model (macro-first, single source of truth):

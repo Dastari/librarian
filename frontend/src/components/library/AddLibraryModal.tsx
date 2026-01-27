@@ -50,10 +50,17 @@ export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibrar
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} size="xl" scrollBehavior="inside">
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      size="xl"
+      scrollBehavior="inside"
+      aria-labelledby="add-library-modal-title"
+      aria-describedby="add-library-modal-description"
+    >
       <ModalContent>
-        <ModalHeader>Add Library</ModalHeader>
-        <ModalBody>
+        <ModalHeader id="add-library-modal-title">Add Library</ModalHeader>
+        <ModalBody id="add-library-modal-description">
           <LibrarySettingsForm
             initialValues={DEFAULT_LIBRARY_SETTINGS}
             onChange={handleChange}

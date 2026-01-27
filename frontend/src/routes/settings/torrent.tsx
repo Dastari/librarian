@@ -5,15 +5,17 @@ import { Switch } from '@heroui/switch'
 import { Accordion, AccordionItem } from '@heroui/accordion'
 import { Button } from '@heroui/button'
 import { addToast } from '@heroui/toast'
+import { graphqlClient } from '../../lib/graphql/client'
 import {
-  graphqlClient,
-  TORRENT_SETTINGS_QUERY,
-  UPDATE_TORRENT_SETTINGS_MUTATION,
+  TorrentAppSettingsDocument,
+  CreateAppSettingDocument,
+  UpdateAppSettingDocument,
+  type TorrentAppSettingsQuery,
+} from '../../lib/graphql/generated/graphql'
+import {
   UPnP_STATUS_QUERY,
   TEST_PORT_ACCESSIBILITY_QUERY,
   ATTEMPT_UPNP_PORT_FORWARDING_MUTATION,
-  type TorrentSettings,
-  type SettingsResult,
   type UpnpResult,
   type PortTestResult,
 } from '../../lib/graphql'
@@ -22,16 +24,59 @@ import { SettingsHeader } from '../../components/shared'
 import { sanitizeError } from '../../lib/format'
 import { IconFolder, IconNetwork, IconGauge, IconTestPipe, IconAlertTriangle, IconCheck, IconX } from '@tabler/icons-react'
 
+const TORRENT_CATEGORY = 'torrent'
+const TORRENT_KEYS = {
+  download_dir: 'torrent.download_dir',
+  session_dir: 'torrent.session_dir',
+  enable_dht: 'torrent.enable_dht',
+  listen_port: 'torrent.listen_port',
+  max_concurrent: 'torrent.max_concurrent',
+  upload_limit: 'torrent.upload_limit',
+  download_limit: 'torrent.download_limit',
+} as const
+
+/** Shape used by the form and for change detection (from AppSettings key/value store). */
+interface TorrentSettingsShape {
+  downloadDir: string
+  sessionDir: string
+  enableDht: boolean
+  listenPort: number
+  maxConcurrent: number
+  uploadLimit: number
+  downloadLimit: number
+}
+
+function appSettingsToTorrentSettings(
+  edges: TorrentAppSettingsQuery['AppSettings']['Edges']
+): TorrentSettingsShape {
+  const map = new Map(edges.map((e) => [e.Node.Key, e.Node.Value]))
+  const get = (k: string, def: string) => map.get(k) ?? def
+  return {
+    downloadDir: get(TORRENT_KEYS.download_dir, ''),
+    sessionDir: get(TORRENT_KEYS.session_dir, ''),
+    enableDht: get(TORRENT_KEYS.enable_dht, 'true') === 'true',
+    listenPort: parseInt(get(TORRENT_KEYS.listen_port, '6881'), 10) || 6881,
+    maxConcurrent: parseInt(get(TORRENT_KEYS.max_concurrent, '5'), 10) || 5,
+    uploadLimit: parseInt(get(TORRENT_KEYS.upload_limit, '0'), 10) || 0,
+    downloadLimit: parseInt(get(TORRENT_KEYS.download_limit, '0'), 10) || 0,
+  }
+}
+
+/** Map from app setting key to node Id (for updates). */
+function keyToIdMap(edges: TorrentAppSettingsQuery['AppSettings']['Edges']): Map<string, string> {
+  return new Map(edges.map((e) => [e.Node.Key, e.Node.Id]))
+}
+
 export const Route = createFileRoute('/settings/torrent')({
   component: TorrentSettingsPage,
 })
 
 function TorrentSettingsPage() {
-  const [originalSettings, setOriginalSettings] = useState<TorrentSettings | null>(null)
+  const [originalSettings, setOriginalSettings] = useState<TorrentSettingsShape | null>(null)
+  const [settingIds, setSettingIds] = useState<Map<string, string>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
 
-  // Form state
   const [downloadDir, setDownloadDir] = useState('')
   const [sessionDir, setSessionDir] = useState('')
   const [enableDht, setEnableDht] = useState(true)
@@ -40,13 +85,11 @@ function TorrentSettingsPage() {
   const [uploadLimit, setUploadLimit] = useState(0)
   const [downloadLimit, setDownloadLimit] = useState(0)
 
-  // UPnP and port testing state
   const [upnpStatus, setUpnpStatus] = useState<UpnpResult | null>(null)
   const [portTestResult, setPortTestResult] = useState<PortTestResult | null>(null)
   const [isTestingPort, setIsTestingPort] = useState(false)
   const [isAttemptingUpnp, setIsAttemptingUpnp] = useState(false)
 
-  // Track changes
   const hasChanges = useMemo(() => {
     if (!originalSettings) return false
     return (
@@ -62,45 +105,29 @@ function TorrentSettingsPage() {
 
   const fetchSettings = useCallback(async () => {
     try {
-      const result = await graphqlClient.query<{ torrentSettings: TorrentSettings }>(TORRENT_SETTINGS_QUERY, {}).toPromise()
-      if (result.data?.torrentSettings) {
-        const s = result.data.torrentSettings
-        setOriginalSettings(s)
-        setDownloadDir(s.downloadDir)
-        setSessionDir(s.sessionDir)
-        setEnableDht(s.enableDht)
-        setListenPort(s.listenPort)
-        setMaxConcurrent(s.maxConcurrent)
-        setUploadLimit(s.uploadLimit)
-        setDownloadLimit(s.downloadLimit)
-      }
-      if (result.error) {
-        // Silently ignore auth errors - they can happen during login race conditions
-        const isAuthError = result.error.message?.toLowerCase().includes('authentication');
-        if (!isAuthError) {
-          addToast({
-            title: 'Error',
-            description: sanitizeError(result.error),
-            color: 'danger',
-          })
-        }
-      }
+      const result = await graphqlClient.query(TorrentAppSettingsDocument, {}).toPromise()
+      const data = result.data as TorrentAppSettingsQuery | undefined
+      const edges = data?.AppSettings?.Edges ?? []
+      const settings = appSettingsToTorrentSettings(edges)
+      setOriginalSettings(settings)
+      setSettingIds(keyToIdMap(edges))
+      setDownloadDir(settings.downloadDir)
+      setSessionDir(settings.sessionDir)
+      setEnableDht(settings.enableDht)
+      setListenPort(settings.listenPort)
+      setMaxConcurrent(settings.maxConcurrent)
+      setUploadLimit(settings.uploadLimit)
+      setDownloadLimit(settings.downloadLimit)
     } catch (e) {
-      // Silently ignore auth errors
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      if (!errorMsg.toLowerCase().includes('authentication')) {
-        addToast({
-          title: 'Error',
-          description: sanitizeError(e),
-          color: 'danger',
-        })
+      const isAuthError = (e instanceof Error ? e.message : String(e)).toLowerCase().includes('authentication')
+      if (!isAuthError) {
+        addToast({ title: 'Error', description: sanitizeError(e), color: 'danger' })
       }
     } finally {
       setIsLoading(false)
     }
   }, [])
 
-  // Fetch settings on mount
   useEffect(() => {
     fetchSettings()
   }, [fetchSettings])
@@ -108,12 +135,9 @@ function TorrentSettingsPage() {
   const fetchUpnpStatus = useCallback(async () => {
     try {
       const result = await graphqlClient.query<{ upnpStatus: UpnpResult | null }>(UPnP_STATUS_QUERY, {}).toPromise()
-      if (result.data?.upnpStatus) {
-        setUpnpStatus(result.data.upnpStatus)
-      }
-    } catch (e) {
-      // Silently ignore errors for UPnP status
-      console.warn('Failed to fetch UPnP status:', e)
+      if (result.data?.upnpStatus) setUpnpStatus(result.data.upnpStatus)
+    } catch {
+      console.warn('Failed to fetch UPnP status')
     }
   }, [])
 
@@ -121,7 +145,7 @@ function TorrentSettingsPage() {
     setIsTestingPort(true)
     try {
       const result = await graphqlClient.query<{ testPortAccessibility: PortTestResult }>(TEST_PORT_ACCESSIBILITY_QUERY, {
-        port: listenPort
+        port: listenPort,
       }).toPromise()
       if (result.data?.testPortAccessibility) {
         setPortTestResult(result.data.testPortAccessibility)
@@ -134,11 +158,7 @@ function TorrentSettingsPage() {
         })
       }
     } catch (e) {
-      addToast({
-        title: 'Port Test Error',
-        description: sanitizeError(e),
-        color: 'danger',
-      })
+      addToast({ title: 'Port Test Error', description: sanitizeError(e), color: 'danger' })
     } finally {
       setIsTestingPort(false)
     }
@@ -150,72 +170,88 @@ function TorrentSettingsPage() {
       const result = await graphqlClient
         .mutation<{ attemptUpnpPortForwarding: UpnpResult }>(ATTEMPT_UPNP_PORT_FORWARDING_MUTATION, {})
         .toPromise()
-
       if (result.data?.attemptUpnpPortForwarding) {
         const upnpResult = result.data.attemptUpnpPortForwarding
         setUpnpStatus(upnpResult)
-
         addToast({
           title: upnpResult.success ? 'UPnP Port Forwarding Successful' : 'UPnP Port Forwarding Failed',
           description: upnpResult.success
             ? `Successfully forwarded port ${listenPort} via UPnP`
-            : `Failed to forward port ${listenPort} via UPnP: ${upnpResult.error || 'Unknown error'}`,
+            : `Failed to forward port ${listenPort} via UPnP: ${upnpResult.error ?? 'Unknown error'}`,
           color: upnpResult.success ? 'success' : 'warning',
         })
       }
     } catch (e) {
-      addToast({
-        title: 'UPnP Error',
-        description: sanitizeError(e),
-        color: 'danger',
-      })
+      addToast({ title: 'UPnP Error', description: sanitizeError(e), color: 'danger' })
     } finally {
       setIsAttemptingUpnp(false)
     }
   }, [listenPort])
 
-  // Fetch UPnP status on mount
   useEffect(() => {
     fetchUpnpStatus()
   }, [fetchUpnpStatus])
 
   const handleSave = async () => {
     setIsSaving(true)
+    const now = new Date().toISOString()
+    const pairs: [keyof typeof TORRENT_KEYS, string][] = [
+      ['download_dir', downloadDir],
+      ['session_dir', sessionDir],
+      ['enable_dht', enableDht ? 'true' : 'false'],
+      ['listen_port', String(listenPort)],
+      ['max_concurrent', String(maxConcurrent)],
+      ['upload_limit', String(uploadLimit)],
+      ['download_limit', String(downloadLimit)],
+    ]
 
     try {
-      const result = await graphqlClient
-        .mutation<{ updateTorrentSettings: SettingsResult }>(UPDATE_TORRENT_SETTINGS_MUTATION, {
-          input: {
-            downloadDir,
-            sessionDir,
-            enableDht,
-            listenPort,
-            maxConcurrent,
-            uploadLimit,
-            downloadLimit,
-          },
-        })
-        .toPromise()
-
-      if (result.data?.updateTorrentSettings.success) {
-        addToast({
-          title: 'Settings Saved',
-          description: 'Restart the server for changes to take effect.',
-          color: 'success',
-        })
-      } else {
-        addToast({
-          title: 'Error',
-          description: sanitizeError(result.data?.updateTorrentSettings.error || 'Failed to save settings'),
-          color: 'danger',
-        })
+      for (const [key, value] of pairs) {
+        const settingKey = TORRENT_KEYS[key]
+        const id = settingIds.get(settingKey)
+        if (id) {
+          const res = await graphqlClient.mutation(UpdateAppSettingDocument, {
+            Id: id,
+            Input: { Value: value },
+          }).toPromise()
+          const data = res.data as { UpdateAppSetting?: { Success: boolean; Error?: string | null } }
+          if (!data?.UpdateAppSetting?.Success) {
+            addToast({
+              title: 'Error',
+              description: sanitizeError(data?.UpdateAppSetting?.Error ?? 'Failed to save setting'),
+              color: 'danger',
+            })
+            return
+          }
+        } else {
+          const res = await graphqlClient.mutation(CreateAppSettingDocument, {
+            Input: {
+              Key: settingKey,
+              Value: value,
+              Category: TORRENT_CATEGORY,
+              CreatedAt: now,
+              UpdatedAt: now,
+            },
+          }).toPromise()
+          const data = res.data as { CreateAppSetting?: { Success: boolean; Error?: string | null } }
+          if (!data?.CreateAppSetting?.Success) {
+            addToast({
+              title: 'Error',
+              description: sanitizeError(data?.CreateAppSetting?.Error ?? 'Failed to create setting'),
+              color: 'danger',
+            })
+            return
+          }
+        }
       }
-    } catch (e) {
       addToast({
-        title: 'Error',
-        description: sanitizeError(e),
-        color: 'danger',
+        title: 'Settings Saved',
+        description: 'Restart the server for changes to take effect.',
+        color: 'success',
       })
+      await fetchSettings()
+    } catch (e) {
+      addToast({ title: 'Error', description: sanitizeError(e), color: 'danger' })
     } finally {
       setIsSaving(false)
     }
@@ -253,12 +289,7 @@ function TorrentSettingsPage() {
         hasChanges={hasChanges}
       />
 
-      <Accordion
-        selectionMode="multiple"
-        // defaultExpandedKeys={['directories', 'network', 'limits']}
-        variant="splitted"
-      >
-        {/* Directories Section */}
+      <Accordion selectionMode="multiple" variant="splitted">
         <AccordionItem
           key="directories"
           aria-label="Directories"
@@ -280,7 +311,6 @@ function TorrentSettingsPage() {
               modalTitle="Select Download Directory"
               isDisabled={isLoading}
             />
-
             <FolderBrowserInput
               label="Session Directory"
               value={sessionDir}
@@ -293,7 +323,6 @@ function TorrentSettingsPage() {
           </div>
         </AccordionItem>
 
-        {/* Network Section */}
         <AccordionItem
           key="network"
           aria-label="Network"
@@ -309,9 +338,7 @@ function TorrentSettingsPage() {
             <div className="flex justify-between items-center">
               <div>
                 <p className="font-medium">Enable DHT</p>
-                <p className="text-xs text-default-400">
-                  Distributed Hash Table for finding peers without trackers
-                </p>
+                <p className="text-xs text-default-400">Distributed Hash Table for finding peers without trackers</p>
               </div>
               <Switch isSelected={enableDht} onValueChange={setEnableDht} isDisabled={isLoading} />
             </div>
@@ -327,9 +354,7 @@ function TorrentSettingsPage() {
               placeholder="6881"
               className="max-w-xs"
               isDisabled={isLoading}
-              classNames={{
-                label: 'text-sm font-medium text-primary!',
-              }}
+              classNames={{ label: 'text-sm font-medium text-primary!' }}
             />
 
             <Input
@@ -345,19 +370,14 @@ function TorrentSettingsPage() {
               min={1}
               max={20}
               isDisabled={isLoading}
-              classNames={{
-                label: 'text-sm font-medium text-primary!',
-              }}
+              classNames={{ label: 'text-sm font-medium text-primary!' }}
             />
 
-            {/* UPnP Port Forwarding Status */}
             <div className="space-y-3 p-4 bg-content2 rounded-lg">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="font-medium text-foreground">UPnP Port Forwarding</p>
-                  <p className="text-xs text-default-500">
-                    Automatic port forwarding via UPnP for better connectivity
-                  </p>
+                  <p className="text-xs text-default-500">Automatic port forwarding via UPnP for better connectivity</p>
                 </div>
                 <div className="flex gap-2">
                   {upnpStatus && (
@@ -388,29 +408,23 @@ function TorrentSettingsPage() {
                 </div>
               </div>
 
-              {/* Alert Banner when UPnP fails */}
               {upnpStatus && !upnpStatus.success && !isAttemptingUpnp && (
                 <div className="flex items-start gap-3 p-3 bg-warning-50 border border-warning-200 rounded-md">
-                  <IconAlertTriangle size={16} className="text-warning mt-0.5 flex-shrink-0" />
+                  <IconAlertTriangle size={16} className="text-warning mt-0.5 shrink-0" />
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-warning-800">
-                      Port forwarding required
-                    </p>
+                    <p className="text-sm font-medium text-warning-800">Port forwarding required</p>
                     <p className="text-xs text-warning-700 mt-1">
-                      UPnP port forwarding failed. To improve torrent performance, create a port forwarding rule
-                      in your router for port {listenPort} (TCP and UDP) to your backend's local IP address.
+                      UPnP port forwarding failed. To improve torrent performance, create a port forwarding rule in
+                      your router for port {listenPort} (TCP and UDP) to your backend's local IP address.
                     </p>
                   </div>
                 </div>
               )}
 
-              {/* Port Accessibility Test */}
               <div className="flex items-center justify-between pt-2 border-t border-default-200">
                 <div>
                   <p className="text-sm font-medium text-foreground">Port Accessibility</p>
-                  <p className="text-xs text-default-500">
-                    Test if port {listenPort} is accessible from the internet
-                  </p>
+                  <p className="text-xs text-default-500">Test if port {listenPort} is accessible from the internet</p>
                 </div>
                 <Button
                   size="sm"
@@ -425,22 +439,16 @@ function TorrentSettingsPage() {
               </div>
 
               {portTestResult && (
-                <div className={`flex items-center gap-2 p-2 rounded text-xs ${
-                  portTestResult.portOpen
-                    ? 'bg-success-50 text-success-700'
-                    : 'bg-danger-50 text-danger-700'
-                }`}>
-                  {portTestResult.portOpen ? (
-                    <IconCheck size={14} />
-                  ) : (
-                    <IconX size={14} />
-                  )}
+                <div
+                  className={`flex items-center gap-2 p-2 rounded text-xs ${
+                    portTestResult.portOpen ? 'bg-success-50 text-success-700' : 'bg-danger-50 text-danger-700'
+                  }`}
+                >
+                  {portTestResult.portOpen ? <IconCheck size={14} /> : <IconX size={14} />}
                   <span>
                     Port {listenPort} is {portTestResult.portOpen ? 'accessible' : 'not accessible'} from the internet
                     {portTestResult.externalIp && (
-                      <span className="ml-1 text-default-500">
-                        (External IP: {portTestResult.externalIp})
-                      </span>
+                      <span className="ml-1 text-default-500">(External IP: {portTestResult.externalIp})</span>
                     )}
                   </span>
                 </div>
@@ -449,7 +457,6 @@ function TorrentSettingsPage() {
           </div>
         </AccordionItem>
 
-        {/* Speed Limits Section */}
         <AccordionItem
           key="limits"
           aria-label="Speed Limits"
@@ -473,9 +480,7 @@ function TorrentSettingsPage() {
               placeholder="0"
               endContent={<span className="text-default-400 text-sm">B/s</span>}
               isDisabled={isLoading}
-              classNames={{
-                label: 'text-sm font-medium text-primary!',
-              }}
+              classNames={{ label: 'text-sm font-medium text-primary!' }}
             />
             <Input
               type="number"
@@ -488,9 +493,7 @@ function TorrentSettingsPage() {
               placeholder="0"
               endContent={<span className="text-default-400 text-sm">B/s</span>}
               isDisabled={isLoading}
-              classNames={{
-                label: 'text-sm font-medium text-primary!',
-              }}
+              classNames={{ label: 'text-sm font-medium text-primary!' }}
             />
           </div>
         </AccordionItem>

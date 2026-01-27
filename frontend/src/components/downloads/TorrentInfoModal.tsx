@@ -24,7 +24,10 @@ import { ErrorState } from '../shared'
 import { IconCheck, IconArrowDown, IconArrowUp, IconFolder, IconLink, IconX, IconTrash, IconCopy } from '@tabler/icons-react'
 
 interface TorrentInfoModalProps {
-  torrentId: number | null
+  /** Legacy numeric id (session handle). Prefer torrentInfoHash when using entity list. */
+  torrentId?: number | null
+  /** Entity torrent info hash – fetches one Torrent by InfoHash and shows basic info. */
+  torrentInfoHash?: string | null
   isOpen: boolean
   onClose: () => void
 }
@@ -198,8 +201,45 @@ function createFileColumns(
   ]
 }
 
-export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModalProps) {
+const TORRENT_BY_INFO_HASH_QUERY = `
+  query TorrentByInfoHash($Where: TorrentWhereInput, $Page: PageInput) {
+    Torrents(Where: $Where, Page: $Page) {
+      Edges {
+        Node {
+          Id
+          InfoHash
+          Name
+          State
+          Progress
+          TotalBytes
+          DownloadedBytes
+          UploadedBytes
+          SavePath
+          AddedAt
+          Files(Page: { Limit: 500 }) {
+            Edges { Node { FileIndex FilePath FileSize DownloadedBytes Progress } }
+          }
+        }
+      }
+    }
+  }
+`
+
+export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }: TorrentInfoModalProps) {
   const [details, setDetails] = useState<TorrentDetails | null>(null)
+  const [entityTorrent, setEntityTorrent] = useState<{
+    Id: string
+    InfoHash: string
+    Name: string
+    State: string
+    Progress: number
+    TotalBytes: number
+    DownloadedBytes: number
+    UploadedBytes: number
+    SavePath: string
+    AddedAt: string
+    Files?: { Edges: Array<{ Node: { FileIndex: number; FilePath: string; FileSize: number; DownloadedBytes: number; Progress: number } }> }
+  } | null>(null)
   const [fileMatches, setFileMatches] = useState<PendingFileMatch[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -234,12 +274,51 @@ export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModa
   )
 
   useEffect(() => {
-    if (isOpen && torrentId !== null) {
+    if (!isOpen) return
+
+    setDetails(null)
+    setEntityTorrent(null)
+    setFileMatches([])
+    setError(null)
+
+    if (torrentInfoHash) {
       setIsLoading(true)
-      setError(null)
-      setFileMatches([])
-      
-      // Fetch torrent details
+      graphqlClient
+        .query<{
+          Torrents: {
+            Edges: Array<{
+              Node: {
+                Id: string
+                InfoHash: string
+                Name: string
+                State: string
+                Progress: number
+                TotalBytes: number
+                DownloadedBytes: number
+                UploadedBytes: number
+                SavePath: string
+                AddedAt: string
+                Files?: { Edges: Array<{ Node: { FileIndex: number; FilePath: string; FileSize: number; DownloadedBytes: number; Progress: number } }> }
+              }
+            }>
+          }
+        }>(TORRENT_BY_INFO_HASH_QUERY, {
+          Where: { InfoHash: { Eq: torrentInfoHash } },
+          Page: { Limit: 1, Offset: 0 },
+        })
+        .toPromise()
+        .then((result) => {
+          const node = result.data?.Torrents?.Edges?.[0]?.Node
+          if (node) setEntityTorrent(node)
+          else setError('Torrent not found')
+        })
+        .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+        .finally(() => setIsLoading(false))
+      return
+    }
+
+    if (torrentId != null) {
+      setIsLoading(true)
       graphqlClient
         .query<{ torrentDetails: TorrentDetails }>(TORRENT_DETAILS_QUERY, { id: torrentId })
         .toPromise()
@@ -273,7 +352,7 @@ export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModa
         .catch((err) => setError(sanitizeError(err)))
         .finally(() => setIsLoading(false))
     }
-  }, [isOpen, torrentId])
+  }, [isOpen, torrentId, torrentInfoHash])
 
   return (
     <Modal 
@@ -291,28 +370,28 @@ export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModa
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 flex-1">
               <h2 className="text-xl font-semibold truncate pr-4">
-                {details?.name || 'Torrent Details'}
+                {details?.name ?? entityTorrent?.Name ?? 'Torrent Details'}
               </h2>
-              {details && (
+              {(details ?? entityTorrent) && (
                 <code className="text-xs text-default-400 font-mono mt-1 block">
-                  {details.infoHash}
+                  {details?.infoHash ?? entityTorrent?.InfoHash}
                 </code>
               )}
             </div>
-            {details && (
+            {(details ?? entityTorrent) && (
               <div className="flex items-center gap-2 flex-shrink-0">
                 <Chip
                   size="sm"
-                  color={TORRENT_STATE_INFO[details.state]?.color || 'default'}
+                  color={TORRENT_STATE_INFO[(details ?? entityTorrent)!.state]?.color ?? 'default'}
                   variant="flat"
                 >
-                  {TORRENT_STATE_INFO[details.state]?.label || details.state}
+                  {TORRENT_STATE_INFO[(details ?? entityTorrent)!.state]?.label ?? (details ?? entityTorrent)!.state}
                 </Chip>
-                {details.finished && (
+                {details?.finished ?? (entityTorrent && entityTorrent.Progress >= 1) ? (
                   <Chip size="sm" color="success" variant="flat" startContent={<IconCheck size={12} className="text-green-400" />}>
                     Complete
                   </Chip>
-                )}
+                ) : null}
               </div>
             )}
           </div>
@@ -331,6 +410,56 @@ export function TorrentInfoModal({ torrentId, isOpen, onClose }: TorrentInfoModa
               title="Failed to Load Details"
               message={error}
             />
+          )}
+
+          {entityTorrent && !isLoading && !details && (
+            <div className="space-y-6">
+              <Card className="bg-content2/50">
+                <CardBody className="p-4">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-default-500">
+                        {formatBytes(entityTorrent.DownloadedBytes)} of {formatBytes(entityTorrent.TotalBytes)}
+                      </span>
+                      <span className="font-semibold tabular-nums">
+                        {(entityTorrent.Progress * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    <Progress
+                      value={entityTorrent.Progress * 100}
+                      color={entityTorrent.State === 'error' ? 'danger' : entityTorrent.Progress >= 1 ? 'success' : 'primary'}
+                      size="md"
+                      aria-label="Download progress"
+                      classNames={{ track: 'h-3', indicator: 'h-3' }}
+                    />
+                  </div>
+                </CardBody>
+              </Card>
+              <div className="bg-content2/30 rounded-lg p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <IconFolder size={16} className="text-amber-400" />
+                  <span className="text-xs font-medium text-default-500 uppercase tracking-wide">Save Location</span>
+                </div>
+                <code className="text-sm text-default-600 break-all">{entityTorrent.SavePath}</code>
+              </div>
+              {entityTorrent.Files?.Edges?.length ? (
+                <div className="space-y-3">
+                  <span className="text-sm font-medium text-default-600">Files ({entityTorrent.Files.Edges.length})</span>
+                  <DataTable
+                    data={entityTorrent.Files.Edges.map((e) => e.Node)}
+                    columns={[
+                      { key: 'FilePath', label: 'File', render: (n) => <span className="truncate block max-w-md" title={n.FilePath}>{n.FilePath.split(/[/\\]/).pop() ?? n.FilePath}</span> },
+                      { key: 'FileSize', label: 'Size', render: (n) => formatBytes(n.FileSize) },
+                      { key: 'Progress', label: 'Progress', render: (n) => `${(n.Progress * 100).toFixed(0)}%` },
+                    ]}
+                    getRowKey={(n) => n.FileIndex.toString()}
+                    isCompact
+                    hideToolbar
+                    removeWrapper
+                  />
+                </div>
+              ) : null}
+            </div>
           )}
 
           {details && !isLoading && (

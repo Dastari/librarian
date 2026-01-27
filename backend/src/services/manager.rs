@@ -31,6 +31,7 @@ use crate::services::database::{DatabaseService, DatabaseServiceConfig};
 use crate::services::graphql::{GraphqlService, GraphqlServiceConfig};
 use crate::services::http_server::{HttpServerConfig, HttpServerService};
 use crate::services::logging::{LoggingService, LoggingServiceConfig};
+use crate::services::torrent::{TorrentService, TorrentServiceConfig};
 
 /// Health status of a service.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -139,6 +140,7 @@ enum ServiceRegistration {
     Logging(LoggingServiceConfig),
     Graphql(GraphqlServiceConfig),
     Http(HttpServerConfig),
+    Torrent(TorrentServiceConfig),
     Service(Arc<dyn Service>),
 }
 
@@ -177,6 +179,12 @@ impl IntoServiceRegistration for LoggingServiceConfig {
 impl IntoServiceRegistration for HttpServerConfig {
     fn into_registration(self) -> ServiceRegistration {
         ServiceRegistration::Http(self)
+    }
+}
+
+impl IntoServiceRegistration for TorrentServiceConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration::Torrent(self)
     }
 }
 
@@ -274,6 +282,10 @@ impl ServicesManagerBuilder {
                         Arc::new(HttpServerService::new(manager.clone(), config.config));
                     manager.register(http_svc).await;
                 }
+                ServiceRegistration::Torrent(config) => {
+                    let torrent_svc = Arc::new(TorrentService::new(manager.clone(), config));
+                    manager.register_torrent(torrent_svc).await;
+                }
                 ServiceRegistration::Service(svc) => {
                     manager.register(svc).await;
                 }
@@ -305,6 +317,7 @@ pub struct ServicesManager {
     database: RwLock<Option<Arc<DatabaseService>>>,
     logging: RwLock<Option<Arc<LoggingService>>>,
     graphql: RwLock<Option<Arc<GraphqlService>>>,
+    torrent: RwLock<Option<Arc<TorrentService>>>,
     /// Route builders for /api/*; used by [build_api_router]. ParkingRwLock so registration and build are sync.
     api_route_builders: ParkingRwLock<Vec<(String, Box<dyn Fn(AppState) -> Router<AppState> + Send + Sync>)>>,
 }
@@ -324,6 +337,7 @@ impl ServicesManager {
             database: RwLock::new(None),
             logging: RwLock::new(None),
             graphql: RwLock::new(None),
+            torrent: RwLock::new(None),
             api_route_builders: ParkingRwLock::new(Vec::new()),
         }
     }
@@ -521,6 +535,26 @@ impl ServicesManager {
         self.graphql.read().await.clone()
     }
 
+    /// Register the torrent service so [get_torrent](ServicesManager::get_torrent) works.
+    pub async fn register_torrent(&self, service: Arc<TorrentService>) {
+        let name = service.name().to_string();
+        *self.torrent.write().await = Some(service.clone());
+        let mut guard = self.services.write().await;
+        if guard.insert(name.clone(), service).is_some() {
+            warn!(service = %name, "Service '{}' reregistered, overwriting previous", name);
+        } else {
+            info!(service = %name, "Service '{}' registered", name);
+        }
+    }
+
+    /// Return the torrent service if it is registered and currently **started**.
+    pub async fn get_torrent(&self) -> Option<Arc<TorrentService>> {
+        if !self.started.read().await.contains("torrent") {
+            return None;
+        }
+        self.torrent.read().await.clone()
+    }
+
     /// Unregister a service by name. Does not stop it; call [stop_one](ServicesManager::stop_one)
     /// before unregistering if it is running. Removes it from the started set.
     /// Returns the previous service if present. Clears typed handles for "auth", "database", "logging", "graphql".
@@ -537,6 +571,9 @@ impl ServicesManager {
         }
         if name == "graphql" {
             *self.graphql.write().await = None;
+        }
+        if name == "torrent" {
+            *self.torrent.write().await = None;
         }
         let mut guard = self.services.write().await;
         let out = guard.remove(name);

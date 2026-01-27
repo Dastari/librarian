@@ -28,8 +28,9 @@ use crate::db::Database;
 use crate::services::logging::{DbLayerState, OptionalDbLayer};
 use crate::services::{
     AuthConfig, DatabaseServiceConfig, GraphqlServiceConfig, HttpServerConfig,
-    LoggingServiceConfig, ServicesManager,
+    LoggingServiceConfig, ServicesManager, torrent::TorrentServiceConfig,
 };
+use std::path::PathBuf;
 use crate::tui::{create_tui_layer, should_use_tui, TuiApp, TuiConfig};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -93,6 +94,13 @@ async fn main() -> anyhow::Result<()> {
         .add_service(AuthConfig::from_env())
         .add_service(GraphqlServiceConfig {
             server_port: config.port,
+        })
+        .add_service(TorrentServiceConfig {
+            download_dir: PathBuf::from(&config.downloads_path),
+            session_dir: PathBuf::from(&config.session_path),
+            enable_dht: config.torrent_enable_dht,
+            listen_port: config.torrent_listen_port,
+            max_concurrent: config.torrent_max_concurrent,
         })
         .add_service(HttpServerConfig {
             config: config.clone(),

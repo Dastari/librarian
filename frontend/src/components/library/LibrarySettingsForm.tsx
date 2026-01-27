@@ -209,6 +209,7 @@ export function LibrarySettingsForm({
 
       <Select
         label="Library Type"
+        aria-label="Library Type"
         selectedKeys={[values.libraryType]}
         onChange={(e) => updateValue('libraryType', e.target.value as LibraryType)}
         isDisabled={mode === 'edit'}
@@ -233,6 +234,7 @@ export function LibrarySettingsForm({
         description="Automatically scan for new files periodically"
       >
         <Switch
+          aria-label="Auto-scan"
           isSelected={values.autoScan}
           onValueChange={(v) => updateValue('autoScan', v)}
         />
@@ -263,6 +265,7 @@ export function LibrarySettingsForm({
         description="Use filesystem notifications for instant detection"
       >
         <Switch
+          aria-label="Watch for changes"
           isSelected={values.watchForChanges}
           onValueChange={(v) => updateValue('watchForChanges', v)}
         />
@@ -318,6 +321,7 @@ export function LibrarySettingsForm({
           description={getAutoHuntDescription()}
         >
           <Switch
+            aria-label="Auto Hunt"
             isSelected={isAutoHuntEnabled}
             onValueChange={handleAutoHuntChange}
           />
@@ -330,6 +334,7 @@ export function LibrarySettingsForm({
           description={getAutoAddDescription()}
         >
           <Switch
+            aria-label="Auto-add discovered"
             isSelected={values.autoAddDiscovered}
             onValueChange={(v) => updateValue('autoAddDiscovered', v)}
           />
@@ -352,6 +357,7 @@ export function LibrarySettingsForm({
       <>
         <SettingRow label="Organize files" description={organizeDescription}>
           <Switch
+            aria-label="Organize files"
             isSelected={values.organizeFiles}
             onValueChange={(v) => updateValue('organizeFiles', v)}
           />
@@ -373,6 +379,7 @@ export function LibrarySettingsForm({
       return (
         <Select
           label="Quality Preset"
+          aria-label="Quality Preset"
           selectedKeys={[qualityPreset]}
           onChange={(e) => handlePresetChange(e.target.value)}
           description="Quick quality filter setup (can be customized later in settings)"

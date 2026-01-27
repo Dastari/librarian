@@ -1,12 +1,14 @@
 /**
  * Filesystem GraphQL operations
  *
- * These functions provide GraphQL-based filesystem operations,
- * replacing the old REST API endpoints.
+ * Uses codegen-generated documents and PascalCase types from the backend schema.
  */
 
 import { graphqlClient } from './client';
-import { BROWSE_DIRECTORY_QUERY } from './queries';
+import {
+  BrowseDirectoryDocument,
+  type BrowseDirectoryQuery,
+} from './generated/graphql';
 import {
   CREATE_DIRECTORY_MUTATION,
   DELETE_FILES_MUTATION,
@@ -14,25 +16,43 @@ import {
   MOVE_FILES_MUTATION,
   RENAME_FILE_MUTATION,
 } from './mutations';
-import type { BrowseResponse, BrowseDirectoryResult, FileOperationResult } from './types';
+import type {
+  FileOperationResult,
+  FileOperationPayloadPascal,
+} from './types';
+
+function fromPascal(p: FileOperationPayloadPascal): FileOperationResult {
+  return {
+    success: p.Success,
+    error: p.Error,
+    affectedCount: p.AffectedCount,
+    messages: p.Messages ?? [],
+    path: p.Path ?? null,
+  };
+}
+
+/** Result shape from BrowseDirectory query (PascalCase). */
+export type BrowseDirectoryResult = NonNullable<
+  BrowseDirectoryQuery['BrowseDirectory']
+>;
 
 /**
  * Browse a directory on the server filesystem
  *
  * @param path - Path to browse (defaults to root)
  * @param dirsOnly - Only show directories (default: true)
- * @returns Browse response with entries and quick paths
+ * @returns Browse result with CurrentPath, Entries, QuickPaths (PascalCase)
  */
 export async function browseDirectory(
   path?: string,
   dirsOnly = true
-): Promise<BrowseResponse> {
+): Promise<BrowseDirectoryResult> {
   const result = await graphqlClient
-    .query<{ browseDirectory: BrowseDirectoryResult }>(BROWSE_DIRECTORY_QUERY, {
-      input: {
-        path: path || null,
-        dirsOnly,
-        showHidden: false,
+    .query(BrowseDirectoryDocument, {
+      Input: {
+        Path: path ?? null,
+        DirsOnly: dirsOnly,
+        ShowHidden: false,
       },
     })
     .toPromise();
@@ -41,29 +61,12 @@ export async function browseDirectory(
     throw new Error(result.error.message);
   }
 
-  if (!result.data?.browseDirectory) {
+  const data = result.data?.BrowseDirectory;
+  if (!data) {
     throw new Error('Failed to browse directory');
   }
 
-  const data = result.data.browseDirectory;
-
-  // Convert to BrowseResponse for backward compatibility
-  return {
-    currentPath: data.currentPath,
-    parentPath: data.parentPath,
-    entries: data.entries.map((e) => ({
-      name: e.name,
-      path: e.path,
-      isDir: e.isDir,
-      size: e.size,
-      sizeFormatted: e.sizeFormatted,
-      readable: e.readable,
-      writable: e.writable,
-      mimeType: e.mimeType,
-      modifiedAt: e.modifiedAt,
-    })),
-    quickPaths: data.quickPaths,
-  };
+  return data;
 }
 
 /**
@@ -76,8 +79,8 @@ export async function createDirectory(
   path: string
 ): Promise<{ success: boolean; path?: string; error?: string }> {
   const result = await graphqlClient
-    .mutation<{ createDirectory: FileOperationResult }>(CREATE_DIRECTORY_MUTATION, {
-      input: { path },
+    .mutation<{ CreateDirectory: FileOperationPayloadPascal }>(CREATE_DIRECTORY_MUTATION, {
+      Input: { Path: path },
     })
     .toPromise();
 
@@ -88,18 +91,18 @@ export async function createDirectory(
     };
   }
 
-  if (!result.data?.createDirectory) {
+  if (!result.data?.CreateDirectory) {
     return {
       success: false,
       error: 'Failed to create directory',
     };
   }
 
-  const data = result.data.createDirectory;
+  const data = result.data.CreateDirectory;
   return {
-    success: data.success,
-    path: data.path || undefined,
-    error: data.error || undefined,
+    success: data.Success,
+    path: data.Path ?? undefined,
+    error: data.Error ?? undefined,
   };
 }
 
@@ -115,8 +118,8 @@ export async function deleteFiles(
   recursive = true
 ): Promise<FileOperationResult> {
   const result = await graphqlClient
-    .mutation<{ deleteFiles: FileOperationResult }>(DELETE_FILES_MUTATION, {
-      input: { paths, recursive },
+    .mutation<{ DeleteFiles: FileOperationPayloadPascal }>(DELETE_FILES_MUTATION, {
+      Input: { Paths: paths, Recursive: recursive },
     })
     .toPromise();
 
@@ -130,7 +133,7 @@ export async function deleteFiles(
     };
   }
 
-  if (!result.data?.deleteFiles) {
+  if (!result.data?.DeleteFiles) {
     return {
       success: false,
       error: 'Failed to delete files',
@@ -140,7 +143,7 @@ export async function deleteFiles(
     };
   }
 
-  return result.data.deleteFiles;
+  return fromPascal(result.data.DeleteFiles);
 }
 
 /**
@@ -157,8 +160,8 @@ export async function copyFiles(
   overwrite = false
 ): Promise<FileOperationResult> {
   const result = await graphqlClient
-    .mutation<{ copyFiles: FileOperationResult }>(COPY_FILES_MUTATION, {
-      input: { sources, destination, overwrite },
+    .mutation<{ CopyFiles: FileOperationPayloadPascal }>(COPY_FILES_MUTATION, {
+      Input: { Sources: sources, Destination: destination, Overwrite: overwrite },
     })
     .toPromise();
 
@@ -172,7 +175,7 @@ export async function copyFiles(
     };
   }
 
-  if (!result.data?.copyFiles) {
+  if (!result.data?.CopyFiles) {
     return {
       success: false,
       error: 'Failed to copy files',
@@ -182,7 +185,7 @@ export async function copyFiles(
     };
   }
 
-  return result.data.copyFiles;
+  return fromPascal(result.data.CopyFiles);
 }
 
 /**
@@ -199,8 +202,8 @@ export async function moveFiles(
   overwrite = false
 ): Promise<FileOperationResult> {
   const result = await graphqlClient
-    .mutation<{ moveFiles: FileOperationResult }>(MOVE_FILES_MUTATION, {
-      input: { sources, destination, overwrite },
+    .mutation<{ MoveFiles: FileOperationPayloadPascal }>(MOVE_FILES_MUTATION, {
+      Input: { Sources: sources, Destination: destination, Overwrite: overwrite },
     })
     .toPromise();
 
@@ -214,7 +217,7 @@ export async function moveFiles(
     };
   }
 
-  if (!result.data?.moveFiles) {
+  if (!result.data?.MoveFiles) {
     return {
       success: false,
       error: 'Failed to move files',
@@ -224,7 +227,7 @@ export async function moveFiles(
     };
   }
 
-  return result.data.moveFiles;
+  return fromPascal(result.data.MoveFiles);
 }
 
 /**
@@ -239,8 +242,8 @@ export async function renameFile(
   newName: string
 ): Promise<FileOperationResult> {
   const result = await graphqlClient
-    .mutation<{ renameFile: FileOperationResult }>(RENAME_FILE_MUTATION, {
-      input: { path, newName },
+    .mutation<{ RenameFile: FileOperationPayloadPascal }>(RENAME_FILE_MUTATION, {
+      Input: { Path: path, NewName: newName },
     })
     .toPromise();
 
@@ -254,7 +257,7 @@ export async function renameFile(
     };
   }
 
-  if (!result.data?.renameFile) {
+  if (!result.data?.RenameFile) {
     return {
       success: false,
       error: 'Failed to rename file',
@@ -264,5 +267,5 @@ export async function renameFile(
     };
   }
 
-  return result.data.renameFile;
+  return fromPascal(result.data.RenameFile);
 }

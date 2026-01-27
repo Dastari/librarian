@@ -1,7 +1,16 @@
-use super::torrent_file::TorrentFile;
-use async_graphql::{Result, SimpleObject};
+use std::sync::Arc;
+
+use async_graphql::{Context, InputObject, Object, Result, SimpleObject};
 use librarian_macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use super::super::auth::AuthExt;
+use super::torrent_file::TorrentFile;
+use crate::services::torrent::{
+    TorrentInfo as ServiceTorrentInfo, TorrentService, TorrentState as ServiceTorrentState,
+};
+use crate::services::ServicesManager;
 
 #[derive(
     GraphQLEntity,
@@ -121,224 +130,311 @@ pub struct Torrent {
 #[derive(Default)]
 pub struct TorrentCustomOperations;
 
-// // =============================================================================
-// // Custom Torrent Operations (Service-backed, non-CRUD)
-// // =============================================================================
+// =============================================================================
+// GraphQL types for custom operations (live client state; PascalCase)
+// =============================================================================
 
-// /// Result of rematch operation
-// #[derive(SimpleObject)]
-// #[graphql(name = "RematchSourceResult")]
-// pub struct RematchSourceResult {
-//     #[graphql(name = "Success")]
-//     pub success: bool,
-//     #[graphql(name = "MatchCount")]
-//     pub match_count: i32,
-//     #[graphql(name = "Error")]
-//     pub error: Option<String>,
-// }
+/// Live torrent file (from torrent client)
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "LiveTorrentFile")]
+pub struct LiveTorrentFile {
+    #[graphql(name = "Index")]
+    pub index: i32,
+    #[graphql(name = "Path")]
+    pub path: String,
+    #[graphql(name = "Size")]
+    pub size: i64,
+    #[graphql(name = "Progress")]
+    pub progress: f64,
+}
 
-// /// Result of process operation
-// #[derive(SimpleObject)]
-// #[graphql(name = "ProcessSourceResult")]
-// pub struct ProcessSourceResult {
-//     #[graphql(name = "Success")]
-//     pub success: bool,
-//     #[graphql(name = "FilesProcessed")]
-//     pub files_processed: i32,
-//     #[graphql(name = "FilesFailed")]
-//     pub files_failed: i32,
-//     #[graphql(name = "Messages")]
-//     pub messages: Vec<String>,
-//     #[graphql(name = "Error")]
-//     pub error: Option<String>,
-// }
+/// Live torrent (from torrent client, not DB)
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "LiveTorrent")]
+pub struct LiveTorrent {
+    #[graphql(name = "Id")]
+    pub id: i32,
+    #[graphql(name = "InfoHash")]
+    pub info_hash: String,
+    #[graphql(name = "Name")]
+    pub name: String,
+    #[graphql(name = "State")]
+    pub state: String,
+    #[graphql(name = "Progress")]
+    pub progress: f64,
+    #[graphql(name = "Size")]
+    pub size: i64,
+    #[graphql(name = "Downloaded")]
+    pub downloaded: i64,
+    #[graphql(name = "Uploaded")]
+    pub uploaded: i64,
+    #[graphql(name = "DownloadSpeed")]
+    pub download_speed: i64,
+    #[graphql(name = "UploadSpeed")]
+    pub upload_speed: i64,
+    #[graphql(name = "Peers")]
+    pub peers: i32,
+    #[graphql(name = "SavePath")]
+    pub save_path: String,
+    #[graphql(name = "Files")]
+    pub files: Vec<LiveTorrentFile>,
+}
 
-// /// Result of set/remove match operations
-// #[derive(SimpleObject)]
-// #[graphql(name = "SetMatchResult")]
-// pub struct SetMatchResult {
-//     #[graphql(name = "Success")]
-//     pub success: bool,
-//     #[graphql(name = "Error")]
-//     pub error: Option<String>,
-// }
+fn service_state_to_string(s: ServiceTorrentState) -> &'static str {
+    match s {
+        ServiceTorrentState::Queued => "queued",
+        ServiceTorrentState::Checking => "checking",
+        ServiceTorrentState::Downloading => "downloading",
+        ServiceTorrentState::Seeding => "seeding",
+        ServiceTorrentState::Paused => "paused",
+        ServiceTorrentState::Error => "error",
+    }
+}
 
-// /// Result of import to library operation
-// #[derive(SimpleObject)]
-// #[graphql(name = "ImportToLibraryResult")]
-// pub struct ImportToLibraryResult {
-//     #[graphql(name = "Success")]
-//     pub success: bool,
-//     #[graphql(name = "FilesCopied")]
-//     pub files_copied: i32,
-//     #[graphql(name = "Error")]
-//     pub error: Option<String>,
-// }
+fn service_torrent_to_live(t: ServiceTorrentInfo) -> LiveTorrent {
+    LiveTorrent {
+        id: t.id as i32,
+        info_hash: t.info_hash,
+        name: t.name,
+        state: service_state_to_string(t.state).to_string(),
+        progress: t.progress,
+        size: t.size as i64,
+        downloaded: t.downloaded as i64,
+        uploaded: t.uploaded as i64,
+        download_speed: t.download_speed as i64,
+        upload_speed: t.upload_speed as i64,
+        peers: t.peers as i32,
+        save_path: t.save_path,
+        files: t
+            .files
+            .into_iter()
+            .map(|f| LiveTorrentFile {
+                index: f.index as i32,
+                path: f.path,
+                size: f.size as i64,
+                progress: f.progress,
+            })
+            .collect(),
+    }
+}
 
-// /// Custom operations for torrents (service-backed)
-// #[derive(Default)]
-// pub struct TorrentCustomOperations;
+/// Input for adding a torrent
+#[derive(InputObject)]
+#[graphql(name = "AddTorrentInput")]
+pub struct AddTorrentInput {
+    #[graphql(name = "Magnet")]
+    pub magnet: Option<String>,
+    #[graphql(name = "Url")]
+    pub url: Option<String>,
+}
 
-// #[Object]
-// impl TorrentCustomOperations {
-//     // =========================================================================
-//     // Queries
-//     // =========================================================================
+/// Result of add torrent mutation
+#[derive(Debug, SimpleObject)]
+#[graphql(name = "AddTorrentResult")]
+pub struct AddTorrentResult {
+    #[graphql(name = "Success")]
+    pub success: bool,
+    #[graphql(name = "Torrent")]
+    pub torrent: Option<LiveTorrent>,
+    #[graphql(name = "Error")]
+    pub error: Option<String>,
+}
 
-//     /// Get all torrents with live state from torrent client
-//     #[graphql(name = "LiveTorrents")]
-//     async fn live_torrents(&self, ctx: &Context<'_>) -> Result<Vec<Torrent>> {
-//         let user = ctx.auth_user()?;
-//         let service = ctx.data_unchecked::<Arc<TorrentService>>();
-//         let db = ctx.data_unchecked::<Database>();
+/// Result of pause/resume/remove
+#[derive(Debug, SimpleObject)]
+#[graphql(name = "TorrentActionResult")]
+pub struct TorrentActionResult {
+    #[graphql(name = "Success")]
+    pub success: bool,
+    #[graphql(name = "Error")]
+    pub error: Option<String>,
+}
 
-//         let torrents = service.list_torrents().await;
-//         let mut result: Vec<Torrent> = torrents.into_iter().map(|t| t.into()).collect();
+#[Object]
+impl TorrentCustomOperations {
+    /// Get all torrents with live state from the torrent client
+    #[graphql(name = "LiveTorrents")]
+    async fn live_torrents(&self, ctx: &Context<'_>) -> Result<Vec<LiveTorrent>> {
+        let _user = ctx.auth_user()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let service = manager
+            .get_torrent()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
+        let list = service.list_torrents().await.map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(list.into_iter().map(service_torrent_to_live).collect())
+    }
 
-//         // Get added_at from database records
-//         let user_uuid = user.user_id.clone();
-//         let records = EntityQuery::<TorrentEntity>::new()
-//             .filter(&TorrentEntityWhereInput {
-//                 user_id: Some(StringFilter::eq(&user_uuid)),
-//                 ..Default::default()
-//             })
-//             .fetch_all(db.pool())
-//             .await
-//             .unwrap_or_default();
+    /// Get a single live torrent by numeric id
+    #[graphql(name = "LiveTorrent")]
+    async fn live_torrent(&self, ctx: &Context<'_>, #[graphql(name = "Id")] id: i32) -> Result<Option<LiveTorrent>> {
+        let _user = ctx.auth_user()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let service = manager.get_torrent().await;
+        Ok(match service {
+            Some(svc) => svc
+                .get_torrent_info(id as usize)
+                .await
+                .ok()
+                .map(service_torrent_to_live),
+            None => None,
+        })
+    }
 
-//         let added_at_map: std::collections::HashMap<String, String> = records
-//             .into_iter()
-//             .map(|r| (r.info_hash, r.added_at))
-//             .collect();
+    /// Count of active (downloading/checking) torrents
+    #[graphql(name = "ActiveDownloadCount")]
+    async fn active_download_count(&self, ctx: &Context<'_>) -> Result<i32> {
+        let _user = ctx.auth_user()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let service: Arc<TorrentService> = manager
+            .get_torrent()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
+        let list: Vec<ServiceTorrentInfo> = service.list_active_downloads().await.map_err(|e: anyhow::Error| async_graphql::Error::new(e.to_string()))?;
+        Ok(list.len() as i32)
+    }
+}
 
-//         for torrent in &mut result {
-//             if let Some(added_at) = added_at_map.get(&torrent.info_hash) {
-//                 torrent.added_at = Some(added_at.clone());
-//             }
-//         }
+/// Mutations that use the torrent client (add, pause, resume, remove)
+#[derive(Default)]
+pub struct TorrentClientMutations;
 
-//         Ok(result)
-//     }
+#[Object]
+impl TorrentClientMutations {
+    /// Add a torrent from a magnet link or URL
+    #[graphql(name = "AddTorrent")]
+    async fn add_torrent(&self, ctx: &Context<'_>, #[graphql(name = "Input")] input: AddTorrentInput) -> Result<AddTorrentResult> {
+        let user = ctx.auth_user()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let service = manager
+            .get_torrent()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
+        let user_id = Uuid::parse_str(&user.user_id).ok();
+        let result = if let Some(ref magnet) = input.magnet {
+            service.add_magnet(magnet, user_id).await
+        } else if let Some(ref url) = input.url {
+            service.add_magnet(url, user_id).await
+        } else {
+            return Ok(AddTorrentResult {
+                success: false,
+                torrent: None,
+                error: Some("Either Magnet or Url must be provided".to_string()),
+            });
+        };
+        match result {
+            Ok(info) => Ok(AddTorrentResult {
+                success: true,
+                torrent: Some(service_torrent_to_live(info)),
+                error: None,
+            }),
+            Err(e) => Ok(AddTorrentResult {
+                success: false,
+                torrent: None,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
 
-//     /// Get a specific torrent by ID with live state
-//     #[graphql(name = "LiveTorrent")]
-//     async fn live_torrent(&self, ctx: &Context<'_>, id: i32) -> Result<Option<Torrent>> {
-//         let _user = ctx.auth_user()?;
-//         let service = ctx.data_unchecked::<Arc<TorrentService>>();
-//         match service.get_torrent_info(id as usize).await {
-//             Ok(info) => Ok(Some(info.into())),
-//             Err(_) => Ok(None),
-//         }
-//     }
+    /// Pause a torrent
+    #[graphql(name = "PauseTorrent")]
+    async fn pause_torrent(&self, ctx: &Context<'_>, #[graphql(name = "Id")] id: i32) -> Result<TorrentActionResult> {
+        let _user = ctx.auth_user()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let service = manager
+            .get_torrent()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
+        match service.pause(id as usize).await {
+            Ok(()) => Ok(TorrentActionResult { success: true, error: None }),
+            Err(e) => Ok(TorrentActionResult {
+                success: false,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
 
-//     /// Get detailed information about a torrent
-//     #[graphql(name = "TorrentDetails")]
-//     async fn torrent_details(&self, ctx: &Context<'_>, id: i32) -> Result<Option<TorrentDetails>> {
-//         let _user = ctx.auth_user()?;
-//         let service = ctx.data_unchecked::<Arc<TorrentService>>();
-//         match service.get_torrent_details(id as usize).await {
-//             Ok(details) => Ok(Some(details.into())),
-//             Err(_) => Ok(None),
-//         }
-//     }
+    /// Resume a paused torrent
+    #[graphql(name = "ResumeTorrent")]
+    async fn resume_torrent(&self, ctx: &Context<'_>, #[graphql(name = "Id")] id: i32) -> Result<TorrentActionResult> {
+        let _user = ctx.auth_user()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let service = manager
+            .get_torrent()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
+        match service.resume(id as usize).await {
+            Ok(()) => Ok(TorrentActionResult { success: true, error: None }),
+            Err(e) => Ok(TorrentActionResult {
+                success: false,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
 
-//     /// Get pending file matches for a source
-//     #[graphql(name = "PendingFileMatches")]
-//     async fn pending_file_matches(
-//         &self,
-//         ctx: &Context<'_>,
-//         #[graphql(name = "SourceType", desc = "Source type: 'torrent', 'usenet', etc.")] source_type: String,
-//         #[graphql(name = "SourceId", desc = "Source ID (UUID) or info_hash for torrents")] source_id: String,
-//     ) -> Result<Vec<PendingFileMatch>> {
-//         let _user = ctx.auth_user()?;
-//         let db = ctx.data_unchecked::<Database>();
+    /// Remove a torrent
+    #[graphql(name = "RemoveTorrent")]
+    async fn remove_torrent(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "Id")] id: i32,
+        #[graphql(name = "DeleteFiles", default = false)] delete_files: bool,
+    ) -> Result<TorrentActionResult> {
+        let _user = ctx.auth_user()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let service = manager
+            .get_torrent()
+            .await
+            .ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
+        match service.remove(id as usize, delete_files).await {
+            Ok(()) => Ok(TorrentActionResult { success: true, error: None }),
+            Err(e) => Ok(TorrentActionResult {
+                success: false,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
 
-//         // Resolve source_id to UUID
-//         let source_uuid = if let Ok(_uuid) = Uuid::parse_str(&source_id) {
-//             source_id.clone()
-//         } else if source_type == "torrent" {
-//             // Look up torrent by info_hash
-//             let torrent = EntityQuery::<TorrentEntity>::new()
-//                 .filter(&TorrentEntityWhereInput {
-//                     info_hash: Some(StringFilter::eq(&source_id)),
-//                     ..Default::default()
-//                 })
-//                 .fetch_one(db.pool())
-//                 .await?
-//                 .ok_or_else(|| async_graphql::Error::new("Torrent not found"))?;
-//             torrent.id
-//         } else {
-//             return Err(async_graphql::Error::new("Invalid source ID"));
-//         };
+    #[graphql(name = "PauseTorrentByInfoHash")]
+    async fn pause_torrent_by_info_hash(&self, ctx: &Context<'_>, #[graphql(name = "InfoHash")] info_hash: String) -> Result<TorrentActionResult> {
+        let _user = ctx.auth_user()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let service = manager.get_torrent().await.ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
+        match service.pause_by_info_hash(&info_hash).await {
+            Ok(()) => Ok(TorrentActionResult { success: true, error: None }),
+            Err(e) => Ok(TorrentActionResult { success: false, error: Some(e.to_string()) }),
+        }
+    }
 
-//         let records = EntityQuery::<PendingFileMatchEntity>::new()
-//             .filter(&PendingFileMatchEntityWhereInput {
-//                 source_type: Some(StringFilter::eq(&source_type)),
-//                 source_id: Some(StringFilter::eq(&source_uuid)),
-//                 ..Default::default()
-//             })
-//             .fetch_all(db.pool())
-//             .await?;
+    #[graphql(name = "ResumeTorrentByInfoHash")]
+    async fn resume_torrent_by_info_hash(&self, ctx: &Context<'_>, #[graphql(name = "InfoHash")] info_hash: String) -> Result<TorrentActionResult> {
+        let _user = ctx.auth_user()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let service = manager.get_torrent().await.ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
+        match service.resume_by_info_hash(&info_hash).await {
+            Ok(()) => Ok(TorrentActionResult { success: true, error: None }),
+            Err(e) => Ok(TorrentActionResult { success: false, error: Some(e.to_string()) }),
+        }
+    }
 
-//         Ok(records
-//             .into_iter()
-//             .map(|r| PendingFileMatch {
-//                 id: r.id,
-//                 source_path: r.source_path,
-//                 source_type: r.source_type,
-//                 source_id: r.source_id,
-//                 source_file_index: r.source_file_index,
-//                 file_size: r.file_size,
-//                 episode_id: r.episode_id,
-//                 movie_id: r.movie_id,
-//                 track_id: r.track_id,
-//                 chapter_id: r.chapter_id,
-//                 unmatched_reason: r.unmatched_reason,
-//                 match_type: r.match_type,
-//                 match_confidence: r.match_confidence,
-//                 match_attempts: r.match_attempts,
-//                 verification_status: r.verification_status,
-//                 verification_reason: r.verification_reason,
-//                 parsed_resolution: r.parsed_resolution,
-//                 parsed_codec: r.parsed_codec,
-//                 parsed_source: r.parsed_source,
-//                 parsed_audio: r.parsed_audio,
-//                 copied_at: r.copied_at,
-//                 copy_error: r.copy_error,
-//                 copy_attempts: r.copy_attempts,
-//                 created_at: r.created_at,
-//                 updated_at: r.updated_at,
-//             })
-//             .collect())
-//     }
+    #[graphql(name = "RemoveTorrentByInfoHash")]
+    async fn remove_torrent_by_info_hash(&self, ctx: &Context<'_>, #[graphql(name = "InfoHash")] info_hash: String, #[graphql(name = "DeleteFiles", default = false)] delete_files: bool) -> Result<TorrentActionResult> {
+        let _user = ctx.auth_user()?;
+        let manager = ctx.data::<Arc<ServicesManager>>()?;
+        let service = manager.get_torrent().await.ok_or_else(|| async_graphql::Error::new("Torrent service not available"))?;
+        match service.remove_by_info_hash(&info_hash, delete_files).await {
+            Ok(()) => Ok(TorrentActionResult { success: true, error: None }),
+            Err(e) => Ok(TorrentActionResult { success: false, error: Some(e.to_string()) }),
+        }
+    }
+}
 
-//     /// Get the count of active downloads
-//     #[graphql(name = "ActiveDownloadCount")]
-//     async fn active_download_count(&self, ctx: &Context<'_>) -> Result<i32> {
-//         let _user = ctx.auth_user()?;
-//         let service = ctx.data_unchecked::<Arc<TorrentService>>();
+// =============================================================================
+// Legacy commented sections below (organize, rematch, process, import, settings,
+// pending file matches, helpers) – re-enable when dependent services exist.
+// =============================================================================
 
-//         let torrents = service.list_torrents().await;
-//         let count = torrents
-//             .iter()
-//             .filter(|t| {
-//                 matches!(
-//                     t.state,
-//                     crate::services::TorrentState::Queued
-//                         | crate::services::TorrentState::Checking
-//                         | crate::services::TorrentState::Downloading
-//                 )
-//             })
-//             .count();
-
-//         Ok(count as i32)
-//     }
-
-//     // =========================================================================
-//     // Mutations
-//     // =========================================================================
-
-//     /// Add a new torrent from magnet link or URL
+//     /// Get pending file matches for a source (legacy)
 //     #[graphql(name = "AddTorrent")]
 //     async fn add_torrent(
 //         &self,

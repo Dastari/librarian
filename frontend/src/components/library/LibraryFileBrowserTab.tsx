@@ -22,8 +22,8 @@ import {
   moveFiles,
   graphqlClient,
   MEDIA_FILE_BY_PATH_QUERY,
-  type FileEntry,
-  type QuickPath,
+  type BrowseDirectoryEntry,
+  type BrowseQuickPath,
   type MediaFile,
 } from '../../lib/graphql'
 import { sanitizeError } from '../../lib/format'
@@ -82,8 +82,8 @@ interface LibraryFileBrowserTabProps {
 export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: LibraryFileBrowserTabProps) {
   const [currentPath, setCurrentPath] = useState(libraryPath)
   const [inputPath, setInputPath] = useState(libraryPath)
-  const [entries, setEntries] = useState<FileEntry[]>([])
-  const [quickPaths, setQuickPaths] = useState<QuickPath[]>([])
+  const [entries, setEntries] = useState<BrowseDirectoryEntry[]>([])
+  const [quickPaths, setQuickPaths] = useState<BrowseQuickPath[]>([])
   const [parentPath, setParentPath] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -107,11 +107,11 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
     try {
       setLoading(true)
       const data = await browseDirectory(path, false)
-      setCurrentPath(data.currentPath)
-      setInputPath(data.currentPath)
-      setParentPath(data.parentPath)
-      setEntries(data.entries || [])
-      setQuickPaths(data.quickPaths || [])
+      setCurrentPath(data.CurrentPath)
+      setInputPath(data.CurrentPath)
+      setParentPath(data.ParentPath ?? null)
+      setEntries(data.Entries ?? [])
+      setQuickPaths(data.QuickPaths ?? [])
     } catch (err) {
       console.error('Failed to browse directory:', err)
       addToast({
@@ -142,22 +142,22 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
   // Prepend parent directory as a synthetic entry if it exists
   const sortedEntries = useMemo(() => {
     const sorted = [...entries].sort((a, b) => {
-      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
-      return a.name.localeCompare(b.name)
+      if (a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1
+      return a.Name.localeCompare(b.Name)
     })
     
     // Add parent directory as the first entry
     if (parentPath) {
-      const parentEntry: FileEntry = {
-        name: '..',
-        path: parentPath,
-        isDir: true,
-        readable: true,
-        writable: false,
-        size: 0,
-        sizeFormatted: '-',
-        mimeType: null,
-        modifiedAt: null,
+      const parentEntry: BrowseDirectoryEntry = {
+        Name: '..',
+        Path: parentPath,
+        IsDir: true,
+        Readable: true,
+        Writable: false,
+        Size: 0,
+        SizeFormatted: '-',
+        MimeType: null,
+        ModifiedAt: null,
       }
       return [parentEntry, ...sorted]
     }
@@ -258,17 +258,17 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
   }
 
   // Check if file is a video file
-  const handleProperties = async (entry: FileEntry) => {
+  const handleProperties = async (entry: BrowseDirectoryEntry) => {
     // For any file (not directory), try to look up in the database
-    if (!entry.isDir) {
+    if (!entry.IsDir) {
       const result = await graphqlClient
-        .query<{ mediaFileByPath: MediaFile | null }>(MEDIA_FILE_BY_PATH_QUERY, { path: entry.path })
+        .query<{ mediaFileByPath: MediaFile | null }>(MEDIA_FILE_BY_PATH_QUERY, { path: entry.Path })
         .toPromise()
 
       if (result.data?.mediaFileByPath) {
         // File is in the database, show detailed properties modal
         setPropertiesMediaFileId(result.data.mediaFileByPath.id)
-        setPropertiesFileName(entry.name)
+        setPropertiesFileName(entry.Name)
         onPropertiesOpen()
         return
       }
@@ -277,36 +277,36 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
 
     // For directories or files not in database, show basic info toast
     addToast({
-      title: entry.name,
-      description: `Path: ${entry.path}\nSize: ${formatBytes(entry.size)}\nType: ${entry.isDir ? 'Directory' : 'File'}`,
+      title: entry.Name,
+      description: `Path: ${entry.Path}\nSize: ${formatBytes(entry.Size)}\nType: ${entry.IsDir ? 'Directory' : 'File'}`,
       color: 'default',
     })
   }
 
   // Column definitions
-  const columns: DataTableColumn<FileEntry>[] = useMemo(
+  const columns: DataTableColumn<BrowseDirectoryEntry>[] = useMemo(
     () => [
       {
         key: 'name',
         label: 'NAME',
         sortable: true,
         render: (entry) => {
-          const isParent = entry.name === '..'
-          const icon = getFileIcon(entry.name, entry.isDir)
+          const isParent = entry.Name === '..'
+          const icon = getFileIcon(entry.Name, entry.IsDir)
           
           return (
             <Button
               variant="light"
-              onPress={() => entry.isDir && entry.readable && navigateTo(entry.path)}
+              onPress={() => entry.IsDir && entry.Readable && navigateTo(entry.Path)}
               className={`
                 flex items-center gap-3 text-left min-w-0 w-full justify-start px-2
-                ${!entry.readable ? 'opacity-50' : ''}
+                ${!entry.Readable ? 'opacity-50' : ''}
                 ${isParent ? 'text-default-500' : ''}
               `}
-              isDisabled={!entry.isDir || !entry.readable}
+              isDisabled={!entry.IsDir || !entry.Readable}
             >
               <span className="flex-shrink-0">{icon}</span>
-              <span className="flex-1 truncate">{entry.name}</span>
+              <span className="flex-1 truncate">{entry.Name}</span>
             </Button>
           )
         },
@@ -318,11 +318,11 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
         ),
         sortFn: (a, b) => {
           // Parent directory always first
-          if (a.name === '..') return -1
-          if (b.name === '..') return 1
+          if (a.Name === '..') return -1
+          if (b.Name === '..') return 1
           // Directories first
-          if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
-          return a.name.localeCompare(b.name)
+          if (a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1
+          return a.Name.localeCompare(b.Name)
         },
       },
       {
@@ -332,11 +332,11 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
         sortable: true,
         render: (entry) => (
           <span className="text-xs text-default-400 tabular-nums">
-            {!entry.isDir ? formatBytes(entry.size) : '—'}
+            {!entry.IsDir ? formatBytes(entry.Size) : '—'}
           </span>
         ),
         skeleton: () => <Skeleton className="w-12 h-3 rounded" />,
-        sortFn: (a, b) => (a.size || 0) - (b.size || 0),
+        sortFn: (a, b) => (a.Size || 0) - (b.Size || 0),
       },
       {
         key: 'type',
@@ -345,14 +345,14 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
         sortable: true,
         render: (entry) => (
           <span className="text-xs text-default-400">
-            {entry.isDir ? 'Folder' : entry.name.split('.').pop()?.toUpperCase() || 'File'}
+            {entry.IsDir ? 'Folder' : entry.Name.split('.').pop()?.toUpperCase() || 'File'}
           </span>
         ),
         skeleton: () => <Skeleton className="w-10 h-3 rounded" />,
         sortFn: (a, b) => {
-          if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
-          const extA = a.name.split('.').pop() || ''
-          const extB = b.name.split('.').pop() || ''
+          if (a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1
+          const extA = a.Name.split('.').pop() || ''
+          const extB = b.Name.split('.').pop() || ''
           return extA.localeCompare(extB)
         },
       },
@@ -362,10 +362,10 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
         width: 100,
         render: (entry) => (
           <>
-            {entry.isDir && entry.writable && (
+            {entry.IsDir && entry.Writable && (
               <Chip size="sm" color="success" variant="flat">writable</Chip>
             )}
-            {entry.isDir && !entry.writable && entry.readable && (
+            {entry.IsDir && !entry.Writable && entry.Readable && (
               <Chip size="sm" color="warning" variant="flat">read-only</Chip>
             )}
           </>
@@ -377,25 +377,25 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
   )
 
   // Bulk actions
-  const bulkActions: BulkAction<FileEntry>[] = useMemo(
+  const bulkActions: BulkAction<BrowseDirectoryEntry>[] = useMemo(
     () => [
       {
         key: 'copy',
         label: 'Copy',
         icon: <IconCopy size={16} />,
-        onAction: (items) => handleCopy(items.map((e) => e.path)),
+        onAction: (items) => handleCopy(items.map((e) => e.Path)),
       },
       {
         key: 'move',
         label: 'Move',
         icon: <IconArrowRight size={16} />,
-        onAction: (items) => handleMove(items.map((e) => e.path)),
+        onAction: (items) => handleMove(items.map((e) => e.Path)),
       },
       {
         key: 'match',
         label: 'Match',
         icon: <IconSearch size={16} />,
-        onAction: (items) => handleMatch(items.map((e) => e.path)),
+        onAction: (items) => handleMatch(items.map((e) => e.Path)),
       },
       {
         key: 'delete',
@@ -403,17 +403,17 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
         icon: <IconTrash size={16} className="text-red-400" />,
         color: 'danger',
         isDestructive: true,
-        onAction: (items) => handleDeleteClick(items.map((e) => e.path)),
+        onAction: (items) => handleDeleteClick(items.map((e) => e.Path)),
       },
     ],
     []
   )
 
   // Helper to check if entry is parent directory
-  const isParentEntry = (entry: FileEntry) => entry.name === '..'
+  const isParentEntry = (entry: BrowseDirectoryEntry) => entry.Name === '..'
 
   // Row actions - hidden for parent directory
-  const rowActions: RowAction<FileEntry>[] = useMemo(
+  const rowActions: RowAction<BrowseDirectoryEntry>[] = useMemo(
     () => [
       {
         key: 'copy',
@@ -421,7 +421,7 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
         icon: <IconCopy size={16} />,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
-        onAction: (entry) => handleCopy([entry.path]),
+        onAction: (entry) => handleCopy([entry.Path]),
       },
       {
         key: 'move',
@@ -429,7 +429,7 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
         icon: <IconArrowRight size={16} />,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
-        onAction: (entry) => handleMove([entry.path]),
+        onAction: (entry) => handleMove([entry.Path]),
       },
       {
         key: 'match',
@@ -437,7 +437,7 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
         icon: <IconSearch size={16} />,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
-        onAction: (entry) => handleMatch([entry.path]),
+        onAction: (entry) => handleMatch([entry.Path]),
       },
       {
         key: 'properties',
@@ -454,16 +454,16 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
         isDestructive: true,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
-        onAction: (entry) => handleDeleteClick([entry.path]),
+        onAction: (entry) => handleDeleteClick([entry.Path]),
       },
     ],
     []
   )
 
   // Search function - exclude parent directory from search
-  const searchFn = (entry: FileEntry, term: string) => {
-    if (entry.name === '..') return true // Always show parent directory
-    return entry.name.toLowerCase().includes(term.toLowerCase())
+  const searchFn = (entry: BrowseDirectoryEntry, term: string) => {
+    if (entry.Name === '..') return true // Always show parent directory
+    return entry.Name.toLowerCase().includes(term.toLowerCase())
   }
 
   // Only show loading spinner if we don't have skeleton support (legacy fallback)
@@ -526,12 +526,12 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
             </Button>
             {quickPaths.map((qp) => (
               <Button
-                key={qp.path}
+                key={qp.Path}
                 size="sm"
                 variant="flat"
-                onPress={() => navigateTo(qp.path)}
+                onPress={() => navigateTo(qp.Path)}
               >
-                {qp.name}
+                {qp.Name}
               </Button>
             ))}
           </div>
@@ -547,12 +547,12 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
           skeletonDelay={500}
           data={sortedEntries}
           columns={columns}
-          getRowKey={(entry) => entry.path}
+          getRowKey={(entry) => entry.Path}
           isLoading={parentLoading || loading}
           selectionMode="multiple"
-          isRowSelectable={(entry) => entry.name !== '..'}
+          isRowSelectable={(entry) => entry.Name !== '..'}
           checkboxSelectionOnly
-          isPinned={(entry) => entry.name === '..'}
+          isPinned={(entry) => entry.Name === '..'}
           searchFn={searchFn}
           searchPlaceholder="Search files..."
           bulkActions={bulkActions}

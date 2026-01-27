@@ -18,7 +18,7 @@ import {
   graphqlClient,
   ORGANIZE_TORRENT_MUTATION,
   type LibraryNode,
-  type Torrent,
+  type DownloadsTorrentRow,
   type OrganizeTorrentResult,
   type Album,
 } from '../../lib/graphql'
@@ -39,7 +39,7 @@ const ALBUMS_FOR_LIBRARY_QUERY = `
 export interface LinkToLibraryModalProps {
   isOpen: boolean
   onClose: () => void
-  torrent: Torrent | null
+  torrent: DownloadsTorrentRow | null
   onLinked: () => void
 }
 
@@ -202,9 +202,21 @@ export function LinkToLibraryModal({
 
     setOrganizing(true)
     try {
+      // Legacy OrganizeTorrent expects Int (session id). We only have entity id (string); backend would need OrganizeTorrentByInfoHash to support this.
+      const numericId = typeof torrent.id === 'number' ? torrent.id : null
+      if (numericId === null) {
+        addToast({
+          title: 'Linking not available',
+          description: 'Organize by info hash is not yet supported. Use the legacy torrent ID for now.',
+          color: 'warning',
+        })
+        setOrganizing(false)
+        return
+      }
+
       const result = await graphqlClient
         .mutation<{ organizeTorrent: OrganizeTorrentResult }>(ORGANIZE_TORRENT_MUTATION, {
-          id: torrent.id,
+          id: numericId,
           libraryId: selectedLibraryId,
           albumId: selectedAlbumId,
         })
@@ -372,4 +384,5 @@ export function LinkToLibraryModal({
       </ModalContent>
     </Modal>
   )
+}
 }

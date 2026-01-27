@@ -1,0 +1,26 @@
+# Filesystem: directory browsing (FolderBrowserInput, LibraryFileBrowserTab, etc.)
+# PascalCase to match backend schema
+
+query BrowseDirectory($Input: BrowseDirectoryInput) {
+  BrowseDirectory(Input: $Input) {
+    CurrentPath
+    ParentPath
+    Entries {
+      Name
+      Path
+      IsDir
+      Size
+      SizeFormatted
+      Readable
+      Writable
+      MimeType
+      ModifiedAt
+    }
+    QuickPaths {
+      Name
+      Path
+    }
+    IsLibraryPath
+    LibraryId
+  }
+}

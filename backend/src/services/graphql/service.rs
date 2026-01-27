@@ -204,7 +204,7 @@ impl Service for GraphqlService {
             .get_auth()
             .await
             .ok_or_else(|| anyhow::anyhow!("auth service not available"))?;
-        let schema = build_schema(db, auth);
+        let schema = build_schema(db, auth, self.manager.clone());
         *self.schema.write().await = Some(schema);
         info!(service = "graphql", "GraphQL service started");
         info!(

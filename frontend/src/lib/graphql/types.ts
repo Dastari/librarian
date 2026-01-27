@@ -118,6 +118,26 @@ export interface Torrent {
   addedAt: string | null;
 }
 
+/** Row shape for the downloads page when using entity Torrents (codegen). id is entity Id (string); use infoHash for pause/resume/remove. */
+export interface DownloadsTorrentRow {
+  id: string;
+  infoHash: string;
+  name: string;
+  state: string;
+  progress: number;
+  size: number;
+  sizeFormatted?: string;
+  downloaded: number;
+  uploaded: number;
+  downloadSpeed?: number;
+  downloadSpeedFormatted?: string;
+  uploadSpeed?: number;
+  uploadSpeedFormatted?: string;
+  peers?: number;
+  eta?: number | null;
+  addedAt: string | null;
+}
+
 export type TorrentState =
   | "QUEUED"
   | "CHECKING"
@@ -416,6 +436,15 @@ export interface FileOperationResult {
   affectedCount: number;
   messages: string[];
   path: string | null;
+}
+
+/** PascalCase payload from GraphQL filesystem mutations (refactor-plan) */
+export interface FileOperationPayloadPascal {
+  Success: boolean;
+  Error: string | null;
+  AffectedCount: number;
+  Messages: string[];
+  Path: string | null;
 }
 
 export interface CreateDirectoryInput {

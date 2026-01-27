@@ -8,8 +8,8 @@ import { Chip } from '@heroui/chip'
 import {
   browseDirectory,
   createDirectory,
-  type FileEntry,
-  type QuickPath,
+  type BrowseDirectoryEntry,
+  type BrowseQuickPath,
 } from '../lib/graphql'
 import { IconFolder, IconFolderPlus } from '@tabler/icons-react'
 import { InlineError } from './shared'
@@ -45,8 +45,8 @@ export function DestinationPickerModal({
   isLoading = false,
 }: DestinationPickerModalProps) {
   const [currentPath, setCurrentPath] = useState(initialPath)
-  const [entries, setEntries] = useState<FileEntry[]>([])
-  const [quickPaths, setQuickPaths] = useState<QuickPath[]>([])
+  const [entries, setEntries] = useState<BrowseDirectoryEntry[]>([])
+  const [quickPaths, setQuickPaths] = useState<BrowseQuickPath[]>([])
   const [parentPath, setParentPath] = useState<string | null>(null)
   const [isBrowsing, setIsBrowsing] = useState(false)
   const [browseError, setBrowseError] = useState<string | null>(null)
@@ -59,10 +59,10 @@ export function DestinationPickerModal({
     setBrowseError(null)
     try {
       const result = await browseDirectory(path, true)
-      setCurrentPath(result.currentPath || '/')
-      setParentPath(result.parentPath ?? null)
-      setEntries(result.entries || [])
-      setQuickPaths(result.quickPaths || [])
+      setCurrentPath(result.CurrentPath || '/')
+      setParentPath(result.ParentPath ?? null)
+      setEntries(result.Entries ?? [])
+      setQuickPaths(result.QuickPaths ?? [])
       return true
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : String(e)
@@ -115,8 +115,8 @@ export function DestinationPickerModal({
 
   // Sort entries: directories first, then alphabetically
   const sortedEntries = [...entries]
-    .filter((e) => e.isDir)
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .filter((e) => e.IsDir)
+    .sort((a, b) => a.Name.localeCompare(b.Name))
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="2xl" scrollBehavior="inside">
@@ -162,8 +162,8 @@ export function DestinationPickerModal({
           {quickPaths.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-4">
               {quickPaths.map((qp) => (
-                <Button key={qp.path} size="sm" variant="flat" onPress={() => browse(qp.path)}>
-                  {qp.name}
+                <Button key={qp.Path} size="sm" variant="flat" onPress={() => browse(qp.Path)}>
+                  {qp.Name}
                 </Button>
               ))}
             </div>
@@ -197,22 +197,22 @@ export function DestinationPickerModal({
               {/* Directory entries - only show writable directories */}
               {sortedEntries.map((entry) => (
                 <Button
-                  key={entry.path}
+                  key={entry.Path}
                   variant="light"
-                  onPress={() => entry.readable && browse(entry.path)}
+                  onPress={() => entry.Readable && browse(entry.Path)}
                   className={`w-full justify-start px-3 py-2 h-auto ${
-                    !entry.readable ? 'opacity-50' : ''
+                    !entry.Readable ? 'opacity-50' : ''
                   }`}
-                  isDisabled={!entry.readable}
+                  isDisabled={!entry.Readable}
                 >
                   <IconFolder size={20} className="text-amber-400" />
-                  <span className="flex-1 truncate text-left">{entry.name}</span>
-                  {entry.writable && (
+                  <span className="flex-1 truncate text-left">{entry.Name}</span>
+                  {entry.Writable && (
                     <Chip size="sm" color="success" variant="flat">
                       writable
                     </Chip>
                   )}
-                  {!entry.writable && entry.readable && (
+                  {!entry.Writable && entry.Readable && (
                     <Chip size="sm" color="warning" variant="flat">
                       read-only
                     </Chip>
