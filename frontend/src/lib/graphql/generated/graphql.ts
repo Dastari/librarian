@@ -3126,13 +3126,16 @@ export type MutationRoot = {
   MoveFiles: FileOperationPayload;
   /** Pause a torrent */
   PauseTorrent: TorrentActionResult;
+  PauseTorrentByInfoHash: TorrentActionResult;
   RefreshToken: AuthPayload;
   Register: AuthPayload;
   /** Remove a torrent */
   RemoveTorrent: TorrentActionResult;
+  RemoveTorrentByInfoHash: TorrentActionResult;
   RenameFile: FileOperationPayload;
   /** Resume a paused torrent */
   ResumeTorrent: TorrentActionResult;
+  ResumeTorrentByInfoHash: TorrentActionResult;
   /** Update an existing #struct_name_str */
   UpdateAlbum: AlbumResult;
   /** Update an existing #struct_name_str */
@@ -3741,6 +3744,10 @@ export type MutationRootPauseTorrentArgs = {
   Id: Scalars["Int"]["input"];
 };
 
+export type MutationRootPauseTorrentByInfoHashArgs = {
+  InfoHash: Scalars["String"]["input"];
+};
+
 export type MutationRootRefreshTokenArgs = {
   Input: RefreshTokenInput;
 };
@@ -3754,12 +3761,21 @@ export type MutationRootRemoveTorrentArgs = {
   Id: Scalars["Int"]["input"];
 };
 
+export type MutationRootRemoveTorrentByInfoHashArgs = {
+  DeleteFiles?: Scalars["Boolean"]["input"];
+  InfoHash: Scalars["String"]["input"];
+};
+
 export type MutationRootRenameFileArgs = {
   Input: RenameFileInput;
 };
 
 export type MutationRootResumeTorrentArgs = {
   Id: Scalars["Int"]["input"];
+};
+
+export type MutationRootResumeTorrentByInfoHashArgs = {
+  InfoHash: Scalars["String"]["input"];
 };
 
 export type MutationRootUpdateAlbumArgs = {
