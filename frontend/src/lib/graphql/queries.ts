@@ -246,6 +246,65 @@ export const LLM_PARSER_SETTINGS_QUERY = `
   }
 `;
 
+
+
+
+
+// ============================================================================
+// GraphQL Libraries Query with Counts
+// ============================================================================
+
+export const LIBRARIES_WITH_COUNTS_QUERY = `
+  query LibrariesWithCounts {
+    Libraries {
+      Edges {
+        Node {
+          Id
+          UserId
+          Name
+          Path
+          LibraryType
+          Icon
+          Color
+          AutoScan
+          ScanIntervalMinutes
+          WatchForChanges
+          AutoAddDiscovered
+          AutoDownload
+          AutoHunt
+          Scanning
+          LastScannedAt
+          CreatedAt
+          UpdatedAt
+          Shows {
+            PageInfo {
+              TotalCount
+            }
+          }
+          Movies {
+            PageInfo {
+              TotalCount
+            }
+          }
+          Albums {
+            PageInfo {
+              TotalCount
+            }
+          }
+          Audiobooks {
+            PageInfo {
+              TotalCount
+            }
+          }
+        }
+      }
+      PageInfo {
+        TotalCount
+      }
+    }
+  }
+`;
+
 // ============================================================================
 // Library Queries
 // ============================================================================

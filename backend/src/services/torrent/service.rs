@@ -1,9 +1,7 @@
-//! Native torrent client service using librqbit.
+//! Torrent service implementation.
 //!
 //! Implements [Service](crate::services::manager::Service) and depends on the database service.
 //! Provides the librqbit session, progress monitor, and DB sync loops with graceful shutdown.
-
-mod db_helpers;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,207 +13,15 @@ use librqbit::api::TorrentIdOrHash;
 use librqbit::dht::PersistentDhtConfig;
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions};
 use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::db::Database;
 use crate::services::manager::{Service, ServiceHealth};
-
-use self::db_helpers::*;
-
-fn add_torrent_opts() -> AddTorrentOptions {
-    AddTorrentOptions {
-        overwrite: true,
-        ..Default::default()
-    }
-}
-
-fn get_info_hash_hex<T: AsRef<librqbit::ManagedTorrent>>(handle: &T) -> String {
-    handle
-        .as_ref()
-        .info_hash()
-        .0
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect()
-}
-
-// -----------------------------------------------------------------------------
-// Public types (re-exported for GraphQL, jobs, etc.)
-// -----------------------------------------------------------------------------
-
-/// UPnP port forwarding result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct UpnpResult {
-    pub success: bool,
-    pub tcp_forwarded: bool,
-    pub udp_forwarded: bool,
-    pub local_ip: Option<String>,
-    pub external_ip: Option<String>,
-    pub error: Option<String>,
-}
-
-/// Port test result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct PortTestResult {
-    pub success: bool,
-    pub port_open: bool,
-    pub external_ip: Option<String>,
-    pub error: Option<String>,
-}
-
-/// Events broadcast when torrent state changes
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum TorrentEvent {
-    Added {
-        id: usize,
-        name: String,
-        info_hash: String,
-    },
-    Progress {
-        id: usize,
-        info_hash: String,
-        progress: f64,
-        download_speed: u64,
-        upload_speed: u64,
-        peers: usize,
-        state: TorrentState,
-    },
-    Completed {
-        id: usize,
-        info_hash: String,
-        name: String,
-    },
-    Removed {
-        id: usize,
-        info_hash: String,
-    },
-    Error {
-        id: usize,
-        info_hash: String,
-        message: String,
-    },
-}
-
-/// Simplified torrent state for API
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum TorrentState {
-    Queued,
-    Checking,
-    Downloading,
-    Seeding,
-    Paused,
-    Error,
-}
-
-impl std::fmt::Display for TorrentState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TorrentState::Queued => write!(f, "queued"),
-            TorrentState::Checking => write!(f, "checking"),
-            TorrentState::Downloading => write!(f, "downloading"),
-            TorrentState::Seeding => write!(f, "seeding"),
-            TorrentState::Paused => write!(f, "paused"),
-            TorrentState::Error => write!(f, "error"),
-        }
-    }
-}
-
-/// Information about a torrent for API responses
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct TorrentInfo {
-    pub id: usize,
-    pub info_hash: String,
-    pub name: String,
-    pub state: TorrentState,
-    pub progress: f64,
-    pub size: u64,
-    pub downloaded: u64,
-    pub uploaded: u64,
-    pub download_speed: u64,
-    pub upload_speed: u64,
-    pub peers: usize,
-    pub seeds: usize,
-    pub save_path: String,
-    pub files: Vec<TorrentFile>,
-}
-
-/// Information about a file within a torrent
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct TorrentFile {
-    pub index: usize,
-    pub path: String,
-    pub size: u64,
-    pub progress: f64,
-}
-
-/// Detailed peer statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct PeerStats {
-    pub queued: usize,
-    pub connecting: usize,
-    pub live: usize,
-    pub seen: usize,
-    pub dead: usize,
-    pub not_needed: usize,
-}
-
-/// Detailed torrent information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct TorrentDetails {
-    pub id: usize,
-    pub info_hash: String,
-    pub name: String,
-    pub state: TorrentState,
-    pub progress: f64,
-    pub size: u64,
-    pub downloaded: u64,
-    pub uploaded: u64,
-    pub download_speed: u64,
-    pub upload_speed: u64,
-    pub save_path: String,
-    pub files: Vec<TorrentFile>,
-    pub piece_count: u64,
-    pub pieces_downloaded: u64,
-    pub average_piece_download_ms: Option<u64>,
-    pub time_remaining_secs: Option<u64>,
-    pub peer_stats: PeerStats,
-    pub error: Option<String>,
-    pub finished: bool,
-}
-
-/// Configuration for the torrent service
-#[derive(Debug, Clone)]
-pub struct TorrentServiceConfig {
-    pub download_dir: PathBuf,
-    pub session_dir: PathBuf,
-    pub enable_dht: bool,
-    pub listen_port: u16,
-    pub max_concurrent: usize,
-}
-
-impl Default for TorrentServiceConfig {
-    fn default() -> Self {
-        Self {
-            download_dir: PathBuf::from("/data/downloads"),
-            session_dir: PathBuf::from("/data/session"),
-            enable_dht: true,
-            listen_port: 0,
-            max_concurrent: 5,
-        }
-    }
-}
+use crate::services::torrent::client::{add_torrent_opts, get_info_hash_hex, perform_upnp, TorrentEvent, TorrentFile, TorrentInfo, TorrentServiceConfig, TorrentState, UpnpResult};
+use crate::services::torrent::database;
 
 // -----------------------------------------------------------------------------
 // Runtime (session + background tasks with cancellation)
@@ -301,7 +107,7 @@ impl TorrentService {
 
                 if let Some(uid) = user_id {
                     if let Err(e) =
-                        db_helpers::create_torrent(db, uid, &info_hash, Some(magnet), &name, &config.download_dir.to_string_lossy(), stats.total_bytes as i64).await
+                        database::create_torrent(db, uid, &info_hash, Some(magnet), &name, &config.download_dir.to_string_lossy(), stats.total_bytes as i64).await
                     {
                         error!(error = %e, "Failed to persist torrent to database");
                     }
@@ -397,7 +203,7 @@ impl TorrentService {
         r.session
             .delete(TorrentIdOrHash::Id(id), delete_files)
             .await?;
-        if let Err(e) = db_helpers::delete_torrent(&r.db, &info_hash).await {
+        if let Err(e) = database::delete_torrent(&r.db, &info_hash).await {
             warn!(error = %e, "Failed to delete torrent from database");
         }
         let _ = r.event_tx.send(TorrentEvent::Removed {
@@ -483,19 +289,19 @@ impl Service for TorrentService {
         let mut config = self.config.clone();
 
         // Load settings from app_settings (paths as raw strings, others as JSON)
-        if let Ok(Some(dir)) = get_setting_string(&db, "torrent.download_dir").await {
+        if let Ok(Some(dir)) = database::get_setting_string(&db, "torrent.download_dir").await {
             config.download_dir = PathBuf::from(dir);
         }
-        if let Ok(Some(dir)) = get_setting_string(&db, "torrent.session_dir").await {
+        if let Ok(Some(dir)) = database::get_setting_string(&db, "torrent.session_dir").await {
             config.session_dir = PathBuf::from(dir);
         }
-        if let Ok(Some(v)) = get_setting::<bool>(&db, "torrent.enable_dht").await {
+        if let Ok(Some(v)) = database::get_setting::<bool>(&db, "torrent.enable_dht").await {
             config.enable_dht = v;
         }
-        if let Ok(Some(v)) = get_setting::<u16>(&db, "torrent.listen_port").await {
+        if let Ok(Some(v)) = database::get_setting::<u16>(&db, "torrent.listen_port").await {
             config.listen_port = v;
         }
-        if let Ok(Some(v)) = get_setting::<usize>(&db, "torrent.max_concurrent").await {
+        if let Ok(Some(v)) = database::get_setting::<usize>(&db, "torrent.max_concurrent").await {
             config.max_concurrent = v;
         }
 
@@ -559,10 +365,10 @@ impl Service for TorrentService {
         config.session_dir = effective_session_dir;
 
         // Sync session -> DB and restore from DB (best-effort)
-        if let Err(e) = sync_session_to_database(&session, &db, &config).await {
+        if let Err(e) = database::sync_session_to_database(&session, &db, &config).await {
             warn!(error = %e, "Failed to sync session torrents to database");
         }
-        if let Err(e) = restore_from_database(&session, &db).await {
+        if let Err(e) = database::restore_from_database(&session, &db).await {
             warn!(error = %e, "Failed to restore torrents from database");
         }
 
@@ -617,7 +423,7 @@ impl Service for TorrentService {
                             external_ip: None,
                             error: Some("UPnP task panicked".to_string()),
                         })
-                };
+                } as UpnpResult;
                 *upnp.write() = Some(result);
             });
         }
@@ -740,13 +546,13 @@ async fn db_sync_loop(
     cancel: CancellationToken,
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(10));
-    let fallback_user_id = get_default_user_id(&db).await.ok().flatten();
+    let fallback_user_id = database::get_default_user_id(&db).await.ok().flatten();
     loop {
         tokio::select! {
             _ = cancel.cancelled() => break,
             _ = interval.tick() => {
                 if let Err(e) =
-                    sync_session_to_database(&session, &db, &TorrentServiceConfig { download_dir: download_dir.clone(), ..Default::default() }).await
+                    database::sync_session_to_database(&session, &db, &TorrentServiceConfig { download_dir: download_dir.clone(), ..Default::default() }).await
                 {
                     tracing::trace!(error = %e, "db_sync iteration failed");
                 }
@@ -850,112 +656,4 @@ fn get_torrent_files_list(
         }
     }
     files
-}
-
-fn perform_upnp(port: u16) -> UpnpResult {
-    use igd::{search_gateway, PortMappingProtocol, SearchOptions};
-    use std::time::Duration;
-
-    let search_options = SearchOptions {
-        timeout: Some(Duration::from_secs(3)),
-        ..Default::default()
-    };
-
-    let gateway = match search_gateway(search_options) {
-        Ok(g) => g,
-        Err(e) => {
-            return UpnpResult {
-                success: false,
-                tcp_forwarded: false,
-                udp_forwarded: false,
-                local_ip: None,
-                external_ip: None,
-                error: Some(format!("Failed to find UPnP gateway: {}", e)),
-            }
-        }
-    };
-
-    let local_ip = match local_ip_address::local_ip() {
-        Ok(ip) => ip,
-        Err(e) => {
-            return UpnpResult {
-                success: false,
-                tcp_forwarded: false,
-                udp_forwarded: false,
-                local_ip: None,
-                external_ip: None,
-                error: Some(format!("Failed to get local IP: {}", e)),
-            }
-        }
-    };
-
-    let local_ipv4 = match local_ip {
-        std::net::IpAddr::V4(ip) => ip,
-        std::net::IpAddr::V6(_) => {
-            return UpnpResult {
-                success: false,
-                tcp_forwarded: false,
-                udp_forwarded: false,
-                local_ip: None,
-                external_ip: None,
-                error: Some("UPnP requires IPv4".to_string()),
-            }
-        }
-    };
-
-    let external_ip = match gateway.get_external_ip() {
-        Ok(ip) => ip,
-        Err(e) => {
-            return UpnpResult {
-                success: false,
-                tcp_forwarded: false,
-                udp_forwarded: false,
-                local_ip: Some(local_ipv4.to_string()),
-                external_ip: None,
-                error: Some(format!("Failed to get external IP: {}", e)),
-            }
-        }
-    };
-
-    let local_addr = std::net::SocketAddrV4::new(local_ipv4, port);
-    let mut tcp_forwarded = false;
-    let mut udp_forwarded = false;
-
-    if gateway
-        .add_port(
-            PortMappingProtocol::TCP,
-            port,
-            local_addr,
-            3600,
-            "Librarian Torrent Client",
-        )
-        .is_ok()
-    {
-        tcp_forwarded = true;
-    }
-    if gateway
-        .add_port(
-            PortMappingProtocol::UDP,
-            port,
-            local_addr,
-            3600,
-            "Librarian Torrent Client",
-        )
-        .is_ok()
-    {
-        udp_forwarded = true;
-    }
-
-    UpnpResult {
-        success: tcp_forwarded || udp_forwarded,
-        tcp_forwarded,
-        udp_forwarded,
-        local_ip: Some(local_ipv4.to_string()),
-        external_ip: Some(external_ip.to_string()),
-        error: if tcp_forwarded || udp_forwarded {
-            None
-        } else {
-            Some("Failed to forward both TCP and UDP".to_string())
-        },
-    }
 }

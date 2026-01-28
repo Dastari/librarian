@@ -146,8 +146,7 @@ pub struct Movie {
     #[sortable]
     pub updated_at: String,
 
-    #[graphql(skip)]
-    #[serde(skip)]
+    #[graphql(name = "MediaFile")]
     #[relation(target = "MediaFile", from = "media_file_id", to = "id")]
     pub media_file: Option<MediaFile>,
 }

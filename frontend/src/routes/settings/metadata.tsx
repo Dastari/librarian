@@ -15,6 +15,14 @@ import {
   type ParseAndIdentifyResult,
 } from '../../lib/graphql'
 import {
+  MetadataAppSettingsDocument,
+  UpdateAppSettingDocument,
+  CreateAppSettingDocument,
+  type MetadataAppSettingsQuery,
+  type UpdateAppSettingMutation,
+  type CreateAppSettingMutation,
+} from "../../lib/graphql/generated/graphql";
+import {
   IconMovie,
   IconDeviceTv,
   IconMusic,
@@ -22,7 +30,7 @@ import {
   IconSubtask,
   IconKey,
   IconTestPipe,
-} from '@tabler/icons-react'
+} from "@tabler/icons-react";
 import { sanitizeError } from '../../lib/format'
 import { SettingsHeader } from '../../components/shared'
 
@@ -30,53 +38,77 @@ export const Route = createFileRoute('/settings/metadata')({
   component: MetadataSettingsPage,
 })
 
-interface MetadataSettings {
-  tmdbApiKey: string
-  tmdbEnabled: boolean
-  tvmazeEnabled: boolean
-  musicbrainzEnabled: boolean
-  openlibraryEnabled: boolean
-  opensubtitlesApiKey: string
-  opensubtitlesUsername: string
-  opensubtitlesPassword: string
-  opensubtitlesEnabled: boolean
+const METADATA_KEYS = {
+  tmdb_api_key: "metadata.tmdb_api_key",
+  tmdb_enabled: "metadata.tmdb_enabled",
+  tvmaze_enabled: "metadata.tvmaze_enabled",
+  musicbrainz_enabled: "metadata.musicbrainz_enabled",
+  openlibrary_enabled: "metadata.openlibrary_enabled",
+  opensubtitles_api_key: "metadata.opensubtitles_api_key",
+  opensubtitles_username: "metadata.opensubtitles_username",
+  opensubtitles_password: "metadata.opensubtitles_password",
+  opensubtitles_enabled: "metadata.opensubtitles_enabled",
+} as const;
+
+/** Shape used by the form and for change detection (from AppSettings key/value store). */
+interface MetadataSettingsShape {
+  tmdbApiKey: string;
+  tmdbEnabled: boolean;
+  tvmazeEnabled: boolean;
+  musicbrainzEnabled: boolean;
+  openlibraryEnabled: boolean;
+  opensubtitlesApiKey: string;
+  opensubtitlesUsername: string;
+  opensubtitlesPassword: string;
+  opensubtitlesEnabled: boolean;
 }
 
-// GraphQL queries - use settingsByCategory which returns settings by category prefix
-const GET_SETTINGS_QUERY = `
-  query GetMetadataSettings {
-    settingsByCategory(category: "metadata") {
-      key
-      value
-      category
-    }
-  }
-`
+function appSettingsToMetadataSettings(
+  edges: MetadataAppSettingsQuery["AppSettings"]["Edges"],
+): MetadataSettingsShape {
+  const map = new Map(edges.map((e) => [e.Node.Key, e.Node.Value]));
+  const get = (k: string, def: string) => map.get(k) ?? def;
+  const getBool = (k: string, def: boolean) => {
+    const val = map.get(k);
+    if (val === "true") return true;
+    if (val === "false") return false;
+    return def;
+  };
+  return {
+    tmdbApiKey: get(METADATA_KEYS.tmdb_api_key, ""),
+    tmdbEnabled: getBool(METADATA_KEYS.tmdb_enabled, true),
+    tvmazeEnabled: getBool(METADATA_KEYS.tvmaze_enabled, true),
+    musicbrainzEnabled: getBool(METADATA_KEYS.musicbrainz_enabled, true),
+    openlibraryEnabled: getBool(METADATA_KEYS.openlibrary_enabled, true),
+    opensubtitlesApiKey: get(METADATA_KEYS.opensubtitles_api_key, ""),
+    opensubtitlesUsername: get(METADATA_KEYS.opensubtitles_username, ""),
+    opensubtitlesPassword: get(METADATA_KEYS.opensubtitles_password, ""),
+    opensubtitlesEnabled: getBool(METADATA_KEYS.opensubtitles_enabled, false),
+  };
+}
 
-const SET_SETTING_MUTATION = `
-  mutation SetSetting($key: String!, $value: String!) {
-    setSetting(key: $key, value: $value) {
-      success
-      error
-    }
-  }
-`
+/** Map from app setting key to node Id (for updates). */
+function keyToIdMap(edges: MetadataAppSettingsQuery['AppSettings']['Edges']): Map<string, string> {
+  return new Map(edges.map((e) => [e.Node.Key, e.Node.Id]))
+}
 
 function MetadataSettingsPage() {
-  const [settings, setSettings] = useState<MetadataSettings>({
-    tmdbApiKey: '',
+  const [settings, setSettings] = useState<MetadataSettingsShape>({
+    tmdbApiKey: "",
     tmdbEnabled: true,
     tvmazeEnabled: true,
     musicbrainzEnabled: true,
     openlibraryEnabled: true,
-    opensubtitlesApiKey: '',
-    opensubtitlesUsername: '',
-    opensubtitlesPassword: '',
+    opensubtitlesApiKey: "",
+    opensubtitlesUsername: "",
+    opensubtitlesPassword: "",
     opensubtitlesEnabled: false,
-  })
-  const [initialSettings, setInitialSettings] = useState<MetadataSettings | null>(null)
+  });
+  const [initialSettings, setInitialSettings] =
+    useState<MetadataSettingsShape | null>(null);
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [keyToId, setKeyToId] = useState<Map<string, string>>(new Map());
   
   // Parser test state
   const [testInput, setTestInput] = useState('')
@@ -91,36 +123,23 @@ function MetadataSettingsPage() {
   const fetchSettings = async () => {
     try {
       setLoading(true)
-      const { data } = await graphqlClient
-        .query<{ settingsByCategory: Array<{ key: string; value: unknown; category: string }> }>(GET_SETTINGS_QUERY, {})
-        .toPromise()
+      const { data, error } = await graphqlClient
+        .query<MetadataAppSettingsQuery>(MetadataAppSettingsDocument, {})
+        .toPromise();
 
-      // Parse values from JSON - the backend stores values as JSON
-      const parseValue = (val: unknown): string => {
-        if (typeof val === 'string') return val
-        if (val === null || val === undefined) return ''
-        return String(val)
-      }
-      const parseBool = (val: unknown, defaultVal: boolean): boolean => {
-        if (val === true || val === 'true') return true
-        if (val === false || val === 'false') return false
-        return defaultVal
+      if (error) {
+        throw error;
       }
 
-      const settingsMap = new Map((data?.settingsByCategory || []).map((s) => [s.key, s.value]))
-      const newSettings: MetadataSettings = {
-        tmdbApiKey: parseValue(settingsMap.get('metadata.tmdb_api_key')),
-        tmdbEnabled: parseBool(settingsMap.get('metadata.tmdb_enabled'), true),
-        tvmazeEnabled: parseBool(settingsMap.get('metadata.tvmaze_enabled'), true),
-        musicbrainzEnabled: parseBool(settingsMap.get('metadata.musicbrainz_enabled'), true),
-        openlibraryEnabled: parseBool(settingsMap.get('metadata.openlibrary_enabled'), true),
-        opensubtitlesApiKey: parseValue(settingsMap.get('metadata.opensubtitles_api_key')),
-        opensubtitlesUsername: parseValue(settingsMap.get('metadata.opensubtitles_username')),
-        opensubtitlesPassword: parseValue(settingsMap.get('metadata.opensubtitles_password')),
-        opensubtitlesEnabled: parseBool(settingsMap.get('metadata.opensubtitles_enabled'), false),
+      if (!data?.AppSettings?.Edges) {
+        throw new Error("No settings data returned");
       }
+
+      const newSettings = appSettingsToMetadataSettings(data.AppSettings.Edges);
+      const idMap = keyToIdMap(data.AppSettings.Edges);
+      
       setSettings(newSettings)
-      // Set a separate copy for initial comparison
+      setKeyToId(idMap);
       setInitialSettings({ ...newSettings })
     } catch (err) {
       // Silently ignore auth errors - they can happen during login race conditions
@@ -159,31 +178,105 @@ function MetadataSettingsPage() {
     setSaving(true)
     try {
       const settingsToSave = [
-        { key: 'metadata.tmdb_api_key', value: settings.tmdbApiKey },
-        { key: 'metadata.tmdb_enabled', value: String(settings.tmdbEnabled) },
-        { key: 'metadata.tvmaze_enabled', value: String(settings.tvmazeEnabled) },
-        { key: 'metadata.musicbrainz_enabled', value: String(settings.musicbrainzEnabled) },
-        { key: 'metadata.openlibrary_enabled', value: String(settings.openlibraryEnabled) },
-        { key: 'metadata.opensubtitles_api_key', value: settings.opensubtitlesApiKey },
-        { key: 'metadata.opensubtitles_username', value: settings.opensubtitlesUsername },
-        { key: 'metadata.opensubtitles_password', value: settings.opensubtitlesPassword },
-        { key: 'metadata.opensubtitles_enabled', value: String(settings.opensubtitlesEnabled) },
-      ]
+        { key: METADATA_KEYS.tmdb_api_key, value: settings.tmdbApiKey },
+        {
+          key: METADATA_KEYS.tmdb_enabled,
+          value: String(settings.tmdbEnabled),
+        },
+        {
+          key: METADATA_KEYS.tvmaze_enabled,
+          value: String(settings.tvmazeEnabled),
+        },
+        {
+          key: METADATA_KEYS.musicbrainz_enabled,
+          value: String(settings.musicbrainzEnabled),
+        },
+        {
+          key: METADATA_KEYS.openlibrary_enabled,
+          value: String(settings.openlibraryEnabled),
+        },
+        {
+          key: METADATA_KEYS.opensubtitles_api_key,
+          value: settings.opensubtitlesApiKey,
+        },
+        {
+          key: METADATA_KEYS.opensubtitles_username,
+          value: settings.opensubtitlesUsername,
+        },
+        {
+          key: METADATA_KEYS.opensubtitles_password,
+          value: settings.opensubtitlesPassword,
+        },
+        {
+          key: METADATA_KEYS.opensubtitles_enabled,
+          value: String(settings.opensubtitlesEnabled),
+        },
+      ];
+
+      const now = new Date().toISOString();
 
       for (const { key, value } of settingsToSave) {
-        const { data, error } = await graphqlClient
-          .mutation<{ setSetting: { success: boolean; error: string | null } }>(
-            SET_SETTING_MUTATION,
-            { key, value }
-          )
-          .toPromise()
+        const existingId = keyToId.get(key);
 
-        if (error || !data?.setSetting.success) {
-          throw new Error(data?.setSetting.error || `Failed to save ${key}`)
+        if (existingId) {
+          // Update existing setting using UpdateAppSetting mutation
+          const res = await graphqlClient
+            .mutation(UpdateAppSettingDocument, {
+              Id: existingId,
+              Input: { Value: value },
+            })
+            .toPromise();
+
+          const data = res.data as {
+            UpdateAppSetting?: { Success: boolean; Error?: string | null };
+          };
+          if (!data?.UpdateAppSetting?.Success) {
+            addToast({
+              title: "Error",
+              description: sanitizeError(
+                data?.UpdateAppSetting?.Error ?? `Failed to save ${key}`,
+              ),
+              color: "danger",
+            });
+            return;
+          }
+        } else {
+          // Create new setting
+          const res = await graphqlClient
+            .mutation(CreateAppSettingDocument, {
+              Input: {
+                Key: key,
+                Value: value,
+                Category: "metadata",
+                CreatedAt: now,
+                UpdatedAt: now,
+              },
+            })
+            .toPromise();
+
+          const data = res.data as {
+            CreateAppSetting?: {
+              Success: boolean;
+              Error?: string | null;
+              AppSetting?: { Id: string } | null;
+            };
+          };
+          if (!data?.CreateAppSetting?.Success) {
+            addToast({
+              title: "Error",
+              description: sanitizeError(
+                data?.CreateAppSetting?.Error ?? `Failed to create ${key}`,
+              ),
+              color: "danger",
+            });
+            return;
+          }
         }
       }
 
-      setInitialSettings({ ...settings })
+      // Refetch settings to get updated IDs and values
+      await fetchSettings();
+      
       addToast({
         title: 'Success',
         description: 'Metadata settings saved',
@@ -192,10 +285,10 @@ function MetadataSettingsPage() {
     } catch (err) {
       console.error('Failed to save settings:', err)
       addToast({
-        title: 'Error',
-        description: err instanceof Error ? err.message : 'Failed to save settings',
-        color: 'danger',
-      })
+        title: "Error",
+        description: sanitizeError(err),
+        color: "danger",
+      });
     } finally {
       setSaving(false)
     }

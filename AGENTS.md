@@ -2,11 +2,10 @@
 
 ## Project Structure & Module Organization
 
-- `backend/`: Rust Axum API, GraphQL, jobs, services, and `migrations/` (Postgres) plus `migrations_sqlite/`.
+- `backend/`: Rust Axum API,service.
 - `frontend/`: TanStack Start app with `src/components/`, `src/hooks/`, `src/lib/graphql/`, and file-based routes in `src/routes/`.
 - `librarian-macros/`: internal Rust proc-macro crate used by the backend.
 - `docs/`: architecture, design, and workflow notes.
-- `docker-compose*.yml`, `nginx/`: local stack and deployment assets.
 
 ## Build, Test, and Development Commands
 
@@ -42,6 +41,4 @@
 
 ## Configuration & Security Notes
 
-- Copy `.env.example` to `.env` and set `DATABASE_PATH` if you want a custom location.
-- Never commit secrets; keep `JWT_SECRET` and API keys in local envs.
 - For encryption or indexer changes, note key handling (see `README.md`).

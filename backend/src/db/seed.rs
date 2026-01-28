@@ -30,13 +30,13 @@ async fn seed_app_settings(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
         // Torrent
         SettingRow {
             key: "torrent.download_dir",
-            value: "\"/data/downloads\"",
+            value: "./data/downloads",
             description: "Directory where torrents are downloaded to",
             category: "torrent",
         },
         SettingRow {
             key: "torrent.session_dir",
-            value: "\"/data/session\"",
+            value: "./data/session",
             description: "Directory for torrent session data",
             category: "torrent",
         },

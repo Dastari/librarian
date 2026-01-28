@@ -15,19 +15,16 @@ import {
   IconTrash,
   IconEye,
 } from "@tabler/icons-react";
-import type { LibraryNode, LibraryType } from "../../lib/graphql";
+import type { LibraryType } from "../../lib/graphql";
 import { getLibraryTypeInfo } from "../../lib/graphql";
+import type { Library } from "@/lib/graphql/generated/types";
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export interface LibraryGridCardProps {
-  library: LibraryNode;
-  showCount?: number;
-  movieCount?: number;
-  albumCount?: number;
-  audiobookCount?: number;
+  library: Library;
   onScan: () => void;
   onDelete: () => void;
 }
@@ -48,15 +45,7 @@ const LIBRARY_GRADIENTS: Record<string, string> = {
 // Component
 // ============================================================================
 
-export function LibraryGridCard({
-  library,
-  showCount,
-  movieCount,
-  albumCount,
-  audiobookCount,
-  onScan,
-  onDelete,
-}: LibraryGridCardProps) {
+export function LibraryGridCard({ library, onScan, onDelete }: LibraryGridCardProps) {
   const navigate = useNavigate();
   const typeInfo = getLibraryTypeInfo(library.LibraryType as LibraryType);
   const gradient =
@@ -71,15 +60,19 @@ export function LibraryGridCard({
 
   // Get count based on library type
   const itemCount = (() => {
-    if (library.LibraryType === "TV") return showCount ?? 0;
-    if (library.LibraryType === "MOVIES") return movieCount ?? 0;
-    if (library.LibraryType === "MUSIC") return albumCount ?? 0;
-    if (library.LibraryType === "AUDIOBOOKS") return audiobookCount ?? 0;
+    if (library.LibraryType === "TV")
+      return library.Shows?.PageInfo?.TotalCount ?? 0;
+    if (library.LibraryType === "MOVIES")
+      return library.Movies?.PageInfo?.TotalCount ?? 0;
+    if (library.LibraryType === "MUSIC")
+      return library.Albums?.PageInfo?.TotalCount ?? 0;
+    if (library.LibraryType === "AUDIOBOOKS")
+      return library.Audiobooks?.PageInfo?.TotalCount ?? 0;
     return 0;
   })();
 
   return (
-    <Card className="relative overflow-hidden aspect-[2/3] group border-none bg-content2">
+    <Card className="relative overflow-hidden aspect-2/3 group border-none bg-content2">
       {/* Clickable overlay for navigation - covers the entire card */}
       <button
         type="button"
@@ -90,7 +83,7 @@ export function LibraryGridCard({
 
       {/* Background gradient with icon */}
       <div className="absolute inset-0 w-full h-full">
-        <div className={`absolute inset-0 bg-gradient-to-br ${gradient}`}>
+        <div className={`absolute inset-0 bg-linear-to-br ${gradient}`}>
           <div className="absolute inset-0 flex items-center justify-center opacity-30">
             <typeInfo.Icon size={80} />
           </div>
