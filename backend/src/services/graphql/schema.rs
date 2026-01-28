@@ -15,7 +15,7 @@ use crate::services::graphql::mutations::{AuthMutations, FilesystemMutations};
 use crate::services::graphql::queries::FilesystemQueries;
 use crate::services::graphql::subscriptions::filesystem::FilesystemChangeBroker;
 use crate::services::graphql::subscriptions::FilesystemSubscriptions;
-use crate::services::ServicesManager;
+use crate::services::manager::ServicesManager;
 
 schema_roots! {
     query_custom_ops: [User, Torrent],

@@ -17,10 +17,7 @@ alwaysApply: true
 librarian/
 ├── backend/           # Rust backend (Axum + async-graphql)
 ├── frontend/          # React frontend (TanStack Router + HeroUI)
-├── infra/             # Infrastructure (Supabase, Docker)
-│   └── supabase/      # Supabase local dev config
 ├── docs/              # Documentation
-├── docker-compose.yml # Development services
 ├── Makefile           # Common commands
 └── .cursor/rules/     # AI assistant rules
 ```
@@ -35,7 +32,6 @@ cargo check            # Fast compilation check
 cargo test             # Run tests
 cargo fmt              # Format code
 cargo clippy           # Lint code
-sqlx migrate run       # Run database migrations
 ```
 
 ### Frontend
@@ -45,34 +41,6 @@ pnpm dev               # Start dev server (port 3000)
 pnpm build             # Production build
 pnpm test              # Run tests
 pnpm exec tsc --noEmit # Type check
-```
-
-### Infrastructure
-```bash
-# Start all services
-docker-compose up -d
-
-# Start Supabase locally
-cd infra/supabase && supabase start
-```
-
-## Environment Variables
-
-### Backend (.env)
-```bash
-DATABASE_URL=postgresql://...
-SUPABASE_URL=http://localhost:54321
-SUPABASE_ANON_KEY=...
-JWT_SECRET=...
-DOWNLOADS_PATH=/data/downloads
-SESSION_PATH=/data/session
-```
-
-### Frontend (.env)
-```bash
-VITE_API_URL=http://localhost:3001
-VITE_SUPABASE_URL=http://localhost:54321
-VITE_SUPABASE_ANON_KEY=...
 ```
 
 ## Code Quality
@@ -94,93 +62,10 @@ VITE_SUPABASE_ANON_KEY=...
 - Use strict TypeScript (no `any` without justification)
 - Prefer `const` over `let`
 - Use descriptive variable names
-- Define types in `lib/graphql.ts` for GraphQL operations
-
-## Database Changes
-
-### Creating Migrations
-1. Create file: `backend/migrations/XXX_description.sql`
-2. Use next available number (001, 002, 003, ...)
-3. Test migration: `sqlx migrate run`
-4. Verify rollback plan exists (if destructive)
-
-### Schema Conventions
-- Use `UUID` for primary keys
-- Use `TIMESTAMPTZ` for timestamps (not `TIMESTAMP`)
-- Always add `created_at` and `updated_at` columns
-- Use `snake_case` for column names
-- Enable RLS for user-scoped tables
-
-## GraphQL Development
-
-### Testing Queries
-Use GraphiQL at `http://localhost:3001/graphql`:
-
-```graphql
-# Example query
-query {
-  torrents {
-    id
-    name
-    progress
-    state
-  }
-}
-
-# Example mutation
-mutation {
-  addTorrent(input: { magnet: "magnet:?xt=..." }) {
-    success
-    torrent { id name }
-    error
-  }
-}
-```
-
-### Schema Exploration
-The GraphQL schema is self-documenting. Use introspection:
-```graphql
-{
-  __schema {
-    types { name }
-  }
-}
-```
-
-## Debugging
-
-### Backend Logs
-```bash
-# Verbose logging
-RUST_LOG=debug cargo run
-
-# Specific modules
-RUST_LOG=librarian_backend=debug,librqbit=info cargo run
-```
 
 ### Frontend DevTools
 - React DevTools for component inspection
 - TanStack Router DevTools for routing
-- Browser Network tab for API calls
 - Console for GraphQL subscription messages
 
 ## Common Issues
-
-### "Permission denied" for download directory
-- Configure a valid path in Settings page
-- Ensure the backend process has write permissions
-- Falls back to temp directory if configured path fails
-
-### GraphQL authentication errors
-- Check JWT_SECRET matches Supabase config
-- Verify token is being sent in Authorization header
-- Check token expiration
-
-### Database connection issues
-- Ensure Supabase is running: `supabase status`
-- Check DATABASE_URL in .env
-- Run migrations: `sqlx migrate run`
-
-### Route not found (frontend)
-- Rebuild to regenerate route tree: `pnpm build`
-- Check file naming matches TanStack Router conventions

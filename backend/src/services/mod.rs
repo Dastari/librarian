@@ -37,6 +37,10 @@ pub mod http_server;
 pub mod logging;
 pub mod manager;
 pub mod torrent;
+pub mod metadata;
+pub mod rate_limiter;
+
+pub use rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};
 
 pub use auth::{
     AccessTokenClaims, AuthConfig, AuthService, AuthTokens, AuthenticatedUser, LoginResult,
@@ -55,6 +59,12 @@ pub use torrent::{
     TorrentDetails, TorrentEvent, TorrentFile, TorrentInfo, TorrentService, TorrentServiceConfig,
     TorrentState,
 };
+
+pub use metadata::tmdb::{
+     TmdbClient, TmdbCollection, TmdbCredits, TmdbMovie, TmdbMovieSearchResult, TmdbReleaseDates,
+     normalize_movie_status,
+};
+
 
 // These are legacy mods moved to the legacy folder awaiting conversion to the new @servies.md format.
 // pub mod metadata;
@@ -151,10 +161,6 @@ pub use torrent::{
 // pub use text_utils::{
 //     levenshtein_distance, normalize_quality, normalize_show_name, normalize_show_name_no_articles,
 //     normalize_title, normalize_track_title, show_name_similarity, string_similarity,
-// };
-// pub use tmdb::{
-//     TmdbClient, TmdbCollection, TmdbCredits, TmdbMovie, TmdbMovieSearchResult, TmdbReleaseDates,
-//     normalize_movie_status,
 // };
 // pub use torrent::{
 //     PeerStats, TorrentDetails, TorrentEvent, TorrentFile, TorrentInfo, TorrentService,

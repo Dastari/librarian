@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use super::rate_limiter::{RateLimitedClient, RetryConfig, retry_async};
+use crate::services::rate_limiter::{RateLimitedClient, RetryConfig, RateLimitConfig, retry_async};
 
 /// TMDB API client with rate limiting and retry logic
 #[derive(Clone)]
@@ -172,7 +172,7 @@ impl TmdbClient {
             // TMDB allows ~40 requests per 10 seconds, so ~4/sec with burst of 10
             client: Arc::new(RateLimitedClient::new(
                 "tmdb",
-                super::rate_limiter::RateLimitConfig {
+                RateLimitConfig {
                     requests_per_second: 4,
                     burst_size: 10,
                 },

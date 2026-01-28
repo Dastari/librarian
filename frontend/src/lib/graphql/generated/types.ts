@@ -7435,6 +7435,14 @@ export type TorrentAppSettingsQuery = {
   };
 };
 
+export type MetadataAppSettingsQueryVariables = Exact<{ [key: string]: never }>;
+
+export type MetadataAppSettingsQuery = {
+  AppSettings: {
+    Edges: Array<{ Node: { Id: string; Key: string; Value: string } }>;
+  };
+};
+
 export type CreateAppSettingMutationVariables = Exact<{
   Input: CreateAppSettingInput;
 }>;

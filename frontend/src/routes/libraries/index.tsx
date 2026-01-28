@@ -21,11 +21,13 @@ import { graphqlClient } from "../../lib/graphql";
 import {
   LibraryChangedDocument,
   CreateLibraryDocument,
-  MeDocument,
   ChangeAction,
-  type CreateLibraryInput as GenCreateLibraryInput,
+  type LibraryConnection,
+  type CreateLibraryInput,
   type Library,
 } from "../../lib/graphql/generated/graphql";
+import { LIBRARIES_WITH_COUNTS_QUERY } from "@/lib/graphql/queries";
+import { useAuth } from "@/hooks/useAuth";
 
 // ============================================================================
 // Route Config
@@ -47,83 +49,13 @@ export const Route = createFileRoute("/libraries/")({
   errorComponent: RouteError,
 });
 
-// ============================================================================
-// Types
-// ============================================================================
-
-interface LibraryWithCounts extends Library {
-  _showCount?: number;
-  _movieCount?: number;
-  _albumCount?: number;
-  _audiobookCount?: number;
-}
-
-// ============================================================================
-// GraphQL Query with Counts
-// ============================================================================
-
-const LIBRARIES_WITH_COUNTS_QUERY = `
-  query LibrariesWithCounts {
-    Libraries {
-      Edges {
-        Node {
-          Id
-          UserId
-          Name
-          Path
-          LibraryType
-          Icon
-          Color
-          AutoScan
-          ScanIntervalMinutes
-          WatchForChanges
-          AutoAddDiscovered
-          AutoDownload
-          AutoHunt
-          Scanning
-          LastScannedAt
-          CreatedAt
-          UpdatedAt
-          Shows {
-            PageInfo {
-              TotalCount
-            }
-          }
-          Movies {
-            PageInfo {
-              TotalCount
-            }
-          }
-          Albums {
-            PageInfo {
-              TotalCount
-            }
-          }
-          Audiobooks {
-            PageInfo {
-              TotalCount
-            }
-          }
-        }
-      }
-      PageInfo {
-        TotalCount
-      }
-    }
-  }
-`;
-
-// ============================================================================
-// Component
-// ============================================================================
 
 function LibrariesPage() {
   // State
   const [isPending, startTransition] = useTransition();
-  const [libraries, setLibraries] = useState<LibraryWithCounts[]>([]);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [libraries, setLibraries] = useState<Library[]>([]);
   const [actionLoading, setActionLoading] = useState(false);
-
+  const { user } = useAuth();
   // Modal states
   const {
     isOpen: isAddOpen,
@@ -147,33 +79,11 @@ function LibrariesPage() {
     name: string;
   } | null>(null);
 
-  // Fetch current user
-  useEffect(() => {
-    graphqlClient
-      .query(MeDocument, {})
-      .toPromise()
-      .then((result) => {
-        if (result.data?.Me) {
-          setCurrentUserId(result.data.Me.Id);
-        }
-      });
-  }, []);
-
-  // Fetch libraries with counts
   const fetchLibraries = useCallback(async () => {
     startTransition(async () => {
       const { data, error } = await graphqlClient
         .query<{
-          Libraries: {
-            Edges: Array<{
-              Node: Library & {
-                Shows: { PageInfo: { TotalCount: number } };
-                Movies: { PageInfo: { TotalCount: number } };
-                Albums: { PageInfo: { TotalCount: number } };
-                Audiobooks: { PageInfo: { TotalCount: number } };
-              };
-            }>;
-          };
+          Libraries: LibraryConnection;
         }>(LIBRARIES_WITH_COUNTS_QUERY, {})
         .toPromise();
 
@@ -182,16 +92,7 @@ function LibrariesPage() {
         return;
       }
 
-      const libs =
-        data?.Libraries?.Edges.map((edge) => ({
-          ...edge.Node,
-          _showCount: edge.Node.Shows?.PageInfo?.TotalCount ?? 0,
-          _movieCount: edge.Node.Movies?.PageInfo?.TotalCount ?? 0,
-          _albumCount: edge.Node.Albums?.PageInfo?.TotalCount ?? 0,
-          _audiobookCount: edge.Node.Audiobooks?.PageInfo?.TotalCount ?? 0,
-        })) ?? [];
-
-      setLibraries(libs);
+      setLibraries(data?.Libraries?.Edges.map((edge) => edge.Node) ?? []);
     });
   }, []);
 
@@ -227,19 +128,10 @@ function LibrariesPage() {
 
   // Handlers
   const handleAddLibrary = async (input: CreateLibraryFormInput) => {
-    if (!currentUserId) {
-      addToast({
-        title: "Error",
-        description: "User not loaded. Please refresh and try again.",
-        color: "danger",
-      });
-      return;
-    }
-
     const now = new Date().toISOString();
-    const genInput: GenCreateLibraryInput = {
+    const Input: CreateLibraryInput = {
       ...input,
-      UserId: currentUserId,
+      UserId: user?.id ?? "",
       CreatedAt: now,
       UpdatedAt: now,
     };
@@ -247,7 +139,7 @@ function LibrariesPage() {
     try {
       setActionLoading(true);
       const { data, error } = await graphqlClient
-        .mutation(CreateLibraryDocument, { Input: genInput })
+        .mutation(CreateLibraryDocument, { Input })
         .toPromise();
 
       if (error || !data?.CreateLibrary.Success) {
@@ -311,7 +203,7 @@ function LibrariesPage() {
 
   // Card skeleton
   const cardSkeleton = () => (
-    <Card className="relative overflow-hidden aspect-[2/3] bg-content2">
+    <Card className="relative overflow-hidden aspect-2/3 bg-content2">
       <Skeleton className="absolute inset-0 w-full h-full" />
       <div className="absolute bottom-0 left-0 right-0 p-3 bg-black/50">
         <Skeleton className="h-4 w-3/4 mb-2 rounded" />
@@ -335,10 +227,6 @@ function LibrariesPage() {
         cardRenderer={({ item }) => (
           <LibraryGridCard
             library={item}
-            showCount={item._showCount}
-            movieCount={item._movieCount}
-            albumCount={item._albumCount}
-            audiobookCount={item._audiobookCount}
             onScan={() => handleScanClick(item.Id, item.Name)}
             onDelete={() => handleDeleteClick(item.Id, item.Name)}
           />
@@ -346,7 +234,6 @@ function LibrariesPage() {
         cardSkeleton={cardSkeleton}
         skeletonCardCount={6}
         cardGridClassName="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
-        // Header with title, description, and add button
         headerContent={
           <div className="flex items-start justify-between mb-6">
             <div>
@@ -365,12 +252,10 @@ function LibrariesPage() {
             </Button>
           </div>
         }
-        // Hide default toolbar (search, etc.) and item count
         hideToolbar
         showItemCount={false}
       />
 
-      {/* Modals */}
       <AddLibraryModal
         isOpen={isAddOpen}
         onClose={onAddClose}

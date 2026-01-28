@@ -7436,6 +7436,14 @@ export type TorrentAppSettingsQuery = {
   };
 };
 
+export type MetadataAppSettingsQueryVariables = Exact<{ [key: string]: never }>;
+
+export type MetadataAppSettingsQuery = {
+  AppSettings: {
+    Edges: Array<{ Node: { Id: string; Key: string; Value: string } }>;
+  };
+};
+
 export type CreateAppSettingMutationVariables = Exact<{
   Input: CreateAppSettingInput;
 }>;
@@ -8229,6 +8237,111 @@ export const TorrentAppSettingsDocument = {
 } as unknown as DocumentNode<
   TorrentAppSettingsQuery,
   TorrentAppSettingsQueryVariables
+>;
+export const MetadataAppSettingsDocument = {
+  kind: "Document",
+  definitions: [
+    {
+      kind: "OperationDefinition",
+      operation: "query",
+      name: { kind: "Name", value: "MetadataAppSettings" },
+      selectionSet: {
+        kind: "SelectionSet",
+        selections: [
+          {
+            kind: "Field",
+            name: { kind: "Name", value: "AppSettings" },
+            arguments: [
+              {
+                kind: "Argument",
+                name: { kind: "Name", value: "Where" },
+                value: {
+                  kind: "ObjectValue",
+                  fields: [
+                    {
+                      kind: "ObjectField",
+                      name: { kind: "Name", value: "Category" },
+                      value: {
+                        kind: "ObjectValue",
+                        fields: [
+                          {
+                            kind: "ObjectField",
+                            name: { kind: "Name", value: "Eq" },
+                            value: {
+                              kind: "StringValue",
+                              value: "metadata",
+                              block: false,
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+              {
+                kind: "Argument",
+                name: { kind: "Name", value: "Page" },
+                value: {
+                  kind: "ObjectValue",
+                  fields: [
+                    {
+                      kind: "ObjectField",
+                      name: { kind: "Name", value: "Limit" },
+                      value: { kind: "IntValue", value: "50" },
+                    },
+                    {
+                      kind: "ObjectField",
+                      name: { kind: "Name", value: "Offset" },
+                      value: { kind: "IntValue", value: "0" },
+                    },
+                  ],
+                },
+              },
+            ],
+            selectionSet: {
+              kind: "SelectionSet",
+              selections: [
+                {
+                  kind: "Field",
+                  name: { kind: "Name", value: "Edges" },
+                  selectionSet: {
+                    kind: "SelectionSet",
+                    selections: [
+                      {
+                        kind: "Field",
+                        name: { kind: "Name", value: "Node" },
+                        selectionSet: {
+                          kind: "SelectionSet",
+                          selections: [
+                            {
+                              kind: "Field",
+                              name: { kind: "Name", value: "Id" },
+                            },
+                            {
+                              kind: "Field",
+                              name: { kind: "Name", value: "Key" },
+                            },
+                            {
+                              kind: "Field",
+                              name: { kind: "Name", value: "Value" },
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    },
+  ],
+} as unknown as DocumentNode<
+  MetadataAppSettingsQuery,
+  MetadataAppSettingsQueryVariables
 >;
 export const CreateAppSettingDocument = {
   kind: "Document",

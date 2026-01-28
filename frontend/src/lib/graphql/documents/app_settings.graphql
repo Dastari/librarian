@@ -22,6 +22,21 @@ query TorrentAppSettings {
   }
 }
 
+query MetadataAppSettings {
+  AppSettings(
+    Where: { Category: { Eq: "metadata" } }
+    Page: { Limit: 50, Offset: 0 }
+  ) {
+    Edges {
+      Node {
+        Id
+        Key
+        Value
+      }
+    }
+  }
+}
+
 mutation CreateAppSetting($Input: CreateAppSettingInput!) {
   CreateAppSetting(Input: $Input) {
     Success

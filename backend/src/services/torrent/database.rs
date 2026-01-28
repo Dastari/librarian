@@ -1,10 +1,12 @@
 //! Database helpers for the torrent service.
 //! Uses the pool directly; table/column names must match the GraphQL entity schema (snake_case in DB).
 
+use super::{add_torrent_opts, get_info_hash_hex};
+
 use uuid::Uuid;
 
 use crate::db::Database;
-use librqbit::{AddTorrent, Session};
+use librqbit::AddTorrent;
 
 /// Read a string value from app_settings (raw value, not JSON).
 pub async fn get_setting_string(pool: &Database, key: &str) -> Result<Option<String>, anyhow::Error> {
@@ -303,7 +305,7 @@ pub async fn list_resumable(pool: &Database) -> Result<Vec<ResumableRecord>, any
 
 /// Sync all session torrents into the database (upsert by info_hash).
 pub async fn sync_session_to_database(
-    session: &librqbit::Session,
+    session: &std::sync::Arc<librqbit::Session>,
     pool: &Database,
     config: &super::TorrentServiceConfig,
 ) -> Result<(), anyhow::Error> {
@@ -417,8 +419,8 @@ pub async fn restore_from_database(
         if let Some(magnet) = &record.magnet_uri {
             match session
                 .add_torrent(
-                    librqbit::AddTorrent::from_url(magnet),
-                    Some(super::add_torrent_opts()),
+                    AddTorrent::from_url(magnet),
+                    Some(add_torrent_opts()),
                 )
                 .await
             {
