@@ -1,13 +1,23 @@
 import { useState, useCallback } from 'react'
 import { Button } from '@heroui/button'
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
-import { LibrarySettingsForm, DEFAULT_LIBRARY_SETTINGS, type LibrarySettingsValues } from './LibrarySettingsForm'
+import {
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+} from "@heroui/modal";
+import {
+  LibrarySettingsForm,
+  DEFAULT_LIBRARY_SETTINGS,
+  type LibrarySettingsFormValues,
+} from "./LibrarySettingsForm";
 import type { CreateLibraryInput } from '../../lib/graphql'
 
 export type CreateLibraryFormInput = Omit<
   CreateLibraryInput,
-  'UserId' | 'CreatedAt' | 'UpdatedAt'
->
+  "UserId" | "CreatedAt" | "UpdatedAt" | "Scanning" | "LastScannedAt"
+>;
 
 export interface AddLibraryModalProps {
   isOpen: boolean
@@ -16,38 +26,48 @@ export interface AddLibraryModalProps {
   isLoading: boolean
 }
 
-export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibraryModalProps) {
-  const [values, setValues] = useState<LibrarySettingsValues>(DEFAULT_LIBRARY_SETTINGS)
+export function AddLibraryModal({
+  isOpen,
+  onClose,
+  onAdd,
+  isLoading,
+}: AddLibraryModalProps) {
+  const [formValues, setFormValues] = useState<LibrarySettingsFormValues>(
+    DEFAULT_LIBRARY_SETTINGS,
+  );
+  const [isFormValid, setIsFormValid] = useState(false);
 
-  const handleChange = useCallback((newValues: LibrarySettingsValues) => {
-    setValues(newValues)
-  }, [])
+  const handleChange = useCallback(
+    (values: LibrarySettingsFormValues, isValid: boolean) => {
+      setFormValues(values);
+      setIsFormValid(isValid);
+    },
+    [],
+  );
 
   const handleSubmit = async () => {
-    if (!values.name || !values.path) return
-    
+    if (!isFormValid) return;
+
     await onAdd({
-      Name: values.name,
-      Path: values.path,
-      LibraryType: values.libraryType,
-      AutoScan: values.autoScan,
-      ScanIntervalMinutes: values.scanIntervalMinutes,
-      WatchForChanges: values.watchForChanges,
-      AutoAddDiscovered: values.autoAddDiscovered,
-      AutoDownload: values.autoDownload,
-      AutoHunt: values.autoHunt,
-      Scanning: false,
-    })
-    
+      Name: formValues.Name,
+      Path: formValues.Path,
+      LibraryType: formValues.LibraryType,
+      AutoScan: formValues.AutoScan,
+      ScanIntervalMinutes: formValues.ScanIntervalMinutes,
+      WatchForChanges: formValues.WatchForChanges,
+      AutoOrganize: formValues.AutoOrganize,
+      NamingPattern: formValues.NamingPattern ?? "",
+    });
+
     // Reset form
-    setValues(DEFAULT_LIBRARY_SETTINGS)
-    onClose()
-  }
+    setFormValues(DEFAULT_LIBRARY_SETTINGS);
+    onClose();
+  };
 
   const handleClose = () => {
-    setValues(DEFAULT_LIBRARY_SETTINGS)
-    onClose()
-  }
+    setFormValues(DEFAULT_LIBRARY_SETTINGS);
+    onClose();
+  };
 
   return (
     <Modal
@@ -66,7 +86,6 @@ export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibrar
             onChange={handleChange}
             mode="create"
             useCards={false}
-            qualityMode="preset"
           />
         </ModalBody>
         <ModalFooter>
@@ -76,7 +95,7 @@ export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibrar
           <Button
             color="primary"
             onPress={handleSubmit}
-            isDisabled={!values.name || !values.path}
+            isDisabled={!isFormValid}
             isLoading={isLoading}
           >
             Add Library
@@ -84,5 +103,5 @@ export function AddLibraryModal({ isOpen, onClose, onAdd, isLoading }: AddLibrar
         </ModalFooter>
       </ModalContent>
     </Modal>
-  )
+  );
 }

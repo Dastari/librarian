@@ -4,8 +4,8 @@ use async_graphql::{Context, Object, Result, SimpleObject};
 use librarian_macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
-use crate::services::auth::AuthService;
 use super::super::auth::AuthUser;
+use crate::services::auth::AuthService;
 
 #[derive(
     GraphQLEntity,
@@ -94,9 +94,9 @@ impl UserCustomOperations {
     /// True if no admin user exists yet (first-time setup required).
     #[graphql(name = "NeedsSetup")]
     async fn needs_setup(&self, ctx: &Context<'_>) -> Result<bool> {
-        let auth = ctx.data::<Arc<AuthService>>().map_err(|e| {
-            async_graphql::Error::new(format!("Auth service unavailable: {:?}", e))
-        })?;
+        let auth = ctx
+            .data::<Arc<AuthService>>()
+            .map_err(|e| async_graphql::Error::new(format!("Auth service unavailable: {:?}", e)))?;
         auth.needs_setup()
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))
@@ -109,9 +109,9 @@ impl UserCustomOperations {
             Some(u) => u,
             None => return Ok(None),
         };
-        let db = ctx.data::<crate::db::Database>().map_err(|e| {
-            async_graphql::Error::new(format!("Database unavailable: {:?}", e))
-        })?;
+        let db = ctx
+            .data::<crate::db::Database>()
+            .map_err(|e| async_graphql::Error::new(format!("Database unavailable: {:?}", e)))?;
         let user = match User::get(db, &auth_user.user_id).await {
             Ok(Some(u)) => u,
             _ => return Ok(None),

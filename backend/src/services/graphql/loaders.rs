@@ -153,16 +153,16 @@ where
 // Each entity that can be loaded as a relation needs to implement HasForeignKey.
 // This tells the DataLoader how to group results by parent ID.
 
-use crate::services::graphql::entities::Show;
-use crate::services::graphql::entities::Episode;
-use crate::services::graphql::entities::Movie;
-use crate::services::graphql::entities::MediaFile;
 use crate::services::graphql::entities::Album;
-use crate::services::graphql::entities::Track;
 use crate::services::graphql::entities::Artist;
 use crate::services::graphql::entities::Audiobook;
 use crate::services::graphql::entities::Chapter;
+use crate::services::graphql::entities::Episode;
+use crate::services::graphql::entities::MediaFile;
+use crate::services::graphql::entities::Movie;
+use crate::services::graphql::entities::Show;
 use crate::services::graphql::entities::TorrentFile;
+use crate::services::graphql::entities::Track;
 
 impl HasForeignKey for Show {
     fn get_fk_value(&self, fk_column: &str) -> Option<String> {
@@ -283,7 +283,10 @@ pub fn matches_string_filter(
         }
     }
     if let Some(ref starts_with) = filter.starts_with {
-        if !value.to_lowercase().starts_with(&starts_with.to_lowercase()) {
+        if !value
+            .to_lowercase()
+            .starts_with(&starts_with.to_lowercase())
+        {
             return false;
         }
     }
@@ -306,7 +309,10 @@ pub fn matches_string_filter(
 }
 
 /// Apply an IntFilter to an i32 value.
-pub fn matches_int_filter(value: i32, filter: &crate::services::graphql::filters::IntFilter) -> bool {
+pub fn matches_int_filter(
+    value: i32,
+    filter: &crate::services::graphql::filters::IntFilter,
+) -> bool {
     if let Some(eq) = filter.eq {
         if value != eq {
             return false;
@@ -341,7 +347,10 @@ pub fn matches_int_filter(value: i32, filter: &crate::services::graphql::filters
 }
 
 /// Apply a BoolFilter to a bool value.
-pub fn matches_bool_filter(value: bool, filter: &crate::services::graphql::filters::BoolFilter) -> bool {
+pub fn matches_bool_filter(
+    value: bool,
+    filter: &crate::services::graphql::filters::BoolFilter,
+) -> bool {
     if let Some(eq) = filter.eq {
         if value != eq {
             return false;
@@ -415,7 +424,9 @@ pub fn paginate_entities<T, E, C>(
         start_cursor: if edges.is_empty() {
             None
         } else {
-            Some(crate::services::graphql::pagination::encode_cursor(offset as i64))
+            Some(crate::services::graphql::pagination::encode_cursor(
+                offset as i64,
+            ))
         },
         end_cursor: if edges.is_empty() {
             None

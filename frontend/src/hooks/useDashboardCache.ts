@@ -1,19 +1,30 @@
 /**
  * Dashboard data cache with stale-while-revalidate pattern.
- * Uses codegen types only; all data is PascalCase (LibraryNode, ShowNode, ScheduleCacheNode).
+ * Uses generated types only; all data is PascalCase.
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useRouterState } from '@tanstack/react-router'
 import { graphqlClient } from '../lib/graphql'
-import type { LibraryNode, ShowNode, ScheduleCacheNode } from '../lib/graphql'
 import {
   LibrariesDocument,
   LibraryChangedDocument,
   DashboardShowsDocument,
   DashboardScheduleCachesDocument,
+  type LibrariesQuery,
+  type DashboardShowsQuery,
+  type DashboardScheduleCachesQuery,
 } from '../lib/graphql/generated/graphql'
 import { TORRENT_COMPLETED_SUBSCRIPTION } from '../lib/graphql/subscriptions'
+
+/** Library node type derived from Libraries query */
+export type LibraryNode = LibrariesQuery['Libraries']['Edges'][0]['Node']
+
+/** Show node type derived from DashboardShows query */
+export type ShowNode = DashboardShowsQuery['Shows']['Edges'][0]['Node']
+
+/** ScheduleCache node type derived from DashboardScheduleCaches query */
+export type ScheduleCacheNode = DashboardScheduleCachesQuery['ScheduleCaches']['Edges'][0]['Node']
 
 const CACHE_KEY = 'librarian:dashboard_cache'
 const CACHE_TTL_MS = 5 * 60 * 1000
@@ -130,6 +141,7 @@ export function useDashboardCache(userId: string | null): UseDashboardCacheResul
         const showsResult = await graphqlClient
           .query(DashboardShowsDocument, {
             Where: { LibraryId: { Eq: library.Id } },
+            OrderBy: [{ CreatedAt: 'Desc' }],
             Page: { Limit: 6, Offset: 0 },
           })
           .toPromise()

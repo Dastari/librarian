@@ -30,18 +30,20 @@
 
 #![allow(unused_imports)]
 
+pub mod artwork;
 pub mod auth;
 pub mod database;
 pub mod graphql;
 pub mod http_server;
 pub mod logging;
 pub mod manager;
-pub mod torrent;
 pub mod metadata;
 pub mod rate_limiter;
+pub mod torrent;
 
 pub use rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};
 
+pub use artwork::ArtworkService;
 pub use auth::{
     AccessTokenClaims, AuthConfig, AuthService, AuthTokens, AuthenticatedUser, LoginResult,
     RefreshTokenClaims, RegisterInput,
@@ -61,10 +63,9 @@ pub use torrent::{
 };
 
 pub use metadata::tmdb::{
-     TmdbClient, TmdbCollection, TmdbCredits, TmdbMovie, TmdbMovieSearchResult, TmdbReleaseDates,
-     normalize_movie_status,
+    TmdbClient, TmdbCollection, TmdbCredits, TmdbMovie, TmdbMovieSearchResult, TmdbReleaseDates,
+    normalize_movie_status,
 };
-
 
 // These are legacy mods moved to the legacy folder awaiting conversion to the new @servies.md format.
 // pub mod metadata;

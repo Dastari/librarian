@@ -161,7 +161,9 @@ function HomePage() {
             <p className="text-white/70 drop-shadow-md">
               Your media library at a glance
               {isFetching && isStale && (
-                <span className="ml-2 text-xs text-primary-200 animate-pulse">• Refreshing...</span>
+                <span className="ml-2 text-xs text-primary-200 animate-pulse">
+                  • Refreshing...
+                </span>
               )}
             </p>
           </div>
@@ -173,16 +175,17 @@ function HomePage() {
         <section className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="text-xl font-semibold">Airing Soon in Your Library</h2>
-              <p className="text-default-500 text-sm">Episodes from shows you're tracking</p>
+              <h2 className="text-xl font-semibold">
+                Airing Soon in Your Library
+              </h2>
+              <p className="text-default-500 text-sm">
+                Episodes from shows you're tracking
+              </p>
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {libraryUpcoming.slice(0, 8).map((ep) => (
-              <Card
-                key={ep.Id}
-                className="bg-content1 overflow-hidden w-full"
-              >
+              <Card key={ep.Id} className="bg-content1 overflow-hidden w-full">
                 <div className="flex gap-3 p-3">
                   <div className="w-16 h-24 shrink-0 rounded-md overflow-hidden bg-default-200">
                     {ep.ShowPosterUrl ? (
@@ -191,7 +194,7 @@ function HomePage() {
                         alt={ep.ShowName}
                         classNames={{
                           wrapper: "w-full h-full",
-                          img: "w-full h-full object-cover"
+                          img: "w-full h-full object-cover",
                         }}
                         radius="none"
                         removeWrapper={false}
@@ -205,7 +208,8 @@ function HomePage() {
                   <div className="flex-1 min-w-0 text-left flex flex-col">
                     <p className="font-semibold truncate">{ep.ShowName}</p>
                     <p className="text-sm text-default-500 grow">
-                      S{ep.Season.toString().padStart(2, '0')}E{ep.EpisodeNumber.toString().padStart(2, '0')}
+                      S{ep.Season.toString().padStart(2, "0")}E
+                      {ep.EpisodeNumber.toString().padStart(2, "0")}
                       {ep.EpisodeName && `: ${ep.EpisodeName}`}
                     </p>
                     <div className="flex items-center gap-2">
@@ -213,7 +217,9 @@ function HomePage() {
                         {formatAirDate(ep.AirDate)}
                       </Chip>
                       {ep.ShowNetwork && (
-                        <span className="text-xs text-default-400">{ep.ShowNetwork}</span>
+                        <span className="text-xs text-default-400">
+                          {ep.ShowNetwork}
+                        </span>
                       )}
                     </div>
                   </div>
@@ -237,9 +243,17 @@ function HomePage() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
             {recentShows.map((show) => (
-              <Link key={show.Id} to="/shows/$showId" params={{ showId: show.Id }}>
+              <Link
+                key={show.Id}
+                to="/shows/$showId"
+                params={{ showId: show.Id }}
+              >
                 <div className="aspect-[2/3]">
-                  <Card isPressable isHoverable className="bg-content1 overflow-hidden h-full w-full relative">
+                  <Card
+                    isPressable
+                    isHoverable
+                    className="bg-content1 overflow-hidden h-full w-full relative"
+                  >
                     <div className="absolute inset-0">
                       {show.PosterUrl ? (
                         <>
@@ -247,8 +261,9 @@ function HomePage() {
                             src={show.PosterUrl}
                             alt={show.Name}
                             classNames={{
-                              wrapper: "absolute inset-0 w-full h-full !max-w-full",
-                              img: "w-full h-full object-cover"
+                              wrapper:
+                                "absolute inset-0 w-full h-full !max-w-full",
+                              img: "w-full h-full object-cover",
                             }}
                             radius="none"
                           />
@@ -256,14 +271,20 @@ function HomePage() {
                         </>
                       ) : (
                         <div className="w-full h-full bg-gradient-to-br from-blue-900 via-indigo-800 to-cyan-900 flex items-center justify-center">
-                          <IconDeviceTv size={40} className="text-blue-400 opacity-50" />
+                          <IconDeviceTv
+                            size={40}
+                            className="text-blue-400 opacity-50"
+                          />
                         </div>
                       )}
                     </div>
                     <div className="absolute bottom-0 left-0 right-0 p-2 bg-black/50 backdrop-blur-sm">
-                      <p className="text-sm font-medium truncate text-white">{show.Name}</p>
+                      <p className="text-sm font-medium truncate text-white">
+                        {show.Name}
+                      </p>
                       <p className="text-xs text-white/70">
-                        {show.EpisodeFileCount ?? 0} / {show.EpisodeCount ?? 0} episodes
+                        {show.Year ?? "Unknown year"}
+                        {show.Network && ` • ${show.Network}`}
                       </p>
                     </div>
                   </Card>
@@ -280,12 +301,17 @@ function HomePage() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <h2 className="text-xl font-semibold">Airing Soon</h2>
-              <p className="text-default-500 text-sm">Popular shows airing this week</p>
+              <p className="text-default-500 text-sm">
+                Popular shows airing this week
+              </p>
             </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
             {globalUpcoming.map((ep) => (
-              <div key={`${ep.TvmazeShowId}-${ep.Season}-${ep.EpisodeNumber}`} className="aspect-[2/3]">
+              <div
+                key={`${ep.TvmazeShowId}-${ep.Season}-${ep.EpisodeNumber}`}
+                className="aspect-[2/3]"
+              >
                 <Card
                   isHoverable
                   className="bg-content1 overflow-hidden h-full w-full relative"
@@ -297,8 +323,9 @@ function HomePage() {
                           src={ep.ShowPosterUrl}
                           alt={ep.ShowName}
                           classNames={{
-                            wrapper: "absolute inset-0 w-full h-full !max-w-full",
-                            img: "w-full h-full object-cover"
+                            wrapper:
+                              "absolute inset-0 w-full h-full !max-w-full",
+                            img: "w-full h-full object-cover",
                           }}
                           radius="none"
                         />
@@ -306,7 +333,10 @@ function HomePage() {
                       </>
                     ) : (
                       <div className="w-full h-full bg-gradient-to-br from-blue-900 via-indigo-800 to-cyan-900 flex items-center justify-center">
-                        <IconDeviceTv size={40} className="text-blue-400 opacity-50" />
+                        <IconDeviceTv
+                          size={40}
+                          className="text-blue-400 opacity-50"
+                        />
                       </div>
                     )}
                   </div>
@@ -316,9 +346,12 @@ function HomePage() {
                     </Chip>
                   </div>
                   <div className="absolute bottom-0 left-0 right-0 p-2 bg-black/50 backdrop-blur-sm">
-                    <p className="text-sm font-medium truncate text-white">{ep.ShowName}</p>
+                    <p className="text-sm font-medium truncate text-white">
+                      {ep.ShowName}
+                    </p>
                     <p className="text-xs text-white/70">
-                      S{ep.Season.toString().padStart(2, '0')}E{ep.EpisodeNumber.toString().padStart(2, '0')}
+                      S{ep.Season.toString().padStart(2, "0")}E
+                      {ep.EpisodeNumber.toString().padStart(2, "0")}
                       {ep.ShowNetwork && ` • ${ep.ShowNetwork}`}
                     </p>
                   </div>
@@ -330,20 +363,25 @@ function HomePage() {
       )}
 
       {/* Empty state when no recent content but has libraries */}
-      {recentShows.length === 0 && libraryUpcoming.length === 0 && libraries.length > 0 && !isLoading && (
-        <section className="mb-8">
-          <h2 className="text-xl font-semibold mb-4">Recently Added</h2>
-          <Card className="bg-content1/50">
-            <CardBody className="py-8 text-center">
-              <p className="text-lg text-default-600 mb-2">No media found yet</p>
-              <p className="text-sm text-default-500">
-                Scan your libraries or add some downloads to populate your
-                collection.
-              </p>
-            </CardBody>
-          </Card>
-        </section>
-      )}
+      {recentShows.length === 0 &&
+        libraryUpcoming.length === 0 &&
+        libraries.length > 0 &&
+        !isLoading && (
+          <section className="mb-8">
+            <h2 className="text-xl font-semibold mb-4">Recently Added</h2>
+            <Card className="bg-content1/50">
+              <CardBody className="py-8 text-center">
+                <p className="text-lg text-default-600 mb-2">
+                  No media found yet
+                </p>
+                <p className="text-sm text-default-500">
+                  Scan your libraries or add some downloads to populate your
+                  collection.
+                </p>
+              </CardBody>
+            </Card>
+          </section>
+        )}
     </div>
-  )
+  );
 }

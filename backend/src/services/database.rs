@@ -21,11 +21,10 @@ const AUTH_SECRETS_JWT_KEY: &str = "jwt_secret";
 /// The auth_secrets table is created by schema_sync. Secret is stored only in the database
 /// and must never be exposed via GraphQL.
 async fn initialize_jwt_secret(pool: &Database) -> Result<()> {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT value FROM auth_secrets WHERE key = ?")
-            .bind(AUTH_SECRETS_JWT_KEY)
-            .fetch_optional(pool)
-            .await?;
+    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM auth_secrets WHERE key = ?")
+        .bind(AUTH_SECRETS_JWT_KEY)
+        .fetch_optional(pool)
+        .await?;
 
     if let Some((value,)) = row {
         if value.trim().is_empty() {
@@ -35,7 +34,10 @@ async fn initialize_jwt_secret(pool: &Database) -> Result<()> {
                 .bind(&secret)
                 .execute(pool)
                 .await?;
-            info!(service = "database", "JWT secret was empty; generated and stored new secret");
+            info!(
+                service = "database",
+                "JWT secret was empty; generated and stored new secret"
+            );
         }
         return Ok(());
     }
@@ -46,7 +48,10 @@ async fn initialize_jwt_secret(pool: &Database) -> Result<()> {
         .bind(&secret)
         .execute(pool)
         .await?;
-    info!(service = "database", "JWT secret generated and stored in database");
+    info!(
+        service = "database",
+        "JWT secret generated and stored in database"
+    );
     Ok(())
 }
 

@@ -1,12 +1,15 @@
-use async_graphql::SimpleObject;
-use librarian_macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use async_graphql::{Context, SimpleObject};
+use librarian_macros::{GraphQLEntity, GraphQLOperations};
 use serde::{Deserialize, Serialize};
 
+use crate::db::Database;
+use crate::services::graphql::AuthUser;
+
+use super::common::{calculate_content_status, ContentStatus, ContentType};
 use super::media_file::MediaFile;
 
 #[derive(
     GraphQLEntity,
-    GraphQLRelations,
     GraphQLOperations,
     SimpleObject,
     Clone,
@@ -71,6 +74,10 @@ pub struct Track {
     #[filterable(type = "string")]
     pub artist_id: Option<String>,
 
+    #[graphql(name = "Wanted")]
+    #[filterable(type = "boolean")]
+    pub wanted: bool,
+
     #[graphql(name = "MediaFileId")]
     #[filterable(type = "string")]
     pub media_file_id: Option<String>,
@@ -93,3 +100,42 @@ pub struct Track {
 
 #[derive(Default)]
 pub struct TrackCustomOperations;
+
+// ============================================================================
+// ComplexObject Resolvers (computed fields)
+// ============================================================================
+
+#[async_graphql::ComplexObject]
+impl Track {
+    /// Computed status based on playback, file availability, and download state
+    ///
+    /// Returns one of: PLAYING, PAUSED, AVAILABLE, DOWNLOADING, WANTED, MISSING
+    #[graphql(name = "Status")]
+    async fn status(&self, ctx: &Context<'_>) -> ContentStatus {
+        let db = match ctx.data::<Database>() {
+            Ok(db) => db,
+            Err(_) => return ContentStatus::Missing,
+        };
+
+        let user_id = match ctx.data::<AuthUser>() {
+            Ok(user) => user.user_id.clone(),
+            Err(_) => return if self.media_file_id.is_some() {
+                ContentStatus::Available
+            } else if self.wanted {
+                ContentStatus::Wanted
+            } else {
+                ContentStatus::Missing
+            },
+        };
+
+        calculate_content_status(
+            db,
+            ContentType::Track,
+            &self.id,
+            &user_id,
+            self.media_file_id.as_deref(),
+            self.wanted,
+        )
+        .await
+    }
+}

@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import { devtools } from '@tanstack/devtools-vite'
 import viteReact from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -7,18 +7,24 @@ import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import { fileURLToPath, URL } from 'node:url'
 
 // https://vitejs.dev/config/
-export default defineConfig({
-  server: {
-    host: '0.0.0.0',
-    port: 3000,
-    proxy: {
-      // Proxy API requests to the backend during development
-      '/api': {
-        target: 'http://localhost:3001',
-        changeOrigin: true,
+export default defineConfig(({ mode }) => {
+  // Load env vars so we can use VITE_API_URL in the proxy config
+  const env = loadEnv(mode, process.cwd(), '')
+  const apiUrl = env.VITE_API_URL || 'http://localhost:3001'
+
+  return {
+    server: {
+      host: '0.0.0.0',
+      port: 3000,
+      proxy: {
+  // Proxy API requests to the backend during development
+        // Uses VITE_API_URL env var (same as GraphQL client) or defaults to localhost:3001
+        '/api': {
+          target: apiUrl,
+          changeOrigin: true,
+        },
       },
     },
-  },
   plugins: [
     devtools(),
     tanstackRouter({
@@ -51,4 +57,5 @@ export default defineConfig({
       },
     },
   },
+  }
 })

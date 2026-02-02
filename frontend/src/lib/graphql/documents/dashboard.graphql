@@ -1,7 +1,11 @@
 # Dashboard: Shows and ScheduleCaches using Where/Page API
 
-query DashboardShows($Where: ShowWhereInput, $Page: PageInput) {
-  Shows(Where: $Where, Page: $Page) {
+query DashboardShows(
+  $Where: ShowWhereInput
+  $Page: PageInput
+  $OrderBy: [ShowOrderByInput!]
+) {
+  Shows(Where: $Where, Page: $Page, OrderBy: $OrderBy) {
     Edges {
       Node {
         Id
@@ -9,7 +13,6 @@ query DashboardShows($Where: ShowWhereInput, $Page: PageInput) {
         Name
         SortName
         Year
-        Status
         TvmazeId
         TmdbId
         TvdbId
@@ -19,13 +22,9 @@ query DashboardShows($Where: ShowWhereInput, $Page: PageInput) {
         Runtime
         PosterUrl
         BackdropUrl
-        Monitored
-        MonitorType
         Path
-        EpisodeCount
-        EpisodeFileCount
-        SizeBytes
         Genres
+        CreatedAt
       }
       Cursor
     }

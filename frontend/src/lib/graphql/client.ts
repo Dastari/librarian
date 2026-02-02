@@ -170,6 +170,10 @@ export const apolloClient = new ApolloClient({
   },
 });
 
+// Re-export Apollo hooks for convenience
+export { useQuery, useMutation, useSubscription, useLazyQuery } from '@apollo/client/react';
+export { gql };
+
 // Reset Apollo cache after login/logout to clear any stale auth state
 export function resetApolloCache(): void {
   apolloClient.resetStore().catch((err) => {

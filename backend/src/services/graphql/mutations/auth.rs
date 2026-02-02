@@ -5,9 +5,7 @@ use std::sync::Arc;
 
 use async_graphql::{Context, InputObject, Object, Result};
 
-use crate::services::auth::{
-    AuthService, AuthTokens, AuthenticatedUser, RegisterInput,
-};
+use crate::services::auth::{AuthService, AuthTokens, AuthenticatedUser, RegisterInput};
 
 /// GraphQL input for user registration (PascalCase field names).
 #[derive(Debug, Clone, InputObject)]
@@ -111,9 +109,9 @@ impl AuthMutations {
         ctx: &Context<'_>,
         #[graphql(name = "Input")] input: RegisterUserInput,
     ) -> Result<AuthPayload> {
-        let auth = ctx.data::<Arc<AuthService>>().map_err(|e| {
-            async_graphql::Error::new(format!("Auth service unavailable: {:?}", e))
-        })?;
+        let auth = ctx
+            .data::<Arc<AuthService>>()
+            .map_err(|e| async_graphql::Error::new(format!("Auth service unavailable: {:?}", e)))?;
         let inner = RegisterInput {
             email: input.email,
             name: input.name,
@@ -141,13 +139,10 @@ impl AuthMutations {
         ctx: &Context<'_>,
         #[graphql(name = "Input")] input: LoginInput,
     ) -> Result<AuthPayload> {
-        let auth = ctx.data::<Arc<AuthService>>().map_err(|e| {
-            async_graphql::Error::new(format!("Auth service unavailable: {:?}", e))
-        })?;
-        match auth
-            .login(&input.username_or_email, &input.password)
-            .await
-        {
+        let auth = ctx
+            .data::<Arc<AuthService>>()
+            .map_err(|e| async_graphql::Error::new(format!("Auth service unavailable: {:?}", e)))?;
+        match auth.login(&input.username_or_email, &input.password).await {
             Ok(login_result) => Ok(AuthPayload {
                 success: true,
                 error: None,
@@ -169,15 +164,12 @@ impl AuthMutations {
         ctx: &Context<'_>,
         #[graphql(name = "Input")] input: RefreshTokenInput,
     ) -> Result<AuthPayload> {
-        let auth = ctx.data::<Arc<AuthService>>().map_err(|e| {
-            async_graphql::Error::new(format!("Auth service unavailable: {:?}", e))
-        })?;
+        let auth = ctx
+            .data::<Arc<AuthService>>()
+            .map_err(|e| async_graphql::Error::new(format!("Auth service unavailable: {:?}", e)))?;
         match auth.refresh_token(&input.refresh_token).await {
             Ok(tokens) => {
-                let user = auth
-                    .validate_access_token(&tokens.access_token)
-                    .await
-                    .ok();
+                let user = auth.validate_access_token(&tokens.access_token).await.ok();
                 Ok(AuthPayload {
                     success: true,
                     error: None,
@@ -200,9 +192,9 @@ impl AuthMutations {
         ctx: &Context<'_>,
         #[graphql(name = "Input")] input: LogoutInput,
     ) -> Result<LogoutPayload> {
-        let auth = ctx.data::<Arc<AuthService>>().map_err(|e| {
-            async_graphql::Error::new(format!("Auth service unavailable: {:?}", e))
-        })?;
+        let auth = ctx
+            .data::<Arc<AuthService>>()
+            .map_err(|e| async_graphql::Error::new(format!("Auth service unavailable: {:?}", e)))?;
         match auth.logout(&input.refresh_token).await {
             Ok(()) => Ok(LogoutPayload {
                 success: true,

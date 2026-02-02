@@ -49,21 +49,6 @@ function getStatusIcon(isEnabled: boolean, isInherited: boolean) {
 }
 
 // ============================================================================
-// Auto Download Badge (Deprecated - use AutoHuntBadge)
-// ============================================================================
-
-interface AutoDownloadBadgeProps extends BaseBadgeProps {}
-
-/**
- * @deprecated Use AutoHuntBadge instead. Auto Download and Auto Hunt are now consolidated.
- * This badge is kept for backwards compatibility but renders the same as AutoHuntBadge.
- */
-export function AutoDownloadBadge(props: AutoDownloadBadgeProps) {
-  // Redirect to AutoHuntBadge since they're now consolidated
-  return <AutoHuntBadge {...props} />
-}
-
-// ============================================================================
 // File Organization Badge
 // ============================================================================
 
@@ -169,38 +154,38 @@ export function MonitoredBadge({
 // Auto Hunt Badge
 // ============================================================================
 
-interface AutoHuntBadgeProps extends BaseBadgeProps {}
+interface AutoDownloadBadgeProps extends BaseBadgeProps {}
 
 /**
  * Badge showing auto-hunt status.
  * When enabled, the system will automatically search indexers and RSS feeds
  * for missing content and download the best matches.
  */
-export function AutoHuntBadge({
+export function AutoDownloadBadge({
   isInherited = false,
   isEnabled,
-  size = 'sm',
+  size = "sm",
   onClick,
   isLoading = false,
-}: AutoHuntBadgeProps) {
+}: AutoDownloadBadgeProps) {
   const tooltip = isEnabled
-    ? 'Missing content will be automatically searched and downloaded from indexers and RSS feeds'
-    : 'Auto-hunt is disabled - content must be searched and downloaded manually'
+    ? "Missing content will be automatically searched and downloaded from indexers and RSS feeds"
+    : "Auto-download  is disabled - content must be searched and downloaded manually";
 
   return (
     <Tooltip content={tooltip}>
       <Chip
         size={size}
         variant="flat"
-        color={isEnabled ? 'success' : 'default'}
-        className={onClick ? 'cursor-pointer' : ''}
+        color={isEnabled ? "success" : "default"}
+        className={onClick ? "cursor-pointer" : ""}
         onClick={onClick}
         startContent={getStatusIcon(isEnabled, isInherited)}
       >
-        {isLoading ? 'Updating...' : 'Auto Hunt'}
+        {isLoading ? "Updating..." : "Auto Hunt"}
       </Chip>
     </Tooltip>
-  )
+  );
 }
 
 // ============================================================================

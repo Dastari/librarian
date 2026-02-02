@@ -5,8 +5,7 @@ import { Card, CardBody } from '@heroui/card'
 import { useDisclosure } from '@heroui/modal'
 import { Chip } from '@heroui/chip'
 import { Tooltip } from '@heroui/tooltip'
-import { ShimmerLoader } from '../../components/shared/ShimmerLoader'
-import { rssFeedsTemplate } from '../../lib/template-data'
+import { Spinner } from "@heroui/spinner";
 import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell } from '@heroui/table'
 import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
 import { addToast } from '@heroui/toast'
@@ -357,111 +356,127 @@ function RssSettingsPage() {
       {/* Feeds Table */}
       <Card>
         <CardBody className="p-0">
-          <ShimmerLoader loading={isLoading} delay={500} templateProps={{ feeds: rssFeedsTemplate }}>
-          <Table aria-label="RSS Feeds" removeWrapper>
-            <TableHeader>
-              <TableColumn>NAME</TableColumn>
-              <TableColumn>STATUS</TableColumn>
-              <TableColumn>LAST POLLED</TableColumn>
-              <TableColumn>INTERVAL</TableColumn>
-              <TableColumn width={80} align="center">ACTIONS</TableColumn>
-            </TableHeader>
-            <TableBody emptyContent="No RSS feeds configured">
-              {feeds.map((feed) => (
-                <TableRow key={feed.id}>
-                  <TableCell>
-                    <div className="flex flex-col gap-1">
-                      <span className="font-medium">{feed.name}</span>
-                      <span className="text-xs text-default-400 truncate max-w-md">
-                        {feed.url}
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    {feed.lastError ? (
-                      <Tooltip content={feed.lastError}>
-                        <Chip size="sm" color="danger" variant="flat">
-                          Error ({feed.consecutiveFailures})
+          {isLoading && feeds.length === 0 ? (
+            <div className="flex items-center justify-center py-12">
+              <Spinner size="lg" />
+            </div>
+          ) : (
+            <Table aria-label="RSS Feeds" removeWrapper>
+              <TableHeader>
+                <TableColumn>NAME</TableColumn>
+                <TableColumn>STATUS</TableColumn>
+                <TableColumn>LAST POLLED</TableColumn>
+                <TableColumn>INTERVAL</TableColumn>
+                <TableColumn width={80} align="center">
+                  ACTIONS
+                </TableColumn>
+              </TableHeader>
+              <TableBody emptyContent="No RSS feeds configured">
+                {feeds.map((feed) => (
+                  <TableRow key={feed.id}>
+                    <TableCell>
+                      <div className="flex flex-col gap-1">
+                        <span className="font-medium">{feed.name}</span>
+                        <span className="text-xs text-default-400 truncate max-w-md">
+                          {feed.url}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {feed.lastError ? (
+                        <Tooltip content={feed.lastError}>
+                          <Chip size="sm" color="danger" variant="flat">
+                            Error ({feed.consecutiveFailures})
+                          </Chip>
+                        </Tooltip>
+                      ) : feed.enabled ? (
+                        <Chip size="sm" color="success" variant="flat">
+                          Active
                         </Chip>
-                      </Tooltip>
-                    ) : feed.enabled ? (
-                      <Chip size="sm" color="success" variant="flat">
-                        Active
-                      </Chip>
-                    ) : (
-                      <Chip size="sm" color="default" variant="flat">
-                        Disabled
-                      </Chip>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-sm text-default-500">
-                      {formatDateTime(feed.lastPolledAt)}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-sm">{feed.pollIntervalMinutes} min</span>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end">
-                      <Dropdown>
-                        <DropdownTrigger>
-                          <Button
-                            isIconOnly
-                            size="sm"
-                            variant="light"
-                            isLoading={pollingFeedId === feed.id}
-                          >
-                            ⋮
-                          </Button>
-                        </DropdownTrigger>
-                        <DropdownMenu aria-label="Feed actions">
-                          <DropdownItem
-                            key="poll"
-                            startContent={<IconRefresh size={16} />}
-                            onPress={() => handlePollFeed(feed.id)}
-                          >
-                            Poll Now
-                          </DropdownItem>
-                          <DropdownItem
-                            key="test"
-                            startContent={<IconTestPipe size={16} />}
-                            onPress={() => openTestModal(feed.url)}
-                          >
-                            Test Feed
-                          </DropdownItem>
-                          <DropdownItem
-                            key="toggle"
-                            startContent={feed.enabled ? <IconPlayerPause size={16} /> : <IconPlayerPlay size={16} />}
-                            onPress={() => handleToggleEnabled(feed)}
-                          >
-                            {feed.enabled ? 'Disable' : 'Enable'}
-                          </DropdownItem>
-                          <DropdownItem
-                            key="edit"
-                            startContent={<IconPencil size={16} />}
-                            onPress={() => openEditModal(feed)}
-                          >
-                            Edit
-                          </DropdownItem>
-                          <DropdownItem
-                            key="delete"
-                            startContent={<IconTrash size={16} className="text-red-400" />}
-                            className="text-danger"
-                            color="danger"
-                            onPress={() => handleDeleteClick(feed)}
-                          >
-                            Delete
-                          </DropdownItem>
-                        </DropdownMenu>
-                      </Dropdown>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          </ShimmerLoader>
+                      ) : (
+                        <Chip size="sm" color="default" variant="flat">
+                          Disabled
+                        </Chip>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-sm text-default-500">
+                        {formatDateTime(feed.lastPolledAt)}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-sm">
+                        {feed.pollIntervalMinutes} min
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end">
+                        <Dropdown>
+                          <DropdownTrigger>
+                            <Button
+                              isIconOnly
+                              size="sm"
+                              variant="light"
+                              isLoading={pollingFeedId === feed.id}
+                            >
+                              ⋮
+                            </Button>
+                          </DropdownTrigger>
+                          <DropdownMenu aria-label="Feed actions">
+                            <DropdownItem
+                              key="poll"
+                              startContent={<IconRefresh size={16} />}
+                              onPress={() => handlePollFeed(feed.id)}
+                            >
+                              Poll Now
+                            </DropdownItem>
+                            <DropdownItem
+                              key="test"
+                              startContent={<IconTestPipe size={16} />}
+                              onPress={() => openTestModal(feed.url)}
+                            >
+                              Test Feed
+                            </DropdownItem>
+                            <DropdownItem
+                              key="toggle"
+                              startContent={
+                                feed.enabled ? (
+                                  <IconPlayerPause size={16} />
+                                ) : (
+                                  <IconPlayerPlay size={16} />
+                                )
+                              }
+                              onPress={() => handleToggleEnabled(feed)}
+                            >
+                              {feed.enabled ? "Disable" : "Enable"}
+                            </DropdownItem>
+                            <DropdownItem
+                              key="edit"
+                              startContent={<IconPencil size={16} />}
+                              onPress={() => openEditModal(feed)}
+                            >
+                              Edit
+                            </DropdownItem>
+                            <DropdownItem
+                              key="delete"
+                              startContent={
+                                <IconTrash size={16} className="text-red-400" />
+                              }
+                              className="text-danger"
+                              color="danger"
+                              onPress={() => handleDeleteClick(feed)}
+                            >
+                              Delete
+                            </DropdownItem>
+                          </DropdownMenu>
+                        </Dropdown>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </CardBody>
       </Card>
 
@@ -498,13 +513,13 @@ function RssSettingsPage() {
             <div>
               <p className="font-medium">How RSS feeds work</p>
               <p className="text-sm text-default-500 mt-1">
-                RSS feeds are polled periodically to find new torrent releases. When a release
-                matches a wanted episode in your library, it will be marked as "available" and
-                can be automatically downloaded.
+                RSS feeds are polled periodically to find new torrent releases.
+                When a release matches a wanted episode in your library, it will
+                be marked as "available" and can be automatically downloaded.
               </p>
               <p className="text-sm text-default-500 mt-2">
-                Most private trackers provide personal RSS feed URLs. Copy your RSS URL from
-                your tracker's settings page.
+                Most private trackers provide personal RSS feed URLs. Copy your
+                RSS URL from your tracker's settings page.
               </p>
             </div>
           </div>
@@ -523,5 +538,5 @@ function RssSettingsPage() {
         confirmColor="danger"
       />
     </div>
-  )
+  );
 }

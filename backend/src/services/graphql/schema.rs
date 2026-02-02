@@ -4,21 +4,22 @@
 
 use std::sync::Arc;
 
-use async_graphql::dataloader::DataLoader;
 use async_graphql::Schema;
+use async_graphql::dataloader::DataLoader;
 use librarian_macros::schema_roots;
 
 use crate::db::Database;
 use crate::services::graphql::entities::*;
 use crate::services::graphql::loaders::RelationLoader;
-use crate::services::graphql::mutations::{AuthMutations, FilesystemMutations};
+use crate::services::graphql::mutations::{ArtworkMutations, AuthMutations, FilesystemMutations};
 use crate::services::graphql::queries::FilesystemQueries;
-use crate::services::graphql::subscriptions::filesystem::FilesystemChangeBroker;
 use crate::services::graphql::subscriptions::FilesystemSubscriptions;
+use crate::services::graphql::subscriptions::filesystem::FilesystemChangeBroker;
 use crate::services::manager::ServicesManager;
+use crate::services::metadata::providers::{MetadataServiceConfig, create_metadata_service};
 
 schema_roots! {
-    query_custom_ops: [User, Torrent],
+    query_custom_ops: [User, Torrent, Movie],
     entities: [
         Library,
         Movie,
@@ -63,7 +64,7 @@ schema_roots! {
         TorznabCategory,
     ],
     extra_query_types: [FilesystemQueries],
-    extra_mutation_types: [AuthMutations, FilesystemMutations, TorrentClientMutations],
+    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, TorrentClientMutations, MovieMetadataMutations],
     extra_subscription_types: [FilesystemSubscriptions],
 }
 
@@ -72,7 +73,11 @@ pub type LibrarianSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
 
 /// Build the GraphQL schema with all resolvers.
 /// Pass the [ServicesManager] so resolvers can obtain the torrent service etc.
-pub fn build_schema<E>(db: Database, auth_service: E, services: Arc<ServicesManager>) -> LibrarianSchema
+pub fn build_schema<E>(
+    db: Database,
+    auth_service: E,
+    services: Arc<ServicesManager>,
+) -> LibrarianSchema
 where
     E: Send + Sync + Clone + 'static,
 {
@@ -136,6 +141,9 @@ where
         tokio::spawn,
     );
 
+    // Create MetadataService - it will load API keys from database on demand
+    let metadata_service = create_metadata_service(db.clone(), MetadataServiceConfig::default());
+
     Schema::build(
         QueryRoot::default(),
         MutationRoot::default(),
@@ -144,6 +152,7 @@ where
     .data(db)
     .data(auth_service)
     .data(services)
+    .data(metadata_service)
     .data(FilesystemChangeBroker::new(64))
     // Register all relation DataLoaders
     .data(shows_loader)

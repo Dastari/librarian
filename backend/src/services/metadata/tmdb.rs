@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::services::rate_limiter::{RateLimitedClient, RetryConfig, RateLimitConfig, retry_async};
+use crate::services::rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};
 
 /// TMDB API client with rate limiting and retry logic
 #[derive(Clone)]
@@ -186,6 +186,11 @@ impl TmdbClient {
                 multiplier: 2.0,
             },
         }
+    }
+
+    /// Get the API key this client was created with
+    pub fn api_key(&self) -> &str {
+        &self.api_key
     }
 
     /// Check if the client has a valid API key configured

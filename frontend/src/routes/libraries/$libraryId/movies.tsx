@@ -1,61 +1,71 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useState, useRef, useCallback } from "react";
 import { useDisclosure } from '@heroui/modal'
-import { addToast } from '@heroui/toast'
-import { LibraryMoviesTab, AddMovieModal } from '../../../components/library'
-import { ConfirmModal } from '../../../components/ConfirmModal'
+import { useSubscription, gql } from "../../../lib/graphql/client";
+import {
+  LibraryMoviesTab,
+  AddMovieModal,
+  DeleteMovieModal,
+} from "../../../components/library";
 import { useLibraryContext } from '../$libraryId'
-import { graphqlClient, DELETE_MOVIE_MUTATION } from '../../../lib/graphql'
-import { sanitizeError } from '../../../lib/format'
+import { ChangeAction } from "../../../lib/graphql/generated/graphql";
+import { MOVIE_CHANGED_SUBSCRIPTION } from "../../../lib/graphql";
 
 export const Route = createFileRoute('/libraries/$libraryId/movies')({
   component: MoviesPage,
 })
 
+const MOVIE_CHANGED = gql`
+  ${MOVIE_CHANGED_SUBSCRIPTION}
+`;
+
 function MoviesPage() {
-  const { library, loading, fetchData } = useLibraryContext()
-  const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
-  const { isOpen: isAddOpen, onOpen: onAddOpen, onClose: onAddClose } = useDisclosure()
-  const [movieToDelete, setMovieToDelete] = useState<{ id: string; title: string } | null>(null)
+  const { library, loading } = useLibraryContext();
+  const {
+    isOpen: isDeleteOpen,
+    onOpen: onDeleteOpen,
+    onClose: onDeleteClose,
+  } = useDisclosure();
+  const {
+    isOpen: isAddOpen,
+    onOpen: onAddOpen,
+    onClose: onAddClose,
+  } = useDisclosure();
+  const [movieToDelete, setMovieToDelete] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
+
+  // Use ref to store refresh function to avoid re-render loop
+  const refreshMoviesRef = useRef<(() => void) | null>(null);
+
+  // Subscribe to movie changes for this library
+  useSubscription<{ MovieChanged: { Id: string; Action: ChangeAction } }>(
+    MOVIE_CHANGED,
+    {
+      variables: {
+        Filter: { LibraryId: { Eq: library.Id } },
+      },
+      onData: ({ data }) => {
+        const event = data.data?.MovieChanged;
+        if (!event) return;
+
+        // Refresh the movies list on any change
+        if (refreshMoviesRef.current) {
+          refreshMoviesRef.current();
+        }
+      },
+    }
+  );
 
   const handleDeleteMovieClick = (movieId: string, movieTitle: string) => {
-    setMovieToDelete({ id: movieId, title: movieTitle })
-    onConfirmOpen()
-  }
+    setMovieToDelete({ id: movieId, title: movieTitle });
+    onDeleteOpen();
+  };
 
-  const handleDeleteMovie = async () => {
-    if (!movieToDelete) return
-
-    try {
-      const { data, error } = await graphqlClient
-        .mutation<{ deleteMovie: { success: boolean; error: string | null } }>(
-          DELETE_MOVIE_MUTATION,
-          { id: movieToDelete.id }
-        )
-        .toPromise()
-
-      if (error || !data?.deleteMovie.success) {
-        addToast({
-          title: 'Error',
-          description: sanitizeError(data?.deleteMovie.error || 'Failed to delete movie'),
-          color: 'danger',
-        })
-        onConfirmClose()
-        return
-      }
-
-      addToast({
-        title: 'Deleted',
-        description: `"${movieToDelete.title}" removed from library`,
-        color: 'success',
-      })
-
-      await fetchData()
-    } catch (err) {
-      console.error('Failed to delete movie:', err)
-    }
-    onConfirmClose()
-  }
+  const handleMoviesRefresh = useCallback((refreshFn: () => void) => {
+    refreshMoviesRef.current = refreshFn;
+  }, []);
 
   return (
     <>
@@ -64,6 +74,7 @@ function MoviesPage() {
         loading={loading}
         onDeleteMovie={handleDeleteMovieClick}
         onAddMovie={onAddOpen}
+        onRefreshReady={handleMoviesRefresh}
       />
 
       {/* Add Movie Modal */}
@@ -71,20 +82,16 @@ function MoviesPage() {
         isOpen={isAddOpen}
         onClose={onAddClose}
         libraryId={library.Id}
-        onAdded={fetchData}
+        onAdded={refreshMoviesRef.current || undefined}
       />
 
-      {/* Confirm Delete Modal */}
-      <ConfirmModal
-        isOpen={isConfirmOpen}
-        onClose={onConfirmClose}
-        onConfirm={handleDeleteMovie}
-        title="Delete Movie"
-        message={`Are you sure you want to delete "${movieToDelete?.title}"?`}
-        description="This will remove the movie from your library. Downloaded files will not be deleted."
-        confirmLabel="Delete"
-        confirmColor="danger"
+      {/* Delete Movie Modal */}
+      <DeleteMovieModal
+        isOpen={isDeleteOpen}
+        onClose={onDeleteClose}
+        movie={movieToDelete}
+        onDeleted={refreshMoviesRef.current || undefined}
       />
     </>
-  )
+  );
 }

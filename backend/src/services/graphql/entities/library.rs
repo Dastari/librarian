@@ -19,7 +19,14 @@ use super::show::Show;
 /// Relations (Shows, Movies, Artists, etc.) are automatically generated
 /// by the GraphQLRelations macro and use DataLoader for N+1 prevention.
 #[derive(
-    GraphQLEntity, GraphQLRelations, GraphQLOperations, SimpleObject, Clone, Debug, Serialize, Deserialize,
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
 #[graphql(name = "Library", complex)]
 #[serde(rename_all = "PascalCase")]
@@ -59,6 +66,14 @@ pub struct Library {
     #[filterable(type = "boolean")]
     pub auto_scan: bool,
 
+    #[graphql(name = "AutoOrganize")]
+    #[filterable(type = "boolean")]
+    pub auto_organize: bool,
+
+    #[graphql(name = "NamingPattern")]
+    #[filterable(type = "string")]
+    pub naming_pattern: String,
+
     #[graphql(name = "ScanIntervalMinutes")]
     #[filterable(type = "number")]
     pub scan_interval_minutes: i32,
@@ -66,18 +81,6 @@ pub struct Library {
     #[graphql(name = "WatchForChanges")]
     #[filterable(type = "boolean")]
     pub watch_for_changes: bool,
-
-    #[graphql(name = "AutoAddDiscovered")]
-    #[filterable(type = "boolean")]
-    pub auto_add_discovered: bool,
-
-    #[graphql(name = "AutoDownload")]
-    #[filterable(type = "boolean")]
-    pub auto_download: bool,
-
-    #[graphql(name = "AutoHunt")]
-    #[filterable(type = "boolean")]
-    pub auto_hunt: bool,
 
     #[graphql(name = "Scanning")]
     #[filterable(type = "boolean")]
@@ -106,7 +109,6 @@ pub struct Library {
     // - Exposes a GraphQL field with Where/OrderBy/Page args
     // - Uses DataLoader for batching when no args provided (N+1 free)
     // - Falls back to direct SQL query when args provided (full filter support)
-
     /// Shows in this library
     #[graphql(skip)]
     #[serde(skip)]

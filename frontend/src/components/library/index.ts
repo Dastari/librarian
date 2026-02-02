@@ -18,13 +18,14 @@ export { MovieCard, type MovieCardProps } from "./MovieCard";
 export { MediaCardSkeleton, SquareCardSkeleton } from "./MediaCardSkeleton";
 export { AddShowModal, type AddShowModalProps } from "./AddShowModal";
 export { AddMovieModal, type AddMovieModalProps } from "./AddMovieModal";
+export { DeleteMovieModal } from "./DeleteMovieModal";
 
 // Shared form component
 export {
   LibrarySettingsForm,
   DEFAULT_LIBRARY_SETTINGS,
   type LibrarySettingsFormProps,
-  type LibrarySettingsValues,
+  type LibrarySettingsFormValues,
 } from "./LibrarySettingsForm";
 
 // Library detail page components

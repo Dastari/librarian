@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use super::rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};
+use crate::services::rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};
 
 /// MusicBrainz API client with rate limiting
 pub struct MusicBrainzClient {

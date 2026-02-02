@@ -16,12 +16,12 @@ use time::OffsetDateTime;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
-use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
+use tracing_subscriber::layer::Context;
 use uuid::Uuid;
 
-use crate::db::operations;
 use crate::db::Database;
+use crate::db::operations;
 use crate::services::graphql::entities::AppLog;
 use crate::services::manager::{Service, ServiceHealth};
 
@@ -72,7 +72,10 @@ impl std::fmt::Debug for LoggingServiceConfig {
             .field("batch_size", &self.batch_size)
             .field("flush_interval_ms", &self.flush_interval_ms)
             .field("broadcast_capacity", &self.broadcast_capacity)
-            .field("db_layer_state", &self.db_layer_state.as_ref().map(|_| "..."))
+            .field(
+                "db_layer_state",
+                &self.db_layer_state.as_ref().map(|_| "..."),
+            )
             .finish()
     }
 }

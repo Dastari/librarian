@@ -1,3 +1,6 @@
+// Common types shared across entities
+pub mod common;
+
 // Base entities (no relations to other entities)
 pub mod audio_stream;
 pub mod media_chapter;
@@ -60,6 +63,7 @@ pub mod library;
 pub mod torrent;
 
 // Re-export all entity types
+pub use common::*;
 pub use album::*;
 pub use app_log::*;
 pub use app_setting::*;

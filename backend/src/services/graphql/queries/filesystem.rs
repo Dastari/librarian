@@ -131,10 +131,7 @@ fn get_quick_paths() -> Vec<BrowseQuickPath> {
     #[cfg(windows)]
     {
         for drive in windows_drive_paths() {
-            let name = drive
-                .to_string_lossy()
-                .trim_end_matches('\\')
-                .to_string();
+            let name = drive.to_string_lossy().trim_end_matches('\\').to_string();
             paths.push(BrowseQuickPath {
                 name,
                 path: display_path(&drive),
@@ -195,9 +192,9 @@ impl FilesystemQueries {
         ctx: &Context<'_>,
         #[graphql(name = "Input")] input: Option<BrowseDirectoryInput>,
     ) -> Result<BrowseDirectoryResult> {
-        let _user = ctx
-            .data_opt::<AuthUser>()
-            .ok_or_else(|| async_graphql::Error::new("Authentication required to browse directories"))?;
+        let _user = ctx.data_opt::<AuthUser>().ok_or_else(|| {
+            async_graphql::Error::new("Authentication required to browse directories")
+        })?;
 
         let path = input.as_ref().and_then(|i| i.path.as_deref());
         let dirs_only = input.as_ref().map(|i| i.dirs_only).unwrap_or(true);
@@ -260,12 +257,10 @@ impl FilesystemQueries {
                     };
                     let size = if is_dir { 0 } else { metadata.len() };
                     let modified_at = metadata.modified().ok().and_then(|t| {
-                        t.duration_since(std::time::UNIX_EPOCH)
-                            .ok()
-                            .and_then(|d| {
-                                chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)
-                                    .map(|dt| dt.to_rfc3339())
-                            })
+                        t.duration_since(std::time::UNIX_EPOCH).ok().and_then(|d| {
+                            chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)
+                                .map(|dt| dt.to_rfc3339())
+                        })
                     });
                     entries.push(BrowseDirectoryEntry {
                         name: name.clone(),
@@ -294,9 +289,7 @@ impl FilesystemQueries {
             _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
         });
 
-        let parent_path = canonical_path
-            .parent()
-            .map(|p| display_path(p));
+        let parent_path = canonical_path.parent().map(|p| display_path(p));
 
         Ok(BrowseDirectoryResult {
             current_path: display_path(&canonical_path),

@@ -102,13 +102,13 @@ function LibrarySearchPage() {
         if (!queryLower || show.Name.toLowerCase().includes(queryLower)) {
           results.push({
             id: show.Id,
-            type: 'show',
+            type: "show",
             title: show.Name,
             year: show.Year ?? undefined,
             posterUrl: show.PosterUrl ?? undefined,
-            status: show.Status ?? undefined,
+            status: undefined,
             libraryId: show.LibraryId,
-          })
+          });
         }
       }
     }

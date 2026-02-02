@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use tokio::sync::broadcast;
 use tracing::info;
 
-use crate::app::{build_app, AppState};
+use crate::app::{AppState, build_app};
 use crate::config::Config;
 use crate::services::manager::{Service, ServiceHealth};
 
@@ -105,9 +105,7 @@ impl Service for HttpServerService {
         info!(service = "http", "HTTP server service started");
         info!(
             service = "http",
-            "Listening on http://{}; GraphQL: http://localhost:{}/graphql",
-            addr,
-            self.config.port
+            "Listening on http://{}; GraphQL: http://localhost:{}/graphql", addr, self.config.port
         );
         Ok(())
     }

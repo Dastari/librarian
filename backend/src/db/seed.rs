@@ -103,7 +103,7 @@ async fn seed_app_settings(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
         },
         SettingRow {
             key: "llm.prompt_template",
-            value: "null",
+            value: "",
             description: "Custom prompt template for LLM parsing (null = use default)",
             category: "llm",
         },
@@ -122,49 +122,49 @@ async fn seed_app_settings(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
         // LLM per-library
         SettingRow {
             key: "llm.model.movies",
-            value: "null",
+            value: "",
             description: "Ollama model for movie libraries (null = use default)",
             category: "llm",
         },
         SettingRow {
             key: "llm.model.tv",
-            value: "null",
+            value: "",
             description: "Ollama model for TV show libraries (null = use default)",
             category: "llm",
         },
         SettingRow {
             key: "llm.model.music",
-            value: "null",
+            value: "",
             description: "Ollama model for music libraries (null = use default)",
             category: "llm",
         },
         SettingRow {
             key: "llm.model.audiobooks",
-            value: "null",
+            value: "",
             description: "Ollama model for audiobook libraries (null = use default)",
             category: "llm",
         },
         SettingRow {
             key: "llm.prompt.movies",
-            value: "null",
+            value: "",
             description: "Prompt template for movie libraries (null = use default)",
             category: "llm",
         },
         SettingRow {
             key: "llm.prompt.tv",
-            value: "null",
+            value: "",
             description: "Prompt template for TV show libraries (null = use default)",
             category: "llm",
         },
         SettingRow {
             key: "llm.prompt.music",
-            value: "null",
+            value: "",
             description: "Prompt template for music libraries (null = use default)",
             category: "llm",
         },
         SettingRow {
             key: "llm.prompt.audiobooks",
-            value: "null",
+            value: "",
             description: "Prompt template for audiobook libraries (null = use default)",
             category: "llm",
         },
@@ -178,13 +178,13 @@ async fn seed_app_settings(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
         // Metadata
         SettingRow {
             key: "metadata.tmdb_api_key",
-            value: "null",
+            value: "",
             description: "TMDB API key for movie/TV metadata",
             category: "metadata",
         },
         SettingRow {
             key: "metadata.tvdb_api_key",
-            value: "null",
+            value: "",
             description: "TVDB API key for TV show metadata",
             category: "metadata",
         },
@@ -215,7 +215,7 @@ async fn seed_app_settings(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
         },
         SettingRow {
             key: "subtitles.opensubtitles_api_key",
-            value: "null",
+            value: "",
             description: "OpenSubtitles API key",
             category: "subtitles",
         },

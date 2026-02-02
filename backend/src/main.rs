@@ -8,6 +8,7 @@
 
 mod app;
 mod app_mode;
+mod api;
 mod cli;
 mod config;
 mod db;
@@ -30,12 +31,12 @@ use crate::services::{
     AuthConfig, DatabaseServiceConfig, GraphqlServiceConfig, HttpServerConfig,
     LoggingServiceConfig, ServicesManager, torrent::TorrentServiceConfig,
 };
+use crate::tui::{TuiApp, TuiConfig, create_tui_layer, should_use_tui};
 use std::path::PathBuf;
-use crate::tui::{create_tui_layer, should_use_tui, TuiApp, TuiConfig};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-pub use app::{api_router, build_app, AppState};
+pub use app::{AppState, api_router, build_app};
 
 pub async fn get_db_pool(services: &ServicesManager) -> Option<Database> {
     services.get_database().await.map(|svc| svc.pool().clone())
@@ -105,6 +106,7 @@ async fn main() -> anyhow::Result<()> {
         .add_service(HttpServerConfig {
             config: config.clone(),
         })
+        .add_api_routes("artwork", |_| crate::api::artwork::router())
         .start()
         .await?;
 

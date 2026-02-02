@@ -1,85 +1,73 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Input } from '@heroui/input'
-import { Select, SelectItem } from '@heroui/select'
-import { Switch } from '@heroui/switch'
-import { Divider } from '@heroui/divider'
-import { Accordion, AccordionItem } from '@heroui/accordion'
-import { FolderBrowserInput } from '../FolderBrowserInput'
-import { NamingPatternSelector } from './NamingPatternSelector'
-import { QualitySettingsCard, QUALITY_PRESETS, type QualitySettings } from '../settings'
-import { LIBRARY_TYPES, type LibraryType } from '../../lib/graphql'
-import { IconFolder, IconRefresh, IconDownload, IconSettings, IconFilter } from '@tabler/icons-react'
+import { useEffect } from "react";
+import { z } from "zod";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm, Controller } from "react-hook-form";
+import { Input } from "@heroui/input";
+import { Select, SelectItem } from "@heroui/select";
+import { Switch } from "@heroui/switch";
+import { Divider } from "@heroui/divider";
+import { Accordion, AccordionItem } from "@heroui/accordion";
+import { FolderBrowserInput } from "../FolderBrowserInput";
+import { NamingPatternSelector } from "./NamingPatternSelector";
 
-// ============================================================================
-// Types
-// ============================================================================
+import { LIBRARY_TYPES, type LibraryType } from "../../lib/graphql";
+import { IconFolder, IconRefresh, IconSettings } from "@tabler/icons-react";
 
-export interface LibrarySettingsValues {
-  name: string
-  path: string
-  libraryType: LibraryType
-  autoScan: boolean
-  scanIntervalMinutes: number
-  watchForChanges: boolean
-  organizeFiles: boolean
-  namingPattern: string | null
-  autoAddDiscovered: boolean
-  autoDownload: boolean
-  autoHunt: boolean
-  // Quality settings
-  allowedResolutions: string[]
-  allowedVideoCodecs: string[]
-  allowedAudioFormats: string[]
-  requireHdr: boolean
-  allowedHdrTypes: string[]
-  allowedSources: string[]
-  releaseGroupBlacklist: string[]
-  releaseGroupWhitelist: string[]
-}
+// =============================================================================
+// Schema & Types
+// =============================================================================
 
-export const DEFAULT_LIBRARY_SETTINGS: LibrarySettingsValues = {
-  name: '',
-  path: '',
-  libraryType: 'TV',
-  autoScan: true,
-  scanIntervalMinutes: 60,
-  watchForChanges: false,
-  organizeFiles: true,
-  namingPattern: null,
-  autoAddDiscovered: true,
-  autoDownload: true,
-  autoHunt: false,
-  allowedResolutions: [],
-  allowedVideoCodecs: [],
-  allowedAudioFormats: [],
-  requireHdr: false,
-  allowedHdrTypes: [],
-  allowedSources: [],
-  releaseGroupBlacklist: [],
-  releaseGroupWhitelist: [],
-}
+const LIBRARY_TYPE_VALUES = [
+  "MOVIES",
+  "TV",
+  "MUSIC",
+  "AUDIOBOOKS",
+  "OTHER",
+] as const;
+
+const librarySettingsSchema = z.object({
+  Name: z.string().min(1, "Name is required"),
+  Path: z.string().min(1, "Path is required"),
+  LibraryType: z.enum(LIBRARY_TYPE_VALUES),
+  AutoScan: z.boolean(),
+  ScanIntervalMinutes: z.number().min(5).max(1440),
+  WatchForChanges: z.boolean(),
+  AutoOrganize: z.boolean(),
+  NamingPattern: z.string().nullable(),
+});
+
+export type LibrarySettingsFormValues = z.infer<typeof librarySettingsSchema>;
+
+export const DEFAULT_LIBRARY_SETTINGS: LibrarySettingsFormValues = {
+  Name: "",
+  Path: "",
+  LibraryType: "TV",
+  AutoScan: true,
+  ScanIntervalMinutes: 60,
+  WatchForChanges: false,
+  AutoOrganize: true,
+  NamingPattern: null,
+};
+
+// =============================================================================
+// Props
+// =============================================================================
 
 export interface LibrarySettingsFormProps {
-  /** Initial values for the form */
-  initialValues?: Partial<LibrarySettingsValues>
-  /** Called when any value changes */
-  onChange: (values: LibrarySettingsValues) => void
-  /** Mode determines which fields are shown/editable */
-  mode: 'create' | 'edit'
-  /** Whether to use Card wrappers (for settings page) or flat layout (for modal) */
-  useCards?: boolean
-  /** Whether to show quality preset selector (create mode) or full settings (edit mode) */
-  qualityMode?: 'preset' | 'full'
+  initialValues?: Partial<LibrarySettingsFormValues>;
+  onChange: (values: LibrarySettingsFormValues, isValid: boolean) => void;
+  mode: "create" | "edit";
+  useCards?: boolean;
 }
 
-// ============================================================================
-// Reusable Setting Row Component
-// ============================================================================
+// =============================================================================
+// Helper Components
+// =============================================================================
 
 interface SettingRowProps {
-  label: string
-  description: string
-  children: React.ReactNode
+  label: string;
+  description: string;
+  children: React.ReactNode;
 }
 
 function SettingRow({ label, description, children }: SettingRowProps) {
@@ -91,330 +79,247 @@ function SettingRow({ label, description, children }: SettingRowProps) {
       </div>
       {children}
     </div>
-  )
+  );
 }
 
-// ============================================================================
+// =============================================================================
 // Main Component
-// ============================================================================
+// =============================================================================
 
 export function LibrarySettingsForm({
   initialValues,
   onChange,
   mode,
   useCards = false,
-  qualityMode = mode === 'create' ? 'preset' : 'full',
 }: LibrarySettingsFormProps) {
-  // Merge initial values with defaults
-  const [values, setValues] = useState<LibrarySettingsValues>(() => ({
-    ...DEFAULT_LIBRARY_SETTINGS,
-    ...initialValues,
-  }))
-  
-  // Quality preset (only used in create mode)
-  const [qualityPreset, setQualityPreset] = useState('Any Quality')
+  const {
+    control,
+    watch,
+    formState: { errors, isValid },
+  } = useForm<LibrarySettingsFormValues>({
+    resolver: zodResolver(librarySettingsSchema),
+    defaultValues: { ...DEFAULT_LIBRARY_SETTINGS, ...initialValues },
+    mode: "onChange",
+  });
 
-  // Track if values were changed by user (not initial load)
-  const [hasUserChanges, setHasUserChanges] = useState(false)
+  // Watch all values and notify parent on change
+  const formValues = watch();
 
-  // Reset when initial values change
   useEffect(() => {
-    setValues({
-      ...DEFAULT_LIBRARY_SETTINGS,
-      ...initialValues,
-    })
-    setHasUserChanges(false)
-  }, [initialValues])
+    onChange(formValues, isValid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    formValues.Name,
+    formValues.Path,
+    formValues.LibraryType,
+    formValues.AutoScan,
+    formValues.ScanIntervalMinutes,
+    formValues.WatchForChanges,
+    formValues.AutoOrganize,
+    formValues.NamingPattern,
+    isValid,
+    onChange,
+  ]);
 
-  // Notify parent of changes (after state update completes)
-  useEffect(() => {
-    if (hasUserChanges) {
-      onChange(values)
-    }
-  }, [values, hasUserChanges, onChange])
+  // Current library type for conditional rendering
+  const libraryType = formValues.LibraryType;
 
-  // Update a single value
-  const updateValue = useCallback(<K extends keyof LibrarySettingsValues>(
-    key: K,
-    value: LibrarySettingsValues[K]
-  ) => {
-    setValues(prev => ({ ...prev, [key]: value }))
-    setHasUserChanges(true)
-  }, [])
-
-  // Quality settings as a single object
-  const qualitySettings = useMemo<QualitySettings>(() => ({
-    allowedResolutions: values.allowedResolutions,
-    allowedVideoCodecs: values.allowedVideoCodecs,
-    allowedAudioFormats: values.allowedAudioFormats,
-    requireHdr: values.requireHdr,
-    allowedHdrTypes: values.allowedHdrTypes,
-    allowedSources: values.allowedSources,
-    releaseGroupBlacklist: values.releaseGroupBlacklist,
-    releaseGroupWhitelist: values.releaseGroupWhitelist,
-  }), [values])
-
-  const handleQualityChange = useCallback((settings: QualitySettings) => {
-    setValues(prev => ({
-      ...prev,
-      allowedResolutions: settings.allowedResolutions,
-      allowedVideoCodecs: settings.allowedVideoCodecs,
-      allowedAudioFormats: settings.allowedAudioFormats,
-      requireHdr: settings.requireHdr,
-      allowedHdrTypes: settings.allowedHdrTypes,
-      allowedSources: settings.allowedSources,
-      releaseGroupBlacklist: settings.releaseGroupBlacklist,
-      releaseGroupWhitelist: settings.releaseGroupWhitelist,
-    }))
-    setHasUserChanges(true)
-  }, [])
-
-  const handlePresetChange = useCallback((presetName: string) => {
-    setQualityPreset(presetName)
-    const preset = QUALITY_PRESETS.find(p => p.name === presetName)
-    if (preset) {
-      handleQualityChange({
-        ...DEFAULT_LIBRARY_SETTINGS,
-        ...preset.settings,
-      } as QualitySettings)
-    }
-  }, [handleQualityChange])
-
-  // ============================================================================
-  // Render Sections
-  // ============================================================================
+  // ==========================================================================
+  // Section Renderers
+  // ==========================================================================
 
   const renderGeneralSection = () => (
     <>
-      <Input
-        label="Library Name"
-        labelPlacement="inside"
-        variant="flat"
-        placeholder="e.g., Movies, TV Shows"
-        value={values.name}
-        onChange={(e) => updateValue('name', e.target.value)}
-        classNames={{
-          label: 'text-sm font-medium text-primary!',
-        }}
+      <Controller
+        name="Name"
+        control={control}
+        render={({ field }) => (
+          <Input
+            label="Library Name"
+            labelPlacement="inside"
+            variant="flat"
+            placeholder="e.g., Movies, TV Shows"
+            value={field.value}
+            onChange={field.onChange}
+            onBlur={field.onBlur}
+            isInvalid={!!errors.Name}
+            errorMessage={errors.Name?.message}
+            classNames={{
+              label: "text-sm font-medium text-primary!",
+            }}
+          />
+        )}
       />
 
-      <FolderBrowserInput
-        label="Path"
-        value={values.path}
-        onChange={(v) => updateValue('path', v)}
-        placeholder="/data/media/TV"
-        description="Full path to the media folder"
-        modalTitle="Select Library Folder"
+      <Controller
+        name="Path"
+        control={control}
+        render={({ field }) => (
+          <FolderBrowserInput
+            label="Path"
+            value={field.value}
+            onChange={field.onChange}
+            placeholder="/data/media/TV"
+            description={
+              errors.Path?.message
+                ? String(errors.Path.message)
+                : "Full path to the media folder"
+            }
+            modalTitle="Select Library Folder"
+          />
+        )}
       />
 
-      <Select
-        label="Library Type"
-        aria-label="Library Type"
-        selectedKeys={[values.libraryType]}
-        onChange={(e) => updateValue('libraryType', e.target.value as LibraryType)}
-        isDisabled={mode === 'edit'}
-        description={mode === 'edit' ? 'Library type cannot be changed after creation' : undefined}
-      >
-        {LIBRARY_TYPES.map((type) => (
-          <SelectItem key={type.value} textValue={type.label}>
-            <div className="flex items-center gap-2">
-              <type.Icon className="w-4 h-4" />
-              {type.label}
-            </div>
-          </SelectItem>
-        ))}
-      </Select>
+      <Controller
+        name="LibraryType"
+        control={control}
+        render={({ field }) => (
+          <Select
+            label="Library Type"
+            aria-label="Library Type"
+            selectedKeys={[field.value]}
+            onChange={(e) => field.onChange(e.target.value as LibraryType)}
+            isDisabled={mode === "edit"}
+            description={
+              mode === "edit"
+                ? "Library type cannot be changed after creation"
+                : undefined
+            }
+          >
+            {LIBRARY_TYPES.map((type) => (
+              <SelectItem key={type.value} textValue={type.label}>
+                <div className="flex items-center gap-2">
+                  <type.Icon className="w-4 h-4" />
+                  {type.label}
+                </div>
+              </SelectItem>
+            ))}
+          </Select>
+        )}
+      />
     </>
-  )
+  );
 
   const renderScanningSection = () => (
     <>
-      <SettingRow
-        label="Auto-scan"
-        description="Automatically scan for new files periodically"
-      >
-        <Switch
-          aria-label="Auto-scan"
-          isSelected={values.autoScan}
-          onValueChange={(v) => updateValue('autoScan', v)}
-        />
-      </SettingRow>
+      <Controller
+        name="AutoScan"
+        control={control}
+        render={({ field }) => (
+          <SettingRow
+            label="Auto-scan"
+            description="Automatically scan for new files periodically"
+          >
+            <Switch
+              aria-label="Auto-scan"
+              isSelected={field.value}
+              onValueChange={field.onChange}
+            />
+          </SettingRow>
+        )}
+      />
 
-      {values.autoScan && (
-        <Input
-          type="number"
-          label="Scan Interval (minutes)"
-          labelPlacement="inside"
-          variant="flat"
-          placeholder="60"
-          description="How often to scan for new files (5-1440 minutes)"
-          value={values.scanIntervalMinutes.toString()}
-          onChange={(e) => updateValue('scanIntervalMinutes', parseInt(e.target.value) || 60)}
-          min={5}
-          max={1440}
-          classNames={{
-            label: 'text-sm font-medium text-primary!',
-          }}
+      {formValues.AutoScan && (
+        <Controller
+          name="ScanIntervalMinutes"
+          control={control}
+          render={({ field }) => (
+            <Input
+              type="number"
+              label="Scan Interval (minutes)"
+              labelPlacement="inside"
+              variant="flat"
+              placeholder="60"
+              description="How often to scan for new files (5-1440 minutes)"
+              value={field.value.toString()}
+              onChange={(e) => field.onChange(parseInt(e.target.value) || 60)}
+              min={5}
+              max={1440}
+              isInvalid={!!errors.ScanIntervalMinutes}
+              errorMessage={errors.ScanIntervalMinutes?.message}
+              classNames={{
+                label: "text-sm font-medium text-primary!",
+              }}
+            />
+          )}
         />
       )}
 
       <Divider />
 
-      <SettingRow
-        label="Watch for changes"
-        description="Use filesystem notifications for instant detection"
-      >
-        <Switch
-          aria-label="Watch for changes"
-          isSelected={values.watchForChanges}
-          onValueChange={(v) => updateValue('watchForChanges', v)}
-        />
-      </SettingRow>
+      <Controller
+        name="WatchForChanges"
+        control={control}
+        render={({ field }) => (
+          <SettingRow
+            label="Watch for changes"
+            description="Use filesystem notifications for instant detection"
+          >
+            <Switch
+              aria-label="Watch for changes"
+              isSelected={field.value}
+              onValueChange={field.onChange}
+            />
+          </SettingRow>
+        )}
+      />
     </>
-  )
-
-  const renderAutomationSection = () => {
-    const libraryType = values.libraryType
-
-    // Consolidated Auto Hunt description - covers both RSS matching and proactive searching
-    const getAutoHuntDescription = () => {
-      switch (libraryType) {
-        case 'TV':
-          return 'Automatically search and download missing episodes from indexers and RSS feeds'
-        case 'MOVIES':
-          return 'Automatically search and download missing movies from indexers and RSS feeds'
-        case 'MUSIC':
-          return 'Automatically search and download missing albums from indexers and RSS feeds'
-        case 'AUDIOBOOKS':
-          return 'Automatically search and download missing audiobooks from indexers and RSS feeds'
-        default:
-          return 'Automatically search and download missing content from indexers and RSS feeds'
-      }
-    }
-
-    const getAutoAddDescription = () => {
-      switch (libraryType) {
-        case 'TV':
-          return 'Automatically add shows found during library scanning'
-        case 'MOVIES':
-          return 'Automatically add movies found during library scanning'
-        case 'MUSIC':
-          return 'Automatically add albums found during library scanning'
-        case 'AUDIOBOOKS':
-          return 'Automatically add audiobooks found during library scanning'
-        default:
-          return 'Automatically add content found during library scanning'
-      }
-    }
-
-    // Consolidated auto-hunt toggle - controls both autoDownload and autoHunt
-    const isAutoHuntEnabled = values.autoHunt || values.autoDownload
-    const handleAutoHuntChange = (enabled: boolean) => {
-      updateValue('autoHunt', enabled)
-      updateValue('autoDownload', enabled)
-    }
-
-    return (
-      <>
-        <SettingRow
-          label="Auto Hunt"
-          description={getAutoHuntDescription()}
-        >
-          <Switch
-            aria-label="Auto Hunt"
-            isSelected={isAutoHuntEnabled}
-            onValueChange={handleAutoHuntChange}
-          />
-        </SettingRow>
-
-        <Divider />
-
-        <SettingRow
-          label="Auto-add discovered"
-          description={getAutoAddDescription()}
-        >
-          <Switch
-            aria-label="Auto-add discovered"
-            isSelected={values.autoAddDiscovered}
-            onValueChange={(v) => updateValue('autoAddDiscovered', v)}
-          />
-        </SettingRow>
-      </>
-    )
-  }
+  );
 
   const renderOrganizationSection = () => {
-    const libraryType = values.libraryType
-    const organizeDescription = {
-      TV: 'Organize downloaded files into show/season folders',
-      MOVIES: 'Organize downloaded files into movie folders',
-      MUSIC: 'Organize downloaded files into artist/album folders',
-      AUDIOBOOKS: 'Organize downloaded files into author/book folders',
-      OTHER: 'Organize downloaded files into folders',
-    }[libraryType] || 'Organize downloaded files into folders'
+    const organizeDescriptions: Record<
+      LibrarySettingsFormValues["LibraryType"],
+      string
+    > = {
+      TV: "Organize downloaded files into show/season folders",
+      MOVIES: "Organize downloaded files into movie folders",
+      MUSIC: "Organize downloaded files into artist/album folders",
+      AUDIOBOOKS: "Organize downloaded files into author/book folders",
+      OTHER: "Organize downloaded files into folders",
+    };
+    const organizeDescription = organizeDescriptions[libraryType];
 
     return (
       <>
-        <SettingRow label="Organize files" description={organizeDescription}>
-          <Switch
-            aria-label="Organize files"
-            isSelected={values.organizeFiles}
-            onValueChange={(v) => updateValue('organizeFiles', v)}
-          />
-        </SettingRow>
+        <Controller
+          name="AutoOrganize"
+          control={control}
+          render={({ field }) => (
+            <SettingRow
+              label="Organize files"
+              description={organizeDescription}
+            >
+              <Switch
+                aria-label="Organize files"
+                isSelected={field.value}
+                onValueChange={field.onChange}
+              />
+            </SettingRow>
+          )}
+        />
 
-        {values.organizeFiles && (
-          <NamingPatternSelector
-            value={values.namingPattern}
-            onChange={(v) => updateValue('namingPattern', v)}
-            libraryType={values.libraryType.toLowerCase()}
+        {formValues.AutoOrganize && (
+          <Controller
+            name="NamingPattern"
+            control={control}
+            render={({ field }) => (
+              <NamingPatternSelector
+                value={field.value}
+                onChange={field.onChange}
+                libraryType={libraryType.toLowerCase()}
+              />
+            )}
           />
         )}
       </>
-    )
-  }
+    );
+  };
 
-  const renderQualitySection = () => {
-    if (qualityMode === 'preset') {
-      return (
-        <Select
-          label="Quality Preset"
-          aria-label="Quality Preset"
-          selectedKeys={[qualityPreset]}
-          onChange={(e) => handlePresetChange(e.target.value)}
-          description="Quick quality filter setup (can be customized later in settings)"
-        >
-          {QUALITY_PRESETS.map((preset) => (
-            <SelectItem key={preset.name} textValue={preset.name}>
-              <div className="flex flex-col">
-                <span>{preset.name}</span>
-                <span className="text-xs text-default-400">
-                  {preset.description}
-                </span>
-              </div>
-            </SelectItem>
-          ))}
-        </Select>
-      )
-    }
-
-    return (
-      <QualitySettingsCard
-        settings={qualitySettings}
-        onChange={handleQualityChange}
-        title="Quality Filters"
-        description="Configure which releases to accept. Empty = accept any."
-        noCard={!useCards}
-      />
-    )
-  }
-
-  // ============================================================================
+  // ==========================================================================
   // Render with Accordions (for settings page)
-  // ============================================================================
+  // ==========================================================================
 
   if (useCards) {
-    // Build accordion items dynamically to avoid conditional children issue
     const accordionItems = [
       <AccordionItem
         key="general"
@@ -427,9 +332,7 @@ export function LibrarySettingsForm({
         }
         subtitle="Library name, path, and type"
       >
-        <div className="space-y-4 pb-2">
-          {renderGeneralSection()}
-        </div>
+        <div className="space-y-4 pb-2">{renderGeneralSection()}</div>
       </AccordionItem>,
 
       <AccordionItem
@@ -443,53 +346,9 @@ export function LibrarySettingsForm({
         }
         subtitle="How the library detects new files"
       >
-        <div className="space-y-4 pb-2">
-          {renderScanningSection()}
-        </div>
+        <div className="space-y-4 pb-2">{renderScanningSection()}</div>
       </AccordionItem>,
 
-      <AccordionItem
-        key="quality"
-        aria-label="Quality Filters"
-        title={
-          <div className="flex items-center gap-2">
-            <IconFilter size={18} className="text-warning" />
-            <span className="font-semibold">Quality Filters</span>
-          </div>
-        }
-        subtitle="Control which releases are accepted"
-      >
-        <div className="pb-2">
-          <QualitySettingsCard
-            settings={qualitySettings}
-            onChange={handleQualityChange}
-            title=""
-            description="Configure which releases to accept. Empty = accept any."
-            noCard
-            libraryType={values.libraryType}
-          />
-        </div>
-      </AccordionItem>,
-
-      <AccordionItem
-        key="automation"
-        aria-label="Automation"
-        title={
-          <div className="flex items-center gap-2">
-            <IconDownload size={18} className="text-primary" />
-            <span className="font-semibold">Automation</span>
-          </div>
-        }
-        subtitle="Auto-download and hunting settings"
-      >
-        <div className="space-y-4 pb-2">
-          {renderAutomationSection()}
-        </div>
-      </AccordionItem>,
-    ]
-
-    // Add organization section
-    accordionItems.push(
       <AccordionItem
         key="organization"
         aria-label="Organization"
@@ -501,26 +360,20 @@ export function LibrarySettingsForm({
         }
         subtitle="File organization and naming"
       >
-        <div className="space-y-4 pb-2">
-          {renderOrganizationSection()}
-        </div>
-      </AccordionItem>
-    )
+        <div className="space-y-4 pb-2">{renderOrganizationSection()}</div>
+      </AccordionItem>,
+    ];
 
     return (
-      <Accordion 
-        selectionMode="multiple" 
-        // defaultExpandedKeys={defaultKeys}
-        variant="splitted"
-      >
+      <Accordion selectionMode="multiple" variant="splitted">
         {accordionItems}
       </Accordion>
-    )
+    );
   }
 
-  // ============================================================================
+  // ==========================================================================
   // Render Flat (for modals)
-  // ============================================================================
+  // ==========================================================================
 
   return (
     <div className="space-y-4">
@@ -533,14 +386,6 @@ export function LibrarySettingsForm({
       <Divider />
 
       {renderOrganizationSection()}
-
-      <Divider />
-
-      {renderAutomationSection()}
-
-      <Divider />
-
-      {renderQualitySection()}
     </div>
-  )
+  );
 }

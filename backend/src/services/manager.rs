@@ -19,8 +19,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use axum::Router;
-use serde::Serialize;
 use parking_lot::RwLock as ParkingRwLock;
+use serde::Serialize;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
@@ -214,7 +214,10 @@ impl IntoServiceRegistration for Arc<dyn Service> {
 pub struct ServicesManagerBuilder {
     registrations: Vec<ServiceRegistration>,
     /// Route builders for /api/*; merged in order when the HTTP app is built.
-    api_route_registrations: Vec<(String, Box<dyn Fn(AppState) -> Router<AppState> + Send + Sync>)>,
+    api_route_registrations: Vec<(
+        String,
+        Box<dyn Fn(AppState) -> Router<AppState> + Send + Sync>,
+    )>,
 }
 
 impl ServicesManagerBuilder {
@@ -278,8 +281,7 @@ impl ServicesManagerBuilder {
                     manager.register_graphql(graphql_svc).await;
                 }
                 ServiceRegistration::Http(config) => {
-                    let http_svc =
-                        Arc::new(HttpServerService::new(manager.clone(), config.config));
+                    let http_svc = Arc::new(HttpServerService::new(manager.clone(), config.config));
                     manager.register(http_svc).await;
                 }
                 ServiceRegistration::Torrent(config) => {
@@ -319,7 +321,12 @@ pub struct ServicesManager {
     graphql: RwLock<Option<Arc<GraphqlService>>>,
     torrent: RwLock<Option<Arc<TorrentService>>>,
     /// Route builders for /api/*; used by [build_api_router]. ParkingRwLock so registration and build are sync.
-    api_route_builders: ParkingRwLock<Vec<(String, Box<dyn Fn(AppState) -> Router<AppState> + Send + Sync>)>>,
+    api_route_builders: ParkingRwLock<
+        Vec<(
+            String,
+            Box<dyn Fn(AppState) -> Router<AppState> + Send + Sync>,
+        )>,
+    >,
 }
 
 impl Default for ServicesManager {

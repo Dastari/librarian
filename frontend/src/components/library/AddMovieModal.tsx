@@ -45,8 +45,8 @@ export function AddMovieModal({
     try {
       setSearching(true)
       const { data, error } = await graphqlClient
-        .query<{ searchMovies: MovieSearchResult[] }>(SEARCH_MOVIES_QUERY, {
-          query: searchQuery,
+        .query<{ SearchMovies: MovieSearchResult[] }>(SEARCH_MOVIES_QUERY, {
+          Query: searchQuery,
         })
         .toPromise()
 
@@ -59,7 +59,7 @@ export function AddMovieModal({
         return
       }
 
-      setSearchResults(data?.searchMovies || [])
+      setSearchResults(data?.SearchMovies || [])
     } catch (err) {
       console.error('Search failed:', err)
     } finally {
@@ -74,24 +74,24 @@ export function AddMovieModal({
       setAdding(true)
       const { data, error } = await graphqlClient
         .mutation<{
-          addMovie: {
-            success: boolean
-            movie: Movie | null
-            error: string | null
+          AddMovie: {
+            Success: boolean
+            Movie: Movie | null
+            Error: string | null
           }
         }>(ADD_MOVIE_MUTATION, {
-          libraryId,
-          input: {
-            tmdbId: selectedMovie.providerId,
-            monitored,
+          LibraryId: libraryId,
+          Input: {
+            TmdbId: selectedMovie.providerId,
+            Monitored: monitored,
           },
         })
         .toPromise()
 
-      if (error || !data?.addMovie.success) {
+      if (error || !data?.AddMovie.Success) {
         addToast({
           title: 'Error',
-          description: sanitizeError(data?.addMovie.error || 'Failed to add movie'),
+          description: sanitizeError(data?.AddMovie.Error || 'Failed to add movie'),
           color: 'danger',
         })
         return
@@ -139,10 +139,10 @@ export function AddMovieModal({
                 placeholder="Search for a movie..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
                 className="flex-1"
                 classNames={{
-                  label: 'text-sm font-medium text-primary!',
+                  label: "text-sm font-medium text-primary!",
                 }}
                 endContent={
                   <Button
@@ -179,13 +179,16 @@ export function AddMovieModal({
                               alt={result.title}
                               classNames={{
                                 wrapper: "w-full",
-                                img: "w-full aspect-[2/3] object-cover"
+                                img: "w-full aspect-[2/3] object-cover",
                               }}
                               radius="sm"
                             />
                           ) : (
                             <div className="w-full aspect-[2/3] bg-default-200 flex items-center justify-center rounded-sm">
-                              <IconMovie size={16} className="text-purple-400" />
+                              <IconMovie
+                                size={16}
+                                className="text-purple-400"
+                              />
                             </div>
                           )}
                         </div>
@@ -199,7 +202,7 @@ export function AddMovieModal({
                             )}
                           </h4>
                           <p className="text-xs text-default-500 line-clamp-2">
-                            {result.overview || 'No description available'}
+                            {result.overview || "No description available"}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -207,7 +210,13 @@ export function AddMovieModal({
                             <Chip
                               size="sm"
                               variant="flat"
-                              color={result.voteAverage >= 7 ? 'success' : result.voteAverage >= 5 ? 'warning' : 'danger'}
+                              color={
+                                result.voteAverage >= 7
+                                  ? "success"
+                                  : result.voteAverage >= 5
+                                    ? "warning"
+                                    : "danger"
+                              }
                               startContent={<IconStar size={10} />}
                             >
                               {result.voteAverage.toFixed(1)}
@@ -235,7 +244,7 @@ export function AddMovieModal({
                         alt={selectedMovie.title}
                         classNames={{
                           wrapper: "w-full",
-                          img: "w-full aspect-[2/3] object-cover"
+                          img: "w-full aspect-[2/3] object-cover",
                         }}
                         radius="md"
                       />
@@ -254,12 +263,13 @@ export function AddMovieModal({
                         </span>
                       )}
                     </h4>
-                    {selectedMovie.voteAverage && selectedMovie.voteAverage > 0 && (
-                      <div className="flex items-center gap-1 text-sm text-default-500 mt-1">
-                        <IconStar size={14} className="text-yellow-400" />
-                        <span>{selectedMovie.voteAverage.toFixed(1)}</span>
-                      </div>
-                    )}
+                    {selectedMovie.voteAverage &&
+                      selectedMovie.voteAverage > 0 && (
+                        <div className="flex items-center gap-1 text-sm text-default-500 mt-1">
+                          <IconStar size={14} className="text-yellow-400" />
+                          <span>{selectedMovie.voteAverage.toFixed(1)}</span>
+                        </div>
+                      )}
                     {selectedMovie.overview && (
                       <p className="text-sm text-default-400 mt-2 line-clamp-4">
                         {selectedMovie.overview}
@@ -271,28 +281,21 @@ export function AddMovieModal({
 
               <div className="flex items-center justify-between p-3 bg-content2 rounded-lg">
                 <div>
-                  <p className="font-medium">Monitor Movie</p>
+                  <p className="font-medium">Auto Download</p>
                   <p className="text-xs text-default-500">
                     {monitored
-                      ? 'Auto-hunt will search indexers for this movie'
-                      : 'Movie will be tracked but not auto-downloaded'}
+                      ? "Movie will be set to Wanted and auto-download will search for it"
+                      : "Movie will be added but not automatically downloaded"}
                   </p>
                 </div>
-                <Switch
-                  isSelected={monitored}
-                  onValueChange={setMonitored}
-                />
+                <Switch isSelected={monitored} onValueChange={setMonitored} />
               </div>
-
-              <p className="text-xs text-default-400">
-                Quality settings will be inherited from the library. You can customize them after adding the movie.
-              </p>
 
               <Button
                 variant="flat"
                 onPress={() => {
-                  setSelectedMovie(null)
-                  setSearchResults([])
+                  setSelectedMovie(null);
+                  setSearchResults([]);
                 }}
               >
                 Back to Search
@@ -312,5 +315,5 @@ export function AddMovieModal({
         </ModalFooter>
       </ModalContent>
     </Modal>
-  )
+  );
 }

@@ -9,7 +9,7 @@
 // //! - Media streaming for cast devices and browser playback
 // //! - Artwork serving (SQLite mode only - images are stored as BLOBs)
 
-// pub mod artwork;
+pub mod artwork;
 // pub mod filesystem;
 // pub mod health;
 // pub mod media;

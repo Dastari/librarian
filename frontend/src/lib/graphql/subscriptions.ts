@@ -120,6 +120,15 @@ export const LIBRARY_CHANGED_SUBSCRIPTION = `
   }
 `;
 
+export const MOVIE_CHANGED_SUBSCRIPTION = `
+  subscription MovieChanged($Filter: MovieChangedFilter) {
+    MovieChanged(Filter: $Filter) {
+      Action
+      Id
+    }
+  }
+`;
+
 // ============================================================================
 // Media File Subscriptions
 // ============================================================================

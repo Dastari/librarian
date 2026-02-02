@@ -19,8 +19,6 @@ import {
   UpdateAppSettingDocument,
   CreateAppSettingDocument,
   type MetadataAppSettingsQuery,
-  type UpdateAppSettingMutation,
-  type CreateAppSettingMutation,
 } from "../../lib/graphql/generated/graphql";
 import {
   IconMovie,
@@ -64,10 +62,15 @@ interface MetadataSettingsShape {
 }
 
 function appSettingsToMetadataSettings(
-  edges: MetadataAppSettingsQuery["AppSettings"]["Edges"],
+  edges: MetadataAppSettingsQuery["AppSettings"]["Edges"]
 ): MetadataSettingsShape {
   const map = new Map(edges.map((e) => [e.Node.Key, e.Node.Value]));
-  const get = (k: string, def: string) => map.get(k) ?? def;
+  // Treat the literal string "null" as empty (legacy data issue)
+  const get = (k: string, def: string) => {
+    const val = map.get(k);
+    if (val === undefined || val === "null") return def;
+    return val;
+  };
   const getBool = (k: string, def: boolean) => {
     const val = map.get(k);
     if (val === "true") return true;

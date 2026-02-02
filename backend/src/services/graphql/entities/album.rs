@@ -2,11 +2,12 @@ use async_graphql::{Result, SimpleObject};
 use librarian_macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
+use super::common::AutoDownloadMode;
 use super::track::Track;
 use crate::{
     db::Database,
     graphql::{
-        entities::{TrackOrderByInput, TrackWhereInput},
+        entities::{Library, TrackOrderByInput, TrackWhereInput},
         orm::{EntityQuery, StringFilter},
     },
 };
@@ -14,7 +15,6 @@ use crate::{
 /// Album Entity
 #[derive(
     GraphQLEntity,
-    GraphQLRelations,
     GraphQLOperations,
     SimpleObject,
     Clone,
@@ -22,7 +22,7 @@ use crate::{
     Serialize,
     Deserialize,
 )]
-#[graphql(name = "Album", complex)]
+#[graphql(name = "Album")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
     table = "albums",
@@ -103,6 +103,13 @@ pub struct Album {
     #[filterable(type = "number")]
     pub total_duration_secs: Option<i32>,
 
+    #[graphql(name = "AutoDownload")]
+    #[filterable(type = "boolean")]
+    pub auto_download: bool,
+
+    #[graphql(name = "AutoDownloadMode")]
+    pub auto_download_mode: AutoDownloadMode,
+
     #[graphql(name = "HasFiles")]
     #[filterable(type = "boolean")]
     pub has_files: bool,
@@ -125,32 +132,17 @@ pub struct Album {
     #[sortable]
     pub updated_at: String,
 
+    #[graphql(name = "Library")]
+    #[relation(target = "Library", from = "library_id", to = "id")]
+    pub library: Option<Library>,
+
+    /// Tracks in this album
     #[graphql(skip)]
     #[serde(skip)]
     #[skip_db]
+    #[relation(target = "Track", to = "album_id", multiple)]
     pub tracks: Vec<Track>,
 }
-
-#[async_graphql::ComplexObject]
-impl Album {
-    /// Tracks in this album
-    #[graphql(name = "Tracks")]
-    async fn tracks(&self, ctx: &async_graphql::Context<'_>) -> async_graphql::Result<Vec<Track>> {
-        let where_input = TrackWhereInput {
-            album_id: Some(StringFilter::eq(&self.id)),
-            ..Default::default()
-        };
-        let order_by = TrackOrderByInput::default();
-        let tracks = EntityQuery::<Track>::new()
-            .filter(&where_input)
-            .order_by(&order_by)
-            .fetch_all(ctx.data_unchecked::<Database>())
-            .await?;
-
-        Ok(tracks)
-    }
-}
-
 // // ============================================================================
 // // Custom Operations (non-CRUD - external API calls)
 // // ============================================================================

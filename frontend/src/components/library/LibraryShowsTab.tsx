@@ -1,7 +1,6 @@
 import { useMemo, useCallback } from 'react'
 import { useQueryState, parseAsString, parseAsStringLiteral } from 'nuqs'
-import { Button } from '@heroui/button'
-import { Chip } from '@heroui/chip'
+import { Button } from "@heroui/button";
 import { Image } from '@heroui/image'
 import { Card, CardBody } from '@heroui/card'
 import { Link } from '@tanstack/react-router'
@@ -55,11 +54,10 @@ interface TvShowsConnectionResponse {
 
 // Map column keys to GraphQL ShowOrderByInput field names
 const SORT_FIELD_MAP: Record<string, string> = {
-  name: 'SortName',
-  year: 'Year',
-  seasons: 'EpisodeCount',
-  episodes: 'EpisodeCount',
-}
+  name: "SortName",
+  year: "Year",
+  createdAt: "CreatedAt",
+};
 
 export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteShow, onAddShow }: LibraryShowsTabProps) {
   // URL-persisted state via nuqs (clean URLs when using defaults)
@@ -148,10 +146,14 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
   const columns: DataTableColumn<Show>[] = useMemo(
     () => [
       {
-        key: 'name',
-        label: 'SHOW',
+        key: "name",
+        label: "SHOW",
         render: (show) => (
-          <Link to="/shows/$showId" params={{ showId: show.Id }} className="flex items-center gap-3 hover:opacity-80">
+          <Link
+            to="/shows/$showId"
+            params={{ showId: show.Id }}
+            className="flex items-center gap-3 hover:opacity-80"
+          >
             {show.PosterUrl ? (
               <Image
                 src={show.PosterUrl}
@@ -170,50 +172,21 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
         ),
       },
       {
-        key: 'year',
-        label: 'YEAR',
+        key: "year",
+        label: "YEAR",
         width: 80,
-        render: (show) => <span>{show.Year ?? '—'}</span>,
+        render: (show) => <span>{show.Year ?? "—"}</span>,
       },
       {
-        key: 'episodes',
-        label: 'EPISODES',
+        key: "network",
+        label: "NETWORK",
         width: 150,
-        render: (show) => {
-          const missing = (show.EpisodeCount || 0) - (show.EpisodeFileCount || 0)
-          return (
-            <div className="flex items-center gap-2">
-              <span>
-                {show.EpisodeFileCount || 0}/{show.EpisodeCount || 0}
-              </span>
-              {missing > 0 && (
-                <Chip size="sm" color="warning" variant="flat">
-                  {missing} missing
-                </Chip>
-              )}
-            </div>
-          )
-        },
-      },
-      {
-        key: 'progress',
-        label: 'PROGRESS',
-        width: 80,
         sortable: false,
-        render: (show) => {
-          const downloaded = show.EpisodeFileCount ?? 0
-          const total = show.EpisodeCount ?? 0
-          const isComplete = total > 0 && downloaded >= total
-          return (
-            <span className={isComplete ? 'text-success font-medium' : 'text-warning font-medium'}>
-              {downloaded}/{total}
-            </span>
-          )
-        },
+        render: (show) => <span>{show.Network ?? "—"}</span>,
       },
     ],
     []
-  )
+  );
 
   // Row actions
   const rowActions: RowAction<Show>[] = useMemo(

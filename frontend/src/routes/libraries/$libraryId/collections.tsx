@@ -2,17 +2,15 @@ import { createFileRoute } from '@tanstack/react-router'
 import { Card, CardBody } from '@heroui/card'
 import { IconStack } from '@tabler/icons-react'
 import { useLibraryContext } from '../$libraryId'
-import { ShimmerLoader } from '../../../components/shared/ShimmerLoader'
 
 export const Route = createFileRoute('/libraries/$libraryId/collections')({
   component: CollectionsPage,
 })
 
 function CollectionsPage() {
-  const { library, loading } = useLibraryContext()
+  const { library } = useLibraryContext()
 
   return (
-    <ShimmerLoader loading={loading} delay={500}>
       <div className="flex flex-col w-full h-full overflow-hidden">
         {/* Toolbar */}
         <div className="flex items-center justify-between gap-4 mb-4 shrink-0">
@@ -34,6 +32,5 @@ function CollectionsPage() {
           </CardBody>
         </Card>
       </div>
-    </ShimmerLoader>
   )
 }

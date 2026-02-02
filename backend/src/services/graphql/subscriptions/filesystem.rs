@@ -60,26 +60,30 @@ impl FilesystemSubscriptions {
     async fn filesystem_changed(
         &self,
         ctx: &Context<'_>,
-        #[graphql(name = "Path", desc = "Filter to changes under this path (optional)")] path_filter: Option<String>,
+        #[graphql(name = "Path", desc = "Filter to changes under this path (optional)")]
+        path_filter: Option<String>,
     ) -> Pin<Box<dyn Stream<Item = FilesystemChangeEvent> + Send>> {
         let filter = path_filter;
 
         if ctx.data_opt::<AuthUser>().is_some() {
             if let Ok(broker) = ctx.data::<Arc<FilesystemChangeBroker>>() {
                 let rx = broker.subscribe();
-                let stream = BroadcastStream::new(rx)
-                    .filter_map(|r| r.ok())
-                    .filter_map(move |event| {
-                        let pass = match filter.as_ref() {
-                            Some(p) => event.path.starts_with(p),
-                            None => true,
-                        };
-                        if pass { Some(event) } else { None }
-                    });
-                return Box::pin(Box::new(stream) as Box<dyn Stream<Item = FilesystemChangeEvent> + Send + Unpin>);
+                let stream =
+                    BroadcastStream::new(rx)
+                        .filter_map(|r| r.ok())
+                        .filter_map(move |event| {
+                            let pass = match filter.as_ref() {
+                                Some(p) => event.path.starts_with(p),
+                                None => true,
+                            };
+                            if pass { Some(event) } else { None }
+                        });
+                return Box::pin(Box::new(stream)
+                    as Box<dyn Stream<Item = FilesystemChangeEvent> + Send + Unpin>);
             }
         }
 
-        Box::pin(Box::new(futures::stream::empty::<FilesystemChangeEvent>()) as Box<dyn Stream<Item = FilesystemChangeEvent> + Send + Unpin>)
+        Box::pin(Box::new(futures::stream::empty::<FilesystemChangeEvent>())
+            as Box<dyn Stream<Item = FilesystemChangeEvent> + Send + Unpin>)
     }
 }

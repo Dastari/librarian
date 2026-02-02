@@ -93,7 +93,7 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
           title: show.Name,
           year: show.Year ?? null,
           posterUrl: show.PosterUrl ?? null,
-          status: show.Status ?? null,
+          status: null,
           libraryId: show.LibraryId,
         });
       }

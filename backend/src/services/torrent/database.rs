@@ -9,22 +9,30 @@ use crate::db::Database;
 use librqbit::AddTorrent;
 
 /// Read a string value from app_settings (raw value, not JSON).
-pub async fn get_setting_string(pool: &Database, key: &str) -> Result<Option<String>, anyhow::Error> {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT value FROM app_settings WHERE key = ?")
-            .bind(key)
-            .fetch_optional(pool)
-            .await?;
-    Ok(row.map(|(s,)| s).filter(|s| !s.trim().is_empty()))
+/// Filters out empty strings and the literal "null" string (legacy seed data issue).
+pub async fn get_setting_string(
+    pool: &Database,
+    key: &str,
+) -> Result<Option<String>, anyhow::Error> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM app_settings WHERE key = ?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await?;
+    
+    Ok(row
+        .map(|(s,)| s)
+        .filter(|s| !s.trim().is_empty() && s != "null"))
 }
 
 /// Read a value from app_settings. Value is parsed as JSON (e.g. "true", "5", "0" for bool/u16/usize).
-pub async fn get_setting<T: serde::de::DeserializeOwned>(pool: &Database, key: &str) -> Result<Option<T>, anyhow::Error> {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT value FROM app_settings WHERE key = ?")
-            .bind(key)
-            .fetch_optional(pool)
-            .await?;
+pub async fn get_setting<T: serde::de::DeserializeOwned>(
+    pool: &Database,
+    key: &str,
+) -> Result<Option<T>, anyhow::Error> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM app_settings WHERE key = ?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await?;
 
     match row {
         Some((s,)) => {
@@ -32,7 +40,8 @@ pub async fn get_setting<T: serde::de::DeserializeOwned>(pool: &Database, key: &
             if s.is_empty() {
                 return Ok(None);
             }
-            let v: T = serde_json::from_str(s).map_err(|e| anyhow::anyhow!("app_settings key {}: {}", key, e))?;
+            let v: T = serde_json::from_str(s)
+                .map_err(|e| anyhow::anyhow!("app_settings key {}: {}", key, e))?;
             Ok(Some(v))
         }
         None => Ok(None),
@@ -45,10 +54,9 @@ pub async fn get_default_user_id(pool: &Database) -> Result<Option<Uuid>, anyhow
     struct Row {
         id: String,
     }
-    let row: Option<Row> =
-        sqlx::query_as("SELECT id FROM users ORDER BY created_at ASC LIMIT 1")
-            .fetch_optional(pool)
-            .await?;
+    let row: Option<Row> = sqlx::query_as("SELECT id FROM users ORDER BY created_at ASC LIMIT 1")
+        .fetch_optional(pool)
+        .await?;
     Ok(row.and_then(|r| Uuid::parse_str(&r.id).ok()))
 }
 
@@ -102,11 +110,10 @@ pub async fn upsert_from_session(
     let ts = now.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
 
     // Check if exists
-    let existing: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM torrents WHERE info_hash = ?")
-            .bind(info_hash)
-            .fetch_optional(pool)
-            .await?;
+    let existing: Option<(String,)> = sqlx::query_as("SELECT id FROM torrents WHERE info_hash = ?")
+        .bind(info_hash)
+        .fetch_optional(pool)
+        .await?;
 
     if let Some((id,)) = existing {
         sqlx::query(
@@ -181,7 +188,11 @@ pub async fn mark_completed(pool: &Database, info_hash: &str) -> Result<(), anyh
     Ok(())
 }
 
-pub async fn update_state(pool: &Database, info_hash: &str, state: &str) -> Result<(), anyhow::Error> {
+pub async fn update_state(
+    pool: &Database,
+    info_hash: &str,
+    state: &str,
+) -> Result<(), anyhow::Error> {
     sqlx::query(r#"UPDATE torrents SET state = ? WHERE info_hash = ?"#)
         .bind(state)
         .bind(info_hash)
@@ -359,7 +370,8 @@ pub async fn sync_session_to_database(
         }
 
         // Sync torrent_files for this torrent
-        if let Ok(Some((torrent_id, excluded_files))) = get_torrent_id_and_excluded(pool, &info_hash).await
+        if let Ok(Some((torrent_id, excluded_files))) =
+            get_torrent_id_and_excluded(pool, &info_hash).await
         {
             if let Some(metadata) = handle.metadata.load_full() {
                 let mut rows = Vec::with_capacity(metadata.file_infos.len());
@@ -418,10 +430,7 @@ pub async fn restore_from_database(
     for record in records {
         if let Some(magnet) = &record.magnet_uri {
             match session
-                .add_torrent(
-                    AddTorrent::from_url(magnet),
-                    Some(add_torrent_opts()),
-                )
+                .add_torrent(AddTorrent::from_url(magnet), Some(add_torrent_opts()))
                 .await
             {
                 Ok(_) => {

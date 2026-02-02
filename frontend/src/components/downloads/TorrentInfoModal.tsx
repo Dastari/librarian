@@ -332,14 +332,14 @@ export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }
   }, [isOpen, torrentId, torrentInfoHash])
 
   return (
-    <Modal 
-      isOpen={isOpen} 
-      onClose={onClose} 
-      size="5xl" 
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      size="5xl"
       scrollBehavior="inside"
       classNames={{
-        wrapper: 'overflow-hidden',
-        base: 'max-h-[90vh]',
+        wrapper: "overflow-hidden",
+        base: "max-h-[90vh]",
       }}
     >
       <ModalContent>
@@ -347,7 +347,7 @@ export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 flex-1">
               <h2 className="text-xl font-semibold truncate pr-4">
-                {details?.name ?? entityTorrent?.Name ?? 'Torrent Details'}
+                {details?.name ?? entityTorrent?.Name ?? "Torrent Details"}
               </h2>
               {(details ?? entityTorrent) && (
                 <code className="text-xs text-default-400 font-mono mt-1 block">
@@ -357,15 +357,32 @@ export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }
             </div>
             {(details ?? entityTorrent) && (
               <div className="flex items-center gap-2 flex-shrink-0">
-                <Chip
-                  size="sm"
-                  color={TORRENT_STATE_INFO[(details ?? entityTorrent)!.state]?.color ?? 'default'}
-                  variant="flat"
-                >
-                  {TORRENT_STATE_INFO[(details ?? entityTorrent)!.state]?.label ?? (details ?? entityTorrent)!.state}
-                </Chip>
-                {details?.finished ?? (entityTorrent && entityTorrent.Progress >= 1) ? (
-                  <Chip size="sm" color="success" variant="flat" startContent={<IconCheck size={12} className="text-green-400" />}>
+                {(() => {
+                  const stateValue = (
+                    details?.state ??
+                    entityTorrent?.State ??
+                    ""
+                  ).toUpperCase() as keyof typeof TORRENT_STATE_INFO;
+                  return (
+                    <Chip
+                      size="sm"
+                      color={TORRENT_STATE_INFO[stateValue]?.color ?? "default"}
+                      variant="flat"
+                    >
+                      {TORRENT_STATE_INFO[stateValue]?.label ?? stateValue}
+                    </Chip>
+                  );
+                })()}
+                {(details?.finished ??
+                (entityTorrent && entityTorrent.Progress >= 1)) ? (
+                  <Chip
+                    size="sm"
+                    color="success"
+                    variant="flat"
+                    startContent={
+                      <IconCheck size={12} className="text-green-400" />
+                    }
+                  >
                     Complete
                   </Chip>
                 ) : null}
@@ -378,15 +395,14 @@ export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }
           {isLoading && (
             <div className="flex flex-col items-center justify-center py-16 gap-3">
               <Spinner size="lg" />
-              <span className="text-default-500 text-sm">Loading torrent details...</span>
+              <span className="text-default-500 text-sm">
+                Loading torrent details...
+              </span>
             </div>
           )}
 
           {error && (
-            <ErrorState
-              title="Failed to Load Details"
-              message={error}
-            />
+            <ErrorState title="Failed to Load Details" message={error} />
           )}
 
           {entityTorrent && !isLoading && !details && (
@@ -396,7 +412,8 @@ export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }
                   <div className="space-y-3">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-default-500">
-                        {formatBytes(entityTorrent.DownloadedBytes)} of {formatBytes(entityTorrent.TotalBytes)}
+                        {formatBytes(entityTorrent.DownloadedBytes)} of{" "}
+                        {formatBytes(entityTorrent.TotalBytes)}
                       </span>
                       <span className="font-semibold tabular-nums">
                         {(entityTorrent.Progress * 100).toFixed(1)}%
@@ -404,10 +421,16 @@ export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }
                     </div>
                     <Progress
                       value={entityTorrent.Progress * 100}
-                      color={entityTorrent.State === 'error' ? 'danger' : entityTorrent.Progress >= 1 ? 'success' : 'primary'}
+                      color={
+                        entityTorrent.State === "error"
+                          ? "danger"
+                          : entityTorrent.Progress >= 1
+                            ? "success"
+                            : "primary"
+                      }
                       size="md"
                       aria-label="Download progress"
-                      classNames={{ track: 'h-3', indicator: 'h-3' }}
+                      classNames={{ track: "h-3", indicator: "h-3" }}
                     />
                   </div>
                 </CardBody>
@@ -415,19 +438,44 @@ export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }
               <div className="bg-content2/30 rounded-lg p-3">
                 <div className="flex items-center gap-2 mb-1">
                   <IconFolder size={16} className="text-amber-400" />
-                  <span className="text-xs font-medium text-default-500 uppercase tracking-wide">Save Location</span>
+                  <span className="text-xs font-medium text-default-500 uppercase tracking-wide">
+                    Save Location
+                  </span>
                 </div>
-                <code className="text-sm text-default-600 break-all">{entityTorrent.SavePath}</code>
+                <code className="text-sm text-default-600 break-all">
+                  {entityTorrent.SavePath}
+                </code>
               </div>
               {entityTorrent.Files?.Edges?.length ? (
                 <div className="space-y-3">
-                  <span className="text-sm font-medium text-default-600">Files ({entityTorrent.Files.Edges.length})</span>
+                  <span className="text-sm font-medium text-default-600">
+                    Files ({entityTorrent.Files.Edges.length})
+                  </span>
                   <DataTable
                     data={entityTorrent.Files.Edges.map((e) => e.Node)}
                     columns={[
-                      { key: 'FilePath', label: 'File', render: (n) => <span className="truncate block max-w-md" title={n.FilePath}>{n.FilePath.split(/[/\\]/).pop() ?? n.FilePath}</span> },
-                      { key: 'FileSize', label: 'Size', render: (n) => formatBytes(n.FileSize) },
-                      { key: 'Progress', label: 'Progress', render: (n) => `${(n.Progress * 100).toFixed(0)}%` },
+                      {
+                        key: "FilePath",
+                        label: "File",
+                        render: (n) => (
+                          <span
+                            className="truncate block max-w-md"
+                            title={n.FilePath}
+                          >
+                            {n.FilePath.split(/[/\\]/).pop() ?? n.FilePath}
+                          </span>
+                        ),
+                      },
+                      {
+                        key: "FileSize",
+                        label: "Size",
+                        render: (n) => formatBytes(n.FileSize),
+                      },
+                      {
+                        key: "Progress",
+                        label: "Progress",
+                        render: (n) => `${(n.Progress * 100).toFixed(0)}%`,
+                      },
                     ]}
                     getRowKey={(n) => n.FileIndex.toString()}
                     isCompact
@@ -455,12 +503,18 @@ export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }
                     </div>
                     <Progress
                       value={details.progressPercent}
-                      color={details.state === 'ERROR' ? 'danger' : details.finished ? 'success' : 'primary'}
+                      color={
+                        details.state === "ERROR"
+                          ? "danger"
+                          : details.finished
+                            ? "success"
+                            : "primary"
+                      }
                       size="md"
                       aria-label="Download progress"
                       classNames={{
-                        track: 'h-3',
-                        indicator: 'h-3',
+                        track: "h-3",
+                        indicator: "h-3",
                       }}
                     />
                     {details.error && (
@@ -475,50 +529,76 @@ export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }
               {/* Stats Grid */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 {/* Transfer Stats */}
-                <StatCard 
-                  title="Download" 
-                  value={details.downloadSpeedFormatted} 
-                  subtitle={details.timeRemainingFormatted ? `ETA: ${details.timeRemainingFormatted}` : undefined}
+                <StatCard
+                  title="Download"
+                  value={details.downloadSpeedFormatted}
+                  subtitle={
+                    details.timeRemainingFormatted
+                      ? `ETA: ${details.timeRemainingFormatted}`
+                      : undefined
+                  }
                   icon={<IconArrowDown size={20} className="text-blue-400" />}
                   valueColor="primary"
                 />
-                <StatCard 
-                  title="Upload" 
-                  value={details.uploadSpeedFormatted} 
+                <StatCard
+                  title="Upload"
+                  value={details.uploadSpeedFormatted}
                   subtitle={`Ratio: ${details.ratio.toFixed(2)}`}
                   icon={<IconArrowUp size={20} className="text-green-400" />}
-                  valueColor={details.ratio >= 1 ? 'success' : undefined}
+                  valueColor={details.ratio >= 1 ? "success" : undefined}
                 />
-                <StatCard 
-                  title="Peers" 
-                  value={details.peerStats.live.toString()} 
+                <StatCard
+                  title="Peers"
+                  value={details.peerStats.live.toString()}
                   subtitle={`${details.peerStats.connecting} connecting`}
                   icon="👥"
                   valueColor="success"
                 />
-                <StatCard 
-                  title="Pieces" 
-                  value={`${details.piecesDownloaded} / ${details.pieceCount}`} 
-                  subtitle={details.averagePieceDownloadMs ? `Avg: ${details.averagePieceDownloadMs}ms` : undefined}
+                <StatCard
+                  title="Pieces"
+                  value={`${details.piecesDownloaded} / ${details.pieceCount}`}
+                  subtitle={
+                    details.averagePieceDownloadMs
+                      ? `Avg: ${details.averagePieceDownloadMs}ms`
+                      : undefined
+                  }
                   icon="🧩"
                 />
               </div>
 
               {/* Detailed Stats Row */}
               <div className="grid grid-cols-3 lg:grid-cols-6 gap-3 text-sm">
-                <MiniStat label="Downloaded" value={details.downloadedFormatted} />
+                <MiniStat
+                  label="Downloaded"
+                  value={details.downloadedFormatted}
+                />
                 <MiniStat label="Uploaded" value={details.uploadedFormatted} />
-                <MiniStat label="Peers Queued" value={details.peerStats.queued.toString()} />
-                <MiniStat label="Peers Seen" value={details.peerStats.seen.toString()} />
-                <MiniStat label="Peers Dead" value={details.peerStats.dead.toString()} color="danger" />
-                <MiniStat label="Not Needed" value={details.peerStats.notNeeded.toString()} />
+                <MiniStat
+                  label="Peers Queued"
+                  value={details.peerStats.queued.toString()}
+                />
+                <MiniStat
+                  label="Peers Seen"
+                  value={details.peerStats.seen.toString()}
+                />
+                <MiniStat
+                  label="Peers Dead"
+                  value={details.peerStats.dead.toString()}
+                  color="danger"
+                />
+                <MiniStat
+                  label="Not Needed"
+                  value={details.peerStats.notNeeded.toString()}
+                />
               </div>
 
               {/* Save Path */}
               <div className="bg-content2/30 rounded-lg p-3">
                 <div className="flex items-center gap-2 mb-1">
                   <IconFolder size={16} className="text-amber-400" />
-                  <span className="text-xs font-medium text-default-500 uppercase tracking-wide">Save Location</span>
+                  <span className="text-xs font-medium text-default-500 uppercase tracking-wide">
+                    Save Location
+                  </span>
                 </div>
                 <code className="text-sm text-default-600 break-all">
                   {details.savePath}
@@ -534,14 +614,26 @@ export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }
                     </span>
                     {fileMatches.length > 0 && (
                       <span className="text-xs text-default-400">
-                        {fileMatches.filter(m => m.episodeId || m.movieId || m.trackId || m.chapterId).length} matched
+                        {
+                          fileMatches.filter(
+                            (m) =>
+                              m.episodeId ||
+                              m.movieId ||
+                              m.trackId ||
+                              m.chapterId
+                          ).length
+                        }{" "}
+                        matched
                       </span>
                     )}
                   </div>
                   <DataTable
                     skeletonDelay={500}
                     data={details.files}
-                    columns={createFileColumns(matchesByIndex, handleRemoveMatch)}
+                    columns={createFileColumns(
+                      matchesByIndex,
+                      handleRemoveMatch
+                    )}
                     getRowKey={(file) => file.index}
                     isCompact
                     isStriped
@@ -549,13 +641,13 @@ export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }
                     removeWrapper
                     showItemCount={false}
                     defaultSortColumn="path"
-                    searchFn={(file, term) => 
+                    searchFn={(file, term) =>
                       file.path.toLowerCase().includes(term.toLowerCase())
                     }
                     searchPlaceholder="Search files..."
                     classNames={{
-                      wrapper: 'max-h-80',
-                      table: 'min-w-full',
+                      wrapper: "max-h-80",
+                      table: "min-w-full",
                     }}
                   />
                 </div>
@@ -571,7 +663,7 @@ export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }
         </ModalFooter>
       </ModalContent>
     </Modal>
-  )
+  );
 }
 
 // Stat card component for main metrics

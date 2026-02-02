@@ -24,11 +24,13 @@ import {
   graphqlClient,
   ORGANIZE_TORRENT_MUTATION,
   type LibraryNode,
-  type DownloadsTorrentRow,
   type OrganizeTorrentResult,
   type Album,
 } from "../../lib/graphql";
-import { LibrariesDocument } from "../../lib/graphql/generated/graphql";
+import {
+  LibrariesDocument,
+  type Torrent,
+} from "../../lib/graphql/generated/graphql";
 
 // Query to get albums for a library
 const ALBUMS_FOR_LIBRARY_QUERY = `
@@ -45,7 +47,7 @@ const ALBUMS_FOR_LIBRARY_QUERY = `
 export interface LinkToLibraryModalProps {
   isOpen: boolean;
   onClose: () => void;
-  torrent: DownloadsTorrentRow | null;
+  torrent: Torrent | null;
   onLinked: () => void;
 }
 
@@ -185,7 +187,7 @@ export function LinkToLibraryModal({
   // Detect recommended library type
   const recommendedType = useMemo(() => {
     if (!torrent) return null;
-    return detectMediaType(torrent.name);
+    return detectMediaType(torrent.Name);
   }, [torrent]);
 
   // Sort libraries - recommended type first
@@ -221,8 +223,9 @@ export function LinkToLibraryModal({
     setOrganizing(true);
     try {
       // Legacy OrganizeTorrent expects Int (session id). We only have entity id (string); backend would need OrganizeTorrentByInfoHash to support this.
-      const numericId = typeof torrent.id === "number" ? torrent.id : null;
-      if (numericId === null) {
+      // Try to parse Id as number for legacy API, otherwise show warning
+      const numericId = parseInt(torrent.Id, 10);
+      if (isNaN(numericId)) {
         addToast({
           title: "Linking not available",
           description:
@@ -240,7 +243,7 @@ export function LinkToLibraryModal({
             id: numericId,
             libraryId: selectedLibraryId,
             albumId: selectedAlbumId,
-          },
+          }
         )
         .toPromise();
 
@@ -284,7 +287,7 @@ export function LinkToLibraryModal({
           <div>Link to Library</div>
           {torrent && (
             <div className="text-sm font-normal text-default-500 line-clamp-1">
-              {torrent.name}
+              {torrent.Name}
             </div>
           )}
         </ModalHeader>

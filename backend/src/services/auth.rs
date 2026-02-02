@@ -220,11 +220,9 @@ impl AuthService {
     /// Return the JWT signing secret loaded from the database. Used for token creation and verification.
     /// Never expose this value via GraphQL or logs.
     pub async fn get_jwt_secret(&self) -> Result<String> {
-        self.jwt_secret
-            .read()
-            .await
-            .clone()
-            .ok_or_else(|| anyhow!("JWT secret not loaded (auth service not started or missing in database)"))
+        self.jwt_secret.read().await.clone().ok_or_else(|| {
+            anyhow!("JWT secret not loaded (auth service not started or missing in database)")
+        })
     }
 
     // ========================================================================
@@ -524,14 +522,7 @@ impl AuthService {
         granted_by: &str,
     ) -> Result<()> {
         let pool = self.get_pool().await?;
-        grant_library_access(
-            &pool,
-            user_id,
-            library_id,
-            access_level,
-            Some(granted_by),
-        )
-        .await
+        grant_library_access(&pool, user_id, library_id, access_level, Some(granted_by)).await
     }
 
     /// Revoke library access
@@ -627,7 +618,11 @@ impl AuthService {
     }
 
     /// Decode and validate access token using the given secret.
-    fn decode_access_token_with_secret(&self, token: &str, secret: &str) -> Result<AccessTokenClaims> {
+    fn decode_access_token_with_secret(
+        &self,
+        token: &str,
+        secret: &str,
+    ) -> Result<AccessTokenClaims> {
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = true;
 
@@ -646,7 +641,11 @@ impl AuthService {
     }
 
     /// Decode and validate refresh token using the given secret.
-    fn decode_refresh_token_with_secret(&self, token: &str, secret: &str) -> Result<RefreshTokenClaims> {
+    fn decode_refresh_token_with_secret(
+        &self,
+        token: &str,
+        secret: &str,
+    ) -> Result<RefreshTokenClaims> {
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = true;
 
@@ -717,15 +716,16 @@ impl Service for AuthService {
             .ok_or_else(|| anyhow!("database service not available"))?;
         *self.db.write().await = Some(db.clone());
 
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT value FROM auth_secrets WHERE key = ?")
-                .bind(AUTH_SECRETS_JWT_KEY)
-                .fetch_optional(&db)
-                .await?;
+        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM auth_secrets WHERE key = ?")
+            .bind(AUTH_SECRETS_JWT_KEY)
+            .fetch_optional(&db)
+            .await?;
         let secret = row
             .map(|(v,)| v)
             .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| anyhow!("JWT secret not found in database (run database service first)"))?;
+            .ok_or_else(|| {
+                anyhow!("JWT secret not found in database (run database service first)")
+            })?;
         *self.jwt_secret.write().await = Some(secret);
         info!(service = "auth", "Auth service started");
         Ok(())

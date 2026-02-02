@@ -248,9 +248,9 @@ export function AddToLibraryModal({
         setSearchResults(data?.searchTvShows || [])
       } else if (selectedType === 'movies') {
         const { data } = await graphqlClient
-          .query<{ searchMovies: MovieSearchResult[] }>(SEARCH_MOVIES_QUERY, { query: searchQuery })
+          .query<{ SearchMovies: MovieSearchResult[] }>(SEARCH_MOVIES_QUERY, { Query: searchQuery })
           .toPromise()
-        setSearchResults(data?.searchMovies || [])
+        setSearchResults(data?.SearchMovies || [])
       } else {
         // Music and audiobooks - no search yet
         setSearchResults([])
@@ -301,22 +301,22 @@ export function AddToLibraryModal({
         } else if (selectedType === 'movies') {
           const movieItem = selectedItem as MovieSearchResult
           const { data, error } = await graphqlClient
-            .mutation<{ addMovie: { success: boolean; movie: { id: string } | null; error: string | null } }>(
+            .mutation<{ AddMovie: { Success: boolean; Movie: { Id: string } | null; Error: string | null } }>(
               ADD_MOVIE_MUTATION,
               {
-                libraryId: selectedLibraryId,
-                input: {
-                  provider: movieItem.provider,
-                  providerId: String(movieItem.providerId),
+                LibraryId: selectedLibraryId,
+                Input: {
+                  TmdbId: movieItem.providerId,
+                  Monitored: true,
                 },
               }
             )
             .toPromise()
           
-          if (error || !data?.addMovie.success) {
-            throw new Error(data?.addMovie.error || 'Failed to add movie')
+          if (error || !data?.AddMovie.Success) {
+            throw new Error(data?.AddMovie.Error || 'Failed to add movie')
           }
-          // TODO: Use data.addMovie.movie?.id to link torrent to movie
+          // TODO: Use data.AddMovie.Movie?.Id to link torrent to movie
         }
       }
       

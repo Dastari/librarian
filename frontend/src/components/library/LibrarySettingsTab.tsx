@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { addToast } from '@heroui/toast'
-import { LibrarySettingsForm, type LibrarySettingsValues } from './LibrarySettingsForm'
+import {
+  LibrarySettingsForm,
+  type LibrarySettingsFormValues,
+} from "./LibrarySettingsForm";
 import { SettingsHeader } from '../shared'
 import type { Library, UpdateLibraryInput } from '../../lib/graphql'
 
@@ -10,120 +13,113 @@ interface LibrarySettingsTabProps {
   isLoading: boolean
 }
 
-export function LibrarySettingsTab({ library, onSave, isLoading }: LibrarySettingsTabProps) {
-  // Convert codegen Library to form values (only fields present on schema; rest defaulted)
-  const libraryToValues = useCallback((lib: Library): LibrarySettingsValues => ({
-    name: lib.Name,
-    path: lib.Path,
-    libraryType: lib.LibraryType as LibrarySettingsValues['libraryType'],
-    autoScan: lib.AutoScan,
-    scanIntervalMinutes: lib.ScanIntervalMinutes,
-    watchForChanges: lib.WatchForChanges,
-    organizeFiles: false,
-    namingPattern: null,
-    autoAddDiscovered: lib.AutoAddDiscovered,
-    autoDownload: lib.AutoDownload,
-    autoHunt: lib.AutoHunt,
-    allowedResolutions: [],
-    allowedVideoCodecs: [],
-    allowedAudioFormats: [],
-    requireHdr: false,
-    allowedHdrTypes: [],
-    allowedSources: [],
-    releaseGroupBlacklist: [],
-    releaseGroupWhitelist: [],
-  }), [])
+export function LibrarySettingsTab({
+  library,
+  onSave,
+  isLoading,
+}: LibrarySettingsTabProps) {
+  // Convert Library entity to form values
+  const libraryToFormValues = useCallback(
+    (lib: Library): LibrarySettingsFormValues => ({
+      Name: lib.Name,
+      Path: lib.Path,
+      LibraryType: lib.LibraryType as LibrarySettingsFormValues["LibraryType"],
+      AutoScan: lib.AutoScan,
+      ScanIntervalMinutes: lib.ScanIntervalMinutes,
+      WatchForChanges: lib.WatchForChanges,
+      AutoOrganize: lib.AutoOrganize,
+      NamingPattern: lib.NamingPattern || null,
+    }),
+    [],
+  );
 
-  const [values, setValues] = useState<LibrarySettingsValues>(() => libraryToValues(library))
-  const [hasChanges, setHasChanges] = useState(false)
+  const [formValues, setFormValues] = useState<LibrarySettingsFormValues>(() =>
+    libraryToFormValues(library),
+  );
+  const [isFormValid, setIsFormValid] = useState(true);
+  const [hasChanges, setHasChanges] = useState(false);
 
   // Reset form when library changes
   useEffect(() => {
-    setValues(libraryToValues(library))
-    setHasChanges(false)
-  }, [library, libraryToValues])
+    setFormValues(libraryToFormValues(library));
+    setHasChanges(false);
+  }, [library, libraryToFormValues]);
 
-  // Track changes
-  const originalValues = useMemo(() => libraryToValues(library), [library, libraryToValues])
+  // Track changes by comparing with original values
+  const originalValues = useMemo(
+    () => libraryToFormValues(library),
+    [library, libraryToFormValues],
+  );
 
   useEffect(() => {
-    const arraysEqual = (a: string[], b: string[]) => 
-      a.length === b.length && a.every((v, i) => v === b[i])
-    
     const changed =
-      values.name !== originalValues.name ||
-      values.path !== originalValues.path ||
-      values.autoScan !== originalValues.autoScan ||
-      values.scanIntervalMinutes !== originalValues.scanIntervalMinutes ||
-      values.watchForChanges !== originalValues.watchForChanges ||
-      values.organizeFiles !== originalValues.organizeFiles ||
-      values.namingPattern !== originalValues.namingPattern ||
-      values.autoAddDiscovered !== originalValues.autoAddDiscovered ||
-      values.autoDownload !== originalValues.autoDownload ||
-      values.autoHunt !== originalValues.autoHunt ||
-      !arraysEqual(values.allowedResolutions, originalValues.allowedResolutions) ||
-      !arraysEqual(values.allowedVideoCodecs, originalValues.allowedVideoCodecs) ||
-      !arraysEqual(values.allowedAudioFormats, originalValues.allowedAudioFormats) ||
-      values.requireHdr !== originalValues.requireHdr ||
-      !arraysEqual(values.allowedHdrTypes, originalValues.allowedHdrTypes) ||
-      !arraysEqual(values.allowedSources, originalValues.allowedSources) ||
-      !arraysEqual(values.releaseGroupBlacklist, originalValues.releaseGroupBlacklist) ||
-      !arraysEqual(values.releaseGroupWhitelist, originalValues.releaseGroupWhitelist)
-    
-    setHasChanges(changed)
-  }, [values, originalValues])
+      formValues.Name !== originalValues.Name ||
+      formValues.Path !== originalValues.Path ||
+      formValues.AutoScan !== originalValues.AutoScan ||
+      formValues.ScanIntervalMinutes !== originalValues.ScanIntervalMinutes ||
+      formValues.WatchForChanges !== originalValues.WatchForChanges ||
+      formValues.AutoOrganize !== originalValues.AutoOrganize ||
+      formValues.NamingPattern !== originalValues.NamingPattern;
 
-  const handleChange = useCallback((newValues: LibrarySettingsValues) => {
-    setValues(newValues)
-  }, [])
+    setHasChanges(changed);
+  }, [formValues, originalValues]);
+
+  const handleChange = useCallback(
+    (values: LibrarySettingsFormValues, isValid: boolean) => {
+      setFormValues(values);
+      setIsFormValid(isValid);
+    },
+    [],
+  );
 
   const handleSubmit = async () => {
-    if (!values.name || !values.path) {
+    if (!isFormValid) {
       addToast({
-        title: 'Validation Error',
-        description: 'Name and path are required',
-        color: 'danger',
-      })
-      return
+        title: "Validation Error",
+        description: "Please fix the form errors before saving",
+        color: "danger",
+      });
+      return;
     }
 
     await onSave({
-      Name: values.name,
-      Path: values.path,
-      LibraryType: values.libraryType,
-      AutoScan: values.autoScan,
-      ScanIntervalMinutes: values.scanIntervalMinutes,
-      WatchForChanges: values.watchForChanges,
-      AutoAddDiscovered: values.autoAddDiscovered,
-      AutoDownload: values.autoDownload,
-      AutoHunt: values.autoHunt,
-    })
-  }
+      Name: formValues.Name,
+      Path: formValues.Path,
+      LibraryType: formValues.LibraryType,
+      AutoScan: formValues.AutoScan,
+      ScanIntervalMinutes: formValues.ScanIntervalMinutes,
+      WatchForChanges: formValues.WatchForChanges,
+      AutoOrganize: formValues.AutoOrganize,
+      NamingPattern: formValues.NamingPattern,
+    });
+  };
 
   const handleReset = useCallback(() => {
-    setValues(libraryToValues(library))
-  }, [library, libraryToValues])
+    setFormValues(libraryToFormValues(library));
+  }, [library, libraryToFormValues]);
 
   return (
-    <div className="grow overflow-hidden overflow-y-auto pb-8 px-4" style={{ scrollbarGutter: 'stable' }}>
+    <div
+      className="grow overflow-hidden overflow-y-auto pb-8 px-4"
+      style={{ scrollbarGutter: "stable" }}
+    >
       <SettingsHeader
         title="Library Settings"
         subtitle="Configure how this library behaves"
         onSave={handleSubmit}
         onReset={handleReset}
-        isSaveDisabled={!hasChanges || !values.name || !values.path}
+        isSaveDisabled={!hasChanges || !isFormValid}
         isResetDisabled={!hasChanges}
         isSaving={isLoading}
         hasChanges={hasChanges}
       />
 
       <LibrarySettingsForm
-        initialValues={values}
+        initialValues={formValues}
         onChange={handleChange}
         mode="edit"
         useCards={true}
-        qualityMode="full"
       />
     </div>
-  )
+  );
 }

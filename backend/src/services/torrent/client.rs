@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use librqbit::AddTorrentOptions;
 use serde::{Deserialize, Serialize};
 
-
 pub fn add_torrent_opts() -> AddTorrentOptions {
     AddTorrentOptions {
         overwrite: true,
@@ -199,9 +198,8 @@ impl Default for TorrentServiceConfig {
     }
 }
 
-
 pub fn perform_upnp(port: u16) -> UpnpResult {
-    use igd::{search_gateway, PortMappingProtocol, SearchOptions};
+    use igd::{PortMappingProtocol, SearchOptions, search_gateway};
     use std::time::Duration;
 
     let search_options = SearchOptions {
@@ -219,7 +217,7 @@ pub fn perform_upnp(port: u16) -> UpnpResult {
                 local_ip: None,
                 external_ip: None,
                 error: Some(format!("Failed to find UPnP gateway: {}", e)),
-            }
+            };
         }
     };
 
@@ -233,7 +231,7 @@ pub fn perform_upnp(port: u16) -> UpnpResult {
                 local_ip: None,
                 external_ip: None,
                 error: Some(format!("Failed to get local IP: {}", e)),
-            }
+            };
         }
     };
 
@@ -247,7 +245,7 @@ pub fn perform_upnp(port: u16) -> UpnpResult {
                 local_ip: None,
                 external_ip: None,
                 error: Some("UPnP requires IPv4".to_string()),
-            }
+            };
         }
     };
 
@@ -261,7 +259,7 @@ pub fn perform_upnp(port: u16) -> UpnpResult {
                 local_ip: Some(local_ipv4.to_string()),
                 external_ip: None,
                 error: Some(format!("Failed to get external IP: {}", e)),
-            }
+            };
         }
     };
 

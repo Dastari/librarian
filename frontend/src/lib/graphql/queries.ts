@@ -269,9 +269,6 @@ export const LIBRARIES_WITH_COUNTS_QUERY = `
           AutoScan
           ScanIntervalMinutes
           WatchForChanges
-          AutoAddDiscovered
-          AutoDownload
-          AutoHunt
           Scanning
           LastScannedAt
           CreatedAt
@@ -345,9 +342,6 @@ export const LIBRARY_QUERY = `
       AutoScan
       ScanIntervalMinutes
       WatchForChanges
-      AutoAddDiscovered
-      AutoDownload
-      AutoHunt
       Scanning
       LastScannedAt
       CreatedAt
@@ -390,7 +384,6 @@ export const TV_SHOWS_QUERY = `
           Name
           SortName
           Year
-          Status
           TvmazeId
           TmdbId
           TvdbId
@@ -401,12 +394,10 @@ export const TV_SHOWS_QUERY = `
           Genres
           PosterUrl
           BackdropUrl
-          Monitored
-          MonitorType
+          AutoDownload
+          AutoDownloadMode
           Path
-          EpisodeCount
-          EpisodeFileCount
-          SizeBytes
+          CreatedAt
         }
       }
     }
@@ -427,12 +418,9 @@ export const TV_SHOWS_CONNECTION_QUERY = `
           Name
           SortName
           Year
-          Status
           PosterUrl
           BackdropUrl
-          Monitored
-          EpisodeCount
-          EpisodeFileCount
+          AutoDownload
         }
         Cursor
       }
@@ -455,7 +443,6 @@ export const TV_SHOW_QUERY = `
       Name
       SortName
       Year
-      Status
       TvmazeId
       TmdbId
       TvdbId
@@ -466,15 +453,46 @@ export const TV_SHOW_QUERY = `
       Genres
       PosterUrl
       BackdropUrl
-      Monitored
-      MonitorType
+      AutoDownload
+      AutoDownloadMode
       Path
-      EpisodeCount
-      EpisodeFileCount
-      SizeBytes
       CreatedAt
       UpdatedAt
       UserId
+      Episodes {
+        Edges {
+          Node {
+            Id
+            ShowId
+            Season
+            Episode
+            AbsoluteNumber
+            Title
+            Overview
+            AirDate
+            Runtime
+            TvmazeId
+            TmdbId
+            TvdbId
+            ImdbId
+            MediaFileId
+            Resolution
+            VideoCodec
+            AudioCodec
+            AudioChannels
+            IsHdr
+            HdrType
+            FileSizeBytes
+            FileSizeFormatted
+            WatchProgress
+            WatchPosition
+            IsWatched
+            DownloadProgress
+            CreatedAt
+            UpdatedAt
+          }
+        }
+      }
     }
   }
 `;
@@ -635,19 +653,19 @@ export const MOVIE_QUERY = `
 `;
 
 export const SEARCH_MOVIES_QUERY = `
-  query SearchMovies($query: String!, $year: Int) {
-    searchMovies(query: $query, year: $year) {
-      provider
-      providerId
-      title
-      originalTitle
-      year
-      overview
-      posterUrl
-      backdropUrl
-      imdbId
-      voteAverage
-      popularity
+  query SearchMovies($Query: String!, $Year: Int) {
+    SearchMovies(Query: $Query, Year: $Year) {
+      provider: Provider
+      providerId: ProviderId
+      title: Title
+      originalTitle: OriginalTitle
+      year: Year
+      overview: Overview
+      posterUrl: PosterUrl
+      backdropUrl: BackdropUrl
+      imdbId: ImdbId
+      voteAverage: VoteAverage
+      popularity: Popularity
     }
   }
 `;

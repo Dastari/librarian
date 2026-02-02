@@ -1,0 +1,213 @@
+# Entity Single Source of Truth
+
+## Core Principle
+
+All entity CRUD operations (Create, Read, Update, Delete) MUST go through the GraphQL entity system. This ensures:
+
+1. **Subscription triggers** - Entity changes automatically notify connected clients
+2. **Consistent validation** - All operations go through the same validation logic
+3. **Audit trail** - All changes are logged through a single path
+4. **Type safety** - Generated types ensure correct field handling
+
+## When to Use Entity Operations
+
+### ALWAYS Use GraphQL Entity Methods For:
+
+- Creating new entities (movies, shows, episodes, albums, etc.)
+- Updating existing entities
+- Deleting entities
+- Querying entities (use `Entity::get()`, `Entity::query()`)
+
+### Acceptable Exceptions:
+
+- **Batch operations** - Large bulk inserts/updates where performance is critical
+- **Complex joins** - Queries spanning multiple tables that can't be expressed via entity filters
+- **Aggregate queries** - COUNT, SUM, AVG with GROUP BY
+- **Migrations** - Schema changes and data migrations
+- **Health checks** - Simple connectivity verification
+
+## Implementation Pattern
+
+### Calling Entity Methods Internally
+
+When a service needs to create/update entities, it should call the entity's methods directly rather than raw SQL:
+
+```rust
+// ✅ CORRECT: Use entity methods
+let movie = Movie::create_from_metadata(&db, &details, options).await?;
+
+// ❌ WRONG: Raw SQL bypasses subscriptions and validation
+sqlx::query("INSERT INTO movies (id, title, ...) VALUES (?, ?, ...)")
+    .bind(id)
+    .bind(title)
+    .execute(&db)
+    .await?;
+```
+
+### Adding Internal Create Methods
+
+When adding "from external data" creation (like metadata providers), add a method to the entity:
+
+```rust
+impl Movie {
+    /// Create a movie from metadata details (e.g., from TMDB)
+    ///
+    /// This is the single source of truth for creating movies from external metadata.
+    pub async fn create_from_metadata(
+        db: &Database,
+        details: &MovieDetails,
+        options: CreateMovieFromMetadataOptions,
+    ) -> anyhow::Result<Self> {
+        // 1. Generate UUID
+        let movie_id = Uuid::new_v4();
+        
+        // 2. Build and execute INSERT
+        sqlx::query(r#"INSERT INTO movies (...) VALUES (...)"#)
+            .bind(...)
+            .execute(db)
+            .await?;
+        
+        // 3. Fetch the created entity
+        let movie = Self::get(db, &movie_id.to_string()).await?
+            .ok_or_else(|| anyhow::anyhow!("Movie not found after creation"))?;
+        
+        // 4. Broadcast subscription event
+        broadcast_entity_change(db, "Movie", &movie.id, "CREATE", Some(&movie.library_id)).await;
+        
+        // 5. Return the entity
+        Ok(movie)
+    }
+}
+```
+
+### Calling GraphQL Mutations Internally
+
+For complex operations that benefit from the full GraphQL context (auth, validation, etc.), you can execute GraphQL operations directly:
+
+```rust
+use async_graphql::{Request, Variables};
+
+// Build the mutation request
+let mut req = Request::new(r#"
+    mutation CreateMovie($Input: CreateMovieInput!) {
+        CreateMovie(Input: $Input) {
+            Success
+            Movie { Id Title }
+            Error
+        }
+    }
+"#);
+req = req.variables(Variables::from_json(serde_json::json!({
+    "Input": {
+        "LibraryId": library_id,
+        "Title": title,
+        // ... other fields
+    }
+})));
+
+// Execute against the schema
+let resp = schema.execute(req).await;
+```
+
+## Subscription Broadcasting
+
+All entity changes should trigger subscription events. The macro-generated mutations handle this via the `notify` attribute:
+
+```rust
+#[graphql_entity(
+    table = "movies",
+    plural = "Movies",
+    notify = "libraries"  // Broadcasts to library subscribers
+)]
+```
+
+For internal create methods, manually broadcast:
+
+```rust
+// After creating an entity
+broadcast_entity_change(
+    db,
+    "Movie",           // Entity type
+    &movie.id,         // Entity ID
+    "CREATE",          // Operation: CREATE, UPDATE, DELETE
+    Some(&library_id), // Related entity for filtering subscriptions
+).await;
+```
+
+## Repository Pattern (Legacy)
+
+The legacy repository pattern (`db.movies().create(...)`) is being phased out in favor of GraphQL entities. For new code:
+
+1. **DO NOT** create new repository methods
+2. **DO** use GraphQL entity methods for new functionality
+3. **DO** migrate existing repository usage when touching that code
+
+## Common Mistakes to Avoid
+
+### 1. Bypassing the Entity System
+
+```rust
+// ❌ DON'T: Direct SQL for standard CRUD
+sqlx::query("INSERT INTO movies ...")
+
+// ✅ DO: Use entity methods
+Movie::create_from_metadata(&db, &details, options).await
+```
+
+### 2. Forgetting Subscriptions
+
+```rust
+// ❌ DON'T: Create without broadcasting
+let id = insert_movie_sql(&db, &data).await?;
+return Self::get(&db, &id).await;
+
+// ✅ DO: Broadcast after creation
+let movie = Self::get(&db, &id).await?;
+broadcast_entity_change(&db, "Movie", &movie.id, "CREATE", Some(&library_id)).await;
+return Ok(movie);
+```
+
+### 3. Duplicate Logic
+
+```rust
+// ❌ DON'T: Same insert logic in multiple places
+// In mutation:
+sqlx::query("INSERT INTO movies (id, title, year, ...)");
+// In service:
+sqlx::query("INSERT INTO movies (id, title, year, ...)");  // Might diverge!
+
+// ✅ DO: Single method both can call
+Movie::create_from_metadata(&db, &details, options).await
+```
+
+## Database Schema vs GraphQL Fields
+
+Some GraphQL fields are **computed** (not stored in the database):
+
+- `Status` - Computed from `wanted`, `media_file_id`, playback state
+- `ContentStatus` - Computed from multiple factors
+- `Library` - Loaded via relation
+
+When inserting, only include actual database columns, not computed fields.
+
+## Testing Entity Operations
+
+When testing entity creation:
+
+```rust
+#[tokio::test]
+async fn test_create_movie_from_metadata() {
+    let db = test_db().await;
+    let details = MovieDetails { /* ... */ };
+    let options = CreateMovieFromMetadataOptions { /* ... */ };
+    
+    let movie = Movie::create_from_metadata(&db, &details, options).await.unwrap();
+    
+    assert_eq!(movie.title, details.title);
+    assert!(movie.id.len() > 0);
+    
+    // Verify it's actually in the database
+    let fetched = Movie::get(&db, &movie.id).await.unwrap().unwrap();
+    assert_eq!(fetched.id, movie.id);
+}
+```

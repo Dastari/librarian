@@ -140,11 +140,8 @@ async fn graphql_ws_handler(
         Some(auth) => auth.get_jwt_secret().await.ok(),
         None => None,
     };
-    let auth_user = extract_token(&headers).and_then(|token| {
-        secret
-            .as_ref()
-            .and_then(|s| verify_token(&token, s).ok())
-    });
+    let auth_user = extract_token(&headers)
+        .and_then(|token| secret.as_ref().and_then(|s| verify_token(&token, s).ok()));
     let secret_for_init = secret.clone();
 
     ws.protocols(["graphql-transport-ws", "graphql-ws"])
@@ -209,8 +206,7 @@ impl Service for GraphqlService {
         info!(service = "graphql", "GraphQL service started");
         info!(
             service = "graphql",
-            "GraphQL playground: http://localhost:{}/graphql",
-            self.server_port
+            "GraphQL playground: http://localhost:{}/graphql", self.server_port
         );
         Ok(())
     }

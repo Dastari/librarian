@@ -24,17 +24,14 @@ import {
   PAUSE_TORRENT_BY_INFO_HASH_MUTATION,
   RESUME_TORRENT_BY_INFO_HASH_MUTATION,
   REMOVE_TORRENT_BY_INFO_HASH_MUTATION,
-  ORGANIZE_TORRENT_MUTATION,
   PROCESS_SOURCE_MUTATION,
   REMATCH_SOURCE_MUTATION,
   TorrentChangedDocument,
-  type DownloadsTorrentRow,
   type AddTorrentResult,
-  type TorrentActionResult,
-  type OrganizeTorrentResult,
   type ProcessSourceResult,
   type RematchSourceResult,
 } from "../../lib/graphql";
+import type { Torrent, TorrentConnection } from "../../lib/graphql/generated/graphql";
 import {
   TorrentTable,
   AddTorrentModal,
@@ -119,7 +116,7 @@ export const Route = createFileRoute("/downloads/")({
 
 function DownloadsPage() {
   const [activeTab, setActiveTab] = useState<"torrents" | "usenet">("torrents");
-  const [torrents, setTorrents] = useState<DownloadsTorrentRow[]>([]);
+  const [torrents, setTorrents] = useState<Torrent[]>([]);
   const [usenetDownloads, setUsenetDownloads] = useState<UsenetDownload[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -139,30 +136,18 @@ function DownloadsPage() {
     string | null
   >(null);
   const [torrentToLink, setTorrentToLink] =
-    useState<DownloadsTorrentRow | null>(null);
+    useState<Torrent | null>(null);
 
   const fetchTorrents = useCallback(async () => {
     try {
       const result = await graphqlClient
-        .query<TorrentsDocument>(DOWNLOADS_TORRENTS_QUERY, {
+        .query<{ Torrents: TorrentConnection }>(DOWNLOADS_TORRENTS_QUERY, {
           Page: { Limit: 500, Offset: 0 },
         })
         .toPromise();
       if (result.data?.Torrents?.Edges) {
-        const rows: DownloadsTorrentRow[] = result.data.Torrents.Edges.map(
-          ({ Node }) => ({
-            id: Node.Id,
-            infoHash: Node.InfoHash,
-            name: Node.Name,
-            state: (Node.State ?? "").toUpperCase(),
-            progress: Node.Progress,
-            size: Node.TotalBytes,
-            downloaded: Node.DownloadedBytes,
-            uploaded: Node.UploadedBytes,
-            addedAt: Node.AddedAt,
-          }),
-        );
-        setTorrents(rows);
+        const torrentNodes = result.data.Torrents.Edges.map(({ Node }) => Node);
+        setTorrents(torrentNodes);
       }
       if (result.error) {
         const isAuthError = result.error.message
@@ -414,7 +399,7 @@ function DownloadsPage() {
     if (data?.Success) {
       setTorrents((prev) =>
         prev.map((t) =>
-          t.infoHash === infoHash ? { ...t, state: "paused" } : t,
+          t.InfoHash === infoHash ? { ...t, State: "paused" } : t,
         ),
       );
     }
@@ -432,7 +417,7 @@ function DownloadsPage() {
     if (data?.Success) {
       setTorrents((prev) =>
         prev.map((t) =>
-          t.infoHash === infoHash ? { ...t, state: "downloading" } : t,
+          t.InfoHash === infoHash ? { ...t, State: "downloading" } : t,
         ),
       );
     }
@@ -449,7 +434,7 @@ function DownloadsPage() {
       .toPromise();
     const data = result.data?.RemoveTorrentByInfoHash;
     if (data?.Success) {
-      setTorrents((prev) => prev.filter((t) => t.infoHash !== infoHash));
+      setTorrents((prev) => prev.filter((t) => t.InfoHash !== infoHash));
       addToast({
         title: "Torrent Removed",
         description: "The torrent has been removed.",
@@ -472,13 +457,13 @@ function DownloadsPage() {
   };
 
   // Process pending file matches (copy files to library)
-  const handleProcess = async (torrent: DownloadsTorrentRow) => {
+  const handleProcess = async (torrent: Torrent) => {
     const result = await graphqlClient
       .mutation<{ processSource: ProcessSourceResult }>(
         PROCESS_SOURCE_MUTATION,
         {
           sourceType: "torrent",
-          sourceId: torrent.infoHash,
+          sourceId: torrent.InfoHash,
         },
       )
       .toPromise();
@@ -509,13 +494,13 @@ function DownloadsPage() {
   };
 
   // Re-match files against library items
-  const handleRematch = async (torrent: DownloadsTorrentRow) => {
+  const handleRematch = async (torrent: Torrent) => {
     const result = await graphqlClient
       .mutation<{ rematchSource: RematchSourceResult }>(
         REMATCH_SOURCE_MUTATION,
         {
           sourceType: "torrent",
-          sourceId: torrent.infoHash,
+          sourceId: torrent.InfoHash,
           libraryId: null, // Match against all libraries
         },
       )
@@ -561,7 +546,7 @@ function DownloadsPage() {
         successCount++;
         setTorrents((prev) =>
           prev.map((t) =>
-            t.infoHash === infoHash ? { ...t, state: "paused" } : t,
+            t.InfoHash === infoHash ? { ...t, State: "paused" } : t,
           ),
         );
       }
@@ -588,7 +573,7 @@ function DownloadsPage() {
         successCount++;
         setTorrents((prev) =>
           prev.map((t) =>
-            t.infoHash === infoHash ? { ...t, state: "downloading" } : t,
+            t.InfoHash === infoHash ? { ...t, State: "downloading" } : t,
           ),
         );
       }
@@ -614,7 +599,7 @@ function DownloadsPage() {
         .toPromise();
       if (result.data?.RemoveTorrentByInfoHash?.Success) {
         successCount++;
-        setTorrents((prev) => prev.filter((t) => t.infoHash !== infoHash));
+        setTorrents((prev) => prev.filter((t) => t.InfoHash !== infoHash));
       }
     }
     addToast({

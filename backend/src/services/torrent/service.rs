@@ -20,7 +20,10 @@ use uuid::Uuid;
 
 use crate::db::Database;
 use crate::services::manager::{Service, ServiceHealth};
-use crate::services::torrent::client::{add_torrent_opts, get_info_hash_hex, perform_upnp, TorrentEvent, TorrentFile, TorrentInfo, TorrentServiceConfig, TorrentState, UpnpResult};
+use crate::services::torrent::client::{
+    TorrentEvent, TorrentFile, TorrentInfo, TorrentServiceConfig, TorrentState, UpnpResult,
+    add_torrent_opts, get_info_hash_hex, perform_upnp,
+};
 use crate::services::torrent::database;
 
 // -----------------------------------------------------------------------------
@@ -80,7 +83,10 @@ impl TorrentService {
     /// Subscribe to torrent events (for GraphQL subscriptions).
     pub fn subscribe(&self) -> Option<broadcast::Receiver<TorrentEvent>> {
         // We need sync access to inner; we use try_read and return None if not started
-        self.inner.try_read().ok().and_then(|g| g.as_ref().map(|r| r.event_tx.subscribe()))
+        self.inner
+            .try_read()
+            .ok()
+            .and_then(|g| g.as_ref().map(|r| r.event_tx.subscribe()))
     }
 
     /// Add a torrent from a magnet link.
@@ -106,8 +112,16 @@ impl TorrentService {
                 let stats = handle.stats();
 
                 if let Some(uid) = user_id {
-                    if let Err(e) =
-                        database::create_torrent(db, uid, &info_hash, Some(magnet), &name, &config.download_dir.to_string_lossy(), stats.total_bytes as i64).await
+                    if let Err(e) = database::create_torrent(
+                        db,
+                        uid,
+                        &info_hash,
+                        Some(magnet),
+                        &name,
+                        &config.download_dir.to_string_lossy(),
+                        stats.total_bytes as i64,
+                    )
+                    .await
                     {
                         error!(error = %e, "Failed to persist torrent to database");
                     }
@@ -120,7 +134,9 @@ impl TorrentService {
                 });
                 get_torrent_info_impl(session, config, id).await
             }
-            AddTorrentResponse::AlreadyManaged(id, _) => get_torrent_info_impl(session, config, id).await,
+            AddTorrentResponse::AlreadyManaged(id, _) => {
+                get_torrent_info_impl(session, config, id).await
+            }
             AddTorrentResponse::ListOnly(_) => anyhow::bail!("Torrent was added in list-only mode"),
         }
     }
@@ -131,9 +147,9 @@ impl TorrentService {
             .runtime()
             .await
             .ok_or_else(|| anyhow::anyhow!("torrent service not started"))?;
-        let ids: Vec<usize> =
-            r.session
-                .with_torrents(|iter| iter.map(|(id, _)| id).collect());
+        let ids: Vec<usize> = r
+            .session
+            .with_torrents(|iter| iter.map(|(id, _)| id).collect());
         let mut out = Vec::new();
         for id in ids {
             if let Ok(info) = get_torrent_info_impl(&r.session, &r.config, id).await {
@@ -171,7 +187,10 @@ impl TorrentService {
             .session
             .get(TorrentIdOrHash::Id(id))
             .context("Torrent not found")?;
-        r.session.pause(&handle).await.context("Failed to pause torrent")?;
+        r.session
+            .pause(&handle)
+            .await
+            .context("Failed to pause torrent")?;
         Ok(())
     }
 
@@ -185,7 +204,10 @@ impl TorrentService {
             .session
             .get(TorrentIdOrHash::Id(id))
             .context("Torrent not found")?;
-        r.session.unpause(&handle).await.context("Failed to resume torrent")?;
+        r.session
+            .unpause(&handle)
+            .await
+            .context("Failed to resume torrent")?;
         Ok(())
     }
 
@@ -216,7 +238,10 @@ impl TorrentService {
 
     /// Pause a torrent by info hash (hex string).
     pub async fn pause_by_info_hash(&self, info_hash: &str) -> Result<()> {
-        let r = self.runtime().await.ok_or_else(|| anyhow::anyhow!("torrent service not started"))?;
+        let r = self
+            .runtime()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("torrent service not started"))?;
         let id = r
             .session
             .with_torrents(|iter| {
@@ -233,7 +258,10 @@ impl TorrentService {
 
     /// Resume a torrent by info hash (hex string).
     pub async fn resume_by_info_hash(&self, info_hash: &str) -> Result<()> {
-        let r = self.runtime().await.ok_or_else(|| anyhow::anyhow!("torrent service not started"))?;
+        let r = self
+            .runtime()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("torrent service not started"))?;
         let id = r
             .session
             .with_torrents(|iter| {
@@ -250,7 +278,10 @@ impl TorrentService {
 
     /// Remove a torrent by info hash (hex string), optionally deleting files.
     pub async fn remove_by_info_hash(&self, info_hash: &str, delete_files: bool) -> Result<()> {
-        let r = self.runtime().await.ok_or_else(|| anyhow::anyhow!("torrent service not started"))?;
+        let r = self
+            .runtime()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("torrent service not started"))?;
         let id = r
             .session
             .with_torrents(|iter| {
@@ -307,7 +338,9 @@ impl Service for TorrentService {
 
         info!(path = %config.download_dir.display(), "Using download directory");
 
-        let download_dir_ok = tokio::fs::create_dir_all(&config.download_dir).await.is_ok();
+        let download_dir_ok = tokio::fs::create_dir_all(&config.download_dir)
+            .await
+            .is_ok();
         let effective_download_dir = if download_dir_ok {
             config.download_dir.clone()
         } else {

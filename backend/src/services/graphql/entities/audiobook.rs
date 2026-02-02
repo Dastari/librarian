@@ -3,6 +3,7 @@ use librarian_macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 use super::chapter::Chapter;
+use super::common::AutoDownloadMode;
 
 #[derive(
     GraphQLEntity,
@@ -101,6 +102,13 @@ pub struct Audiobook {
 
     #[graphql(name = "CoverUrl")]
     pub cover_url: Option<String>,
+
+    #[graphql(name = "AutoDownload")]
+    #[filterable(type = "boolean")]
+    pub auto_download: bool,
+
+    #[graphql(name = "AutoDownloadMode")]
+    pub auto_download_mode: AutoDownloadMode,
 
     #[graphql(name = "HasFiles")]
     #[filterable(type = "boolean")]

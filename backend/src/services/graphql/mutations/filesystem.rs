@@ -228,17 +228,26 @@ async fn run_create_directory(
     }
 }
 
-async fn run_delete_files(_ctx: &Context<'_>, input: &DeleteFilesInput) -> Result<FileOperationPayload> {
+async fn run_delete_files(
+    _ctx: &Context<'_>,
+    input: &DeleteFilesInput,
+) -> Result<FileOperationPayload> {
     let _ = input;
     not_configured()
 }
 
-async fn run_copy_files(_ctx: &Context<'_>, input: &CopyFilesInput) -> Result<FileOperationPayload> {
+async fn run_copy_files(
+    _ctx: &Context<'_>,
+    input: &CopyFilesInput,
+) -> Result<FileOperationPayload> {
     let _ = input;
     not_configured()
 }
 
-async fn run_move_files(_ctx: &Context<'_>, input: &MoveFilesInput) -> Result<FileOperationPayload> {
+async fn run_move_files(
+    _ctx: &Context<'_>,
+    input: &MoveFilesInput,
+) -> Result<FileOperationPayload> {
     let _ = input;
     not_configured()
 }

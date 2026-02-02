@@ -1,5 +1,11 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { useState, useEffect, useCallback, useTransition } from "react";
+import { useState } from "react";
+import {
+  useQuery,
+  useMutation,
+  useSubscription,
+  gql,
+} from "../../lib/graphql/client";
 import { Button } from "@heroui/button";
 import { Card, CardBody } from "@heroui/card";
 import { useDisclosure } from "@heroui/modal";
@@ -17,10 +23,7 @@ import {
   LibraryGridCard,
   type CreateLibraryFormInput,
 } from "../../components/library";
-import { graphqlClient } from "../../lib/graphql";
 import {
-  LibraryChangedDocument,
-  CreateLibraryDocument,
   ChangeAction,
   type LibraryConnection,
   type CreateLibraryInput,
@@ -28,10 +31,6 @@ import {
 } from "../../lib/graphql/generated/graphql";
 import { LIBRARIES_WITH_COUNTS_QUERY } from "@/lib/graphql/queries";
 import { useAuth } from "@/hooks/useAuth";
-
-// ============================================================================
-// Route Config
-// ============================================================================
 
 export const Route = createFileRoute("/libraries/")({
   beforeLoad: ({ context, location }) => {
@@ -49,13 +48,32 @@ export const Route = createFileRoute("/libraries/")({
   errorComponent: RouteError,
 });
 
+// GraphQL operations
+const LIBRARIES_QUERY = gql`
+  ${LIBRARIES_WITH_COUNTS_QUERY}
+`;
+
+const CREATE_LIBRARY = gql`
+  mutation CreateLibrary($Input: CreateLibraryInput!) {
+    CreateLibrary(Input: $Input) {
+      Success
+      Error
+    }
+  }
+`;
+
+const LIBRARY_CHANGED_SUBSCRIPTION = gql`
+  subscription LibraryChanged {
+    LibraryChanged {
+      Id
+      Action
+    }
+  }
+`;
 
 function LibrariesPage() {
-  // State
-  const [isPending, startTransition] = useTransition();
-  const [libraries, setLibraries] = useState<Library[]>([]);
-  const [actionLoading, setActionLoading] = useState(false);
   const { user } = useAuth();
+
   // Modal states
   const {
     isOpen: isAddOpen,
@@ -79,74 +97,66 @@ function LibrariesPage() {
     name: string;
   } | null>(null);
 
-  const fetchLibraries = useCallback(async () => {
-    startTransition(async () => {
-      const { data, error } = await graphqlClient
-        .query<{
-          Libraries: LibraryConnection;
-        }>(LIBRARIES_WITH_COUNTS_QUERY, {})
-        .toPromise();
+  // Query libraries
+  const {
+    data: librariesData,
+    previousData: previousLibrariesData,
+    loading: librariesLoading,
+    refetch,
+  } = useQuery<{ Libraries: LibraryConnection }>(LIBRARIES_QUERY, {
+    fetchPolicy: "cache-and-network",
+  });
+  const libraries =
+    (librariesData?.Libraries ?? previousLibrariesData?.Libraries)?.Edges.map(
+      (edge) => edge.Node,
+    ) ?? [];
 
-      if (error) {
-        console.error("Failed to fetch libraries:", error);
-        return;
-      }
-
-      setLibraries(data?.Libraries?.Edges.map((edge) => edge.Node) ?? []);
-    });
-  }, []);
-
-  // Initial fetch
-  useEffect(() => {
-    fetchLibraries();
-  }, [fetchLibraries]);
+  // Create library mutation
+  const [createLibrary, { loading: createLoading }] = useMutation<{
+    CreateLibrary: { Success: boolean; Error: string | null };
+  }>(CREATE_LIBRARY);
 
   // Subscribe to library changes for real-time updates
-  useEffect(() => {
-    const subscription = graphqlClient
-      .subscription(LibraryChangedDocument, {})
-      .subscribe({
-        next: (result) => {
-          const event = result.data?.LibraryChanged;
-          if (!event) return;
+  useSubscription<{ LibraryChanged: { Id: string; Action: ChangeAction } }>(
+    LIBRARY_CHANGED_SUBSCRIPTION,
+    {
+      onData: ({ data }) => {
+        const event = data.data?.LibraryChanged;
+        if (!event) return;
 
-          switch (event.Action) {
-            case ChangeAction.Created:
-            case ChangeAction.Updated:
-              // Refetch to get updated counts
-              fetchLibraries();
-              break;
-            case ChangeAction.Deleted:
-              setLibraries((prev) => prev.filter((lib) => lib.Id !== event.Id));
-              break;
-          }
-        },
-      });
-
-    return () => subscription.unsubscribe();
-  }, [fetchLibraries]);
+        switch (event.Action) {
+          case ChangeAction.Created:
+          case ChangeAction.Updated:
+            // Refetch to get updated counts
+            refetch();
+            break;
+          case ChangeAction.Deleted:
+            // Apollo will automatically update the cache
+            refetch();
+            break;
+        }
+      },
+    },
+  );
 
   // Handlers
   const handleAddLibrary = async (input: CreateLibraryFormInput) => {
     const now = new Date().toISOString();
     const Input: CreateLibraryInput = {
       ...input,
+      Scanning: false,
       UserId: user?.id ?? "",
       CreatedAt: now,
       UpdatedAt: now,
     };
 
     try {
-      setActionLoading(true);
-      const { data, error } = await graphqlClient
-        .mutation(CreateLibraryDocument, { Input })
-        .toPromise();
+      const { data } = await createLibrary({ variables: { Input } });
 
-      if (error || !data?.CreateLibrary.Success) {
+      if (!data?.CreateLibrary.Success) {
         addToast({
           title: "Error",
-          description:
-            data?.CreateLibrary.Error || error?.message || "Unknown error",
+          description: data?.CreateLibrary.Error || "Unknown error",
           color: "danger",
         });
         return;
@@ -159,7 +169,7 @@ function LibrariesPage() {
       });
 
       onAddClose();
-      await fetchLibraries();
+      await refetch();
     } catch (err) {
       console.error("Failed to create library:", err);
       addToast({
@@ -167,8 +177,6 @@ function LibrariesPage() {
         description: "Failed to create library",
         color: "danger",
       });
-    } finally {
-      setActionLoading(false);
     }
   };
 
@@ -218,8 +226,8 @@ function LibrariesPage() {
         stateKey="libraries"
         data={libraries}
         columns={[]}
-        getRowKey={(lib) => lib.Id}
-        isLoading={isPending && libraries.length === 0}
+        getRowKey={(lib: Library) => lib.Id}
+        isLoading={librariesLoading && libraries.length === 0}
         skeletonDelay={300}
         emptyContent={emptyContent}
         // Card view only
@@ -260,7 +268,7 @@ function LibrariesPage() {
         isOpen={isAddOpen}
         onClose={onAddClose}
         onAdd={handleAddLibrary}
-        isLoading={actionLoading}
+        isLoading={createLoading}
       />
 
       <DeleteLibraryModal
@@ -268,7 +276,7 @@ function LibrariesPage() {
         onClose={onDeleteClose}
         libraryId={targetLibrary?.id ?? null}
         libraryName={targetLibrary?.name ?? null}
-        onDeleted={fetchLibraries}
+        onDeleted={refetch}
       />
 
       <ScanLibraryModal

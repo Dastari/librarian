@@ -3,8 +3,7 @@
 // Client
 export { apolloClient, graphqlClient, onGraphQLError } from "./client";
 
-// Codegen node types and Library types (source of truth)
-export type { LibraryNode, ShowNode, ScheduleCacheNode } from "./codegen-nodes";
+// Library types from generated (source of truth)
 export type {
   Library,
   LibraryResult,
@@ -15,6 +14,9 @@ export type {
   BrowseDirectoryEntry,
   BrowseQuickPath,
 } from "./generated/graphql";
+
+// Node types derived from query results (for components that need typed query results)
+export type { LibraryNode, ShowNode, ScheduleCacheNode } from "../../hooks/useDashboardCache";
 
 // Types
 export type {
@@ -328,7 +330,6 @@ export {
   // Movie Mutations
   ADD_MOVIE_MUTATION,
   UPDATE_MOVIE_MUTATION,
-  DELETE_MOVIE_MUTATION,
   REFRESH_MOVIE_MUTATION,
   // Album Mutations
   ADD_ALBUM_MUTATION,
@@ -397,6 +398,7 @@ export {
   ERROR_LOGS_SUBSCRIPTION,
   // Library Subscriptions
   LIBRARY_CHANGED_SUBSCRIPTION,
+  MOVIE_CHANGED_SUBSCRIPTION,
   // Media File Subscriptions
   MEDIA_FILE_UPDATED_SUBSCRIPTION,
   // Filesystem Subscriptions

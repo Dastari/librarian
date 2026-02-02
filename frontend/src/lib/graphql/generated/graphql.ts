@@ -28,6 +28,14 @@ export type Scalars = {
   Float: { input: number; output: number };
 };
 
+/** Input for adding a movie from TMDB */
+export type AddMovieInput = {
+  /** Whether to monitor for releases (enables auto-download) */
+  Monitored?: InputMaybe<Scalars["Boolean"]["input"]>;
+  /** TMDB movie ID */
+  TmdbId: Scalars["Int"]["input"];
+};
+
 /** Input for adding a torrent */
 export type AddTorrentInput = {
   Magnet?: InputMaybe<Scalars["String"]["input"]>;
@@ -45,6 +53,8 @@ export type AddTorrentResult = {
 export type Album = {
   AlbumType?: Maybe<Scalars["String"]["output"]>;
   ArtistId: Scalars["String"]["output"];
+  AutoDownload: Scalars["Boolean"]["output"];
+  AutoDownloadMode: AutoDownloadMode;
   Country?: Maybe<Scalars["String"]["output"]>;
   CoverUrl?: Maybe<Scalars["String"]["output"]>;
   CreatedAt: Scalars["String"]["output"];
@@ -53,6 +63,7 @@ export type Album = {
   HasFiles: Scalars["Boolean"]["output"];
   Id: Scalars["String"]["output"];
   Label?: Maybe<Scalars["String"]["output"]>;
+  Library?: Maybe<Library>;
   LibraryId: Scalars["String"]["output"];
   MusicbrainzId?: Maybe<Scalars["String"]["output"]>;
   Name: Scalars["String"]["output"];
@@ -62,8 +73,6 @@ export type Album = {
   SortName?: Maybe<Scalars["String"]["output"]>;
   TotalDurationSecs?: Maybe<Scalars["Int"]["output"]>;
   TrackCount?: Maybe<Scalars["Int"]["output"]>;
-  /** Tracks in this album */
-  Tracks: Array<Track>;
   UpdatedAt: Scalars["String"]["output"];
   UserId: Scalars["String"]["output"];
   Year?: Maybe<Scalars["Int"]["output"]>;
@@ -114,6 +123,7 @@ export type AlbumWhereInput = {
   /** Logical AND of conditions */
   And?: InputMaybe<Array<AlbumWhereInput>>;
   ArtistId?: InputMaybe<StringFilter>;
+  AutoDownload?: InputMaybe<BoolFilter>;
   Country?: InputMaybe<StringFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   DiscCount?: InputMaybe<IntFilter>;
@@ -506,6 +516,8 @@ export type Audiobook = {
   Asin?: Maybe<Scalars["String"]["output"]>;
   AudibleId?: Maybe<Scalars["String"]["output"]>;
   AuthorName?: Maybe<Scalars["String"]["output"]>;
+  AutoDownload: Scalars["Boolean"]["output"];
+  AutoDownloadMode: AutoDownloadMode;
   ChapterCount?: Maybe<Scalars["Int"]["output"]>;
   /**
    * Get related #graphql_name with optional filtering, sorting, and pagination.
@@ -591,6 +603,7 @@ export type AudiobookWhereInput = {
   Asin?: InputMaybe<StringFilter>;
   AudibleId?: InputMaybe<StringFilter>;
   AuthorName?: InputMaybe<StringFilter>;
+  AutoDownload?: InputMaybe<BoolFilter>;
   ChapterCount?: InputMaybe<IntFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   GoodreadsId?: InputMaybe<StringFilter>;
@@ -642,6 +655,18 @@ export type AuthenticatedUser = {
   Username: Scalars["String"]["output"];
 };
 
+/** Auto-download mode for media items */
+export const AutoDownloadMode = {
+  /** Auto-download all items */
+  ALL: "ALL",
+  /** Do not auto-download */
+  NONE: "NONE",
+  /** Auto-download only wanted items */
+  WANTED: "WANTED",
+} as const;
+
+export type AutoDownloadMode =
+  (typeof AutoDownloadMode)[keyof typeof AutoDownloadMode];
 /** Filter for boolean fields */
 export type BoolFilter = {
   /** Equals */
@@ -919,8 +944,15 @@ export type Chapter = {
   Id: Scalars["String"]["output"];
   MediaFileId?: Maybe<Scalars["String"]["output"]>;
   StartTimeSecs: Scalars["Float"]["output"];
+  /**
+   * Computed status based on playback, file availability, and download state
+   *
+   * Returns one of: PLAYING, PAUSED, AVAILABLE, DOWNLOADING, WANTED, MISSING
+   */
+  Status: ContentStatus;
   Title?: Maybe<Scalars["String"]["output"]>;
   UpdatedAt: Scalars["String"]["output"];
+  Wanted: Scalars["Boolean"]["output"];
 };
 
 /** Event for #struct_name changes (subscriptions) */
@@ -977,8 +1009,26 @@ export type ChapterWhereInput = {
   StartTimeSecs?: InputMaybe<IntFilter>;
   Title?: InputMaybe<StringFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
+  Wanted?: InputMaybe<BoolFilter>;
 };
 
+/** Content status for playable media items (episodes, movies, tracks, chapters) */
+export const ContentStatus = {
+  /** Content file is available (has media file) */
+  AVAILABLE: "AVAILABLE",
+  /** Content is currently downloading */
+  DOWNLOADING: "DOWNLOADING",
+  /** Content is missing (no file, not wanted) */
+  MISSING: "MISSING",
+  /** Content playback is paused */
+  PAUSED: "PAUSED",
+  /** Content is currently being played */
+  PLAYING: "PLAYING",
+  /** Content is wanted but not yet downloaded */
+  WANTED: "WANTED",
+} as const;
+
+export type ContentStatus = (typeof ContentStatus)[keyof typeof ContentStatus];
 export type CopyFilesInput = {
   Destination: Scalars["String"]["input"];
   Overwrite?: InputMaybe<Scalars["Boolean"]["input"]>;
@@ -989,6 +1039,8 @@ export type CopyFilesInput = {
 export type CreateAlbumInput = {
   AlbumType?: InputMaybe<Scalars["String"]["input"]>;
   ArtistId: Scalars["String"]["input"];
+  AutoDownload: Scalars["Boolean"]["input"];
+  AutoDownloadMode: AutoDownloadMode;
   Country?: InputMaybe<Scalars["String"]["input"]>;
   CoverUrl?: InputMaybe<Scalars["String"]["input"]>;
   CreatedAt: Scalars["String"]["input"];
@@ -1088,6 +1140,8 @@ export type CreateAudiobookInput = {
   Asin?: InputMaybe<Scalars["String"]["input"]>;
   AudibleId?: InputMaybe<Scalars["String"]["input"]>;
   AuthorName?: InputMaybe<Scalars["String"]["input"]>;
+  AutoDownload: Scalars["Boolean"]["input"];
+  AutoDownloadMode: AutoDownloadMode;
   ChapterCount?: InputMaybe<Scalars["Int"]["input"]>;
   CoverUrl?: InputMaybe<Scalars["String"]["input"]>;
   CreatedAt: Scalars["String"]["input"];
@@ -1164,6 +1218,7 @@ export type CreateChapterInput = {
   StartTimeSecs: Scalars["Float"]["input"];
   Title?: InputMaybe<Scalars["String"]["input"]>;
   UpdatedAt: Scalars["String"]["input"];
+  Wanted: Scalars["Boolean"]["input"];
 };
 
 export type CreateDirectoryInput = {
@@ -1186,6 +1241,7 @@ export type CreateEpisodeInput = {
   TvdbId?: InputMaybe<Scalars["Int"]["input"]>;
   TvmazeId?: InputMaybe<Scalars["Int"]["input"]>;
   UpdatedAt: Scalars["String"]["input"];
+  Wanted: Scalars["Boolean"]["input"];
 };
 
 /** Input for creating a new #struct_name */
@@ -1255,9 +1311,7 @@ export type CreateInviteTokenInput = {
 
 /** Input for creating a new #struct_name */
 export type CreateLibraryInput = {
-  AutoAddDiscovered: Scalars["Boolean"]["input"];
-  AutoDownload: Scalars["Boolean"]["input"];
-  AutoHunt: Scalars["Boolean"]["input"];
+  AutoOrganize: Scalars["Boolean"]["input"];
   AutoScan: Scalars["Boolean"]["input"];
   Color?: InputMaybe<Scalars["String"]["input"]>;
   CreatedAt: Scalars["String"]["input"];
@@ -1265,6 +1319,7 @@ export type CreateLibraryInput = {
   LastScannedAt?: InputMaybe<Scalars["String"]["input"]>;
   LibraryType: Scalars["String"]["input"];
   Name: Scalars["String"]["input"];
+  NamingPattern: Scalars["String"]["input"];
   Path: Scalars["String"]["input"];
   ScanIntervalMinutes: Scalars["Int"]["input"];
   Scanning: Scalars["Boolean"]["input"];
@@ -1310,7 +1365,6 @@ export type CreateMediaFileInput = {
 
 /** Input for creating a new #struct_name */
 export type CreateMovieInput = {
-  BackdropUrl?: InputMaybe<Scalars["String"]["input"]>;
   CastNames: Array<Scalars["String"]["input"]>;
   Certification?: InputMaybe<Scalars["String"]["input"]>;
   CollectionId?: InputMaybe<Scalars["Int"]["input"]>;
@@ -1327,7 +1381,6 @@ export type CreateMovieInput = {
   Monitored: Scalars["Boolean"]["input"];
   OriginalTitle?: InputMaybe<Scalars["String"]["input"]>;
   Overview?: InputMaybe<Scalars["String"]["input"]>;
-  PosterUrl?: InputMaybe<Scalars["String"]["input"]>;
   ProductionCountries: Array<Scalars["String"]["input"]>;
   ReleaseDate?: InputMaybe<Scalars["String"]["input"]>;
   Runtime?: InputMaybe<Scalars["Int"]["input"]>;
@@ -1529,25 +1582,21 @@ export type CreateScheduleSyncStateInput = {
 
 /** Input for creating a new #struct_name */
 export type CreateShowInput = {
+  AutoDownload: Scalars["Boolean"]["input"];
+  AutoDownloadMode: AutoDownloadMode;
   BackdropUrl?: InputMaybe<Scalars["String"]["input"]>;
   ContentRating?: InputMaybe<Scalars["String"]["input"]>;
   CreatedAt: Scalars["String"]["input"];
-  EpisodeCount?: InputMaybe<Scalars["Int"]["input"]>;
-  EpisodeFileCount?: InputMaybe<Scalars["Int"]["input"]>;
   Genres: Array<Scalars["String"]["input"]>;
   ImdbId?: InputMaybe<Scalars["String"]["input"]>;
   LibraryId: Scalars["String"]["input"];
-  MonitorType: Scalars["String"]["input"];
-  Monitored: Scalars["Boolean"]["input"];
   Name: Scalars["String"]["input"];
   Network?: InputMaybe<Scalars["String"]["input"]>;
   Overview?: InputMaybe<Scalars["String"]["input"]>;
   Path?: InputMaybe<Scalars["String"]["input"]>;
   PosterUrl?: InputMaybe<Scalars["String"]["input"]>;
   Runtime?: InputMaybe<Scalars["Int"]["input"]>;
-  SizeBytes?: InputMaybe<Scalars["Int"]["input"]>;
   SortName?: InputMaybe<Scalars["String"]["input"]>;
-  Status?: InputMaybe<Scalars["String"]["input"]>;
   TmdbId?: InputMaybe<Scalars["Int"]["input"]>;
   TvdbId?: InputMaybe<Scalars["Int"]["input"]>;
   TvmazeId?: InputMaybe<Scalars["Int"]["input"]>;
@@ -1652,6 +1701,7 @@ export type CreateTrackInput = {
   Title: Scalars["String"]["input"];
   TrackNumber: Scalars["Int"]["input"];
   UpdatedAt: Scalars["String"]["input"];
+  Wanted: Scalars["Boolean"]["input"];
 };
 
 /** Input for creating a new #struct_name */
@@ -2087,11 +2137,18 @@ export type Episode = {
   Runtime?: Maybe<Scalars["Int"]["output"]>;
   Season: Scalars["Int"]["output"];
   ShowId: Scalars["String"]["output"];
+  /**
+   * Computed status based on playback, file availability, and download state
+   *
+   * Returns one of: PLAYING, PAUSED, AVAILABLE, DOWNLOADING, WANTED, MISSING
+   */
+  Status: ContentStatus;
   Title?: Maybe<Scalars["String"]["output"]>;
   TmdbId?: Maybe<Scalars["Int"]["output"]>;
   TvdbId?: Maybe<Scalars["Int"]["output"]>;
   TvmazeId?: Maybe<Scalars["Int"]["output"]>;
   UpdatedAt: Scalars["String"]["output"];
+  Wanted: Scalars["Boolean"]["output"];
 };
 
 /** Event for #struct_name changes (subscriptions) */
@@ -2154,6 +2211,7 @@ export type EpisodeWhereInput = {
   TvdbId?: InputMaybe<IntFilter>;
   TvmazeId?: InputMaybe<IntFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
+  Wanted?: InputMaybe<BoolFilter>;
 };
 
 export type FileOperationPayload = {
@@ -2510,9 +2568,7 @@ export type Library = {
    * database query for full SQL support.
    */
   Audiobooks: AudiobookConnection;
-  AutoAddDiscovered: Scalars["Boolean"]["output"];
-  AutoDownload: Scalars["Boolean"]["output"];
-  AutoHunt: Scalars["Boolean"]["output"];
+  AutoOrganize: Scalars["Boolean"]["output"];
   AutoScan: Scalars["Boolean"]["output"];
   Color?: Maybe<Scalars["String"]["output"]>;
   CreatedAt: Scalars["String"]["output"];
@@ -2539,6 +2595,7 @@ export type Library = {
    */
   Movies: MovieConnection;
   Name: Scalars["String"]["output"];
+  NamingPattern: Scalars["String"]["output"];
   Path: Scalars["String"]["output"];
   ScanIntervalMinutes: Scalars["Int"]["output"];
   Scanning: Scalars["Boolean"]["output"];
@@ -2658,15 +2715,14 @@ export type LibraryResult = {
 export type LibraryWhereInput = {
   /** Logical AND of conditions */
   And?: InputMaybe<Array<LibraryWhereInput>>;
-  AutoAddDiscovered?: InputMaybe<BoolFilter>;
-  AutoDownload?: InputMaybe<BoolFilter>;
-  AutoHunt?: InputMaybe<BoolFilter>;
+  AutoOrganize?: InputMaybe<BoolFilter>;
   AutoScan?: InputMaybe<BoolFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   Id?: InputMaybe<StringFilter>;
   LastScannedAt?: InputMaybe<DateFilter>;
   LibraryType?: InputMaybe<StringFilter>;
   Name?: InputMaybe<StringFilter>;
+  NamingPattern?: InputMaybe<StringFilter>;
   /** Logical NOT of condition */
   Not?: InputMaybe<LibraryWhereInput>;
   /** Logical OR of conditions */
@@ -2889,6 +2945,7 @@ export type MoveFilesInput = {
 };
 
 export type Movie = {
+  /** Get backdrop URL, preferring cached version if available */
   BackdropUrl?: Maybe<Scalars["String"]["output"]>;
   CastNames: Array<Scalars["String"]["output"]>;
   Certification?: Maybe<Scalars["String"]["output"]>;
@@ -2903,10 +2960,12 @@ export type Movie = {
   Id: Scalars["String"]["output"];
   ImdbId?: Maybe<Scalars["String"]["output"]>;
   LibraryId: Scalars["String"]["output"];
+  MediaFile?: Maybe<MediaFile>;
   MediaFileId?: Maybe<Scalars["String"]["output"]>;
   Monitored: Scalars["Boolean"]["output"];
   OriginalTitle?: Maybe<Scalars["String"]["output"]>;
   Overview?: Maybe<Scalars["String"]["output"]>;
+  /** Get poster URL, preferring cached version if available */
   PosterUrl?: Maybe<Scalars["String"]["output"]>;
   ProductionCountries: Array<Scalars["String"]["output"]>;
   ReleaseDate?: Maybe<Scalars["String"]["output"]>;
@@ -2947,6 +3006,13 @@ export type MovieEdge = {
   Node: Movie;
 };
 
+/** Result of movie operations */
+export type MovieOperationResult = {
+  Error?: Maybe<Scalars["String"]["output"]>;
+  Movie?: Maybe<Movie>;
+  Success: Scalars["Boolean"]["output"];
+};
+
 export type MovieOrderByInput = {
   CreatedAt?: InputMaybe<SortDirection>;
   ReleaseDate?: InputMaybe<SortDirection>;
@@ -2962,6 +3028,21 @@ export type MovieResult = {
   Error?: Maybe<Scalars["String"]["output"]>;
   Movie?: Maybe<Movie>;
   Success: Scalars["Boolean"]["output"];
+};
+
+/** Movie search result from TMDB */
+export type MovieSearchResult = {
+  BackdropUrl?: Maybe<Scalars["String"]["output"]>;
+  ImdbId?: Maybe<Scalars["String"]["output"]>;
+  OriginalTitle?: Maybe<Scalars["String"]["output"]>;
+  Overview?: Maybe<Scalars["String"]["output"]>;
+  Popularity?: Maybe<Scalars["Float"]["output"]>;
+  PosterUrl?: Maybe<Scalars["String"]["output"]>;
+  Provider: Scalars["String"]["output"];
+  ProviderId: Scalars["Int"]["output"];
+  Title: Scalars["String"]["output"];
+  VoteAverage?: Maybe<Scalars["Float"]["output"]>;
+  Year?: Maybe<Scalars["Int"]["output"]>;
 };
 
 export type MovieWhereInput = {
@@ -2995,6 +3076,8 @@ export type MovieWhereInput = {
 };
 
 export type MutationRoot = {
+  /** Add a movie to a library by fetching metadata from TMDB */
+  AddMovie: MovieOperationResult;
   /** Add a torrent from a magnet link or URL */
   AddTorrent: AddTorrentResult;
   CopyFiles: FileOperationPayload;
@@ -3252,6 +3335,10 @@ export type MutationRoot = {
   /** Pause a torrent */
   PauseTorrent: TorrentActionResult;
   PauseTorrentByInfoHash: TorrentActionResult;
+  /** Recache artwork for all movies (runs in background) */
+  RecacheAllMovieArtwork: Scalars["Int"]["output"];
+  /** Recache artwork for a specific movie */
+  RecacheMovieArtwork: Scalars["Boolean"]["output"];
   RefreshToken: AuthPayload;
   Register: AuthPayload;
   /** Remove a torrent */
@@ -3343,6 +3430,11 @@ export type MutationRoot = {
   UpdateUser: UserResult;
   /** Update an existing #struct_name_str */
   UpdateVideoStream: VideoStreamResult;
+};
+
+export type MutationRootAddMovieArgs = {
+  Input: AddMovieInput;
+  LibraryId: Scalars["String"]["input"];
 };
 
 export type MutationRootAddTorrentArgs = {
@@ -3871,6 +3963,10 @@ export type MutationRootPauseTorrentArgs = {
 
 export type MutationRootPauseTorrentByInfoHashArgs = {
   InfoHash: Scalars["String"]["input"];
+};
+
+export type MutationRootRecacheMovieArtworkArgs = {
+  MovieId: Scalars["String"]["input"];
 };
 
 export type MutationRootRefreshTokenArgs = {
@@ -4664,6 +4760,8 @@ export type QueryRoot = {
   ScheduleSyncState?: Maybe<ScheduleSyncState>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
   ScheduleSyncStates: ScheduleSyncStateConnection;
+  /** Search for movies on TMDB */
+  SearchMovies: Array<MovieSearchResult>;
   /** Get a single #struct_name_str by ID */
   Show?: Maybe<Show>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
@@ -5016,6 +5114,11 @@ export type QueryRootScheduleSyncStatesArgs = {
   OrderBy?: InputMaybe<Array<ScheduleSyncStateOrderByInput>>;
   Page?: InputMaybe<PageInput>;
   Where?: InputMaybe<ScheduleSyncStateWhereInput>;
+};
+
+export type QueryRootSearchMoviesArgs = {
+  Query: Scalars["String"]["input"];
+  Year?: InputMaybe<Scalars["Int"]["input"]>;
 };
 
 export type QueryRootShowArgs = {
@@ -5532,35 +5635,70 @@ export type ScheduleSyncStateWhereInput = {
  * Show entity representing a TV show.
  *
  * The Episodes relation is automatically generated by the GraphQLRelations macro
- * and uses DataLoader for N+1 prevention.
+ * and uses DataLoader for N+1 prevention. Query with:
+ * ```graphql
+ * Show {
+ * Episodes(Page: { Limit: 10 }) {
+ * Edges { Node { ... } }
+ * PageInfo { TotalCount }
+ * }
+ * }
+ * ```
  */
 export type Show = {
+  AutoDownload: Scalars["Boolean"]["output"];
+  AutoDownloadMode: AutoDownloadMode;
   BackdropUrl?: Maybe<Scalars["String"]["output"]>;
   ContentRating?: Maybe<Scalars["String"]["output"]>;
   CreatedAt: Scalars["String"]["output"];
-  EpisodeCount?: Maybe<Scalars["Int"]["output"]>;
-  EpisodeFileCount?: Maybe<Scalars["Int"]["output"]>;
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  Episodes: EpisodeConnection;
   Genres: Array<Scalars["String"]["output"]>;
   Id: Scalars["String"]["output"];
   ImdbId?: Maybe<Scalars["String"]["output"]>;
+  /** Get related #graphql_name */
+  Library?: Maybe<Library>;
   LibraryId: Scalars["String"]["output"];
-  MonitorType: Scalars["String"]["output"];
-  Monitored: Scalars["Boolean"]["output"];
   Name: Scalars["String"]["output"];
   Network?: Maybe<Scalars["String"]["output"]>;
   Overview?: Maybe<Scalars["String"]["output"]>;
   Path?: Maybe<Scalars["String"]["output"]>;
   PosterUrl?: Maybe<Scalars["String"]["output"]>;
   Runtime?: Maybe<Scalars["Int"]["output"]>;
-  SizeBytes?: Maybe<Scalars["Int"]["output"]>;
   SortName?: Maybe<Scalars["String"]["output"]>;
-  Status?: Maybe<Scalars["String"]["output"]>;
   TmdbId?: Maybe<Scalars["Int"]["output"]>;
   TvdbId?: Maybe<Scalars["Int"]["output"]>;
   TvmazeId?: Maybe<Scalars["Int"]["output"]>;
   UpdatedAt: Scalars["String"]["output"];
   UserId: Scalars["String"]["output"];
   Year?: Maybe<Scalars["Int"]["output"]>;
+};
+
+/**
+ * Show entity representing a TV show.
+ *
+ * The Episodes relation is automatically generated by the GraphQLRelations macro
+ * and uses DataLoader for N+1 prevention. Query with:
+ * ```graphql
+ * Show {
+ * Episodes(Page: { Limit: 10 }) {
+ * Edges { Node { ... } }
+ * PageInfo { TotalCount }
+ * }
+ * }
+ * ```
+ */
+export type ShowEpisodesArgs = {
+  OrderBy?: InputMaybe<EpisodeOrderByInput>;
+  Page?: InputMaybe<PageInput>;
+  Where?: InputMaybe<EpisodeWhereInput>;
 };
 
 /** Event for #struct_name changes (subscriptions) */
@@ -5588,9 +5726,7 @@ export type ShowEdge = {
 
 export type ShowOrderByInput = {
   CreatedAt?: InputMaybe<SortDirection>;
-  EpisodeCount?: InputMaybe<SortDirection>;
   Name?: InputMaybe<SortDirection>;
-  SizeBytes?: InputMaybe<SortDirection>;
   SortName?: InputMaybe<SortDirection>;
   UpdatedAt?: InputMaybe<SortDirection>;
   Year?: InputMaybe<SortDirection>;
@@ -5606,15 +5742,12 @@ export type ShowResult = {
 export type ShowWhereInput = {
   /** Logical AND of conditions */
   And?: InputMaybe<Array<ShowWhereInput>>;
+  AutoDownload?: InputMaybe<BoolFilter>;
   ContentRating?: InputMaybe<StringFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
-  EpisodeCount?: InputMaybe<IntFilter>;
-  EpisodeFileCount?: InputMaybe<IntFilter>;
   Id?: InputMaybe<StringFilter>;
   ImdbId?: InputMaybe<StringFilter>;
   LibraryId?: InputMaybe<StringFilter>;
-  MonitorType?: InputMaybe<StringFilter>;
-  Monitored?: InputMaybe<BoolFilter>;
   Name?: InputMaybe<StringFilter>;
   Network?: InputMaybe<StringFilter>;
   /** Logical NOT of condition */
@@ -5622,8 +5755,6 @@ export type ShowWhereInput = {
   /** Logical OR of conditions */
   Or?: InputMaybe<Array<ShowWhereInput>>;
   Runtime?: InputMaybe<IntFilter>;
-  SizeBytes?: InputMaybe<IntFilter>;
-  Status?: InputMaybe<StringFilter>;
   TmdbId?: InputMaybe<IntFilter>;
   TvdbId?: InputMaybe<IntFilter>;
   TvmazeId?: InputMaybe<IntFilter>;
@@ -6336,13 +6467,18 @@ export type Track = {
   Id: Scalars["String"]["output"];
   Isrc?: Maybe<Scalars["String"]["output"]>;
   LibraryId: Scalars["String"]["output"];
-  /** Get related #graphql_name */
-  MediaFile?: Maybe<MediaFile>;
   MediaFileId?: Maybe<Scalars["String"]["output"]>;
   MusicbrainzId?: Maybe<Scalars["String"]["output"]>;
+  /**
+   * Computed status based on playback, file availability, and download state
+   *
+   * Returns one of: PLAYING, PAUSED, AVAILABLE, DOWNLOADING, WANTED, MISSING
+   */
+  Status: ContentStatus;
   Title: Scalars["String"]["output"];
   TrackNumber: Scalars["Int"]["output"];
   UpdatedAt: Scalars["String"]["output"];
+  Wanted: Scalars["Boolean"]["output"];
 };
 
 /** Event for #struct_name changes (subscriptions) */
@@ -6406,12 +6542,15 @@ export type TrackWhereInput = {
   Title?: InputMaybe<StringFilter>;
   TrackNumber?: InputMaybe<IntFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
+  Wanted?: InputMaybe<BoolFilter>;
 };
 
 /** Input for updating an existing #struct_name */
 export type UpdateAlbumInput = {
   AlbumType?: InputMaybe<Scalars["String"]["input"]>;
   ArtistId?: InputMaybe<Scalars["String"]["input"]>;
+  AutoDownload?: InputMaybe<Scalars["Boolean"]["input"]>;
+  AutoDownloadMode?: InputMaybe<AutoDownloadMode>;
   Country?: InputMaybe<Scalars["String"]["input"]>;
   CoverUrl?: InputMaybe<Scalars["String"]["input"]>;
   DiscCount?: InputMaybe<Scalars["Int"]["input"]>;
@@ -6501,6 +6640,8 @@ export type UpdateAudiobookInput = {
   Asin?: InputMaybe<Scalars["String"]["input"]>;
   AudibleId?: InputMaybe<Scalars["String"]["input"]>;
   AuthorName?: InputMaybe<Scalars["String"]["input"]>;
+  AutoDownload?: InputMaybe<Scalars["Boolean"]["input"]>;
+  AutoDownloadMode?: InputMaybe<AutoDownloadMode>;
   ChapterCount?: InputMaybe<Scalars["Int"]["input"]>;
   CoverUrl?: InputMaybe<Scalars["String"]["input"]>;
   Description?: InputMaybe<Scalars["String"]["input"]>;
@@ -6567,6 +6708,7 @@ export type UpdateChapterInput = {
   MediaFileId?: InputMaybe<Scalars["String"]["input"]>;
   StartTimeSecs?: InputMaybe<Scalars["Float"]["input"]>;
   Title?: InputMaybe<Scalars["String"]["input"]>;
+  Wanted?: InputMaybe<Scalars["Boolean"]["input"]>;
 };
 
 /** Input for updating an existing #struct_name */
@@ -6583,6 +6725,7 @@ export type UpdateEpisodeInput = {
   TmdbId?: InputMaybe<Scalars["Int"]["input"]>;
   TvdbId?: InputMaybe<Scalars["Int"]["input"]>;
   TvmazeId?: InputMaybe<Scalars["Int"]["input"]>;
+  Wanted?: InputMaybe<Scalars["Boolean"]["input"]>;
 };
 
 /** Input for updating an existing #struct_name */
@@ -6646,15 +6789,14 @@ export type UpdateInviteTokenInput = {
 
 /** Input for updating an existing #struct_name */
 export type UpdateLibraryInput = {
-  AutoAddDiscovered?: InputMaybe<Scalars["Boolean"]["input"]>;
-  AutoDownload?: InputMaybe<Scalars["Boolean"]["input"]>;
-  AutoHunt?: InputMaybe<Scalars["Boolean"]["input"]>;
+  AutoOrganize?: InputMaybe<Scalars["Boolean"]["input"]>;
   AutoScan?: InputMaybe<Scalars["Boolean"]["input"]>;
   Color?: InputMaybe<Scalars["String"]["input"]>;
   Icon?: InputMaybe<Scalars["String"]["input"]>;
   LastScannedAt?: InputMaybe<Scalars["String"]["input"]>;
   LibraryType?: InputMaybe<Scalars["String"]["input"]>;
   Name?: InputMaybe<Scalars["String"]["input"]>;
+  NamingPattern?: InputMaybe<Scalars["String"]["input"]>;
   Path?: InputMaybe<Scalars["String"]["input"]>;
   ScanIntervalMinutes?: InputMaybe<Scalars["Int"]["input"]>;
   Scanning?: InputMaybe<Scalars["Boolean"]["input"]>;
@@ -6698,7 +6840,6 @@ export type UpdateMediaFileInput = {
 
 /** Input for updating an existing #struct_name */
 export type UpdateMovieInput = {
-  BackdropUrl?: InputMaybe<Scalars["String"]["input"]>;
   CastNames?: InputMaybe<Array<Scalars["String"]["input"]>>;
   Certification?: InputMaybe<Scalars["String"]["input"]>;
   CollectionId?: InputMaybe<Scalars["Int"]["input"]>;
@@ -6714,7 +6855,6 @@ export type UpdateMovieInput = {
   Monitored?: InputMaybe<Scalars["Boolean"]["input"]>;
   OriginalTitle?: InputMaybe<Scalars["String"]["input"]>;
   Overview?: InputMaybe<Scalars["String"]["input"]>;
-  PosterUrl?: InputMaybe<Scalars["String"]["input"]>;
   ProductionCountries?: InputMaybe<Array<Scalars["String"]["input"]>>;
   ReleaseDate?: InputMaybe<Scalars["String"]["input"]>;
   Runtime?: InputMaybe<Scalars["Int"]["input"]>;
@@ -6898,24 +7038,20 @@ export type UpdateScheduleSyncStateInput = {
 
 /** Input for updating an existing #struct_name */
 export type UpdateShowInput = {
+  AutoDownload?: InputMaybe<Scalars["Boolean"]["input"]>;
+  AutoDownloadMode?: InputMaybe<AutoDownloadMode>;
   BackdropUrl?: InputMaybe<Scalars["String"]["input"]>;
   ContentRating?: InputMaybe<Scalars["String"]["input"]>;
-  EpisodeCount?: InputMaybe<Scalars["Int"]["input"]>;
-  EpisodeFileCount?: InputMaybe<Scalars["Int"]["input"]>;
   Genres?: InputMaybe<Array<Scalars["String"]["input"]>>;
   ImdbId?: InputMaybe<Scalars["String"]["input"]>;
   LibraryId?: InputMaybe<Scalars["String"]["input"]>;
-  MonitorType?: InputMaybe<Scalars["String"]["input"]>;
-  Monitored?: InputMaybe<Scalars["Boolean"]["input"]>;
   Name?: InputMaybe<Scalars["String"]["input"]>;
   Network?: InputMaybe<Scalars["String"]["input"]>;
   Overview?: InputMaybe<Scalars["String"]["input"]>;
   Path?: InputMaybe<Scalars["String"]["input"]>;
   PosterUrl?: InputMaybe<Scalars["String"]["input"]>;
   Runtime?: InputMaybe<Scalars["Int"]["input"]>;
-  SizeBytes?: InputMaybe<Scalars["Int"]["input"]>;
   SortName?: InputMaybe<Scalars["String"]["input"]>;
-  Status?: InputMaybe<Scalars["String"]["input"]>;
   TmdbId?: InputMaybe<Scalars["Int"]["input"]>;
   TvdbId?: InputMaybe<Scalars["Int"]["input"]>;
   TvmazeId?: InputMaybe<Scalars["Int"]["input"]>;
@@ -7010,6 +7146,7 @@ export type UpdateTrackInput = {
   MusicbrainzId?: InputMaybe<Scalars["String"]["input"]>;
   Title?: InputMaybe<Scalars["String"]["input"]>;
   TrackNumber?: InputMaybe<Scalars["Int"]["input"]>;
+  Wanted?: InputMaybe<Scalars["Boolean"]["input"]>;
 };
 
 /** Input for updating an existing #struct_name */
@@ -7642,6 +7779,7 @@ export type CastSettingsQuery = {
 export type DashboardShowsQueryVariables = Exact<{
   Where?: InputMaybe<ShowWhereInput>;
   Page?: InputMaybe<PageInput>;
+  OrderBy?: InputMaybe<Array<ShowOrderByInput> | ShowOrderByInput>;
 }>;
 
 export type DashboardShowsQuery = {
@@ -7654,7 +7792,6 @@ export type DashboardShowsQuery = {
         Name: string;
         SortName?: string | null;
         Year?: number | null;
-        Status?: string | null;
         TvmazeId?: number | null;
         TmdbId?: number | null;
         TvdbId?: number | null;
@@ -7664,13 +7801,9 @@ export type DashboardShowsQuery = {
         Runtime?: number | null;
         PosterUrl?: string | null;
         BackdropUrl?: string | null;
-        Monitored: boolean;
-        MonitorType: string;
         Path?: string | null;
-        EpisodeCount?: number | null;
-        EpisodeFileCount?: number | null;
-        SizeBytes?: number | null;
         Genres: Array<string>;
+        CreatedAt: string;
       };
     }>;
     PageInfo: { TotalCount?: number | null };
@@ -7759,9 +7892,6 @@ export type LibrariesQuery = {
         AutoScan: boolean;
         ScanIntervalMinutes: number;
         WatchForChanges: boolean;
-        AutoAddDiscovered: boolean;
-        AutoDownload: boolean;
-        AutoHunt: boolean;
         Scanning: boolean;
         LastScannedAt?: string | null;
         CreatedAt: string;
@@ -7794,9 +7924,6 @@ export type LibraryChangedSubscription = {
       AutoScan: boolean;
       ScanIntervalMinutes: number;
       WatchForChanges: boolean;
-      AutoAddDiscovered: boolean;
-      AutoDownload: boolean;
-      AutoHunt: boolean;
       Scanning: boolean;
       LastScannedAt?: string | null;
       CreatedAt: string;
@@ -9388,6 +9515,23 @@ export const DashboardShowsDocument = {
             name: { kind: "Name", value: "PageInput" },
           },
         },
+        {
+          kind: "VariableDefinition",
+          variable: {
+            kind: "Variable",
+            name: { kind: "Name", value: "OrderBy" },
+          },
+          type: {
+            kind: "ListType",
+            type: {
+              kind: "NonNullType",
+              type: {
+                kind: "NamedType",
+                name: { kind: "Name", value: "ShowOrderByInput" },
+              },
+            },
+          },
+        },
       ],
       selectionSet: {
         kind: "SelectionSet",
@@ -9410,6 +9554,14 @@ export const DashboardShowsDocument = {
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
+                },
+              },
+              {
+                kind: "Argument",
+                name: { kind: "Name", value: "OrderBy" },
+                value: {
+                  kind: "Variable",
+                  name: { kind: "Name", value: "OrderBy" },
                 },
               },
             ],
@@ -9450,10 +9602,6 @@ export const DashboardShowsDocument = {
                             },
                             {
                               kind: "Field",
-                              name: { kind: "Name", value: "Status" },
-                            },
-                            {
-                              kind: "Field",
                               name: { kind: "Name", value: "TvmazeId" },
                             },
                             {
@@ -9490,31 +9638,15 @@ export const DashboardShowsDocument = {
                             },
                             {
                               kind: "Field",
-                              name: { kind: "Name", value: "Monitored" },
-                            },
-                            {
-                              kind: "Field",
-                              name: { kind: "Name", value: "MonitorType" },
-                            },
-                            {
-                              kind: "Field",
                               name: { kind: "Name", value: "Path" },
                             },
                             {
                               kind: "Field",
-                              name: { kind: "Name", value: "EpisodeCount" },
-                            },
-                            {
-                              kind: "Field",
-                              name: { kind: "Name", value: "EpisodeFileCount" },
-                            },
-                            {
-                              kind: "Field",
-                              name: { kind: "Name", value: "SizeBytes" },
-                            },
-                            {
-                              kind: "Field",
                               name: { kind: "Name", value: "Genres" },
+                            },
+                            {
+                              kind: "Field",
+                              name: { kind: "Name", value: "CreatedAt" },
                             },
                           ],
                         },
@@ -9979,21 +10111,6 @@ export const LibrariesDocument = {
                             },
                             {
                               kind: "Field",
-                              name: {
-                                kind: "Name",
-                                value: "AutoAddDiscovered",
-                              },
-                            },
-                            {
-                              kind: "Field",
-                              name: { kind: "Name", value: "AutoDownload" },
-                            },
-                            {
-                              kind: "Field",
-                              name: { kind: "Name", value: "AutoHunt" },
-                            },
-                            {
-                              kind: "Field",
                               name: { kind: "Name", value: "Scanning" },
                             },
                             {
@@ -10210,18 +10327,6 @@ export const LibraryChangedDocument = {
                       {
                         kind: "Field",
                         name: { kind: "Name", value: "WatchForChanges" },
-                      },
-                      {
-                        kind: "Field",
-                        name: { kind: "Name", value: "AutoAddDiscovered" },
-                      },
-                      {
-                        kind: "Field",
-                        name: { kind: "Name", value: "AutoDownload" },
-                      },
-                      {
-                        kind: "Field",
-                        name: { kind: "Name", value: "AutoHunt" },
                       },
                       {
                         kind: "Field",

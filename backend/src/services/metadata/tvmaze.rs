@@ -13,7 +13,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use super::rate_limiter::{RateLimitedClient, RetryConfig, retry_async};
+use crate::services::rate_limiter::{RateLimitedClient, RetryConfig, retry_async};
 
 /// TVMaze API client with rate limiting and retry logic
 pub struct TvMazeClient {

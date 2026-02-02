@@ -27,7 +27,6 @@ export {
 export { QualityBadge } from './QualityBadge'
 export { 
   AutoDownloadBadge,
-  AutoHuntBadge,
   FileOrganizationBadge,
   MonitoredBadge,
   QualityFilterBadge,

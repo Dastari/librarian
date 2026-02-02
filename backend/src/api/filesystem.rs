@@ -295,8 +295,8 @@ async fn create_directory(
     }
 }
 
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/filesystem/browse", get(browse_directory))
-        .route("/filesystem/mkdir", axum::routing::post(create_directory))
-}
+// pub fn router() -> Router<AppState> {
+//     Router::new()
+//         .route("/filesystem/browse", get(browse_directory))
+//         .route("/filesystem/mkdir", axum::routing::post(create_directory))
+// }

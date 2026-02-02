@@ -1,6 +1,7 @@
 import { StrictMode, useState, useEffect, useMemo, useCallback } from "react";
 import ReactDOM from "react-dom/client";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
+import { ApolloProvider } from "@apollo/client/react";
 import { HeroUIProvider } from "@heroui/system";
 import { NuqsAdapter } from "nuqs/adapters/react";
 
@@ -17,7 +18,7 @@ import {
   setTokens,
   clearTokens,
 } from "./lib/auth";
-import { graphqlClient } from "./lib/graphql";
+import { graphqlClient, apolloClient } from "./lib/graphql";
 import {
   RefreshTokenDocument,
   MeDocument,
@@ -283,11 +284,13 @@ if (rootElement && !rootElement.innerHTML) {
   root.render(
     <StrictMode>
       <ErrorBoundary>
-        <HeroUIProvider>
-          <NuqsAdapter>
-            <InnerApp />
-          </NuqsAdapter>
-        </HeroUIProvider>
+        <ApolloProvider client={apolloClient}>
+          <HeroUIProvider>
+            <NuqsAdapter>
+              <InnerApp />
+            </NuqsAdapter>
+          </HeroUIProvider>
+        </ApolloProvider>
       </ErrorBoundary>
     </StrictMode>,
   );

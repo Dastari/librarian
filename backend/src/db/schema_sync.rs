@@ -168,6 +168,20 @@ async fn run_static_migrations(pool: &SqlitePool) -> SchemaSyncResult {
     } else if !existed {
         result.tables_created.push("auth_secrets".to_string());
     }
+
+    // Ensure app_settings.key has a unique index to prevent duplicate rows.
+    // This is critical for INSERT OR IGNORE to work correctly in seeding.
+    const APP_SETTINGS_KEY_INDEX_SQL: &str =
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_app_settings_key ON app_settings(key)";
+    if let Err(e) = sqlx::query(APP_SETTINGS_KEY_INDEX_SQL)
+        .execute(pool)
+        .await
+    {
+        let msg = format!("Failed to create unique index on app_settings.key: {}", e);
+        warn!("{}", msg);
+        result.errors.push(msg);
+    }
+
     result
 }
 
@@ -215,7 +229,10 @@ async fn fix_cast_settings_default_volume_type(pool: &SqlitePool) -> SchemaSyncR
             return result;
         }
     }
-    result.columns_added.push(("cast_settings".to_string(), "default_volume (type fix)".to_string()));
+    result.columns_added.push((
+        "cast_settings".to_string(),
+        "default_volume (type fix)".to_string(),
+    ));
     result
 }
 
@@ -317,8 +334,12 @@ pub async fn sync_all_entity_schemas(pool: &SqlitePool) -> SchemaSyncResult {
 
     // Static migrations (non-entity tables, e.g. auth_secrets)
     let static_result = run_static_migrations(pool).await;
-    total_result.tables_created.extend(static_result.tables_created);
-    total_result.columns_added.extend(static_result.columns_added);
+    total_result
+        .tables_created
+        .extend(static_result.tables_created);
+    total_result
+        .columns_added
+        .extend(static_result.columns_added);
     total_result.errors.extend(static_result.errors);
 
     // Fix cast_settings.default_volume if it was created as INTEGER (Rust expects REAL/f64)

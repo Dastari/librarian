@@ -4,17 +4,19 @@ import { Progress } from '@heroui/progress'
 import { Chip } from '@heroui/chip'
 import { Tooltip } from '@heroui/tooltip'
 import { useDisclosure } from '@heroui/modal'
-import type { Torrent, TorrentState } from '../../lib/graphql'
-import { formatBytes, formatSpeed } from '../../lib/format'
-import { IconPlayerPlay, IconPlayerPause, IconTrash, IconArrowDown, IconArrowUp } from '@tabler/icons-react'
+import type { Torrent } from '../../lib/graphql/generated/graphql'
+import { formatBytes } from '../../lib/format'
+import { IconPlayerPlay, IconPlayerPause, IconTrash } from '@tabler/icons-react'
 import { ConfirmModal } from '../ConfirmModal'
 
 // ============================================================================
 // State Configuration
 // ============================================================================
 
+type TorrentStateKey = 'QUEUED' | 'CHECKING' | 'DOWNLOADING' | 'SEEDING' | 'PAUSED' | 'ERROR'
+
 export const TORRENT_STATE_INFO: Record<
-  TorrentState,
+  TorrentStateKey,
   { label: string; color: 'default' | 'primary' | 'success' | 'warning' | 'danger' | 'secondary' }
 > = {
   QUEUED: { label: 'Queued', color: 'default' },
@@ -31,9 +33,9 @@ export const TORRENT_STATE_INFO: Record<
 
 export interface TorrentCardProps {
   torrent: Torrent
-  onPause: (id: number) => void
-  onResume: (id: number) => void
-  onRemove: (id: number) => void
+  onPause: (infoHash: string) => void
+  onResume: (infoHash: string) => void
+  onRemove: (infoHash: string) => void
   /** Whether to show checkbox space on the left (for alignment with DataTable) */
   showCheckboxSpace?: boolean
 }
@@ -49,10 +51,11 @@ export function TorrentCard({
   onRemove,
   showCheckboxSpace = false,
 }: TorrentCardProps) {
-  const isPaused = torrent.state === 'PAUSED'
-  const isSeeding = torrent.state === 'SEEDING'
-  const isError = torrent.state === 'ERROR'
-  const isDownloading = torrent.state === 'DOWNLOADING'
+  const state = torrent.State.toUpperCase() as TorrentStateKey
+  const isPaused = state === 'PAUSED'
+  const isSeeding = state === 'SEEDING'
+  const isError = state === 'ERROR'
+  const isDownloading = state === 'DOWNLOADING'
 
   const progressColor = isSeeding
     ? 'success'
@@ -62,7 +65,7 @@ export function TorrentCard({
         ? 'warning'
         : 'primary'
 
-  const stateInfo = TORRENT_STATE_INFO[torrent.state] || TORRENT_STATE_INFO.QUEUED
+  const stateInfo = TORRENT_STATE_INFO[state] || TORRENT_STATE_INFO.QUEUED
 
   // Confirm modal state
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
@@ -77,11 +80,11 @@ export function TorrentCard({
       isOpen={isConfirmOpen}
       onClose={onConfirmClose}
       onConfirm={() => {
-        onRemove(torrent.id)
+        onRemove(torrent.InfoHash)
         onConfirmClose()
       }}
       title="Remove Torrent"
-      message={`Are you sure you want to remove "${torrent.name}"?`}
+      message={`Are you sure you want to remove "${torrent.Name}"?`}
       description="This will stop the download but will not delete any downloaded files."
       confirmLabel="Remove"
       confirmColor="danger"
@@ -90,12 +93,12 @@ export function TorrentCard({
       <CardBody>
         <div className="flex items-start justify-between mb-3">
           <div className={`flex-1 min-w-0 mr-4 ${showCheckboxSpace ? 'ml-8' : ''}`}>
-            <h3 className="font-semibold truncate" title={torrent.name}>
-              {torrent.name}
+            <h3 className="font-semibold truncate" title={torrent.Name}>
+              {torrent.Name}
             </h3>
             <div className="flex items-center gap-2 mt-1">
               <span className="text-sm text-default-500">
-                {torrent.sizeFormatted || formatBytes(torrent.size)}
+                {formatBytes(torrent.TotalBytes)}
               </span>
               <Chip size="sm" color={stateInfo.color} variant="flat">
                 {stateInfo.label}
@@ -110,7 +113,7 @@ export function TorrentCard({
                   size="sm"
                   variant="light"
                   color="success"
-                  onPress={() => onResume(torrent.id)}
+                  onPress={() => onResume(torrent.InfoHash)}
                   aria-label="Resume torrent"
                 >
                   <IconPlayerPlay size={16} />
@@ -123,7 +126,7 @@ export function TorrentCard({
                   size="sm"
                   variant="light"
                   color="warning"
-                  onPress={() => onPause(torrent.id)}
+                  onPress={() => onPause(torrent.InfoHash)}
                   aria-label="Pause torrent"
                 >
                   <IconPlayerPause size={16} />
@@ -146,7 +149,7 @@ export function TorrentCard({
         </div>
 
         <Progress
-          value={torrent.progress * 100}
+          value={torrent.Progress * 100}
           color={progressColor}
           size="md"
           className="mb-2"
@@ -154,21 +157,7 @@ export function TorrentCard({
         />
 
         <div className="flex justify-between text-sm text-default-500">
-          <span>{(torrent.progress * 100).toFixed(1)}%</span>
-          <span>
-            {isDownloading && (
-              <span className="flex items-center gap-1">
-                <IconArrowDown size={12} className="text-blue-400" /> {formatSpeed(torrent.downloadSpeed)} • <IconArrowUp size={12} className="text-green-400" /> {formatSpeed(torrent.uploadSpeed)}
-                {torrent.peers > 0 && ` • ${torrent.peers} peers`}
-              </span>
-            )}
-            {isSeeding && (
-              <span className="flex items-center gap-1">
-                <IconArrowUp size={12} className="text-green-400" /> {formatSpeed(torrent.uploadSpeed)}
-                {torrent.peers > 0 && ` • ${torrent.peers} peers`}
-              </span>
-            )}
-          </span>
+          <span>{(torrent.Progress * 100).toFixed(1)}%</span>
         </div>
       </CardBody>
     </Card>

@@ -428,24 +428,24 @@ export const UPDATE_TV_SHOW_MUTATION = `
 // ============================================================================
 
 export const ADD_MOVIE_MUTATION = `
-  mutation AddMovie($libraryId: String!, $input: AddMovieInput!) {
-    addMovie(libraryId: $libraryId, input: $input) {
-      success
-      movie {
-        id
-        libraryId
-        title
-        year
-        tmdbId
-        imdbId
-        status
-        overview
-        posterUrl
-        backdropUrl
-        monitored
-        mediaFileId
+  mutation AddMovie($LibraryId: String!, $Input: AddMovieInput!) {
+    AddMovie(LibraryId: $LibraryId, Input: $Input) {
+      Success
+      Movie {
+        Id
+        LibraryId
+        Title
+        Year
+        TmdbId
+        ImdbId
+        Status
+        Overview
+        PosterUrl
+        BackdropUrl
+        Monitored
+        MediaFileId
       }
-      error
+      Error
     }
   }
 `;
@@ -463,15 +463,6 @@ export const UPDATE_MOVIE_MUTATION = `
         monitored
         mediaFileId
       }
-      error
-    }
-  }
-`;
-
-export const DELETE_MOVIE_MUTATION = `
-  mutation DeleteMovie($id: String!) {
-    deleteMovie(id: $id) {
-      success
       error
     }
   }
