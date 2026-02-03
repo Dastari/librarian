@@ -20,8 +20,8 @@ alwaysApply: true
 - ✅ Use HeroUI components (Button, Card, Input, Modal, etc.)
 - ✅ Use `@tabler/icons-react` for all icons (not emojis or custom SVGs)
 - ✅ Use TanStack Router for routing
-- ✅ Use urql + graphql-ws for GraphQL
-- ✅ Define GraphQL operations in `lib/graphql.ts`
+- ✅ Use Apollo Client for GraphQL (queries, mutations, subscriptions)
+- ✅ Define GraphQL operations in `frontend/src/lib/graphql/`
 - ✅ Use Tailwind CSS for custom styling
 
 ### Backend
@@ -47,7 +47,7 @@ alwaysApply: true
 - ✅ Download via IndexerManager for authenticated private tracker access
 - ✅ Use `process_torrent(force=true)` to re-organize stuck torrents
 
-### Auto-Hunt
+### Auto-Download
 - ✅ Trigger immediately when adding movies/albums/audiobooks
 - ✅ Trigger after library scans complete
 - ✅ Use IndexerManager.download_release() for authenticated downloads
@@ -81,7 +81,7 @@ alwaysApply: true
 - ❌ Use external torrent clients (qBittorrent, etc.)
 - ❌ Download torrents directly from URLs (use IndexerManager for auth)
 - ❌ Compare library_type without lowercasing (DB stores lowercase)
-- ❌ Schedule auto-hunt as independent cron job (it's event-driven)
+- ❌ Schedule auto-download as independent cron job (it's event-driven)
 - ❌ Use separate quality_profiles table (quality settings are per-library)
 
 ### Database
@@ -101,7 +101,7 @@ alwaysApply: true
 | Torrent Processor | `backend/src/services/torrent_processor.rs` |
 | Organizer Service | `backend/src/services/organizer.rs` |
 | Download Monitor Job | `backend/src/jobs/download_monitor.rs` |
-| Auto Hunt Job | `backend/src/jobs/auto_hunt.rs` |
+| Auto Download Job | `backend/src/jobs/auto_download.rs` |
 | Filename Parser | `backend/src/services/filename_parser.rs` |
 | Database Connection | `backend/src/db/mod.rs` |
 | Settings Repository | `backend/src/db/settings.rs` |
@@ -111,7 +111,7 @@ alwaysApply: true
 | Indexer DB Repository | `backend/src/db/indexers.rs` |
 | Frontend GraphQL | `frontend/src/lib/graphql/` |
 | Frontend Routes | `frontend/src/routes/` |
-| Hunt Page | `frontend/src/routes/hunt.tsx` |
+| Download Page | `frontend/src/routes/downloads.tsx` |
 | Search Modal | `frontend/src/components/SearchModal.tsx` |
 | Add to Library Modal | `frontend/src/components/search/AddToLibraryModal.tsx` |
 | Link to Library Modal | `frontend/src/components/downloads/LinkToLibraryModal.tsx` |
@@ -138,6 +138,4 @@ alwaysApply: true
 - Foreign keys: `{table}_id` (e.g., `user_id`)
 
 ### GraphQL
-- `camelCase` for fields (auto-converted from Rust snake_case)
-- `PascalCase` for types
-- `SCREAMING_SNAKE_CASE` for enum values
+- `PascalCase` for fields, types, operations, inputs, and enum values

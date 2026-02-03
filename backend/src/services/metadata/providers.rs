@@ -10,7 +10,10 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 use uuid::Uuid;
 
+use super::musicbrainz::MusicBrainzClient;
+use super::settings::MetadataSettings;
 use super::tmdb::TmdbClient;
+use super::tvmaze::TvMazeClient;
 use crate::db::Database;
 use crate::services::graphql::entities::Movie;
 
@@ -91,6 +94,11 @@ pub struct MetadataServiceConfig {
 pub struct MetadataService {
     /// TMDB client - wrapped in RwLock to allow dynamic reloading when settings change
     tmdb: RwLock<Option<TmdbClient>>,
+    /// TVMaze client - no API key, but cached for reuse
+    tvmaze: RwLock<Option<Arc<TvMazeClient>>>,
+    /// MusicBrainz client - user agent may change via settings
+    musicbrainz: RwLock<Option<Arc<MusicBrainzClient>>>,
+    musicbrainz_user_agent: RwLock<Option<String>>,
     db: Database,
 }
 
@@ -104,6 +112,9 @@ impl MetadataService {
 
         Self {
             tmdb: RwLock::new(tmdb),
+            tvmaze: RwLock::new(None),
+            musicbrainz: RwLock::new(None),
+            musicbrainz_user_agent: RwLock::new(None),
             db,
         }
     }
@@ -121,14 +132,9 @@ impl MetadataService {
         }
 
         // Check database for API key
-        match crate::services::torrent::database::get_setting_string(
-            &self.db,
-            "metadata.tmdb_api_key",
-        )
-        .await
-        {
-            Ok(Some(key)) if !key.is_empty() => true,
-            _ => false,
+        match MetadataSettings::load(&self.db).await {
+            Ok(settings) => settings.tmdb_api_key.is_some(),
+            Err(_) => false,
         }
     }
 
@@ -137,16 +143,8 @@ impl MetadataService {
     /// This ensures that if the user updates the API key via settings,
     /// the next request will use the new key without requiring a server restart.
     async fn get_tmdb_client(&self) -> Result<TmdbClient> {
-        // Always read the current API key from database to pick up changes
-        let tmdb_api_key = crate::services::torrent::database::get_setting_string(
-            &self.db,
-            "metadata.tmdb_api_key",
-        )
-        .await?;
-
-        let tmdb_api_key = tmdb_api_key.filter(|k| !k.is_empty());
-
-        let Some(key) = tmdb_api_key else {
+        let settings = MetadataSettings::load(&self.db).await?;
+        let Some(key) = settings.tmdb_api_key else {
             anyhow::bail!("TMDB API key not configured. Add tmdb_api_key to settings.")
         };
 
@@ -170,6 +168,47 @@ impl MetadataService {
         let mut guard = self.tmdb.write().await;
         *guard = Some(client.clone());
 
+        Ok(client)
+    }
+
+    /// Get TVMaze client (no API key required)
+    pub async fn get_tvmaze_client(&self) -> Result<Arc<TvMazeClient>> {
+        if let Some(client) = self.tvmaze.read().await.as_ref() {
+            return Ok(client.clone());
+        }
+
+        let client = Arc::new(TvMazeClient::new());
+        let mut guard = self.tvmaze.write().await;
+        *guard = Some(client.clone());
+        Ok(client)
+    }
+
+    /// Get MusicBrainz client, honoring the user-agent setting
+    pub async fn get_musicbrainz_client(&self) -> Result<Arc<MusicBrainzClient>> {
+        let settings = MetadataSettings::load(&self.db).await?;
+        let default_user_agent = MusicBrainzClient::default_user_agent();
+        let desired_user_agent = settings
+            .musicbrainz_user_agent
+            .filter(|ua| !ua.trim().is_empty())
+            .unwrap_or(default_user_agent);
+
+        {
+            let client_guard = self.musicbrainz.read().await;
+            let ua_guard = self.musicbrainz_user_agent.read().await;
+            if let (Some(client), Some(current_ua)) = (&*client_guard, &*ua_guard) {
+                if current_ua == &desired_user_agent {
+                    return Ok(client.clone());
+                }
+            }
+        }
+
+        let client = Arc::new(MusicBrainzClient::new_with_user_agent(
+            desired_user_agent.clone(),
+        ));
+        let mut client_guard = self.musicbrainz.write().await;
+        let mut ua_guard = self.musicbrainz_user_agent.write().await;
+        *client_guard = Some(client.clone());
+        *ua_guard = Some(desired_user_agent);
         Ok(client)
     }
 

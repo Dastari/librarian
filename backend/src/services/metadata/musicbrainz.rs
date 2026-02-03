@@ -17,6 +17,7 @@ use uuid::Uuid;
 use crate::services::rate_limiter::{RateLimitConfig, RateLimitedClient, RetryConfig, retry_async};
 
 /// MusicBrainz API client with rate limiting
+#[derive(Clone)]
 pub struct MusicBrainzClient {
     client: Arc<RateLimitedClient>,
     base_url: String,
@@ -195,6 +196,10 @@ pub struct CoverArtThumbnails {
 }
 
 impl MusicBrainzClient {
+    pub fn default_user_agent() -> String {
+        "Librarian/0.1.0 ( https://github.com/librarian )".to_string()
+    }
+
     /// Create a new MusicBrainz client
     pub fn new(app_name: &str, app_version: &str, contact: &str) -> Self {
         Self {
@@ -219,7 +224,32 @@ impl MusicBrainzClient {
 
     /// Create with default values
     pub fn new_default() -> Self {
-        Self::new("Librarian", "0.1.0", "https://github.com/librarian")
+        Self::new_with_user_agent(Self::default_user_agent())
+    }
+
+    /// Create with a fully specified User-Agent value
+    pub fn new_with_user_agent(user_agent: String) -> Self {
+        Self {
+            client: Arc::new(RateLimitedClient::new(
+                "musicbrainz",
+                RateLimitConfig {
+                    requests_per_second: 1,
+                    burst_size: 1,
+                },
+            )),
+            base_url: "https://musicbrainz.org/ws/2".to_string(),
+            user_agent,
+            retry_config: RetryConfig {
+                max_retries: 3,
+                initial_interval: Duration::from_millis(1500),
+                max_interval: Duration::from_secs(10),
+                multiplier: 2.0,
+            },
+        }
+    }
+
+    pub fn user_agent(&self) -> &str {
+        &self.user_agent
     }
 
     /// Search for artists

@@ -27,7 +27,6 @@ librarian/
 ### Backend
 ```bash
 cd backend
-cargo run              # Start development server
 cargo check            # Fast compilation check
 cargo test             # Run tests
 cargo fmt              # Format code
@@ -37,11 +36,13 @@ cargo clippy           # Lint code
 ### Frontend
 ```bash
 cd frontend
-pnpm dev               # Start dev server (port 3000)
 pnpm build             # Production build
 pnpm test              # Run tests
 pnpm exec tsc --noEmit # Type check
 ```
+
+### Assistant Constraint
+- Do **not** run `cargo run` or `pnpm dev` in this environment; the user runs dev servers manually.
 
 ## Code Quality
 

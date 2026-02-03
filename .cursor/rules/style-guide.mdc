@@ -8,9 +8,7 @@ alwaysApply: false
 
 # Style Guide Reference
 
-**Always read `docs/style-guide.md` before implementing new UI components or layouts.**
-
-This rule summarizes key patterns. For full examples and code snippets, consult the style guide.
+**This rule is the UI style guide.** No separate `docs/style-guide.md` exists.
 
 ---
 

@@ -24,7 +24,7 @@
 - Rust uses `rustfmt` defaults; run `cargo fmt` before pushing.
 - Rust modules and functions use `snake_case`; types and traits use `CamelCase`.
 - Frontend components use `PascalCase` filenames (`MediaCard.tsx`); hooks are `useThing.ts`.
-- Tailwind + HeroUI drive UI styling; follow `docs/style-guide.md` for layout and UI patterns.
+- Tailwind + HeroUI drive UI styling; follow `.cursor/rules/style-guide.mdc` for layout and UI patterns.
 
 ## Testing Guidelines
 

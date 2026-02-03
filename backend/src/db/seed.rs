@@ -200,6 +200,12 @@ async fn seed_app_settings(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
             description: "Preferred language for metadata",
             category: "metadata",
         },
+        SettingRow {
+            key: "metadata.musicbrainz_user_agent",
+            value: "",
+            description: "MusicBrainz User-Agent override (optional)",
+            category: "metadata",
+        },
         // Subtitles
         SettingRow {
             key: "subtitles.auto_download",

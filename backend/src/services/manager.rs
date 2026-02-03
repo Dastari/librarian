@@ -11,7 +11,7 @@
 //! which merges all registered route builders. Use this so any service can
 //! contribute endpoints without the HTTP service needing to know about them.
 //!
-//! See `docs/services.md` for how to implement and register services.
+//! See `docs/design.md` (Background Services section) for how to implement and register services.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

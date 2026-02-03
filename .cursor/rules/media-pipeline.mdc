@@ -9,14 +9,14 @@ globs:
   - backend/src/services/torrent_completion_handler.rs
   - backend/src/services/filename_parser.rs
   - backend/src/jobs/download_monitor.rs
-  - backend/src/jobs/auto_hunt.rs
+  - backend/src/jobs/auto_download.rs
   - backend/src/db/pending_file_matches.rs
   - backend/src/db/media_files.rs
 ---
 
 # Media Pipeline Decision Making
 
-When making changes to any media pipeline component, **you MUST read and reference `/docs/media-pipeline-guide.md`** before implementing changes.
+When making changes to any media pipeline component, **you MUST read and reference `/docs/design.md` (Media Pipeline Decision Guide section)** before implementing changes.
 
 ## What is the Media Pipeline?
 
@@ -30,14 +30,13 @@ The media pipeline handles:
 
 ## Before Making Changes
 
-1. **Read the guide first**: `docs/media-pipeline-guide.md` contains all decision points and expected behaviors
-2. **Check if your scenario is covered**: The guide has 36+ documented Q&As for common scenarios
-3. **Check the gaps section**: If your scenario is in the "Gaps" section, you need to make a decision and document it
-4. **Update the guide**: If you add new decision logic, add a corresponding Q&A entry
+1. **Read the guide first**: `docs/design.md` contains all decision points and expected behaviors
+2. **Check if your scenario is covered**: The guide has 50+ documented Q&As for common scenarios
+3. **Update the guide**: If you add new decision logic, add a corresponding Q&A entry in `docs/design.md`
 
 ## Key Principles (Always Follow)
 
-1. **Always COPY, never move** from download folders to library folders
+1. **Source-defined file handling** — each source decides copy vs move and when deletion is allowed (e.g., after seeding)
 2. **Use what exists NOW** rather than waiting for downloads
 3. **Library owns files** - unlinking downloads never affects library files
 4. **No auto-delete** - move conflicts to designated folder instead

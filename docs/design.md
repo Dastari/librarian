@@ -1,958 +1,697 @@
-## Librarian — System Design
+# Librarian — Design Document
 
-### Goals & Scope
+## Purpose
+This document is the **single source of truth** for what Librarian is, what it supports, the architecture it runs on, and the rules agents must follow when building code. It describes the **intended completed system**, not a partial or transitional state.
 
-- **Local‑first, privacy‑preserving media library**
-- **Offline‑first** on a single machine/NAS, with optional remote access
-- **Features**:
-  - **Torrents**: download via native Rust torrent client (librqbit)
-  - **Streaming**: in-browser HLS, plus casting (Chromecast, AirPlay)
-  - **Playback**: integrated web UI
-  - **Metadata**: TV shows, movies, cover art from TVMaze, TMDB, and TheTVDB
-  - **Subscriptions**: monitor shows; auto-fill gaps via RSS feeds and torrent search
-  - **Organization**: auto-rename and file layout with configurable patterns
-  - **Post-Processing**: extract archives, filter files, organize automatically
+## Product Summary
+Librarian is a locally hostable media library management system with a built-in torrent client. It automates acquisition, organization, discovery, and playback of personal media libraries while remaining privacy‑preserving and local‑first.
 
-### High‑Level Architecture
+### Supported Library Types
+- **Movies** (standalone entries) with **Movie Collections**
+- **TV Shows** with **Episodes**
+- **Music** with **Tracks** and **Artists**
+- **Audiobooks** with **Chapters**
 
-- **Frontend**: TanStack Start (React with TanStack Router)
-- **Backend**: Rust (Axum + Tokio), background workers, job queue
-- **Identity & DB**: Local auth + SQLite database
-- **Torrent Engine**: `librqbit` (native Rust, embedded)
-- **Indexer Management**: Native indexer system (Jackett-like) + RSS feeds
-- **Transcoding/Packaging**: FFmpeg/FFprobe → HLS (m3u8 + TS/MP4 segments)
-- **Casting**:
-  - **Chromecast/Google Cast**: Native CASTV2 protocol via rust_cast + mdns-sd discovery
-  - **Media Streaming**: HTTP with Range headers for seeking, direct play when compatible
-  - **Transcoding**: On-demand FFmpeg transcoding for incompatible formats
-  - **AirPlay**: Native Safari AirPlay support on the `<video>` element
-- **File Watching / Library Scanner**: Rust watcher (inotify) + periodic full scan
-- **Object Storage**: SQLite artwork cache and local filesystem
+### Core Capabilities
+- Built-in torrent client with DHT, UPNP, and seeding control
+- Multiple sources: public/private indexers, RSS feeds, usenet, IRC
+- Auto-download for missing items (episodes/chapters/tracks/movies)
+- Automatic organization into a configurable naming structure
+- Persistent video player (YouTube-like) and music player (Spotify-like)
+- Casting support: **Chromecast**, **AirPlay**, and **DLNA**
+- Local-first storage and offline usage
 
 ---
 
-## TV Library Architecture
+## Core Rules and Conventions
+These rules govern all implementation decisions.
 
-### Core Workflow
+### GraphQL and the Entity System
+- **GraphQL is the only data API**. All CRUD should go through the GraphQL entity system.
+- The custom entity system is the **single source of truth** for **both** database schema and GraphQL types.
+- Entities live in the backend GraphQL services layer and generate:
+  - GraphQL schema and resolvers
+  - Database schema and migrations
+  - Subscriptions and change events
+- Resolver macros support **Where**, filtering, sorting, pagination, and infinite scroll
+- **GraphQL resolvers are the primary code path** for reading and writing data.
+- The only non-GraphQL HTTP endpoints are under `/api` (file uploads, artwork, static asset serving, and media streaming).
+- Subscriptions use WebSockets for real-time updates.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           TV LIBRARY LIFECYCLE                               │
-└─────────────────────────────────────────────────────────────────────────────┘
+### Naming Conventions
+- **GraphQL**: **PascalCase** for *all* operation names, types, fields, inputs, and enums.
+- **Rust**: `snake_case` for functions/modules/variables, `PascalCase` for types/traits.
+- **Database**: `snake_case` for tables/columns; plural table names.
+- **Serde**: Use `#[serde(rename_all = "PascalCase")]` or field-specific renames to map Rust to GraphQL.
 
-1. CREATE LIBRARY
-   ┌──────────────┐
-   │ User creates │──→ Name: "TV Shows"
-   │   library    │──→ Path: /mnt/nas/tv
-   │              │──→ Type: TV
-   │              │──→ Quality Profile (default)
-   │              │──→ Scan interval / Watch toggle
-   └──────┬───────┘
-          │
-          ▼
-2. INITIAL SCAN (if pointing to existing folder)
-   ┌──────────────┐
-   │ Scan folder  │──→ Walk directory tree
-   │              │──→ Parse filenames (S01E01, 1x01, etc.)
-   │              │──→ Group by show name
-   │              │──→ Match to TVMaze/TMDB/TVDB
-   │              │──→ If no match: try OpenAI (if configured)
-   │              │──→ Present discovered shows to user
-   └──────┬───────┘
-          │
-          ▼
-3. ADD SHOWS TO LIBRARY
-   ┌──────────────┐
-   │ User picks   │──→ "Auto-add all discovered" OR
-   │   shows      │──→ Manual selection
-   │              │──→ For each show:
-   │              │    - Set monitoring: "All" or "Future only"
-   │              │    - Inherit or override quality profile
-   └──────┬───────┘
-          │
-          ▼
-4. FETCH EPISODE LIST
-   ┌──────────────┐
-   │ For each     │──→ Query TVMaze/TMDB for full episode list
-   │   show       │──→ Store all seasons/episodes in DB
-   │              │──→ Mark existing files as "downloaded"
-   │              │──→ Mark missing as "wanted" (based on monitoring)
-   └──────┬───────┘
-          │
-          ▼
-5. ONGOING MONITORING
-   ┌──────────────────────────────────────────────────────┐
-   │                                                      │
-   │  ┌─────────────┐    ┌─────────────┐                 │
-   │  │ RSS Poller  │    │ Torrent     │                 │
-   │  │ (periodic)  │    │ Search      │                 │
-   │  └──────┬──────┘    └──────┬──────┘                 │
-   │         │                  │                         │
-   │         └────────┬─────────┘                         │
-   │                  ▼                                   │
-   │         ┌──────────────┐                            │
-   │         │ Match wanted │──→ Quality filter          │
-   │         │  episodes    │──→ Add to download queue   │
-   │         └──────────────┘                            │
-   │                                                      │
-   └──────────────────────────────────────────────────────┘
-```
-
-### Post-Download Pipeline
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         POST-DOWNLOAD PROCESSING                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-Torrent Completes
-       │
-       ▼
-┌──────────────┐
-│ 1. EXTRACT   │──→ Is archive? (zip/tar/rar/7z)
-│              │    YES → Extract to temp folder
-│              │    NO  → Continue with files
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│ 2. FILTER    │──→ Keep: video files (.mkv, .mp4, .avi, etc.)
-│              │──→ Keep: subtitles (.srt, .sub, .ass, .idx)
-│              │──→ Keep: NFO if desired
-│              │──→ Discard: samples, screenshots, txt, exe
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│ 3. IDENTIFY  │──→ Parse filename for show/season/episode
-│              │──→ Match to known show in library
-│              │──→ If unmatched: queue for manual review
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│ 4. ANALYZE   │──→ Run ffprobe for media info
-│              │──→ Resolution, codec, bitrate, HDR, audio
-│              │──→ Compare to quality requirements
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│ 5. ORGANIZE  │──→ Apply naming pattern:
-│              │    {Show Name}/Season {S}/{Show} - S{SS}E{EE} - {Title}.{ext}
-│              │──→ Copy or Move (user preference)
-│              │──→ Set correct permissions
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│ 6. UPDATE DB │──→ Mark episode as downloaded
-│              │──→ Link media_file to episode
-│              │──→ Store quality metadata
-│              │──→ Trigger artwork fetch if needed
-└──────────────┘
-```
+### Media Pipeline Rules
+- **Source‑agnostic matching**: The same matching logic handles torrents, usenet, IRC, RSS, or library scans.
+- **Source-defined file handling**: Each source decides **copy vs move** and **when deletion is allowed** (e.g., after seeding for X days). The library pipeline follows the source policy.
+- **Library ownership**: Once in the library, files are owned by the library; unlinking a download source never removes library files.
+- **Quality is verified**: FFprobe is authoritative; quality is not assumed.
+- **No auto-delete conflicts**: Conflicts require explicit user resolution.
+- **Status reflects reality**: the computed status derives from `wanted` and file linkage (e.g., pending matches imply “downloading”, linked files imply “downloaded”).
 
 ---
 
-## Key Technology Choices
+## System Architecture
 
-### Frontend (TanStack Start)
+### Backend
+- **Rust** service using **Axum** and **async-graphql**
+- Jobs and background services managed via a service manager
+- Custom entity system generating GraphQL + DB schema
+- `/api` endpoints for file upload, artwork, static assets, and media streaming
 
-- **Framework**: TanStack Start with TanStack Router (file-based routing)
-- **Language**: TypeScript across the stack
-- **UI**: HeroUI (formerly NextUI) + Tailwind CSS
-- **Package Manager**: pnpm
-- **Auth**: custom JWT auth with GraphQL helpers
-- **Video Playback**: `hls.js` for HLS where needed
-- **Casting**:
-  - Google Cast Web Sender SDK (loaded where casting is available)
-  - Safari's native AirPlay button on `<video>` provides AirPlay
+### Frontend
+- **TanStack Start** with **TanStack Router**
+- **HeroUI + Tailwind** for the UI system
+- **Apollo Client** for GraphQL queries/mutations/subscriptions
+- GraphQL operations and generated types are the primary data contract
 
-### Backend (Rust)
-
-- **Web framework**: `axum` (async, router-first, tower-compatible)
-- **Async runtime**: `tokio`
-- **DB**: `sqlx` (SQLite) with compile‑time checked queries
-- **Auth/JWT**: validate locally issued JWTs with `jsonwebtoken`
-- **HTTP client**: `reqwest` for external APIs (TVMaze/TMDB/TVDB)
-- **Torrent control**: librqbit (native Rust, embedded)
-- **Scheduler / Jobs**: `tokio-cron-scheduler` for periodic tasks
-- **Filesystem**: `notify` (inotify watcher), `walkdir`, `tokio::fs`
-- **Archives**: `unrar` crate + `sevenz-rust` or shell out to `7z`/`unrar`
-- **Renaming**: `regex`, `sanitize-filename`
-- **Transcoding**: spawn `ffmpeg`; parse streams via `ffprobe` JSON
-- **Casting**: `rust_cast` for CASTV2 protocol, `mdns-sd` for device discovery
-- **AI Matching** (optional): `async-openai` crate for filename identification
-- **Observability**: `tracing`, `tracing-subscriber`, optional OpenTelemetry exporter
-
-### Metadata Providers
-
-| Provider | Auth Required | Free Tier | Best For |
-|----------|---------------|-----------|----------|
-| **TVMaze** | No | Unlimited | TV shows (primary, default) |
-| **TMDB** | API key (free) | High limits | Movies + TV, artwork |
-| **TheTVDB** | API key + subscription | Limited | Legacy support, comprehensive |
-
-Priority order: TVMaze → TMDB → TheTVDB
-
-### RSS Feed Parsing
-
-Standard RSS format (like IPTorrents example):
-```xml
-<item>
-  <title>Chicago Fire S14E08 1080p WEB h264-ETHEL</title>
-  <link>https://example.com/download.php/12345/file.torrent</link>
-  <pubDate>Thu, 08 Jan 2026 10:01:59 +0000</pubDate>
-  <description>1.48 GB; TV/Web-DL</description>
-</item>
-```
-
-The RSS poller will:
-1. Parse title using scene naming patterns
-2. Extract show name, season, episode, quality info
-3. Match against wanted episodes in monitored shows
-4. Apply quality filters before downloading
-
-### Indexer System (Native)
-
-Native Jackett-like indexer system built into the backend, supporting both torrent and usenet sources:
-
-**Architecture:**
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           INDEXER SYSTEM                                     │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│  GraphQL API │     │  Torznab API │     │  Auto Hunt   │
-│  (Settings)  │     │  (External)  │     │  (Jobs)      │
-└──────┬───────┘     └──────┬───────┘     └──────┬───────┘
-       │                    │                    │
-       └────────────────────┼────────────────────┘
-                            ▼
-              ┌──────────────────────────┐
-              │    IndexerManager        │
-              │  (Instance Cache)        │
-              └────────────┬─────────────┘
-                           │
-       ┌───────────────────┼───────────────────┐
-       ▼                   ▼                   ▼
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│ IPTorrents  │    │ Cardigann   │    │  Newznab    │
-│  (Torrent)  │    │  (YAML)     │    │  (Usenet)   │
-└─────────────┘    └─────────────┘    └─────────────┘
-       │                   │                   │
-       └───────────────────┼───────────────────┘
-                           ▼
-              ┌──────────────────────────┐
-              │   HTTP Request + Parse   │
-              └──────────────────────────┘
-```
-
-**Supported Indexers:**
-- **IPTorrents**: Private torrent tracker, cookie-based authentication, HTML scraping
-- **Cardigann**: YAML-based definitions for generic tracker support
-- **Newznab**: Usenet indexers (NZBgeek, DrunkenSlug, etc.), API key auth
-
-**Key Features:**
-- Credentials encrypted with AES-256-GCM (key stored in database)
-- Torznab-compatible API at `/api/torznab/{indexer_id}` for external tools
-- GraphQL API for all management (no REST for config)
-- Rate limiting and request throttling
-- Per-indexer download type (torrent vs usenet)
-- Per-indexer post-download action (copy-only today; source-based rules planned)
-
-**Database Tables:**
-- `indexer_configs`: Indexer instances (name, type, enabled, download_type)
-- `indexer_credentials`: Encrypted credentials (cookie, api_key, etc.)
-- `indexer_settings`: Per-indexer settings
-
-### Usenet Support
-
-Native usenet download support parallel to torrents:
-
-**Architecture:**
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          USENET DOWNLOAD SYSTEM                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Newznab     │     │  NZB Parser  │     │    NNTP      │
-│  Indexer     │     │              │     │   Client     │
-└──────┬───────┘     └──────┬───────┘     └──────┬───────┘
-       │                    │                    │
-       ▼                    ▼                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          UsenetService                                       │
-│  - Download queue management                                                 │
-│  - Multi-server support with priority                                        │
-│  - yEnc decoding                                                            │
-│  - Article assembly                                                          │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-**Features:**
-- NNTP client with SSL/TLS support
-- Multi-server configuration with failover
-- NZB file parsing
-- yEnc decoding
-- Download progress tracking
-- Post-download processing (same pipeline as torrents)
-
-**Database Tables:**
-- `usenet_servers`: NNTP server configurations
-- `usenet_downloads`: Download queue (parallel to `torrents`)
-- `usenet_file_matches`: File-level matching (parallel to `torrent_file_matches`)
-
-### Source Priority System
-
-Controls which sources (indexers) are used for different content types:
-
-**Scope Hierarchy:**
-1. Per-library (most specific)
-2. Per-library-type (movies, tv, music, audiobooks)
-3. Global default (fallback)
-
-**Features:**
-- Drag-and-drop priority ordering
-- Mixed torrent/usenet sources
-- Option to stop at first match or search all
-- Per-scope enable/disable
-
-**Database Table:**
-- `source_priority_rules`: Priority configurations
-
-### LLM Filename Parsing
-
-Uses Ollama for parsing difficult filenames when regex fails:
-
-**Flow:**
-```
-Filename → Regex Parser → Success? → Use result
-                          │
-                          └→ Failure → LLM Parser (Ollama) → Use LLM result
-```
-
-**Features:**
-- Per-library-type model configuration
-- Fallback when regex patterns fail
-- Extracts: show/movie name, season, episode, year, quality
-- Confidence scoring
-
-**Database Tables:**
-- `app_settings`: LLM parser toggle
-- `llm_library_type_models`: Per-type model selection
-
-### Auto Hunt System
-
-Automatic torrent hunting for missing content. **Auto Hunt is event-driven, not scheduled.**
-
-**Triggers:**
-- **On Add**: Adding a movie/album/audiobook immediately triggers hunt for that item
-- **After Scan**: Library scans trigger auto-hunt for all missing content
-- **Manual**: `triggerAutoHunt` mutation for on-demand hunting
-
-**Flow:**
-```
-1. Trigger event (add item or scan completes)
-          │
-          ▼
-2. Find missing content in library
-   - Movies: monitored=true, has_file=false
-   - TV: episodes with status=wanted
-   - Music/Audiobooks: monitored=true, has_files=false
-          │
-          ▼
-3. Query enabled indexers
-   - Movies: IMDB/TMDB ID + title/year
-   - TV: "Show Name S01E05"
-   - Music: Artist + Album
-          │
-          ▼
-4. Filter results by library quality settings
-   - Resolution, codec, source (video)
-   - Audio format, bit depth (audio)
-   - Preferred release groups
-          │
-          ▼
-5. Score and rank releases
-   - Seeders, freeleech bonus
-   - Quality match score
-          │
-          ▼
-6. Download via IndexerManager (authenticated)
-          │
-          ▼
-7. Link torrent to item
-          │
-          ▼
-8. Download monitor handles organization
-```
-
-**Configuration (per library):**
-- `auto_hunt`: Enable automatic searching
-- Quality filters embedded in library settings (not separate profiles)
+### Storage
+- **SQLite** for structured data and artwork cache
+- **Filesystem** for media files
+- Optional external dependency: **ffprobe/ffmpeg** for analysis/transcoding
 
 ---
 
-## Data Model
+## Acquisition and Sources
+Librarian supports multiple acquisition paths that all converge into the same pipeline:
 
-### Libraries
+- **Torrent** (built-in client) with DHT, UPNP, seeding control
+- **RSS** polling
+- **Usenet**
+- **IRC**
+- **Manual Download** and direct add
+- **Library Scanning** (existing files on disk)
 
-Each user can have multiple libraries of different types:
-
-```sql
-libraries
-├── id (UUID)
-├── user_id (UUID, FK → auth.users)
-├── name (VARCHAR) - e.g., "TV Shows", "Kids TV", "Documentaries"
-├── path (TEXT) - e.g., "/mnt/nas/tv"
-├── library_type (ENUM) - movies|tv|music|audiobooks|other
-├── icon (VARCHAR) - display icon
-├── color (VARCHAR) - theme color
-├── auto_scan (BOOLEAN)
-├── scan_interval_minutes (INTEGER) - how often to scan
-├── watch_for_changes (BOOLEAN) - use inotify where supported
-├── post_download_action (ENUM) - copy (move/hardlink deprecated; source rules planned)
-├── organize_files (BOOLEAN) - automatically organize files
-├── naming_pattern (TEXT) - e.g., "{show}/Season {season}/{show} - S{season}E{episode} - {title}.{ext}"
-├── auto_add_discovered (BOOLEAN) - auto-create entries from downloaded content
-├── auto_download (BOOLEAN) - auto-download from RSS feeds
-├── auto_hunt (BOOLEAN) - auto-search indexers for missing content
-├── quality_* (various) - embedded quality settings (see Quality Settings section)
-├── last_scanned_at (TIMESTAMPTZ)
-├── created_at, updated_at
-```
-
-### TV Shows
-
-```sql
-tv_shows
-├── id (UUID)
-├── library_id (UUID, FK → libraries)
-├── user_id (UUID, FK → auth.users)
-├── name (VARCHAR) - canonical show name
-├── year (INTEGER) - premiere year
-├── status (VARCHAR) - continuing|ended|upcoming|cancelled
-├── tvmaze_id (INTEGER)
-├── tmdb_id (INTEGER)
-├── tvdb_id (INTEGER)
-├── imdb_id (VARCHAR)
-├── overview (TEXT)
-├── network (VARCHAR)
-├── runtime (INTEGER) - typical episode runtime in minutes
-├── poster_url (TEXT)
-├── backdrop_url (TEXT)
-├── monitored (BOOLEAN) - is this show being tracked
-├── monitor_type (VARCHAR) - all|future|none
-├── auto_hunt_override (BOOLEAN) - NULL = inherit from library
-├── organize_override (BOOLEAN) - NULL = inherit from library
-├── path (TEXT) - show-specific folder within library
-├── created_at, updated_at
-```
-
-### Episodes
-
-```sql
-episodes
-├── id (UUID)
-├── tv_show_id (UUID, FK → tv_shows)
-├── season (INTEGER)
-├── episode (INTEGER)
-├── absolute_number (INTEGER) - for anime
-├── title (VARCHAR)
-├── overview (TEXT)
-├── air_date (DATE)
-├── runtime (INTEGER)
-├── tvmaze_id (INTEGER)
-├── tmdb_id (INTEGER)
-├── tvdb_id (INTEGER)
-├── status (VARCHAR) - missing|wanted|downloading|downloaded|ignored
-├── file_id (UUID, FK → media_files) - NULL if not downloaded
-├── created_at, updated_at
-├── UNIQUE(tv_show_id, season, episode)
-```
-
-### Quality Settings (Embedded in Libraries)
-
-Quality settings are stored directly in the `libraries` table, not as separate profiles:
-
-```sql
--- Video library quality columns
-├── quality_resolutions (TEXT[]) - ["1080p", "2160p"]
-├── quality_video_codecs (TEXT[]) - ["x265", "x264"]
-├── quality_hdr_types (TEXT[]) - ["HDR10", "DolbyVision"]
-├── quality_audio_formats (TEXT[]) - ["TrueHD", "DTS-HD"]
-├── quality_sources (TEXT[]) - ["BluRay", "WEB-DL"]
-├── quality_release_groups (TEXT[]) - preferred groups
-├── quality_blocked_groups (TEXT[]) - avoid these
-
--- Audio library quality columns (music/audiobooks)
-├── quality_audio_formats (TEXT[]) - ["FLAC", "MP3 320"]
-├── quality_bit_depths (TEXT[]) - ["24-bit", "16-bit"]
-├── quality_sample_rates (TEXT[]) - ["96kHz", "44.1kHz"]
-```
-
-This simplifies the model - each library has its own quality preferences without needing to reference a separate profile table.
-
-### Media Files
-
-```sql
-media_files
-├── id (UUID)
-├── library_id (UUID, FK → libraries)
-├── episode_id (UUID, FK → episodes) - NULL for unmatched
-├── path (TEXT) - full filesystem path
-├── relative_path (TEXT) - path within library
-├── original_name (TEXT) - original filename before rename
-├── size_bytes (BIGINT)
-├── container (VARCHAR) - mkv|mp4|avi
-├── video_codec (VARCHAR) - hevc|h264|av1|mpeg2
-├── video_bitrate (INTEGER) - kbps
-├── audio_codec (VARCHAR)
-├── audio_channels (VARCHAR) - 2.0|5.1|7.1|atmos
-├── audio_language (VARCHAR)
-├── resolution (VARCHAR) - 2160p|1080p|720p|480p
-├── width (INTEGER)
-├── height (INTEGER)
-├── duration_seconds (INTEGER)
-├── is_hdr (BOOLEAN)
-├── hdr_type (VARCHAR) - hdr10|hdr10plus|dolbyvision|hlg
-├── file_hash (VARCHAR) - for deduplication
-├── added_at (TIMESTAMPTZ)
-├── modified_at (TIMESTAMPTZ)
-```
-
-### RSS Feeds
-
-```sql
-rss_feeds
-├── id (UUID)
-├── user_id (UUID)
-├── library_id (UUID, FK → libraries) - optional, can be global
-├── name (VARCHAR) - display name
-├── url (TEXT) - feed URL
-├── enabled (BOOLEAN)
-├── poll_interval_minutes (INTEGER) - default 15
-├── last_polled_at (TIMESTAMPTZ)
-├── last_error (TEXT)
-├── created_at, updated_at
-```
-
-### Torrents
-
-```sql
-torrents
-├── id (UUID)
-├── user_id (UUID)
-├── info_hash (VARCHAR) - torrent hash
-├── name (VARCHAR)
-├── state (VARCHAR) - queued|downloading|seeding|completed|paused|error
-├── progress (DECIMAL)
-├── size_bytes (BIGINT)
-├── download_path (TEXT)
-├── source_url (TEXT) - magnet or .torrent URL
-├── source_feed_id (UUID, FK → rss_feeds)
-├── source_indexer_id (UUID, FK → indexer_configs)
-├── library_id (UUID, FK → libraries)
-├── episode_id (UUID, FK → episodes)
-├── movie_id (UUID, FK → movies)
-├── album_id (UUID, FK → albums)
-├── audiobook_id (UUID, FK → audiobooks)
-├── post_process_status (VARCHAR) - pending|processing|completed|matched|unmatched|error
-├── excluded_files (INTEGER[]) - file indices to skip
-├── added_at (TIMESTAMPTZ)
-├── completed_at (TIMESTAMPTZ)
-```
-
-### Torrent File Matches
-
-```sql
-torrent_file_matches
-├── id (UUID)
-├── torrent_id (UUID, FK → torrents)
-├── file_index (INTEGER)
-├── file_path (TEXT)
-├── file_size (BIGINT)
-├── episode_id (UUID, FK → episodes)
-├── movie_id (UUID, FK → movies)
-├── track_id (UUID, FK → tracks)
-├── audiobook_chapter_id (UUID, FK → audiobook_chapters)
-├── match_type (VARCHAR) - auto|manual|forced
-├── match_confidence (DECIMAL)
-├── parsed_resolution (VARCHAR)
-├── parsed_codec (VARCHAR)
-├── skip_download (BOOLEAN)
-├── processed (BOOLEAN)
-├── media_file_id (UUID, FK → media_files)
-├── UNIQUE(torrent_id, file_index)
-```
-
-### Usenet Servers
-
-```sql
-usenet_servers
-├── id (UUID)
-├── user_id (UUID)
-├── name (VARCHAR)
-├── host (VARCHAR)
-├── port (INTEGER)
-├── use_ssl (BOOLEAN)
-├── username (VARCHAR)
-├── encrypted_password (TEXT)
-├── connections (INTEGER)
-├── priority (INTEGER) - lower = higher priority
-├── enabled (BOOLEAN)
-├── retention_days (INTEGER)
-```
-
-### Usenet Downloads
-
-```sql
-usenet_downloads
-├── id (UUID)
-├── user_id (UUID)
-├── nzb_name (VARCHAR)
-├── nzb_hash (VARCHAR)
-├── state (VARCHAR) - queued|downloading|paused|completed|failed
-├── progress (DECIMAL)
-├── size_bytes (BIGINT)
-├── downloaded_bytes (BIGINT)
-├── download_path (TEXT)
-├── library_id (UUID, FK → libraries)
-├── episode_id (UUID, FK → episodes)
-├── movie_id (UUID, FK → movies)
-├── album_id (UUID, FK → albums)
-├── audiobook_id (UUID, FK → audiobooks)
-├── indexer_id (UUID, FK → indexer_configs)
-├── post_process_status (VARCHAR)
-```
-
-### Source Priority Rules
-
-```sql
-source_priority_rules
-├── id (UUID)
-├── user_id (UUID)
-├── library_type (VARCHAR) - movies|tv|music|audiobooks|NULL for default
-├── library_id (UUID, FK → libraries) - NULL for type-level
-├── priority_order (JSONB) - [{source_type, id}, ...]
-├── search_all_sources (BOOLEAN) - stop at first match if false
-├── enabled (BOOLEAN)
-```
-
-### Jobs (enhanced)
-
-```sql
-jobs
-├── id (UUID)
-├── kind (VARCHAR) - library_scan|rss_poll|post_process|metadata_fetch|episode_search
-├── library_id (UUID, FK → libraries) - if library-specific
-├── payload (JSONB) - job-specific data
-├── state (VARCHAR) - pending|running|completed|failed|cancelled
-├── priority (INTEGER) - higher = sooner
-├── scheduled_at (TIMESTAMPTZ) - when to run next
-├── started_at (TIMESTAMPTZ)
-├── completed_at (TIMESTAMPTZ)
-├── recurring_cron (VARCHAR) - for periodic jobs, e.g., "*/15 * * * *"
-├── attempts (INTEGER)
-├── max_attempts (INTEGER)
-├── last_error (TEXT)
-├── created_at (TIMESTAMPTZ)
-```
-
-### Unmatched Files (for manual review)
-
-```sql
-unmatched_files
-├── id (UUID)
-├── library_id (UUID, FK → libraries)
-├── path (TEXT)
-├── parsed_show_name (VARCHAR) - our best guess
-├── parsed_season (INTEGER)
-├── parsed_episode (INTEGER)
-├── suggested_show_id (UUID, FK → tv_shows) - AI/pattern suggestion
-├── confidence (DECIMAL) - 0-1 confidence score
-├── status (VARCHAR) - pending|matched|ignored
-├── created_at (TIMESTAMPTZ)
-```
+### Indexers
+- Librarian includes a **native Rust indexer system** (Jackett‑like) with custom adapters (e.g., IPTorrents).
+- External indexer managers such as **Jackett** or **Prowlarr** can be supported via **Torznab/Newznab** endpoints when configured.
 
 ---
 
-## API Surface (GraphQL)
-
-### Libraries
-```graphql
-type Query {
-  libraries: [Library!]!
-  library(id: ID!): Library
-}
-
-type Mutation {
-  createLibrary(input: CreateLibraryInput!): LibraryResult!
-  updateLibrary(id: ID!, input: UpdateLibraryInput!): LibraryResult!
-  deleteLibrary(id: ID!): MutationResult!
-  scanLibrary(id: ID!): ScanStatus!
-}
-
-type Subscription {
-  libraryScanProgress(libraryId: ID!): LibraryScanProgress!
-}
-```
-
-### TV Shows
-```graphql
-type Query {
-  tvShows(libraryId: ID): [TvShow!]!
-  tvShow(id: ID!): TvShow
-  searchTvShows(query: String!): [TvShowSearchResult!]!
-}
-
-type Mutation {
-  addTvShow(libraryId: ID!, input: AddTvShowInput!): TvShowResult!
-  updateTvShow(id: ID!, input: UpdateTvShowInput!): TvShowResult!
-  removeTvShow(id: ID!): MutationResult!
-  refreshTvShowMetadata(id: ID!): TvShowResult!
-}
-```
-
-### Episodes
-```graphql
-type Query {
-  episodes(showId: ID!, season: Int): [Episode!]!
-  episode(id: ID!): Episode
-  wantedEpisodes(libraryId: ID): [Episode!]!
-}
-
-type Mutation {
-  setEpisodeStatus(id: ID!, status: EpisodeStatus!): Episode!
-  searchEpisode(id: ID!): [SearchResult!]!
-}
-```
-
-### RSS Feeds
-```graphql
-type Query {
-  rssFeeds(libraryId: ID): [RssFeed!]!
-  rssFeed(id: ID!): RssFeed
-}
-
-type Mutation {
-  createRssFeed(input: CreateRssFeedInput!): RssFeedResult!
-  updateRssFeed(id: ID!, input: UpdateRssFeedInput!): RssFeedResult!
-  deleteRssFeed(id: ID!): MutationResult!
-  testRssFeed(id: ID!): RssFeedTestResult!
-  pollRssFeed(id: ID!): [RssItem!]!
-}
-```
-
-### Unmatched Files
-```graphql
-type Query {
-  unmatchedFiles(libraryId: ID): [UnmatchedFile!]!
-}
-
-type Mutation {
-  matchFile(id: ID!, showId: ID!, season: Int!, episode: Int!): MediaFile!
-  ignoreUnmatchedFile(id: ID!): MutationResult!
-  autoMatchFiles(libraryId: ID!): AutoMatchResult!
-}
-```
+## Unified Media Pipeline
+All content flows through one unified pipeline regardless of source:
+1. **Acquire**: Auto-download, RSS, manual download, direct add, or library scan
+2. **Match**: Source-agnostic matching against wanted items
+3. **Process**: Apply source-defined copy/move policy, create media records
+4. **Analyze**: FFprobe extracts quality and metadata
+5. **Organize**: Rename into library naming pattern
+6. **Update**: Status transitions and subscriptions
+This pipeline is the single code path for database and library changes.
 
 ---
 
-## Background Workers
-
-| Worker | Schedule | Purpose |
-|--------|----------|---------|
-| **Library Scanner** | Per-library (configurable) | Walk paths, detect new/changed files |
-| **Filesystem Watcher** | Real-time (inotify) | Immediate detection of new files |
-| **RSS Poller** | Every 15 min (configurable) | Check RSS feeds for new releases |
-| **Download Monitor** | Every 1 min | Process completed torrents/usenet, organize files |
-| **Auto-Hunt** | Event-driven | Search indexers for missing content (triggers on add + after scans) |
-| **Metadata Fetcher** | On demand | Fetch show/episode/movie info from APIs |
-| **Transcode GC** | Daily at 3 AM | Clean old HLS transcodes |
-| **Schedule Sync** | Hourly | Sync TV schedule from TVMaze |
-| **Artwork Job** | On demand | Fetch missing posters/backdrops |
+## Playback and Casting
+- **Persistent video player** (YouTube-like)
+- **Persistent music player** (Spotify-like)
+- **Casting**: Chromecast, AirPlay, and DLNA discovery
+- **Streaming**: direct play when possible, otherwise HLS via FFmpeg
 
 ---
 
-## Filename Parsing Patterns
+## Transcoding & Streaming
+- **FFprobe** is the authoritative source for media metadata and quality
+- **FFmpeg** is used for on-demand transcoding and HLS packaging
+- Direct play is used when the client supports the container and codecs
 
-The system will use multiple regex patterns to parse scene-style filenames:
+---
 
-```rust
-// Pattern examples (in priority order)
-"(?P<show>.+?)\\s*[Ss](?P<season>\\d{1,2})[Ee](?P<episode>\\d{1,2})"  // S01E01
-"(?P<show>.+?)\\s*(?P<season>\\d{1,2})x(?P<episode>\\d{2})"           // 1x01
-"(?P<show>.+?)\\s*Season\\s*(?P<season>\\d+).*?Episode\\s*(?P<episode>\\d+)"
-"(?P<show>.+?)\\s*(?P<season>\\d{1,2})(?P<episode>\\d{2})"            // 101, 102
+## Organization and Naming
+- Automatic organization per library with configurable patterns
+- Multiple pre-existing naming patterns supported per media type
+- Default pattern controlled by Librarian
+- Organizer runs only within library folders
 
-// Quality patterns
-"(?P<resolution>2160p|1080p|720p|480p)"
-"(?P<source>HDTV|WEB-DL|WEBRip|BluRay|BDRip)"
-"(?P<codec>x264|x265|H\\.?264|H\\.?265|HEVC|AV1|XviD)"
-"(?P<hdr>HDR10\\+?|HDR|DV|DoVi|Dolby\\.?Vision)"
-"(?P<audio>Atmos|TrueHD|DTS-HD|DTS|AC3|AAC|DD5\\.?1|DDP5\\.?1)"
+---
+
+## Archive Extraction
+- Automatically extracts archives after download completion
+- Supported formats: ZIP, RAR (single + multi-part), 7z
+- Extracted into a dedicated `_extracted` staging area before processing
+- Original archives are preserved for seeding when required
+
+---
+
+## Quality Profiles
+- Separate **video** and **audio** quality profiles
+- Rules evaluate resolution, codec, HDR, source type, and audio specs
+- Suboptimal media is detected and tracked for upgrades
+
+---
+
+## Library Scanning & Discovery
+- Scheduled scans and file watchers discover existing media
+- Auto-add discovered media when enabled
+- File matches use metadata-first matching (embedded tags → original filename → current filename)
+
+---
+
+## Background Services
+Long-running services include:
+- Download monitor and completion processing
+- Library scanning and file matching
+- Organization and file processing
+- Metadata fetching and extraction
+- Streaming/transcoding services
+- Indexer polling
+
+---
+
+## Auth Model
+- Local authentication with **JWT** only
+- No external SSO or OAuth integration
+
+---
+
+## Distribution & Packaging
+Librarian is distributed as a **single binary** with embedded frontend assets.
+
+### Core Distribution Goals
+- Windows and Linux binaries
+- Optional **Windows installer** and **MSI**
+- Optional bundled `ffprobe`/`ffmpeg`
+- Embedded frontend served from a virtual filesystem
+- No nginx in production deployments
+- Service registration for Windows and systemd for Linux
+
+### Frontend Asset Bundling
+- Frontend `dist/` is embedded into the binary during release builds
+- Assets are served from an in-memory virtual filesystem
+- Optional build flag allows serving from disk if needed
+
+### Windows Packaging
+- Installer includes `librarian.exe` and optional `ffprobe.exe`
+- Supports install as a Windows service or tray application
+
+### Service Modes
+- **Tray Mode**: interactive UI control for desktop use
+- **Service Mode**: background service for headless/NAS use
+- Mode is chosen on first run and can be changed later via settings or CLI
+- Provide `service install|uninstall|start|stop|status` commands for Windows and Linux
+
+### Linux Packaging
+- Tarball distribution with optional install scripts
+- `systemd` service unit support
+
+### Docker
+- Docker image is optional but supported for advanced users
+
+---
+
+## Frontend Refactor Targets
+The intended final frontend architecture includes:
+- **Apollo Client** for all GraphQL operations
+- **Generated GraphQL types** are mandatory; no custom type extensions
+- **react-hook-form + zod** for all forms
+- Removal of deprecated library-level AutoDownload settings
+- Consolidated page-level data fetching (avoid manual loading states)
+- Prefer `previousData` patterns to avoid UI flicker on refetch
+- Use HeroUI components for all UI primitives
+
+---
+
+## Media Pipeline Decision Guide (Q&A)
+The following Q&A is authoritative for pipeline behavior.
+
+This guide defines the decision points in the media processing pipeline and the intended behavior for each scenario. Reference this guide when making changes to any media pipeline components.
+
+---
+
+## Core Principles
+
+1. **Source-agnostic matching** - The same matching logic handles files from torrents, usenet, IRC, FTP, or library scans
+2. **Source-defined file handling** - Each source defines copy vs move and when deletion is allowed; library processing follows that policy
+3. **Library owns files** - Unlinking a download source never affects library files
+4. **Quality is verified, not assumed** - Every file is analyzed with FFprobe to determine true quality
+5. **No auto-delete files** - Conflicts require user resolution; never overwrite or auto-delete library files
+6. **Partial fulfillment is OK** - Downloading 8 of 12 album tracks is valid; remaining 4 stay "wanted"
+7. **Status reflects reality** - computed from `wanted` + pending matches + linked files
+8. **Use what exists now** - If a file exists NOW which is a better match, use it rather than waiting for a download
+
+---
+
+## Phase 1: File Matching
+
+### Q1: What do we do when we find a file match for a media file that is in a download state but hasn't finished downloading yet?
+**Answer:** We use what we have now. If a file exists NOW which is a better match for any potential future match (even one that may be downloading), we should use what we have. The scanner processes files that exist on disk; it doesn't wait for downloads.
+
+### Q2: What happens when a file matches multiple items across different libraries?
+**Answer:** The FileMatcher returns all matches (can match to items in multiple libraries). Each match is saved as a separate `pending_file_matches` record. When processed, the file is copied to each matching library.
+
+### Q3: What happens when a file matches an item that's already downloaded?
+**Answer:** For tracks, we skip if a `media_file_id` already exists. For albums/movies/audiobooks with known targets from auto-download, we use 100% confidence and proceed even if `wanted = false`.
+
+### Q4: How do we handle sample files (trailers, previews)?
+**Answer:** If filename contains "sample", "trailer", or "preview" → mark as `Sample` type and don't process further. These are excluded from matching.
+
+### Q5: How does the weighted fuzzy matching work?
+**Answer:** Uses `match_scorer.rs` with field-specific weights and proportional scoring (not thresholds). Each field contributes proportionally based on fuzzy similarity:
+
+**Music (100 points max):**
+| Field | Weight | Scoring |
+|-------|--------|---------|
+| Artist | 30 | 80% match = 24 points |
+| Album | 25 | 90% match = 22.5 points |
+| Track Title | 25 | Proportional to similarity |
+| Track Number | 15 | Exact match only (0 or 15), requires disc match |
+| Year | 5 | ±1 year tolerance (0.8 for ±1) |
+
+**TV Shows (100 points max):**
+| Field | Weight | Scoring |
+|-------|--------|---------|
+| Show Name | 30 | Proportional to similarity |
+| Season | 25 | Exact match only |
+| Episode | 25 | Exact match only |
+| Episode Title | 15 | Bonus if matches |
+| Year | 5 | ±1 year tolerance |
+
+**Movies (100 points max):**
+| Field | Weight | Scoring |
+|-------|--------|---------|
+| Title | 50 | Proportional to similarity |
+| Year | 30 | Exact or ±1 year (0.8 for ±1) |
+| Director | 20 | Bonus if matches |
+
+**Audiobooks (100 points max):**
+| Field | Weight | Scoring |
+|-------|--------|---------|
+| Author | 30 | Proportional to similarity |
+| Book Title | 30 | Proportional to similarity |
+| Chapter Title | 25 | Proportional to similarity |
+| Chapter Number | 15 | Exact match only |
+
+**Thresholds:**
+- Score ≥ 70 → Auto-link (high confidence)
+- Score ≥ 40 → Suggest for manual review
+- Score < 40 → No match
+
+### Q6: What happens when embedded metadata conflicts with filename parsing?
+**Answer:** The code uses a 3-tier priority system:
+1. **Embedded metadata first** - ID3/Vorbis tags, container metadata from FFprobe
+2. **Original filename second** - If file was renamed, try stored `original_name`
+3. **Current filename last** - Parse current path as fallback
+
+If metadata exists and produces a match, filename parsing is skipped entirely. This prevents mismatches when files are renamed incorrectly.
+
+### Q7: What do we do when the original filename differs from the current filename?
+**Answer:** We try matching in order:
+1. Embedded metadata (if extracted)
+2. Original filename (stored in `media_files.original_name`)
+3. Current filename
+
+This 3-tier approach handles cases where files were incorrectly renamed. The `original_name` is preserved in the database and used as a fallback when current filename matching fails.
+
+### Q8: What happens when no library matches are found?
+**Answer:** Return an `Unmatched` result with a reason string. The file is saved in `pending_file_matches` with no target IDs, `unmatched_reason`, and `match_attempts` incremented so it can be manually matched later via the UI.
+
+### Q9: How do we determine if a file is video vs audio?
+**Answer:** File extension check:
+- Video extensions: `.mp4`, `.mkv`, `.avi`, `.mov`, `.wmv`, `.flv`, `.webm`, `.m4v`, `.ts`
+- Audio extensions: `.mp3`, `.flac`, `.m4a`, `.aac`, `.ogg`, `.opus`, `.wav`, `.wma`
+
+### Q9b: How do manual matches work?
+**Answer:** Users can manually match files to library items via the UI. Manual matches:
+1. Set `match_type = 'manual'` on the `media_files` record
+2. Store `matched_by_user_id` and `match_confirmed_at` for audit
+3. **CRITICAL:** Manual matches are NEVER overwritten by automatic matching or scanner verification
+4. Scanner skips files with `match_type = 'manual'` during verification/correction
+5. The `update_match()` function checks for manual matches and returns `false` if file is manually matched
+6. To change a manual match, user must explicitly unmatch first, then rematch
+
+---
+
+## Phase 2: Download Processing
+
+### Q10: When do we copy files vs move files?
+**Answer:** The source defines its post-download policy. The pipeline must honor per-source rules for copy vs move and for when a source file may be deleted (for example, after seeding for N days). Within the library folder, we can still rename/organize as needed.
+
+### Q11: What happens if the source file doesn't exist when we try to process a match?
+**Answer:** Return an error "Source file does not exist". The match is marked as failed with `copy_error` set in the database.
+
+### Q12: What happens if the destination file already exists?
+**Answer:** Treat it as a conflict that requires user resolution. The pipeline never overwrites existing library files. Create an action-required notification with options to:
+1. Use the best quality version (replace)
+2. Keep the existing file
+3. Rematch the file to a different item
+
+### Q13: What happens if creating the destination directory fails?
+**Answer:** The error propagates and the match processing fails. No partial state is created.
+
+### Q14: How do we handle cross-filesystem copies?
+**Answer:** Cross-filesystem operations must follow the source policy. If a source requests a move across filesystems, fall back to copy+delete once the source allows deletion.
+
+### Q15: What happens when a hardlink operation fails?
+**Answer:** Hardlinking is optional per source policy. If hardlinking is not supported or fails, fall back to copy.
+
+### Q16: How do we represent torrent post-processing state?
+**Answer:**
+- `post_process_status = completed` if `files_failed == 0` AND `files_processed > 0`
+- `post_process_status = partial` if `files_processed > 0` but some failed
+- `post_process_status = unmatched` if `files_processed == 0`
+
+---
+
+## Phase 3: Library Scanning
+
+### Q17: What happens if we try to scan a library that's already being scanned?
+**Answer:** Return early without starting a new scan. The `library.scanning` flag is checked first.
+
+### Q18: What happens if the library path doesn't exist on disk?
+**Answer:** Log a warning and return. No error is thrown; the scan just doesn't happen.
+
+### Q19: How do we handle auto_add_discovered when scanning?
+**Answer:** 
+- If enabled and file matches no existing item → create new item from file metadata (search TVMaze/TMDB/MusicBrainz)
+- If disabled → just add files without creating new library entries
+
+### Q20: What happens when metadata lookup fails (TVMaze/TMDB/etc.)?
+**Answer:** For movies, retry search without the year. If still no results, the file remains unmatched. The item is NOT created if we can't find metadata.
+
+### Q21: What happens when a file is already in the database during a scan?
+**Answer:** Check if it needs linking to an item. If already linked → skip. If not linked but matches an item → link it. This prevents duplicate processing.
+
+### Q22: Do we trigger auto-download after scanning?
+**Answer:** Yes, if the library has `auto_download` enabled OR if TV library has shows with `auto_download_override=true`. Runs in background after scan completes.
+
+---
+
+## Phase 4: Quality Evaluation
+
+### Q23: How do we determine if a file meets quality requirements?
+**Answer:** Compare against library/show/movie quality settings:
+- Check resolution against allowed list
+- Check if HDR is required
+- Check HDR type against allowed list
+- Check source type against allowed list
+
+If all pass → `optimal`. If any fail → `suboptimal` with specific reasons.
+
+### Q24: What happens when a file is suboptimal?
+**Answer:** Set `quality_status = "suboptimal"` on the media_file and derive computed status from `wanted` + linkage. Suboptimal is reflected via quality status, not a status column.
+
+The system does NOT automatically trigger an upgrade download.
+
+### Q25: How do we determine if a new file is an upgrade over an existing one?
+**Answer:**
+- If new resolution rank > existing rank → upgrade
+- If same resolution but new has HDR and existing doesn't → upgrade  
+- If new rank < existing rank → NOT an upgrade
+- If existing quality is unknown → always consider it an upgrade
+
+### Q26: What happens when no quality settings are configured?
+**Answer:** If all restrictions are empty (`allows_any()` returns true) → everything is considered optimal.
+
+---
+
+## Phase 5: Organization
+
+### Q27: When do we organize files automatically?
+**Answer:** After library scan completes, if `organize_files` is enabled on the library. Also after downloads complete if configured.
+
+### Q28: What if a show has organize_files_override = false?
+**Answer:** Skip organizing that show's episodes even if the library has organization enabled.
+
+### Q29: What naming pattern do we use if none is configured?
+**Answer:** Fall back to default patterns:
+- TV: `Show Name - S01E01 - Episode Title.ext`
+- Movies: Keep original filename
+- Music: Uses music naming pattern from library
+
+### Q30: How do we handle files that are already organized correctly?
+**Answer:** If `original_path == new_path` → skip organization (no-op). Don't move file to itself.
+
+---
+
+## Phase 6: Torrent/Download Events
+
+### Q31: What happens when a torrent is added?
+**Answer:** 
+1. Spawn async task to match files immediately
+2. Skip if matches already exist (created by auto-download to avoid duplicates)
+3. Save matches to `pending_file_matches`
+4. Pending matches imply computed `downloading` status (derived from pending matches)
+
+### Q32: What happens when a torrent completes?
+**Answer:**
+1. Acquire semaphore permit (max 3 concurrent)
+2. If permit unavailable → skip (will be processed by scheduled job later)
+3. Run match verification to correct mismatches
+4. Process all uncopied matches (copy files to library)
+5. Update torrent `post_process_status`
+
+### Q33: What happens if torrent completion processing fails?
+**Answer:** Log warning and continue. The scheduled download_monitor job will retry processing later.
+
+### Q34: How often does the download monitor retry unmatched torrents?
+**Answer:** Filters for torrents created within last 7 days that have no pending matches. This effectively limits retry window to 7 days.
+
+---
+
+## Phase 7: Match Verification
+
+### Q35: When do we verify matches after download?
+**Answer:** After torrent completes but before processing. Uses `verify_matches_with_metadata()` to check if embedded metadata contradicts the match.
+
+### Q36: What happens if verification finds a mismatch?
+**Answer:**
+- If better match found with score ≥ 70 → auto-correct the match
+- If mismatch detected but no high-confidence alternative → flag for review (set `verification_status`)
+- If file doesn't exist → skip verification
+
+### Q36b: How does the scanner detect and fix mismatched files?
+**Answer:** During library scan, for each linked file:
+1. Extract embedded metadata (if not already done)
+2. Compare linked item's artist/album/show with metadata
+3. If artist similarity < 50% → flag as `ARTIST MISMATCH`
+4. Re-run matching using `FileMatcher.match_media_file()`
+5. If new match found with score ≥ 70 → auto-correct:
+   - Update `media_files.track_id` to new track
+   - Update old track's `media_file_id` to NULL and set `wanted = true`
+   - Update new track's `media_file_id` to file and set `wanted = false`
+6. Clear any stale bidirectional references (other tracks pointing to same file)
+
+### Q36c: How do we ensure bidirectional link consistency?
+**Answer:** After successful verification, explicitly clean up and align `media_file_id` and `wanted`:
+```sql
+-- Clear any OTHER tracks incorrectly pointing to this file
+UPDATE tracks SET media_file_id = NULL, wanted = true
+WHERE media_file_id = $file_id AND id != $correct_track_id;
+
+-- Ensure correct track points to this file
+UPDATE tracks SET media_file_id = $file_id, wanted = false
+WHERE id = $correct_track_id;
 ```
 
+**Note:** The user-visible `status` is computed from `wanted` + presence of a linked `media_file_id`. There is no status column.
+
+## Phase 7b: Metadata Extraction
+
+### Q36d: When is metadata extracted from files?
+**Answer:**
+1. **After download completion** - Queued as background job via `queues.rs`
+2. **During library scan** - For files without `metadata_extracted_at` timestamp
+3. **Manual trigger** - Via `extractMediaFileMetadata` GraphQL mutation
+
+### Q36e: What metadata is extracted and stored?
+**Answer:** Stored in `media_files` table:
+- **Audio**: Artist, album, title, track number, disc number, year, genre
+- **Video**: Show name, season, episode (from container metadata)
+- **Album art**: Base64-encoded cover image with MIME type
+- **Lyrics**: Extracted from FLAC/MP3 tags if present
+- **Timestamps**: `ffprobe_analyzed_at`, `metadata_extracted_at`, `matched_at`
+
+### Q36f: What tools are used for metadata extraction?
+**Answer:**
+- **FFprobe** - Video analysis (resolution, codecs, chapters, container metadata)
+- **lofty** - Audio tag reading (ID3, Vorbis, FLAC, MP3, etc.) including album art and lyrics
+- Extraction happens in `queues.rs` via `extract_audio_metadata_with_art()`
+
 ---
 
-## Naming Patterns
+## Phase 8: Edge Cases & Resolved Decisions
 
-Configurable patterns with tokens:
+These scenarios have been explicitly decided and should be implemented accordingly.
 
-| Token | Description | Example |
-|-------|-------------|---------|
-| `{show}` | Show name | "Chicago Fire" |
-| `{show_clean}` | Show name (filesystem safe) | "Chicago Fire" |
-| `{season}` | Season number | "14" |
-| `{season:02}` | Season zero-padded | "14" |
-| `{episode}` | Episode number | "8" |
-| `{episode:02}` | Episode zero-padded | "08" |
-| `{title}` | Episode title | "The One That Got Away" |
-| `{year}` | Show premiere year | "2012" |
-| `{air_date}` | Episode air date | "2026-01-08" |
-| `{quality}` | Quality string | "1080p WEB h264" |
-| `{ext}` | File extension | "mkv" |
+### Q37: What happens when an item has multiple pending downloads?
+**Answer:** Prefer the newer/better quality download. When a second download matches the same item:
+1. Compare quality of both downloads (parsed from filename)
+2. Keep both pending matches, but mark the higher quality as preferred in processing
+3. Let both downloads complete
+4. When processing, use the better quality file
 
-Default TV pattern:
+### Q38: What do we do when a better quality file is found for an already-downloaded item?
+**Answer:** Notify the user and let them decide. The system should:
+1. Detect when a new file would be an upgrade
+2. Create a user notification with options: "Upgrade" or "Keep Current"
+3. Do NOT auto-replace files
+4. User must explicitly approve the upgrade
+
+### Q39: How do we handle partial album/season downloads?
+**Answer:** Process only the matched files; remaining items stay "wanted". After processing a partial download:
+1. Set a flag on the show/album/audiobook: `download_individual_items = true`
+2. When auto-download runs next, search for individual missing episodes/tracks/chapters
+3. Do NOT search for the complete album/show again (avoid re-downloading the same partial release)
+4. This flag is set when: download completes AND some items matched AND some items still "wanted"
+
+### Q40: What happens when matching fails repeatedly for the same file?
+**Answer:** Retain the unmatched file but notify the user. The system should:
+1. Keep unmatched files in `pending_file_matches` indefinitely
+2. After N failed match attempts (configurable, default 3 via `match_attempts`), create a user notification
+3. Notification should link to the file for manual matching
+4. Do NOT auto-delete unmatched files
+
+### Q41: What do we do with files that fail processing multiple times?
+**Answer:** Alert the user after X failures. The system should:
+1. Track `copy_attempts` count on `pending_file_matches`
+2. Retry on each download monitor run
+3. After X failures (configurable, default 3), create a user notification
+4. Notification should include the error message and options to retry or dismiss
+
+### Q42: How do we handle archive extraction failures?
+**Answer:** Alert the user and wait for manual intervention. The system should:
+1. Log the extraction error
+2. Mark the torrent/download with `extraction_failed = true`
+3. Create a user notification explaining the failure
+4. Do NOT retry automatically (user may need to install `unrar`/`7z`)
+5. User can trigger manual retry after fixing the issue
+
+### Q43: What happens when library storage is full?
+**Answer:** Track free space and alert proactively. The system should:
+1. Track disk free space in server status (exposed via GraphQL for frontend)
+2. Create user notification when space drops below threshold (configurable, default 10GB)
+3. If copy fails due to ENOSPC, create urgent notification (implemented on copy failure)
+4. Clean up any partial files on copy failure
+
+**TODO:** Implement free space tracking in server status. Already exposed via GraphQL for TUI backend, extend for frontend use.
+
+### Q44: How do we handle duplicate torrents for the same item?
+**Answer:** Let both complete and pick best quality. The system should:
+1. Allow multiple torrents to match the same item
+2. When first torrent completes, process normally
+3. When second torrent completes, compare quality to existing file
+4. If second is better quality → process and replace (with user's upgrade approval per Q38)
+5. If second is same/worse quality → skip processing, mark as duplicate
+
+### Q45: What do we do when a file's metadata says one thing but filename says another?
+**Answer:** Use 3-tier priority system:
+1. **Trust metadata first** - If embedded tags produce a match with score ≥ 70, use it
+2. **Try original filename** - If metadata fails, try stored `original_name` if different from current
+3. **Fall back to current filename** - Last resort parsing
+4. If best score is 40-70 → suggest for manual review
+5. If best score < 40 → leave unmatched for manual intervention
+6. Do NOT notify unless file remains unmatched after all tiers
+
+### Q46: How do we handle shows/movies that get renamed/merged in metadata providers?
+**Answer:** Periodically re-sync metadata and detect changes during library scan. The system should:
+1. During library scan, re-fetch metadata for existing items
+2. Compare external IDs (tvmaze_id, tmdb_id, etc.)
+3. If external ID changes or item is marked "merged/redirected" by provider → flag item
+4. Create notification for user to review affected items
+5. Provide UI to merge/migrate affected items
+
+### Q47: What happens when a library is deleted while files are downloading?
+**Answer:** Remove all links that torrents/files have to that library. On library delete:
+1. CASCADE delete all library items (shows, movies, albums, etc.)
+2. This cascades to delete `pending_file_matches` via FK
+3. Torrents remain but become "unlinked" (no library association)
+4. Downloaded files in the library folder are NOT deleted (library owns files, user must delete manually)
+
+### Q48: How do we handle files with non-ASCII characters in names?
+**Answer:** Sanitize to ASCII-safe names when organizing, but only if library has `organize_files` enabled. The system should:
+1. If `organize_files = false` → preserve original filename exactly (we can't modify torrent files anyway)
+2. If `organize_files = true` → sanitize non-ASCII to closest ASCII equivalent or underscore
+3. Use a transliteration library (e.g., `unidecode`) for intelligent conversion
+4. Preserve the original filename in `media_files.original_name` for reference
+
+### Q49: What's the behavior when FFprobe analysis fails?
+**Answer:** Log as warning and continue. The system should:
+1. Log the FFprobe error as a warning (not error, not notification)
+2. Mark file as having unknown quality (`quality_status = null`)
+3. Continue with filename-parsed quality info for matching decisions
+4. Matching is independent of FFprobe; FFprobe just provides quality verification hints
+5. Do NOT create user notification for FFprobe failures (too noisy)
+
+### Q50: How do we handle season packs vs individual episodes?
+**Answer:** Never download for TV show packs, but support them if downloaded. The system should:
+1. Auto-download should search for individual episodes only
+2. If user manually downloads a season pack, file matching handles it automatically
+3. Each file in the pack is matched individually to episodes
+4. Partial packs work fine (matched episodes get processed, unmatched stay as files)
+5. No special "pack scoring" logic needed
+
+### Q51: What happens when a user manually changes a file on disk?
+**Answer:** Require manual re-scan to detect changes. The system should:
+1. No real-time file watching (too resource intensive)
+2. User triggers library scan to detect changes
+3. Scanner compares file paths and sizes to database
+4. Missing files → unlink from items, set `wanted = true`
+5. New files → match and link as usual
+6. Modified files (same path, different size) → re-analyze with FFprobe
+
+---
+
+## Key Files Reference
+
+| Component | File |
+|-----------|------|
+| File Matching | `backend/src/services/file_matcher.rs` |
+| Weighted Scoring | `backend/src/services/match_scorer.rs` |
+| File Processing | `backend/src/services/file_processor.rs` |
+| Library Scanning | `backend/src/services/scanner.rs` |
+| Quality Evaluation | `backend/src/services/quality_evaluator.rs` |
+| Organization | `backend/src/services/organizer.rs` |
+| Download Monitor | `backend/src/jobs/download_monitor.rs` |
+| Torrent Events | `backend/src/services/torrent_completion_handler.rs` |
+| Filename Parsing | `backend/src/services/filename_parser.rs` |
+| Background Jobs | `backend/src/services/queues.rs` |
+| Media Files DB | `backend/src/db/media_files.rs` |
+
+---
+
+## Computed Status Reference
+
+The status shown in the UI is computed from `wanted`, pending matches, linked files, and quality status. There is no status column.
+
+| Computed Status | Meaning | Derived From |
+|-----------------|---------|--------------|
+| `missing` | No file exists, hasn't aired yet (for episodes) | `wanted = false`, no file, future air date |
+| `wanted` | Aired/released, no file, actively looking | `wanted = true`, no file |
+| `downloading` | Matched to a pending download | pending match exists |
+| `downloaded` | File exists in library folder | linked `media_file_id` |
+| `suboptimal` | Has file but below quality target | linked file + `quality_status = suboptimal` |
+| `ignored` | User explicitly skipped | explicit user flag |
+
+---
+
+## UI Progress Display
+
+### Library Item Progress
+
+Instead of showing status chips ("Downloaded", "Wanted"), the UI displays progress fractions:
+
+| Media Type | Display | Example | Color |
+|------------|---------|---------|-------|
+| Album | downloaded/total tracks | `9/15` | Green if complete, Yellow otherwise |
+| TV Show | downloaded/total episodes | `25/30` | Green if complete, Yellow otherwise |
+| Audiobook | downloaded/total chapters | `8/12` | Green if complete, Yellow otherwise |
+
+This applies to:
+- Library card views (top-left badge)
+- Library table views (PROGRESS column)
+
+### Computed Fields
+
+Progress counts are calculated dynamically via SQL subqueries against `wanted` and `media_file_id`:
+
+```sql
+-- Albums
+(SELECT COUNT(*)::int FROM tracks t WHERE t.album_id = a.id AND t.media_file_id IS NOT NULL) as downloaded_track_count
+
+-- TV Shows (already existed)
+episode_file_count, episode_count
+
+-- Audiobooks
+(SELECT COUNT(*)::int FROM chapters c WHERE c.audiobook_id = a.id AND c.media_file_id IS NOT NULL) as downloaded_chapter_count
 ```
-{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}
-```
-
-Example output:
-```
-Chicago Fire/Season 14/Chicago Fire - S14E08 - The One That Got Away.mkv
-```
-
----
-
-## Settings
-
-### Global Settings
-- **OpenAI API Key**: For AI-based filename matching (optional)
-- **TMDB API Key**: For enhanced metadata
-- **TVDB API Key**: For legacy support
-- **Download directory**: Where torrents download to
-- **Temp directory**: For extraction/processing
-
-### Per-Library Settings
-- Path
-- Default quality profile
-- Scan interval
-- Watch for changes (inotify)
-- Auto-add discovered shows
-- Post-download action (copy-only today)
-- Auto-rename
-- Naming pattern
-
-### Per-Show Settings (inherit from library)
-- Monitor type (all/future/none)
-- Quality profile (override)
-- Custom path
-
----
-
-## Security
-
-- Use short‑lived, signed URLs for HLS playlists/segments and artwork
-- Store JWT secrets securely and rotate in production
-- Sanitize all filenames before writing to filesystem
-- Validate paths don't escape library boundaries
-
----
-
-## Local Development & Deployment
-
-### Docker Compose (services to run together)
-
-- `librarian-backend` (Rust)
-- `librarian-frontend` (TanStack Start)
-- Prowlarr (optional, for advanced indexer management)
-
-### Shared volumes
-
-- `/data/media` - library storage
-- `/data/downloads` - torrent downloads
-- `/data/cache` - transcode cache
-- `/data/session` - torrent session data
-
-### Environment (.env)
-
-```bash
-# Auth
-JWT_SECRET=
-
-# Database
-DATABASE_PATH=./data/librarian.db
-
-# Torrent
-DOWNLOADS_PATH=/data/downloads
-SESSION_PATH=/data/session
-
-# Metadata APIs (optional)
-TVMAZE_ENABLED=true
-TMDB_API_KEY=
-TVDB_API_KEY=
-
-# AI (optional)
-OPENAI_API_KEY=
-```
-
----
-
-## MVP vs. Later
-
-### Completed Features
-- ✅ Native torrent client (librqbit)
-- ✅ Native usenet client (NNTP + yEnc)
-- ✅ GraphQL subscriptions for real-time updates
-- ✅ TV library management (create, scan, browse)
-- ✅ Movie library management (TMDB integration)
-- ✅ Music library management (MusicBrainz integration)
-- ✅ Audiobook library management (Audible/OpenLibrary)
-- ✅ Show management (add, search, monitor)
-- ✅ Episode/track/chapter tracking (wanted list)
-- ✅ RSS feed polling with auto-download
-- ✅ Post-download processing with organization
-- ✅ Auto-rename and organization with naming patterns
-- ✅ Quality filters (per-library, type-aware)
-- ✅ Quality verification via FFprobe
-- ✅ Native indexer system (Torznab/Newznab)
-- ✅ Auto-Hunt (event-driven, immediate on add + after scans)
-- ✅ Source priority rules (per-library-type ordering)
-- ✅ Two-way content acquisition (Library-first and Torrent-first)
-- ✅ Authenticated downloads for private trackers
-- ✅ Chromecast casting support
-- ✅ Watch progress tracking
-- ✅ Media chapter support
-- ✅ LLM filename parsing (Ollama)
-- ✅ File-level matching (season packs, multi-file torrents)
-
-### Planned Features
-- ⏳ Multi-quality HLS ladder + dynamic ABR
-- ⏳ Automatic quality upgrading
-- ⏳ DLNA server
-- ⏳ Subtitle automation (search, sync, OCR for PGS)
-- ⏳ Hardware transcoding (NVENC/VAAPI/QSV)
-- ⏳ Multi-user sharing with roles
-- ⏳ Mobile-friendly PWA, offline posters, push notifications
-- ⏳ AirPlay casting support
-- ⏳ Filesystem watching (inotify for real-time detection)
-
----
-
-## Why These Choices?
-
-**librqbit** provides a native Rust torrent client that's embedded in our process—no external dependencies, no network API calls, direct control and real-time events.
-
-**TVMaze** as the default metadata source because it's completely free with no API key required, has excellent data quality for TV shows, and is fast.
-
-**RSS feeds** as the initial indexer approach because they're universal—every private tracker supports them, they're simple to parse, and they give us everything we need (torrent links, release info, timestamps).
-
-**inotify** for filesystem watching gives us instant detection of new files on supported filesystems, with graceful fallback to periodic scanning for network mounts where inotify doesn't work.
-
-**Copy by default** for post-download because it preserves seeding capability—users who want to maintain ratio on private trackers can keep seeding while their files appear organized in the library.
