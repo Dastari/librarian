@@ -1,7 +1,7 @@
-use super::common::{calculate_content_status, ContentStatus, ContentType};
+use super::common::{ContentStatus, ContentType, calculate_content_status};
 use super::media_file::MediaFile;
 use async_graphql::{Context, SimpleObject};
-use librarian_macros::{GraphQLEntity, GraphQLOperations};
+use macros::{GraphQLEntity, GraphQLOperations};
 use serde::{Deserialize, Serialize};
 
 use crate::db::Database;
@@ -108,13 +108,15 @@ impl Episode {
 
         let user_id = match ctx.data::<AuthUser>() {
             Ok(user) => user.user_id.clone(),
-            Err(_) => return if self.media_file_id.is_some() {
-                ContentStatus::Available
-            } else if self.wanted {
-                ContentStatus::Wanted
-            } else {
-                ContentStatus::Missing
-            },
+            Err(_) => {
+                return if self.media_file_id.is_some() {
+                    ContentStatus::Available
+                } else if self.wanted {
+                    ContentStatus::Wanted
+                } else {
+                    ContentStatus::Missing
+                };
+            }
         };
 
         calculate_content_status(

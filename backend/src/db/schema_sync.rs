@@ -173,10 +173,7 @@ async fn run_static_migrations(pool: &SqlitePool) -> SchemaSyncResult {
     // This is critical for INSERT OR IGNORE to work correctly in seeding.
     const APP_SETTINGS_KEY_INDEX_SQL: &str =
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_app_settings_key ON app_settings(key)";
-    if let Err(e) = sqlx::query(APP_SETTINGS_KEY_INDEX_SQL)
-        .execute(pool)
-        .await
-    {
+    if let Err(e) = sqlx::query(APP_SETTINGS_KEY_INDEX_SQL).execute(pool).await {
         let msg = format!("Failed to create unique index on app_settings.key: {}", e);
         warn!("{}", msg);
         result.errors.push(msg);

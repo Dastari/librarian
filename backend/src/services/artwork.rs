@@ -82,7 +82,10 @@ impl ArtworkService {
             .to_string();
 
         // Download the bytes
-        let bytes = response.bytes().await.context("Failed to read artwork bytes")?;
+        let bytes = response
+            .bytes()
+            .await
+            .context("Failed to read artwork bytes")?;
         let data = bytes.to_vec();
         let size_bytes = data.len() as i64;
 
@@ -278,7 +281,10 @@ impl ArtworkService {
         cover_url: Option<&str>,
     ) -> Option<String> {
         if let Some(url) = cover_url {
-            match self.cache_image(url, "audiobook", audiobook_id, "cover").await {
+            match self
+                .cache_image(url, "audiobook", audiobook_id, "cover")
+                .await
+            {
                 Ok(cached_url) => Some(cached_url),
                 Err(e) => {
                     warn!(

@@ -2,10 +2,9 @@
 description: Development workflow and best practices
 globs:
   - "backend/**/*"
+  - "macros/**/*"
   - "frontend/**/*"
-  - "infra/**/*"
   - "Makefile"
-  - "docker-compose.yml"
 alwaysApply: true
 ---
 
@@ -17,6 +16,7 @@ alwaysApply: true
 librarian/
 ├── backend/           # Rust backend (Axum + async-graphql)
 ├── frontend/          # React frontend (TanStack Router + HeroUI)
+├── macros/            # Rust macros for graphql
 ├── docs/              # Documentation
 ├── Makefile           # Common commands
 └── .cursor/rules/     # AI assistant rules

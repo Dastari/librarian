@@ -38,6 +38,7 @@ todos:
   - id: frontend-integration
     content: Integrate cast controls into VideoPlayer, episode tables, show pages
     status: completed
+isProject: false
 ---
 
 # Chromecast Casting Feature Implementation Plan
@@ -70,6 +71,8 @@ flowchart TB
     CC --> MediaServer
     MediaServer --> Transcoder
 ```
+
+
 
 ## Phase 1: Backend Cast Service
 
@@ -336,27 +339,20 @@ CREATE TABLE cast_sessions (
 ## Implementation Order
 
 1. **Backend Core** (Phase 1)
-
-   - Add rust_cast and mdns-sd dependencies
-   - Create CastService with basic device discovery
-   - Implement media streaming endpoint
-
+  - Add rust_cast and mdns-sd dependencies
+  - Create CastService with basic device discovery
+  - Implement media streaming endpoint
 2. **GraphQL API** (Phase 2)
-
-   - Add cast types
-   - Implement queries and mutations
-   - Add subscriptions for real-time updates
-
+  - Add cast types
+  - Implement queries and mutations
+  - Add subscriptions for real-time updates
 3. **Database** (Phase 4)
-
-   - Add migration for device storage
-   - Create repository layer
-
+  - Add migration for device storage
+  - Create repository layer
 4. **Frontend** (Phase 3)
-
-   - Cast context and hooks
-   - UI components
-   - Integration with existing pages
+  - Cast context and hooks
+  - UI components
+  - Integration with existing pages
 
 ## Future Extensibility
 

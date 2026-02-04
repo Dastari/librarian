@@ -18,7 +18,7 @@ pub async fn get_setting_string(
         .bind(key)
         .fetch_optional(pool)
         .await?;
-    
+
     Ok(row
         .map(|(s,)| s)
         .filter(|s| !s.trim().is_empty() && s != "null"))
@@ -115,7 +115,7 @@ pub async fn upsert_from_session(
         .fetch_optional(pool)
         .await?;
 
-    if let Some((id,)) = existing {
+    if let Some((_id,)) = existing {
         sqlx::query(
             r#"UPDATE torrents SET name = ?, state = ?, progress = ?, downloaded_bytes = ?, uploaded_bytes = ?, save_path = ?
                WHERE info_hash = ?"#,

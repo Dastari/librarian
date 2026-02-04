@@ -32,6 +32,7 @@ export function AddLibraryModal({
   onAdd,
   isLoading,
 }: AddLibraryModalProps) {
+  const [closeSignal, setCloseSignal] = useState(0);
   const [formValues, setFormValues] = useState<LibrarySettingsFormValues>(
     DEFAULT_LIBRARY_SETTINGS,
   );
@@ -61,11 +62,13 @@ export function AddLibraryModal({
 
     // Reset form
     setFormValues(DEFAULT_LIBRARY_SETTINGS);
+    setCloseSignal((s) => s + 1);
     onClose();
   };
 
   const handleClose = () => {
     setFormValues(DEFAULT_LIBRARY_SETTINGS);
+    setCloseSignal((s) => s + 1);
     onClose();
   };
 
@@ -86,6 +89,7 @@ export function AddLibraryModal({
             onChange={handleChange}
             mode="create"
             useCards={false}
+            closeSignal={closeSignal}
           />
         </ModalBody>
         <ModalFooter>

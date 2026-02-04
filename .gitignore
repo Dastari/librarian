@@ -16,7 +16,7 @@
 .LSOverride
 
 # Rust
-librarian-backend/target/
+backend/target/
 **/*.rs.bk
 Cargo.lock
 
@@ -27,16 +27,9 @@ yarn-debug.log*
 yarn-error.log*
 
 # Build outputs
-librarian-frontend/.output/
-librarian-frontend/dist/
-librarian-frontend/.vinxi/
+frontend/.vscode/
+frontend/dist/
 
-# Supabase
-supabase/.branches/
-supabase/.temp/
-
-# Docker
-infra/supabase-docker/
 
 # Data directories (for local dev)
 /data/

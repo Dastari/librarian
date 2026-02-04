@@ -29,6 +29,7 @@ todos:
   - id: frontend-settings
     content: Add subtitle settings to library/show UI and OpenSubtitles config page
     status: pending
+isProject: false
 ---
 
 # FFmpeg Integration and Subtitle System
@@ -74,6 +75,8 @@ flowchart TB
     SubDownload --> SubStore
     SubStore --> Subtitles
 ```
+
+
 
 ## Job Queue Integration
 
@@ -408,6 +411,8 @@ sequenceDiagram
     end
 ```
 
+
+
 ### Key Points
 
 - Scanner completes quickly - only file discovery and queue submission
@@ -528,8 +533,10 @@ New section in Settings for OpenSubtitles credentials:
 
 The following system packages are required at runtime:
 
-| Package | Purpose | Docker | Local Dev |
-|---------|---------|--------|-----------|
+
+| Package  | Purpose                          | Docker                          | Local Dev                                    |
+| -------- | -------------------------------- | ------------------------------- | -------------------------------------------- |
 | `ffmpeg` | Media analysis via `ffprobe` CLI | Already in `backend/Dockerfile` | `apt install ffmpeg` / `brew install ffmpeg` |
+
 
 **Note:** We use `ffprobe` command-line (JSON output) instead of Rust FFmpeg bindings for reliability and simpler deployment. The `ffprobe` binary is included in the `ffmpeg` package.

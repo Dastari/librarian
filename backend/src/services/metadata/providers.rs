@@ -365,14 +365,10 @@ impl MetadataService {
         let movie_id = movie.id.clone();
         let poster_url = movie_details.poster_url.clone();
         let backdrop_url = movie_details.backdrop_url.clone();
-        
+
         tokio::spawn(async move {
             artwork_service
-                .cache_movie_artwork(
-                    &movie_id,
-                    poster_url.as_deref(),
-                    backdrop_url.as_deref(),
-                )
+                .cache_movie_artwork(&movie_id, poster_url.as_deref(), backdrop_url.as_deref())
                 .await;
         });
 
@@ -389,6 +385,9 @@ pub struct CreateMovieFromMetadataOptions {
 }
 
 /// Create a sharable metadata service
-pub fn create_metadata_service(db: Database, config: MetadataServiceConfig) -> Arc<MetadataService> {
+pub fn create_metadata_service(
+    db: Database,
+    config: MetadataServiceConfig,
+) -> Arc<MetadataService> {
     Arc::new(MetadataService::new(db, config))
 }

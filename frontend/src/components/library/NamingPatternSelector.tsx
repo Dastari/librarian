@@ -17,6 +17,8 @@ interface NamingPatternSelectorProps {
   isDisabled?: boolean
   /** Library type to filter patterns by (tv, movies, music, audiobooks) */
   libraryType?: string
+  /** Signal to close popovers when parent dialogs close */
+  closeSignal?: number
 }
 
 // Variable descriptions by library type
@@ -46,11 +48,13 @@ export function NamingPatternSelector({
   label = 'File Naming Pattern',
   isDisabled = false,
   libraryType,
+  closeSignal,
 }: NamingPatternSelectorProps) {
   const [allPatterns, setAllPatterns] = useState<NamingPattern[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [useCustom, setUseCustom] = useState(false)
   const [customPattern, setCustomPattern] = useState('')
+  const [isSelectOpen, setIsSelectOpen] = useState(false)
 
   // Filter patterns by library type
   const patterns = libraryType
@@ -92,6 +96,12 @@ export function NamingPatternSelector({
 
     fetchPatterns()
   }, [value, libraryType])
+
+  useEffect(() => {
+    if (closeSignal !== undefined) {
+      setIsSelectOpen(false)
+    }
+  }, [closeSignal])
 
   // Find the currently selected pattern ID based on the pattern string
   const selectedPatternId = patterns.find(p => p.Pattern === value)?.Id || ''
@@ -168,6 +178,8 @@ export function NamingPatternSelector({
       ) : (
         <Select
           aria-label={label}
+          isOpen={isSelectOpen}
+          onOpenChange={setIsSelectOpen}
           selectedKeys={selectedPatternId ? [selectedPatternId] : []}
           onSelectionChange={(keys) => {
             const selected = Array.from(keys)[0] as string

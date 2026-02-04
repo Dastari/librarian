@@ -6,9 +6,9 @@
 
 #![recursion_limit = "512"]
 
+mod api;
 mod app;
 mod app_mode;
-mod api;
 mod cli;
 mod config;
 mod db;

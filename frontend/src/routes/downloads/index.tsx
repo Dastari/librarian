@@ -202,7 +202,7 @@ function DownloadsPage() {
     fetchUsenetDownloads();
 
     const sub = graphqlClient
-      .subscription({ query: TorrentChangedDocument }, {})
+      .subscription(TorrentChangedDocument, {})
       .subscribe({
         next: () => {
           fetchTorrents();

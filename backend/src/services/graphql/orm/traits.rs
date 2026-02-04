@@ -1,7 +1,7 @@
 //! Core traits for the GraphQL ORM layer
 //!
 //! These traits are implemented by the `#[derive(GraphQLEntity)]` and
-//! `#[derive(GraphQLRelations)]` macros from `librarian-macros`.
+//! `#[derive(GraphQLRelations)]` macros from `macros`.
 
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqliteRow;

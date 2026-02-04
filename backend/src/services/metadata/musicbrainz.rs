@@ -343,10 +343,7 @@ impl MusicBrainzClient {
                 )
             } else {
                 // Just use the whole thing as a search term
-                format!(
-                    "\"{}\" AND primarytype:album",
-                    Self::escape_lucene(rest)
-                )
+                format!("\"{}\" AND primarytype:album", Self::escape_lucene(rest))
             }
         } else {
             // Standard search - quote for phrase matching, filter to albums
@@ -490,11 +487,7 @@ impl MusicBrainzClient {
                     type_filter
                 )
             } else {
-                format!(
-                    "\"{}\" AND {}",
-                    Self::escape_lucene(rest),
-                    type_filter
-                )
+                format!("\"{}\" AND {}", Self::escape_lucene(rest), type_filter)
             }
         } else {
             format!(
@@ -727,7 +720,10 @@ impl MusicBrainzClient {
             return Ok(None);
         }
 
-        let body = response.text().await.context("Failed to read response body")?;
+        let body = response
+            .text()
+            .await
+            .context("Failed to read response body")?;
         debug!("Cover Art Archive response length: {} bytes", body.len());
 
         let result: CoverArtArchiveResult = match serde_json::from_str(&body) {

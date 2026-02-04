@@ -1,7 +1,13 @@
-use async_graphql::{Result, SimpleObject};
-use librarian_macros::{GraphQLEntity, GraphQLOperations};
+use async_graphql::{Context, SimpleObject, InputObject, Object};
+use std::sync::Arc;
+
+use macros::{GraphQLEntity, GraphQLOperations};
 use serde::{Deserialize, Serialize};
 
+use crate::db::Database;
+use crate::services::graphql::AuthUser;
+
+use super::common::{calculate_content_status, ContentStatus, ContentType};
 use super::media_file::MediaFile;
 
 // Re-export types used for movie creation from metadata
@@ -121,13 +127,13 @@ pub struct Movie {
     #[filterable(type = "string")]
     pub certification: Option<String>,
 
-    #[graphql(name = "Status")]
-    #[filterable(type = "string")]
-    pub status: Option<String>,
-
     #[graphql(name = "Monitored")]
     #[filterable(type = "boolean")]
     pub monitored: bool,
+
+    #[graphql(name = "Wanted")]
+    #[filterable(type = "boolean")]
+    pub wanted: bool,
 
     #[graphql(name = "DownloadStatus")]
     #[filterable(type = "string")]
@@ -167,7 +173,7 @@ impl Movie {
     async fn poster_url_resolver(&self, ctx: &async_graphql::Context<'_>) -> Option<String> {
         let db = ctx.data_unchecked::<crate::db::Database>();
         let artwork_service = crate::services::ArtworkService::new(db.clone());
-        
+
         artwork_service
             .get_artwork_url("movie", &self.id, "poster", self.poster_url.as_deref())
             .await
@@ -178,10 +184,44 @@ impl Movie {
     async fn backdrop_url_resolver(&self, ctx: &async_graphql::Context<'_>) -> Option<String> {
         let db = ctx.data_unchecked::<crate::db::Database>();
         let artwork_service = crate::services::ArtworkService::new(db.clone());
-        
+
         artwork_service
             .get_artwork_url("movie", &self.id, "backdrop", self.backdrop_url.as_deref())
             .await
+    }
+
+    /// Computed status based on playback, file availability, and download state
+    ///
+    /// Returns one of: PLAYING, PAUSED, AVAILABLE, DOWNLOADING, WANTED, MISSING
+    #[graphql(name = "Status")]
+    async fn status(&self, ctx: &Context<'_>) -> ContentStatus {
+        let db = match ctx.data::<Database>() {
+            Ok(db) => db,
+            Err(_) => return ContentStatus::Missing,
+        };
+
+        let user_id = match ctx.data::<AuthUser>() {
+            Ok(user) => user.user_id.clone(),
+            Err(_) => {
+                return if self.media_file_id.is_some() {
+                    ContentStatus::Available
+                } else if self.wanted {
+                    ContentStatus::Wanted
+                } else {
+                    ContentStatus::Missing
+                };
+            }
+        };
+
+        calculate_content_status(
+            db,
+            ContentType::Movie,
+            &self.id,
+            &user_id,
+            self.media_file_id.as_deref(),
+            self.wanted,
+        )
+        .await
     }
 }
 
@@ -210,10 +250,14 @@ impl Movie {
         let movie_id = uuid::Uuid::new_v4();
 
         // Serialize JSON fields
-        let genres_json = serde_json::to_string(&details.genres).unwrap_or_else(|_| "[]".to_string());
-        let cast_json = serde_json::to_string(&details.cast_names).unwrap_or_else(|_| "[]".to_string());
-        let countries_json = serde_json::to_string(&details.production_countries).unwrap_or_else(|_| "[]".to_string());
-        let languages_json = serde_json::to_string(&details.spoken_languages).unwrap_or_else(|_| "[]".to_string());
+        let genres_json =
+            serde_json::to_string(&details.genres).unwrap_or_else(|_| "[]".to_string());
+        let cast_json =
+            serde_json::to_string(&details.cast_names).unwrap_or_else(|_| "[]".to_string());
+        let countries_json = serde_json::to_string(&details.production_countries)
+            .unwrap_or_else(|_| "[]".to_string());
+        let languages_json =
+            serde_json::to_string(&details.spoken_languages).unwrap_or_else(|_| "[]".to_string());
 
         // Parse release date
         let release_date = details
@@ -308,7 +352,8 @@ impl MovieCustomOperations {
         use crate::graphql::auth::AuthExt;
 
         let _user = ctx.auth_user()?;
-        let metadata = ctx.data_unchecked::<Arc<crate::services::metadata::providers::MetadataService>>();
+        let metadata =
+            ctx.data_unchecked::<Arc<crate::services::metadata::providers::MetadataService>>();
 
         if !metadata.has_tmdb().await {
             return Err(async_graphql::Error::new(
@@ -343,9 +388,6 @@ impl MovieCustomOperations {
 // ============================================================================
 // Movie Metadata Mutations (TMDB integration)
 // ============================================================================
-
-use async_graphql::{Context, InputObject, Object};
-use std::sync::Arc;
 
 /// Input for searching movies
 #[derive(Debug, InputObject)]
@@ -424,8 +466,10 @@ impl MovieMetadataMutations {
         #[graphql(name = "Input")] input: AddMovieInput,
     ) -> async_graphql::Result<MovieOperationResult> {
         use crate::graphql::auth::AuthExt;
-        use crate::services::metadata::providers::{AddMovieOptions, MetadataProvider, MetadataService};
-        
+        use crate::services::metadata::providers::{
+            AddMovieOptions, MetadataProvider, MetadataService,
+        };
+
         let user = ctx.auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 

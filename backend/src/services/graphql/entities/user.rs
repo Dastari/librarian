@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_graphql::{Context, Object, Result, SimpleObject};
-use librarian_macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 use super::super::auth::AuthUser;

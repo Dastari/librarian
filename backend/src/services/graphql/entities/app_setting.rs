@@ -1,7 +1,7 @@
 //! AppSetting Entity
 
 use async_graphql::SimpleObject;
-use librarian_macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 /// AppSetting Entity - application settings

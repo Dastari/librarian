@@ -1,7 +1,7 @@
 //! GraphQL ORM Layer
 //!
 //! Provides traits and utilities for macro-generated GraphQL entities.
-//! The `librarian-macros` crate generates implementations of these traits
+//! The `macros` crate generates implementations of these traits
 //! from annotated Rust structs, creating a single source of truth for:
 //! - GraphQL types (SimpleObject with PascalCase names)
 //! - Filter inputs (WhereInput)

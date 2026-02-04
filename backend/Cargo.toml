@@ -61,7 +61,7 @@ tokio-cron-scheduler = "0.13"
 walkdir = "2"
 
 # Internal macros
-librarian-macros = { path = "../librarian-macros" }
+macros = { path = "../macros" }
 
 # Utilities
 regex = "1"

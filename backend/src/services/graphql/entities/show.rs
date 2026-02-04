@@ -4,7 +4,7 @@
 //! Relations use DataLoader batching to avoid N+1 queries.
 
 use async_graphql::SimpleObject;
-use librarian_macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 use crate::graphql::entities::Library;
@@ -139,7 +139,6 @@ pub struct Show {
     // - Exposes a GraphQL field with Where/OrderBy/Page args (for multiple relations)
     // - Uses DataLoader for batching when no args provided (N+1 free)
     // - Falls back to direct SQL query when args provided (full filter support)
-
     /// Parent library for this show
     #[graphql(skip)]
     #[serde(skip)]

@@ -126,6 +126,17 @@ function RowActionsDropdown<T>({ item, actions }: RowActionsDropdownProps<T>) {
     action.isVisible ? action.isVisible(item) : true
   )
   const dropdownActions = visibleActions.filter((action) => action.inDropdown !== false)
+  const actionMap = useMemo(
+    () => new Map(dropdownActions.map((action) => [String(action.key), action])),
+    [dropdownActions]
+  )
+  const disabledKeys = useMemo(
+    () =>
+      dropdownActions
+        .filter((action) => (action.isDisabled ? action.isDisabled(item) : false))
+        .map((action) => String(action.key)),
+    [dropdownActions, item]
+  )
 
   if (dropdownActions.length === 0) return null
 
@@ -136,7 +147,17 @@ function RowActionsDropdown<T>({ item, actions }: RowActionsDropdownProps<T>) {
           <IconDotsVertical size={18} />
         </Button>
       </DropdownTrigger>
-      <DropdownMenu aria-label="Row actions">
+      <DropdownMenu
+        aria-label="Row actions"
+        closeOnSelect
+        disabledKeys={disabledKeys}
+        onAction={(key) => {
+          const action = actionMap.get(String(key))
+          if (!action) return
+          // Defer until the dropdown closes to avoid focus being trapped in a hidden popover.
+          setTimeout(() => action.onAction(item), 0)
+        }}
+      >
         {dropdownActions.map((action) => (
           <DropdownItem
             key={action.key}
@@ -144,7 +165,6 @@ function RowActionsDropdown<T>({ item, actions }: RowActionsDropdownProps<T>) {
             className={action.isDestructive ? 'text-danger' : ''}
             startContent={resolveIcon(action.icon, item)}
             isDisabled={action.isDisabled ? action.isDisabled(item) : false}
-            onPress={() => action.onAction(item)}
           >
             {resolveLabel(action.label, item)}
           </DropdownItem>

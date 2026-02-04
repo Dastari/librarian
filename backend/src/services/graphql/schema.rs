@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use async_graphql::Schema;
 use async_graphql::dataloader::DataLoader;
-use librarian_macros::schema_roots;
+use macros::schema_roots;
 
 use crate::db::Database;
 use crate::services::graphql::entities::*;

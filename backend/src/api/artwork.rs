@@ -66,7 +66,11 @@ async fn serve_artwork(
                 error = %e,
                 "Failed to retrieve artwork from database"
             );
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to retrieve artwork").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to retrieve artwork",
+            )
+                .into_response()
         }
     }
 }
@@ -79,9 +83,10 @@ async fn storage_stats(State(state): State<AppState>) -> impl IntoResponse {
         .fetch_one(&state.db)
         .await;
 
-    let size_result = sqlx::query_scalar::<_, i64>("SELECT COALESCE(SUM(size_bytes), 0) FROM artwork_cache")
-        .fetch_one(&state.db)
-        .await;
+    let size_result =
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE(SUM(size_bytes), 0) FROM artwork_cache")
+            .fetch_one(&state.db)
+            .await;
 
     let stats_result = sqlx::query_as::<_, (String, i64, i64)>(
         r#"
@@ -120,11 +125,15 @@ async fn storage_stats(State(state): State<AppState>) -> impl IntoResponse {
 /// Create the artwork router
 #[cfg(feature = "sqlite")]
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .nest("/artwork", Router::new()
-            .route("/{entity_type}/{entity_id}/{artwork_type}", get(serve_artwork))
-            .route("/stats", get(storage_stats))
-        )
+    Router::new().nest(
+        "/artwork",
+        Router::new()
+            .route(
+                "/{entity_type}/{entity_id}/{artwork_type}",
+                get(serve_artwork),
+            )
+            .route("/stats", get(storage_stats)),
+    )
 }
 
 /// No-op router for non-SQLite builds

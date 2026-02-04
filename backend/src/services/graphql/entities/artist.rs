@@ -1,5 +1,5 @@
 use async_graphql::SimpleObject;
-use librarian_macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 use super::album::Album;

@@ -23,6 +23,7 @@ alwaysApply: true
 - ✅ Use Apollo Client for GraphQL (queries, mutations, subscriptions)
 - ✅ Define GraphQL operations in `frontend/src/lib/graphql/`
 - ✅ Use Tailwind CSS for custom styling
+- ✅ Use generated codegen types instead of re-creating types.
 
 ### Backend
 - ✅ Use async-graphql for the API
@@ -30,7 +31,7 @@ alwaysApply: true
 - ✅ Use anyhow for error handling
 - ✅ Use tracing for logging
 - ✅ Put business logic in services
-- ✅ Put database queries in repositories
+- ✅ Use GraphQL entity methods for standard CRUD
 
 ### Database
 - ✅ Create numbered migrations (001_, 002_, etc.)
@@ -48,7 +49,7 @@ alwaysApply: true
 - ✅ Use `process_torrent(force=true)` to re-organize stuck torrents
 
 ### Auto-Download
-- ✅ Trigger immediately when adding movies/albums/audiobooks
+- ✅ Trigger immediately when adding movies/albums/audiobooks assuing wanted flag is set.
 - ✅ Trigger after library scans complete
 - ✅ Use IndexerManager.download_release() for authenticated downloads
 - ✅ Match library type case-insensitively (`library.library_type.to_lowercase()`)
@@ -63,14 +64,13 @@ alwaysApply: true
 ### API
 - ❌ Create REST endpoints (except file uploads, health, torznab, media streaming)
 - ❌ Use WebSockets directly (use GraphQL subscriptions)
-- ❌ Expose internal errors to users
 - ❌ Skip authentication checks
 
 ### Frontend
 - ❌ Use raw HTML elements when HeroUI has a component
 - ❌ Use emojis for icons (use `@tabler/icons-react` instead)
 - ❌ Create custom SVG icon components
-- ❌ Use Redux or other state managers (use React hooks + urql cache)
+- ❌ Use Redux or other state managers (use React hooks + Apollo cache)
 - ❌ Create custom form components (use HeroUI Input, Select, etc.)
 - ❌ Hard-code API URLs (use VITE_API_URL env var)
 
@@ -85,7 +85,7 @@ alwaysApply: true
 - ❌ Use separate quality_profiles table (quality settings are per-library)
 
 ### Database
-- ❌ Use raw SQL in GraphQL resolvers (use repositories)
+- ❌ Use raw SQL in GraphQL resolvers (use GraphQL entity methods)
 - ❌ Store user-specific data without RLS
 - ❌ Use TIMESTAMP without timezone
 - ❌ Create tables without updated_at triggers

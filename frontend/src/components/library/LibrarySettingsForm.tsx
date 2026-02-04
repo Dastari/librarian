@@ -58,6 +58,7 @@ export interface LibrarySettingsFormProps {
   onChange: (values: LibrarySettingsFormValues, isValid: boolean) => void;
   mode: "create" | "edit";
   useCards?: boolean;
+  closeSignal?: number;
 }
 
 // =============================================================================
@@ -91,6 +92,7 @@ export function LibrarySettingsForm({
   onChange,
   mode,
   useCards = false,
+  closeSignal,
 }: LibrarySettingsFormProps) {
   const {
     control,
@@ -307,6 +309,7 @@ export function LibrarySettingsForm({
                 value={field.value}
                 onChange={field.onChange}
                 libraryType={libraryType.toLowerCase()}
+                closeSignal={closeSignal}
               />
             )}
           />

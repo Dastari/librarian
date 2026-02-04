@@ -63,7 +63,6 @@ pub mod library;
 pub mod torrent;
 
 // Re-export all entity types
-pub use common::*;
 pub use album::*;
 pub use app_log::*;
 pub use app_setting::*;
@@ -75,6 +74,7 @@ pub use cast_device::*;
 pub use cast_session::*;
 pub use cast_setting::*;
 pub use chapter::*;
+pub use common::*;
 pub use episode::*;
 pub use indexer_config::*;
 pub use indexer_search_cache::*;

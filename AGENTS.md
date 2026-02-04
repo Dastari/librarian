@@ -4,7 +4,7 @@
 
 - `backend/`: Rust Axum API,service.
 - `frontend/`: TanStack Start app with `src/components/`, `src/hooks/`, `src/lib/graphql/`, and file-based routes in `src/routes/`.
-- `librarian-macros/`: internal Rust proc-macro crate used by the backend.
+- `macros/`: internal Rust proc-macro crate used by the backend.
 - `docs/`: architecture, design, and workflow notes.
 
 ## Build, Test, and Development Commands
@@ -24,7 +24,8 @@
 - Rust uses `rustfmt` defaults; run `cargo fmt` before pushing.
 - Rust modules and functions use `snake_case`; types and traits use `CamelCase`.
 - Frontend components use `PascalCase` filenames (`MediaCard.tsx`); hooks are `useThing.ts`.
-- Tailwind + HeroUI drive UI styling; follow `.cursor/rules/style-guide.mdc` for layout and UI patterns.
+- Tailwind + HeroUI drive UI styling; follow `.cursor/rules/` (especially `frontend-ui.mdc`) for layout and UI patterns.
+- Follow `docs/design.md` for product, architecture, and agent rules.
 
 ## Testing Guidelines
 

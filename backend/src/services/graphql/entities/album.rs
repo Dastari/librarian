@@ -1,5 +1,5 @@
 use async_graphql::{Result, SimpleObject};
-use librarian_macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 use super::common::AutoDownloadMode;
@@ -13,15 +13,7 @@ use crate::{
 };
 
 /// Album Entity
-#[derive(
-    GraphQLEntity,
-    GraphQLOperations,
-    SimpleObject,
-    Clone,
-    Debug,
-    Serialize,
-    Deserialize,
-)]
+#[derive(GraphQLEntity, GraphQLOperations, SimpleObject, Clone, Debug, Serialize, Deserialize)]
 #[graphql(name = "Album")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
