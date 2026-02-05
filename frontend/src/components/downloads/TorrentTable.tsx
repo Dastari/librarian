@@ -47,6 +47,10 @@ export interface TorrentTableProps {
   onBulkResume: (infoHashes: string[]) => void;
   onBulkRemove: (infoHashes: string[]) => void;
   onAddClick: () => void;
+  liveStatsByInfoHash?: Record<
+    string,
+    { downloadSpeed: number; uploadSpeed: number; peers: number }
+  >;
 }
 
 // ============================================================================
@@ -84,6 +88,7 @@ export function TorrentTable({
   onBulkResume,
   onBulkRemove,
   onAddClick,
+  liveStatsByInfoHash = {},
 }: TorrentTableProps) {
   // Confirm modal state
   const {
@@ -193,6 +198,33 @@ export function TorrentTable({
           </span>
         ),
         sortFn: (a, b) => a.TotalBytes - b.TotalBytes,
+      },
+      {
+        key: "liveStats",
+        label: "SPEED / PEERS",
+        width: 180,
+        sortable: false,
+        skeleton: () => <Skeleton className="w-24 h-4 rounded" />,
+        render: (torrent) => {
+          const stats = liveStatsByInfoHash[torrent.InfoHash];
+          if (!stats) {
+            return <span className="text-xs text-default-400">-</span>;
+          }
+          const down =
+            stats.downloadSpeed > 0
+              ? `${formatBytes(stats.downloadSpeed)}/s`
+              : "-";
+          const up =
+            stats.uploadSpeed > 0 ? `${formatBytes(stats.uploadSpeed)}/s` : "-";
+          return (
+            <div className="flex flex-col text-xs text-default-500 tabular-nums">
+              <span>
+                ↓ {down} ↑ {up}
+              </span>
+              <span>{stats.peers} peers</span>
+            </div>
+          );
+        },
       },
       {
         key: "State",

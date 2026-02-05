@@ -1,0 +1,29 @@
+# TV Shows: search and add
+
+query SearchTvShows($Query: String!) {
+  SearchTvShows(Query: $Query) {
+    Provider
+    ProviderId
+    Name
+    Year
+    Status
+    Network
+    Overview
+    PosterUrl
+    TvdbId
+    ImdbId
+    Score
+  }
+}
+
+mutation AddTvShow($LibraryId: String!, $Input: AddTvShowInput!) {
+  AddTvShow(LibraryId: $LibraryId, Input: $Input) {
+    Success
+    Show {
+      Id
+      Name
+      PosterUrl
+    }
+    Error
+  }
+}

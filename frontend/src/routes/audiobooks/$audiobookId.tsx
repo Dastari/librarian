@@ -4,7 +4,6 @@ import { Button } from '@heroui/button'
 import { Card, CardBody } from '@heroui/card'
 import { Chip } from '@heroui/chip'
 import { Image } from '@heroui/image'
-import { Spinner } from '@heroui/spinner'
 import { Breadcrumbs, BreadcrumbItem } from '@heroui/breadcrumbs'
 import { Progress } from '@heroui/progress'
 import { useDisclosure } from '@heroui/modal'
@@ -329,8 +328,20 @@ function AudiobookDetailPage() {
     })
   }, [audiobookData, navigate])
 
-  // Show error state only after loading is complete
-  if (!isLoading && (error || !audiobookData)) {
+  if (!audiobookData) {
+    if (isLoading) {
+      return (
+        <div className="container mx-auto p-4">
+          <Card>
+            <CardBody className="flex flex-col items-center justify-center py-12 text-center">
+              <IconBook size={48} className="mx-auto mb-4 text-default-400" />
+              <p className="text-default-500">Loading audiobook...</p>
+            </CardBody>
+          </Card>
+        </div>
+      )
+    }
+
     return (
       <div className="container mx-auto p-4">
         <Card>
@@ -347,24 +358,24 @@ function AudiobookDetailPage() {
     )
   }
 
-  // Use template data during loading, real data when available
-  const displayAudiobookData = audiobookData ?? audiobookTemplate
-  const displayLibrary = library ?? libraryTemplate
-  const { audiobook, chapters, author } = displayAudiobookData
+  const { audiobook, chapters, author } = audiobookData
 
   return (
-    <ShimmerLoader loading={isLoading} delay={500} templateProps={{ audiobookData: audiobookTemplate }}>
-      <div className="container mx-auto p-4  mb-20">
+    <div className="container mx-auto p-4  mb-20">
         {/* Breadcrumbs */}
         <Breadcrumbs className="mb-4">
           <BreadcrumbItem>
             <Link to="/libraries">Libraries</Link>
           </BreadcrumbItem>
-          <BreadcrumbItem>
-            <Link to="/libraries/$libraryId" params={{ libraryId: displayLibrary.Id }}>
-              {displayLibrary.Name}
-            </Link>
-          </BreadcrumbItem>
+          {library ? (
+            <BreadcrumbItem>
+              <Link to="/libraries/$libraryId" params={{ libraryId: library.Id }}>
+                {library.Name}
+              </Link>
+            </BreadcrumbItem>
+          ) : (
+            <BreadcrumbItem>Library</BreadcrumbItem>
+          )}
           <BreadcrumbItem>{audiobook.title}</BreadcrumbItem>
         </Breadcrumbs>
 
@@ -440,21 +451,21 @@ function AudiobookDetailPage() {
             <div className="mb-4">
               <div className="flex items-center justify-between text-sm mb-1">
                 <span className="text-default-500">
-                  {displayAudiobookData.chaptersWithFiles} of {displayAudiobookData.chapterCount} chapters
+                  {audiobookData.chaptersWithFiles} of {audiobookData.chapterCount} chapters
                 </span>
                 <span className="font-medium">
-                  {displayAudiobookData.completionPercent.toFixed(0)}%
+                  {audiobookData.completionPercent.toFixed(0)}%
                 </span>
               </div>
               <Progress
                 aria-label="Audiobook completion"
-                value={displayAudiobookData.completionPercent}
-                color={displayAudiobookData.completionPercent === 100 ? 'success' : 'primary'}
+                value={audiobookData.completionPercent}
+                color={audiobookData.completionPercent === 100 ? 'success' : 'primary'}
                 size="sm"
               />
-              {displayAudiobookData.missingChapters > 0 && (
+              {audiobookData.missingChapters > 0 && (
                 <p className="text-sm text-warning mt-1">
-                  {displayAudiobookData.missingChapters} chapter{displayAudiobookData.missingChapters !== 1 ? 's' : ''} missing
+                  {audiobookData.missingChapters} chapter{audiobookData.missingChapters !== 1 ? 's' : ''} missing
                 </p>
               )}
             </div>
@@ -463,7 +474,7 @@ function AudiobookDetailPage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
               <div>
                 <p className="text-xs text-default-400">Chapters</p>
-                <p className="text-lg font-semibold">{displayAudiobookData.chapterCount}</p>
+                <p className="text-lg font-semibold">{audiobookData.chapterCount}</p>
               </div>
               <div>
                 <p className="text-xs text-default-400">Duration</p>
@@ -537,7 +548,7 @@ function AudiobookDetailPage() {
             ) : (
               <ChapterTable
                 chapters={chapters}
-                audiobookId={displayAudiobookData.audiobook.id}
+                audiobookId={audiobookData.audiobook.id}
                 onPlay={handlePlayChapter}
                 onSearch={handleSearchChapter}
               />
@@ -574,6 +585,5 @@ function AudiobookDetailPage() {
           </Modal>
         )}
       </div>
-    </ShimmerLoader>
   )
 }

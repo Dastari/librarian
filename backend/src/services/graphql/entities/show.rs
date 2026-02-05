@@ -3,14 +3,17 @@
 //! This module contains the Show entity with macro-generated relations.
 //! Relations use DataLoader batching to avoid N+1 queries.
 
-use async_graphql::SimpleObject;
+use async_graphql::{Context, InputObject, Object, SimpleObject};
+use std::sync::Arc;
 use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
+use crate::graphql::auth::AuthExt;
 use crate::graphql::entities::Library;
 
 use super::common::AutoDownloadMode;
 use super::episode::Episode;
+use crate::services::metadata::providers::{AddTvShowOptions, MetadataProvider, MetadataService};
 
 /// Show entity representing a TV show.
 ///
@@ -157,5 +160,159 @@ pub struct Show {
 #[derive(Default)]
 pub struct ShowCustomOperations;
 
-// Custom operations (SearchTvShows, AddTvShowFromProvider, etc.) can be added here
-// as an #[Object] impl on ShowCustomOperations when needed.
+#[async_graphql::Object]
+impl ShowCustomOperations {
+    /// Search for TV shows on TVMaze
+    #[graphql(name = "SearchTvShows")]
+    async fn search_tv_shows(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "Query")] query: String,
+    ) -> async_graphql::Result<Vec<TvShowSearchResultGql>> {
+        let _user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        let results = metadata
+            .search_tv_shows(&query)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(results
+            .into_iter()
+            .map(|show| TvShowSearchResultGql {
+                provider: match show.provider {
+                    MetadataProvider::Tvmaze => "tvmaze".to_string(),
+                    MetadataProvider::Tmdb => "tmdb".to_string(),
+                    MetadataProvider::Musicbrainz => "musicbrainz".to_string(),
+                    MetadataProvider::OpenLibrary => "openlibrary".to_string(),
+                },
+                provider_id: show.provider_id as i32,
+                name: show.name,
+                year: show.year,
+                status: show.status,
+                network: show.network,
+                overview: show.overview,
+                poster_url: show.poster_url,
+                tvdb_id: show.tvdb_id,
+                imdb_id: show.imdb_id,
+                score: show.score,
+            })
+            .collect())
+    }
+}
+
+// ============================================================================
+// TV Show Metadata Mutations (TVMaze integration)
+// ============================================================================
+
+/// Input for searching TV shows
+#[derive(Debug, InputObject)]
+#[graphql(name = "SearchTvShowsInput")]
+pub struct SearchTvShowsInput {
+    #[graphql(name = "Query")]
+    pub query: String,
+}
+
+/// Input for adding a TV show from TVMaze
+#[derive(Debug, InputObject)]
+#[graphql(name = "AddTvShowInput")]
+pub struct AddTvShowInput {
+    /// TVMaze show ID
+    #[graphql(name = "TvmazeId")]
+    pub tvmaze_id: i32,
+    /// Auto-download mode for episodes
+    #[graphql(name = "AutoDownloadMode")]
+    pub auto_download_mode: Option<AutoDownloadMode>,
+    /// Optional path override for the show
+    #[graphql(name = "Path")]
+    pub path: Option<String>,
+}
+
+/// TV show search result from TVMaze
+#[derive(Debug, Clone, async_graphql::SimpleObject)]
+#[graphql(name = "TvShowSearchResult")]
+pub struct TvShowSearchResultGql {
+    #[graphql(name = "Provider")]
+    pub provider: String,
+    #[graphql(name = "ProviderId")]
+    pub provider_id: i32,
+    #[graphql(name = "Name")]
+    pub name: String,
+    #[graphql(name = "Year")]
+    pub year: Option<i32>,
+    #[graphql(name = "Status")]
+    pub status: Option<String>,
+    #[graphql(name = "Network")]
+    pub network: Option<String>,
+    #[graphql(name = "Overview")]
+    pub overview: Option<String>,
+    #[graphql(name = "PosterUrl")]
+    pub poster_url: Option<String>,
+    #[graphql(name = "TvdbId")]
+    pub tvdb_id: Option<i32>,
+    #[graphql(name = "ImdbId")]
+    pub imdb_id: Option<String>,
+    #[graphql(name = "Score")]
+    pub score: Option<f64>,
+}
+
+/// Result of TV show operations
+#[derive(Debug, async_graphql::SimpleObject)]
+#[graphql(name = "TvShowOperationResult")]
+pub struct TvShowOperationResult {
+    #[graphql(name = "Success")]
+    pub success: bool,
+    #[graphql(name = "Show")]
+    pub show: Option<Show>,
+    #[graphql(name = "Error")]
+    pub error: Option<String>,
+}
+
+/// TV show metadata mutations (TVMaze integration)
+#[derive(Default)]
+pub struct ShowMetadataMutations;
+
+#[Object]
+impl ShowMetadataMutations {
+    /// Add a TV show to a library by fetching metadata from TVMaze
+    #[graphql(name = "AddTvShow")]
+    async fn add_tv_show(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "LibraryId")] library_id: String,
+        #[graphql(name = "Input")] input: AddTvShowInput,
+    ) -> async_graphql::Result<TvShowOperationResult> {
+        let user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        let lib_id = uuid::Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+        let user_id = uuid::Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        let monitor_type = input.auto_download_mode.unwrap_or(AutoDownloadMode::All);
+
+        match metadata
+            .add_tv_show_from_provider(AddTvShowOptions {
+                provider: MetadataProvider::Tvmaze,
+                provider_id: input.tvmaze_id as u32,
+                library_id: lib_id,
+                user_id,
+                monitor_type,
+                path: input.path,
+            })
+            .await
+        {
+            Ok(show) => Ok(TvShowOperationResult {
+                success: true,
+                show: Some(show),
+                error: None,
+            }),
+            Err(e) => Ok(TvShowOperationResult {
+                success: false,
+                show: None,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+}

@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { ApolloProvider } from "@apollo/client/react";
 import { HeroUIProvider } from "@heroui/system";
+import { ToastProvider } from "@heroui/toast";
 import { NuqsAdapter } from "nuqs/adapters/react";
 
 // Import the generated route tree
@@ -286,6 +287,7 @@ if (rootElement && !rootElement.innerHTML) {
       <ErrorBoundary>
         <ApolloProvider client={apolloClient}>
           <HeroUIProvider>
+            <ToastProvider />
             <NuqsAdapter>
               <InnerApp />
             </NuqsAdapter>

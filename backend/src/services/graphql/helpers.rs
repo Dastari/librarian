@@ -31,7 +31,7 @@ pub(crate) fn movie_entity_to_graphql(e: Movie) -> Movie {
         tmdb_id: e.tmdb_id,
         imdb_id: e.imdb_id,
         status: e
-            .status
+            .tmdb_status
             .as_deref()
             .map(MovieStatus::from)
             .unwrap_or_default(),

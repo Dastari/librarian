@@ -4,43 +4,60 @@
 
 export const TORRENT_PROGRESS_SUBSCRIPTION = `
   subscription TorrentProgress {
-    torrentProgress {
-      id
-      infoHash
-      progress
-      downloadSpeed
-      uploadSpeed
-      peers
-      state
+    TorrentProgress {
+      Id
+      InfoHash
+      Progress
+      DownloadSpeed
+      UploadSpeed
+      Peers
+      State
     }
   }
 `;
 
 export const TORRENT_ADDED_SUBSCRIPTION = `
   subscription TorrentAdded {
-    torrentAdded {
-      id
-      name
-      infoHash
+    TorrentAdded {
+      Id
+      Name
+      InfoHash
     }
   }
 `;
 
 export const TORRENT_COMPLETED_SUBSCRIPTION = `
   subscription TorrentCompleted {
-    torrentCompleted {
-      id
-      name
-      infoHash
+    TorrentCompleted {
+      Id
+      Name
+      InfoHash
     }
   }
 `;
 
 export const TORRENT_REMOVED_SUBSCRIPTION = `
   subscription TorrentRemoved {
-    torrentRemoved {
-      id
-      infoHash
+    TorrentRemoved {
+      Id
+      InfoHash
+    }
+  }
+`;
+
+export const TORRENT_FILE_CHANGED_SUBSCRIPTION = `
+  subscription TorrentFileChanged($Filter: SubscriptionFilterInput) {
+    TorrentFileChanged(Filter: $Filter) {
+      Action
+      Id
+      TorrentFile {
+        TorrentId
+        FileIndex
+        FilePath
+        FileSize
+        DownloadedBytes
+        Progress
+      }
     }
   }
 `;
@@ -53,8 +70,19 @@ export const TORRENT_REMOVED_SUBSCRIPTION = `
  */
 export const ACTIVE_DOWNLOAD_COUNT_SUBSCRIPTION = `
   subscription ActiveDownloadCount {
-    activeDownloadCount {
-      count
+    ActiveDownloadCount {
+      Count
+    }
+  }
+`;
+
+export const USENET_DOWNLOAD_CHANGED_SUBSCRIPTION = `
+  subscription UsenetDownloadChanged($Filter: SubscriptionFilterInput) {
+    UsenetDownloadChanged(Filter: $Filter) {
+      Action
+      UsenetDownload {
+        Id
+      }
     }
   }
 `;

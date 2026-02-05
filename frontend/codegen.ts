@@ -9,7 +9,6 @@ const config: CodegenConfig = {
   schema: schemaUrl,
   // Only .graphql at root to avoid Babel parse of .ts/.tsx (fixes "Unexpected token (388:0)" in pluck).
   documents: ['src/lib/graphql/documents/**/*.graphql'],
-  ignore: ['src/lib/graphql/generated/**', 'src/routeTree.gen.ts'],
   ignoreNoDocuments: true,
   generates: {
     // TypedDocumentNode + operation types from .graphql documents (auth, etc.)

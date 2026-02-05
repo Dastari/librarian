@@ -221,7 +221,7 @@ export function useDashboardCache(userId: string | null): UseDashboardCacheResul
       },
     })
     const torrentSub = graphqlClient
-      .subscription<{ torrentCompleted: { id: number } }>(TORRENT_COMPLETED_SUBSCRIPTION, {})
+      .subscription<{ TorrentCompleted: { Id: number } }>(TORRENT_COMPLETED_SUBSCRIPTION, {})
       .subscribe({ next: handleEvent })
     return () => {
       librarySub.unsubscribe()

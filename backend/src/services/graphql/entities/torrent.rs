@@ -117,6 +117,11 @@ pub struct Torrent {
     #[sortable]
     pub created_at: String,
 
+    #[graphql(name = "UpdatedAt")]
+    #[filterable(type = "date")]
+    #[sortable]
+    pub updated_at: String,
+
     #[graphql(name = "CompletedAt")]
     #[filterable(type = "date")]
     pub completed_at: Option<String>,

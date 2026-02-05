@@ -28,41 +28,15 @@ import {
 } from '../../lib/graphql'
 import { sanitizeError } from '../../lib/format'
 import { formatBytes } from '../../lib/format'
-import { IconCopy, IconArrowRight, IconTrash, IconSearch, IconInfoCircle, IconRefresh, IconFolder, IconFolderOpen, IconMovie, IconFile, IconPhoto } from '@tabler/icons-react'
+import { IconCopy, IconArrowRight, IconTrash, IconSearch, IconInfoCircle, IconRefresh, IconFolderOpen } from '@tabler/icons-react'
+import { getFileIcon } from '../../lib/fileIcons'
 
 // ============================================================================
 // Utility Functions
 // ============================================================================
 
-function getFileIcon(filename: string, isDir: boolean): React.ReactNode {
-  if (isDir) return <IconFolder size={20} className="text-amber-400" />
-  const ext = filename.split('.').pop()?.toLowerCase()
-  switch (ext) {
-    case 'mkv':
-    case 'mp4':
-    case 'avi':
-    case 'mov':
-    case 'wmv':
-    case 'webm':
-    case 'm4v':
-      return <IconMovie size={20} className="text-purple-400" />
-    case 'srt':
-    case 'sub':
-    case 'ass':
-    case 'vtt':
-      return <IconFile size={20} className="text-default-400" />
-    case 'nfo':
-    case 'txt':
-      return <IconFile size={20} className="text-default-400" />
-    case 'jpg':
-    case 'jpeg':
-    case 'png':
-    case 'gif':
-    case 'webp':
-      return <IconPhoto size={20} className="text-green-400" />
-    default:
-      return <IconFile size={20} className="text-default-400" />
-  }
+function renderFileIcon(filename: string, isDir: boolean): React.ReactNode {
+  return getFileIcon(filename, isDir, { size: 20 })
 }
 
 // ============================================================================
@@ -292,7 +266,7 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
         sortable: true,
         render: (entry) => {
           const isParent = entry.Name === '..'
-          const icon = getFileIcon(entry.Name, entry.IsDir)
+          const icon = renderFileIcon(entry.Name, entry.IsDir)
           
           return (
             <Button

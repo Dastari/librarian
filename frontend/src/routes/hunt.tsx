@@ -104,11 +104,6 @@ function SearchPage() {
       "audiobooks",
     ] as const).withDefault("all"),
   );
-  // Target IDs for linking downloads to library items
-  const [albumId] = useQueryState("albumId", parseAsString);
-  const [movieId] = useQueryState("movieId", parseAsString);
-  const [episodeId] = useQueryState("episodeId", parseAsString);
-
   // Table sorting state - persisted in URL
   const [sortColumn, setSortColumn] = useQueryState(
     "sort",
@@ -270,20 +265,20 @@ function SearchPage() {
 
       try {
         const ADD_TORRENT = `
-        mutation AddTorrent($input: AddTorrentInput!) {
-          addTorrent(input: $input) {
-            success
-            torrent { id name }
-            error
+        mutation AddTorrent($Input: AddTorrentInput!) {
+          AddTorrent(Input: $Input) {
+            Success
+            Torrent { Id Name }
+            Error
           }
         }
       `;
 
         interface AddTorrentResponse {
-          addTorrent: {
-            success: boolean;
-            torrent: { id: string; name: string } | null;
-            error: string | null;
+          AddTorrent: {
+            Success: boolean;
+            Torrent: { Id: string; Name: string } | null;
+            Error: string | null;
           };
         }
 
@@ -292,16 +287,9 @@ function SearchPage() {
 
         const { data, error } = await graphqlClient
           .mutation<AddTorrentResponse>(ADD_TORRENT, {
-            input: {
-              magnet: isMagnet ? magnetUri : undefined,
-              url: !isMagnet ? magnetUri || torrentUrl : undefined,
-              // Pass indexer ID for authenticated .torrent downloads
-              indexerId:
-                !isMagnet && release.indexerId ? release.indexerId : undefined,
-              // Pass target IDs for file-level matching when available
-              albumId: albumId || undefined,
-              movieId: movieId || undefined,
-              episodeId: episodeId || undefined,
+            Input: {
+              Magnet: isMagnet ? magnetUri : undefined,
+              Url: !isMagnet ? magnetUri || torrentUrl : undefined,
             },
           })
           .toPromise();
@@ -310,14 +298,14 @@ function SearchPage() {
           throw new Error(sanitizeError(error));
         }
 
-        if (data?.addTorrent?.success) {
+        if (data?.AddTorrent?.Success) {
           addToast({
             title: "Download Started",
             description: `Added: ${release.title}`,
             color: "success",
           });
         } else {
-          throw new Error(data?.addTorrent?.error || "Failed to add torrent");
+          throw new Error(data?.AddTorrent?.Error || "Failed to add torrent");
         }
       } catch (err) {
         console.error("Download failed:", err);
@@ -335,7 +323,7 @@ function SearchPage() {
         });
       }
     },
-    [albumId, movieId, episodeId],
+    [],
   );
 
   // Table columns

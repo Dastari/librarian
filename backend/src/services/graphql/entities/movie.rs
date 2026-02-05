@@ -131,6 +131,10 @@ pub struct Movie {
     #[filterable(type = "boolean")]
     pub monitored: bool,
 
+    #[graphql(name = "TmdbStatus")]
+    #[filterable(type = "string")]
+    pub tmdb_status: Option<String>,
+
     #[graphql(name = "Wanted")]
     #[filterable(type = "boolean")]
     pub wanted: bool,
@@ -273,8 +277,6 @@ impl Movie {
 
         // Insert into database
         // wanted = monitored (if user wants to auto-download, mark as wanted)
-        // auto_download defaults to false - the wanted flag drives auto-download behavior
-        // auto_download_mode defaults to 'library' (inherit from library settings)
         sqlx::query(
             r#"
             INSERT INTO movies (
@@ -282,10 +284,10 @@ impl Movie {
                 overview, tagline, runtime, genres, production_countries, spoken_languages,
                 director, cast_names, tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
                 collection_id, collection_name, collection_poster_url, release_date,
-                certification, status, monitored, wanted, auto_download, auto_download_mode, has_file, created_at, updated_at
+                certification, tmdb_status, monitored, wanted, has_file, created_at, updated_at
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, 0, 'library', 0, datetime('now'), datetime('now')
+                ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, 0, datetime('now'), datetime('now')
             )
             "#,
         )
@@ -314,7 +316,7 @@ impl Movie {
         .bind(&details.collection_poster_url)
         .bind(release_date.map(|d| d.format("%Y-%m-%d").to_string()))
         .bind(&details.certification)
-        .bind(&details.status)
+        .bind(&details.tmdb_status)
         .bind(options.monitored)
         .bind(options.monitored) // wanted = monitored
         .execute(db)

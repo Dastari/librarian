@@ -1,0 +1,37 @@
+# Movies: search and add
+
+query SearchMovies($Query: String!, $Year: Int) {
+  SearchMovies(Query: $Query, Year: $Year) {
+    Provider
+    ProviderId
+    Title
+    OriginalTitle
+    Year
+    Overview
+    PosterUrl
+    BackdropUrl
+    ImdbId
+    VoteAverage
+    Popularity
+  }
+}
+
+mutation AddMovie($LibraryId: String!, $Input: AddMovieInput!) {
+  AddMovie(LibraryId: $LibraryId, Input: $Input) {
+    Success
+    Movie {
+      Id
+      LibraryId
+      Title
+      Year
+      TmdbId
+      ImdbId
+      Overview
+      PosterUrl
+      BackdropUrl
+      Monitored
+      MediaFileId
+    }
+    Error
+  }
+}

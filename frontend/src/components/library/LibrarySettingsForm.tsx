@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm, Controller } from "react-hook-form";
+import { useForm, Controller, type Resolver } from "react-hook-form";
 import { Input } from "@heroui/input";
 import { Select, SelectItem } from "@heroui/select";
 import { Switch } from "@heroui/switch";
@@ -99,7 +99,9 @@ export function LibrarySettingsForm({
     watch,
     formState: { errors, isValid },
   } = useForm<LibrarySettingsFormValues>({
-    resolver: zodResolver(librarySettingsSchema),
+    resolver: zodResolver(
+      librarySettingsSchema as unknown as Parameters<typeof zodResolver>[0]
+    ) as unknown as Resolver<LibrarySettingsFormValues>,
     defaultValues: { ...DEFAULT_LIBRARY_SETTINGS, ...initialValues },
     mode: "onChange",
   });

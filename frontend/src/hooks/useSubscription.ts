@@ -10,7 +10,7 @@ export function useTorrentCompletionRefresh(onComplete: () => void) {
   callbackRef.current = onComplete
 
   useEffect(() => {
-    const sub = graphqlClient.subscription<{ torrentCompleted: { id: number; name: string } }>(
+    const sub = graphqlClient.subscription<{ TorrentCompleted: { Id: number; Name: string } }>(
       TORRENT_COMPLETED_SUBSCRIPTION,
       {}
     ).subscribe({

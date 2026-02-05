@@ -153,10 +153,6 @@ function isTvShowSearchResult(item: TvShowSearchResult | MovieSearchResult): ite
   return 'name' in item && !('title' in item)
 }
 
-function isMovieSearchResult(item: TvShowSearchResult | MovieSearchResult): item is MovieSearchResult {
-  return 'title' in item
-}
-
 // Get display name from either type
 function getItemDisplayName(item: TvShowSearchResult | MovieSearchResult): string {
   if (isTvShowSearchResult(item)) {
@@ -243,9 +239,9 @@ export function AddToLibraryModal({
     try {
       if (selectedType === 'tv') {
         const { data } = await graphqlClient
-          .query<{ searchTvShows: TvShowSearchResult[] }>(SEARCH_TV_SHOWS_QUERY, { query: searchQuery })
+          .query<{ SearchTvShows: TvShowSearchResult[] }>(SEARCH_TV_SHOWS_QUERY, { Query: searchQuery })
           .toPromise()
-        setSearchResults(data?.searchTvShows || [])
+        setSearchResults(data?.SearchTvShows || [])
       } else if (selectedType === 'movies') {
         const { data } = await graphqlClient
           .query<{ SearchMovies: MovieSearchResult[] }>(SEARCH_MOVIES_QUERY, { Query: searchQuery })
@@ -281,14 +277,13 @@ export function AddToLibraryModal({
         if (selectedType === 'tv') {
           const tvItem = selectedItem as TvShowSearchResult
           const { data, error } = await graphqlClient
-            .mutation<{ addTvShow: { success: boolean; tvShow: { id: string } | null; error: string | null } }>(
+            .mutation<{ addTvShow: { success: boolean; tvShow: { Id: string } | null; error: string | null } }>(
               ADD_TV_SHOW_MUTATION,
               {
-                libraryId: selectedLibraryId,
-                input: {
-                  provider: tvItem.provider,
-                  providerId: tvItem.providerId,
-                  monitorType: 'ALL',
+                LibraryId: selectedLibraryId,
+                Input: {
+                  TvmazeId: tvItem.providerId,
+                  AutoDownloadMode: 'ALL',
                 },
               }
             )
@@ -331,20 +326,20 @@ export function AddToLibraryModal({
         }
         
         const ADD_TORRENT = `
-          mutation AddTorrentToLibrary($input: AddTorrentInput!) {
-            addTorrent(input: $input) {
-              success
-              torrent { id name }
-              error
+          mutation AddTorrentToLibrary($Input: AddTorrentInput!) {
+            AddTorrent(Input: $Input) {
+              Success
+              Torrent { Id Name }
+              Error
             }
           }
         `
         
         interface AddTorrentResponse {
-          addTorrent: {
-            success: boolean
-            torrent: { id: string; name: string } | null
-            error: string | null
+          AddTorrent: {
+            Success: boolean
+            Torrent: { Id: string; Name: string } | null
+            Error: string | null
           }
         }
         
@@ -353,21 +348,15 @@ export function AddToLibraryModal({
         
         const { data, error } = await graphqlClient
           .mutation<AddTorrentResponse>(ADD_TORRENT, {
-            input: {
-              magnet: isMagnet ? magnetUri : undefined,
-              url: !isMagnet ? (magnetUri || torrentUrl) : undefined,
-              libraryId: selectedLibraryId || undefined,
-              // Pass indexer ID for authenticated .torrent downloads
-              indexerId: !isMagnet && release.indexerId ? release.indexerId : undefined,
-              // Link to specific item if selected (providerId is the external ID)
-              movieId: selectedType === 'movies' && selectedItem && isMovieSearchResult(selectedItem) ? String(selectedItem.providerId) : undefined,
-              episodeId: selectedType === 'tv' && selectedItem && isTvShowSearchResult(selectedItem) ? String(selectedItem.providerId) : undefined,
+            Input: {
+              Magnet: isMagnet ? magnetUri : undefined,
+              Url: !isMagnet ? (magnetUri || torrentUrl) : undefined,
             },
           })
           .toPromise()
         
-        if (error || !data?.addTorrent?.success) {
-          throw new Error(data?.addTorrent?.error || 'Failed to add torrent')
+        if (error || !data?.AddTorrent?.Success) {
+          throw new Error(data?.AddTorrent?.Error || 'Failed to add torrent')
         }
       }
       
@@ -535,7 +524,9 @@ export function AddToLibraryModal({
                 <div className="max-h-48 overflow-y-auto space-y-2">
                   {searchResults.map((item) => {
                     const isTv = 'name' in item && !('title' in item)
-                    const id = isTv ? (item as TvShowSearchResult).providerId : String((item as MovieSearchResult).providerId)
+                    const id = isTv
+                      ? String((item as TvShowSearchResult).providerId)
+                      : String((item as MovieSearchResult).providerId)
                     const name = isTv ? (item as TvShowSearchResult).name : (item as MovieSearchResult).title
                     const year = isTv ? (item as TvShowSearchResult).year : (item as MovieSearchResult).year
                     const poster = isTv ? (item as TvShowSearchResult).posterUrl : (item as MovieSearchResult).posterUrl

@@ -20,6 +20,8 @@ use uuid::Uuid;
 
 use crate::db::Database;
 use crate::services::manager::{Service, ServiceHealth};
+use crate::services::graphql::AuthUser;
+use crate::services::graphql::LibrarianSchema;
 use crate::services::torrent::client::{
     TorrentEvent, TorrentFile, TorrentInfo, TorrentServiceConfig, TorrentState, UpnpResult,
     add_torrent_opts, get_info_hash_hex, perform_upnp,
@@ -34,6 +36,7 @@ struct TorrentRuntime {
     session: Arc<Session>,
     config: TorrentServiceConfig,
     db: Database,
+    schema: LibrarianSchema,
     event_tx: broadcast::Sender<TorrentEvent>,
     completed: Arc<RwLock<std::collections::HashSet<String>>>,
     upnp_result: Arc<RwLock<Option<UpnpResult>>>,
@@ -97,7 +100,7 @@ impl TorrentService {
             .ok_or_else(|| anyhow::anyhow!("torrent service not started"))?;
         let session = &r.session;
         let config = &r.config;
-        let db = &r.db;
+        let schema = &r.schema;
         let event_tx = &r.event_tx;
 
         let add_result = session
@@ -112,14 +115,23 @@ impl TorrentService {
                 let stats = handle.stats();
 
                 if let Some(uid) = user_id {
+                    let auth_user = AuthUser {
+                        user_id: uid.to_string(),
+                        email: None,
+                        role: None,
+                    };
                     if let Err(e) = database::create_torrent(
-                        db,
-                        uid,
+                        schema,
+                        &auth_user,
                         &info_hash,
                         Some(magnet),
                         &name,
                         &config.download_dir.to_string_lossy(),
+                        "downloading",
+                        0.0,
                         stats.total_bytes as i64,
+                        0,
+                        0,
                     )
                     .await
                     {
@@ -225,8 +237,20 @@ impl TorrentService {
         r.session
             .delete(TorrentIdOrHash::Id(id), delete_files)
             .await?;
-        if let Err(e) = database::delete_torrent(&r.db, &info_hash).await {
-            warn!(error = %e, "Failed to delete torrent from database");
+        let auth_user = database::get_default_user_id(&r.db)
+            .await
+            .ok()
+            .flatten()
+            .map(|uid| AuthUser {
+                user_id: uid.to_string(),
+                email: None,
+                role: None,
+            });
+        if let Some(auth_user) = auth_user {
+            if let Err(e) = database::delete_torrent(&r.db, &r.schema, &auth_user, &info_hash).await
+            {
+                warn!(error = %e, "Failed to delete torrent from database");
+            }
         }
         let _ = r.event_tx.send(TorrentEvent::Removed {
             id,
@@ -304,7 +328,7 @@ impl Service for TorrentService {
     }
 
     fn dependencies(&self) -> Vec<String> {
-        vec!["database".to_string()]
+        vec!["database".to_string(), "graphql".to_string()]
     }
 
     async fn start(&self) -> Result<()> {
@@ -316,6 +340,15 @@ impl Service for TorrentService {
             .await
             .ok_or_else(|| anyhow::anyhow!("database service not started"))?;
         let db = db_svc.pool().clone();
+        let graphql = self
+            .manager
+            .get_graphql()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("graphql service not started"))?;
+        let schema = graphql
+            .schema()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("graphql schema not ready"))?;
 
         let mut config = self.config.clone();
 
@@ -397,11 +430,29 @@ impl Service for TorrentService {
         config.download_dir = effective_download_dir;
         config.session_dir = effective_session_dir;
 
+        let auth_user = database::get_default_user_id(&db)
+            .await
+            .ok()
+            .flatten()
+            .map(|uid| AuthUser {
+                user_id: uid.to_string(),
+                email: None,
+                role: None,
+            });
+
         // Sync session -> DB and restore from DB (best-effort)
-        if let Err(e) = database::sync_session_to_database(&session, &db, &config).await {
-            warn!(error = %e, "Failed to sync session torrents to database");
+        if let Some(ref user) = auth_user {
+            if let Err(e) = database::sync_session_to_database(&session, &db, &schema, user, &config)
+                .await
+            {
+                warn!(error = %e, "Failed to sync session torrents to database");
+            }
+        } else {
+            warn!("No user found in database, skipping session sync");
         }
-        if let Err(e) = database::restore_from_database(&session, &db).await {
+        if let Err(e) = database::restore_from_database(&session, &db, &schema, auth_user.as_ref())
+            .await
+        {
             warn!(error = %e, "Failed to restore torrents from database");
         }
 
@@ -420,12 +471,14 @@ impl Service for TorrentService {
         let db_clone = db.clone();
         let completed_db = completed.clone();
         let download_dir_db = config.download_dir.clone();
+        let schema_db = schema.clone();
         let db_sync_handle = tokio::spawn(async move {
             db_sync_loop(
                 session_db,
                 db_clone,
                 completed_db,
                 download_dir_db,
+                schema_db,
                 token_db,
             )
             .await;
@@ -465,6 +518,7 @@ impl Service for TorrentService {
             session,
             config,
             db,
+            schema,
             event_tx,
             completed,
             upnp_result,
@@ -576,23 +630,49 @@ async fn db_sync_loop(
     db: Database,
     completed: Arc<RwLock<std::collections::HashSet<String>>>,
     download_dir: PathBuf,
+    schema: LibrarianSchema,
     cancel: CancellationToken,
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(10));
-    let fallback_user_id = database::get_default_user_id(&db).await.ok().flatten();
+    let mut auth_user = database::get_default_user_id(&db)
+        .await
+        .ok()
+        .flatten()
+        .map(|uid| AuthUser {
+            user_id: uid.to_string(),
+            email: None,
+            role: None,
+        });
     loop {
         tokio::select! {
             _ = cancel.cancelled() => break,
             _ = interval.tick() => {
-                if let Err(e) =
-                    database::sync_session_to_database(&session, &db, &TorrentServiceConfig { download_dir: download_dir.clone(), ..Default::default() }).await
-                {
-                    tracing::trace!(error = %e, "db_sync iteration failed");
+                if auth_user.is_none() {
+                    auth_user = database::get_default_user_id(&db)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|uid| AuthUser {
+                            user_id: uid.to_string(),
+                            email: None,
+                            role: None,
+                        });
+                }
+                if let Some(ref user) = auth_user {
+                    if let Err(e) = database::sync_session_to_database(
+                        &session,
+                        &db,
+                        &schema,
+                        user,
+                        &TorrentServiceConfig { download_dir: download_dir.clone(), ..Default::default() }
+                    ).await
+                    {
+                        tracing::trace!(error = %e, "db_sync iteration failed");
+                    }
                 }
             }
         }
     }
-    let _ = fallback_user_id;
     let _ = completed;
 }
 

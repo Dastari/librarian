@@ -498,19 +498,19 @@ export const TV_SHOW_QUERY = `
 `;
 
 export const SEARCH_TV_SHOWS_QUERY = `
-  query SearchTvShows($query: String!) {
-    searchTvShows(query: $query) {
-      provider
-      providerId
-      name
-      year
-      status
-      network
-      overview
-      posterUrl
-      tvdbId
-      imdbId
-      score
+  query SearchTvShows($Query: String!) {
+    SearchTvShows(Query: $Query) {
+      provider: Provider
+      providerId: ProviderId
+      name: Name
+      year: Year
+      status: Status
+      network: Network
+      overview: Overview
+      posterUrl: PosterUrl
+      tvdbId: TvdbId
+      imdbId: ImdbId
+      score: Score
     }
   }
 `;

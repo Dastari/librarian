@@ -13,13 +13,13 @@ use crate::services::graphql::entities::*;
 use crate::services::graphql::loaders::RelationLoader;
 use crate::services::graphql::mutations::{ArtworkMutations, AuthMutations, FilesystemMutations};
 use crate::services::graphql::queries::FilesystemQueries;
-use crate::services::graphql::subscriptions::FilesystemSubscriptions;
+use crate::services::graphql::subscriptions::{FilesystemSubscriptions, TorrentSubscriptions};
 use crate::services::graphql::subscriptions::filesystem::FilesystemChangeBroker;
 use crate::services::manager::ServicesManager;
 use crate::services::metadata::providers::{MetadataServiceConfig, create_metadata_service};
 
 schema_roots! {
-    query_custom_ops: [User, Torrent, Movie],
+    query_custom_ops: [User, Torrent, Movie, Show],
     entities: [
         Library,
         Movie,
@@ -64,8 +64,8 @@ schema_roots! {
         TorznabCategory,
     ],
     extra_query_types: [FilesystemQueries],
-    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, TorrentClientMutations, MovieMetadataMutations],
-    extra_subscription_types: [FilesystemSubscriptions],
+    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations],
+    extra_subscription_types: [FilesystemSubscriptions, TorrentSubscriptions],
 }
 
 /// The GraphQL schema type
@@ -142,7 +142,8 @@ where
     );
 
     // Create MetadataService - it will load API keys from database on demand
-    let metadata_service = create_metadata_service(db.clone(), MetadataServiceConfig::default());
+    let metadata_service =
+        create_metadata_service(db.clone(), services.clone(), MetadataServiceConfig::default());
 
     Schema::build(
         QueryRoot::default(),

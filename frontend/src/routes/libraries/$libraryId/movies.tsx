@@ -67,6 +67,10 @@ function MoviesPage() {
     refreshMoviesRef.current = refreshFn;
   }, []);
 
+  const handleMoviesUpdated = useCallback(() => {
+    refreshMoviesRef.current?.();
+  }, []);
+
   return (
     <>
       <LibraryMoviesTab
@@ -82,7 +86,7 @@ function MoviesPage() {
         isOpen={isAddOpen}
         onClose={onAddClose}
         libraryId={library.Id}
-        onAdded={refreshMoviesRef.current || undefined}
+        onAdded={handleMoviesUpdated}
       />
 
       {/* Delete Movie Modal */}
@@ -90,7 +94,7 @@ function MoviesPage() {
         isOpen={isDeleteOpen}
         onClose={onDeleteClose}
         movie={movieToDelete}
-        onDeleted={refreshMoviesRef.current || undefined}
+        onDeleted={handleMoviesUpdated}
       />
     </>
   );

@@ -2266,7 +2266,7 @@ impl ScannerService {
         let best_match = &search_results[0];
 
         // Check if we already have this show in the library
-        if best_match.provider == MetadataProvider::TvMaze
+        if best_match.provider == MetadataProvider::Tvmaze
             && let Some(existing) = tv_shows_repo
                 .get_by_tvmaze_id(library_id, best_match.provider_id as i32)
                 .await?
@@ -2282,8 +2282,7 @@ impl ScannerService {
                 provider_id: best_match.provider_id,
                 library_id,
                 user_id,
-                monitored: true,
-                monitor_type: "all".to_string(),
+                monitor_type: crate::services::graphql::entities::AutoDownloadMode::All,
                 path: None,
             })
             .await?;

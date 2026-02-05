@@ -12,10 +12,9 @@ import {
   graphqlClient,
   SEARCH_TV_SHOWS_QUERY,
   ADD_TV_SHOW_MUTATION,
-  type TvShow,
   type TvShowSearchResult,
-  type MonitorType,
 } from '../../lib/graphql'
+import type { AutoDownloadMode } from '../../lib/graphql/generated/graphql'
 import { IconDeviceTv } from '@tabler/icons-react'
 import { sanitizeError } from '../../lib/format'
 
@@ -38,7 +37,7 @@ export function AddShowModal({
   const [searching, setSearching] = useState(false)
   const [adding, setAdding] = useState(false)
   const [selectedShow, setSelectedShow] = useState<TvShowSearchResult | null>(null)
-  const [monitorType, setMonitorType] = useState<MonitorType>('ALL')
+  const [monitorType, setMonitorType] = useState<AutoDownloadMode>('ALL')
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return
@@ -46,8 +45,8 @@ export function AddShowModal({
     try {
       setSearching(true)
       const { data, error } = await graphqlClient
-        .query<{ searchTvShows: TvShowSearchResult[] }>(SEARCH_TV_SHOWS_QUERY, {
-          query: searchQuery,
+        .query<{ SearchTvShows: TvShowSearchResult[] }>(SEARCH_TV_SHOWS_QUERY, {
+          Query: searchQuery,
         })
         .toPromise()
 
@@ -60,7 +59,7 @@ export function AddShowModal({
         return
       }
 
-      setSearchResults(data?.searchTvShows || [])
+      setSearchResults(data?.SearchTvShows || [])
     } catch (err) {
       console.error('Search failed:', err)
     } finally {
@@ -77,15 +76,14 @@ export function AddShowModal({
         .mutation<{
           addTvShow: {
             success: boolean
-            tvShow: TvShow | null
+            tvShow: { Id: string } | null
             error: string | null
           }
         }>(ADD_TV_SHOW_MUTATION, {
-          libraryId,
-          input: {
-            provider: selectedShow.provider,
-            providerId: selectedShow.providerId,
-            monitorType,
+          LibraryId: libraryId,
+          Input: {
+            TvmazeId: selectedShow.providerId,
+            AutoDownloadMode: monitorType,
           },
         })
         .toPromise()
@@ -216,13 +214,13 @@ export function AddShowModal({
               <Card className="bg-content2">
                 <CardBody className="flex flex-row gap-4 p-3">
                   <div className="flex-shrink-0 w-24">
-                    {selectedShow.posterUrl ? (
-                      <Image
-                        src={selectedShow.posterUrl}
-                        alt={selectedShow.name}
-                        classNames={{
-                          wrapper: "w-full",
-                          img: "w-full aspect-[2/3] object-cover"
+                            {selectedShow.posterUrl ? (
+                              <Image
+                                src={selectedShow.posterUrl}
+                                alt={selectedShow.name}
+                                classNames={{
+                                  wrapper: "w-full",
+                                  img: "w-full aspect-[2/3] object-cover"
                         }}
                         radius="md"
                       />
@@ -234,22 +232,22 @@ export function AddShowModal({
                   </div>
                   <div className="flex-1 min-w-0">
                     <h4 className="font-semibold text-lg">
-                      {selectedShow.name}
-                      {selectedShow.year && (
-                        <span className="text-default-500 ml-1">
-                          ({selectedShow.year})
-                        </span>
-                      )}
-                    </h4>
-                    <p className="text-sm text-default-500">
-                      {selectedShow.network && `${selectedShow.network} • `}
-                      {selectedShow.status}
-                    </p>
-                    {selectedShow.overview && (
-                      <p className="text-sm text-default-400 mt-2 line-clamp-3">
-                        {selectedShow.overview}
-                      </p>
+                    {selectedShow.name}
+                    {selectedShow.year && (
+                      <span className="text-default-500 ml-1">
+                        ({selectedShow.year})
+                      </span>
                     )}
+                  </h4>
+                  <p className="text-sm text-default-500">
+                    {selectedShow.network && `${selectedShow.network} • `}
+                    {selectedShow.status}
+                  </p>
+                  {selectedShow.overview && (
+                    <p className="text-sm text-default-400 mt-2 line-clamp-3">
+                      {selectedShow.overview}
+                    </p>
+                  )}
                   </div>
                 </CardBody>
               </Card>
@@ -258,7 +256,7 @@ export function AddShowModal({
                 label="Monitor Type"
                 selectedKeys={[monitorType]}
                 onChange={(e) => {
-                  const value = e.target.value as MonitorType
+                  const value = e.target.value as AutoDownloadMode
                   if (value) setMonitorType(value)
                 }}
                 disallowEmptySelection
@@ -267,8 +265,8 @@ export function AddShowModal({
                 <SelectItem key="ALL" textValue="All Episodes">
                   All Episodes - Track all missing episodes
                 </SelectItem>
-                <SelectItem key="FUTURE" textValue="Future Episodes">
-                  Future Only - Only track new episodes going forward
+                <SelectItem key="WANTED" textValue="Wanted Episodes">
+                  Wanted Only - Only track wanted episodes
                 </SelectItem>
                 <SelectItem key="NONE" textValue="Don't Monitor">
                   Don't Monitor - Track but don't download

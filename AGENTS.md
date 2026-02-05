@@ -13,7 +13,7 @@
 - `make dev-backend` / `make dev-frontend`: run one side only.
 - `make build`: build backend (`cargo build --release`) and frontend (`pnpm run build`).
 - `make test`: run `cargo test` and `pnpm test` (Vitest).
-- `make lint`: backend `cargo clippy` + `cargo fmt --check` and frontend `pnpm run lint`.
+- `make lint`: backend `cargo clippy` + `cargo fmt --check`; frontend `pnpm exec tsc --noEmit`.
 - `make db-migrate`: run `sqlx` migrations against SQLite (`DATABASE_PATH` defaults to `./data/librarian.db`).
 - `make docker-up`: start the Docker dev stack; `make prod-up` for production compose.
 - `cargo run`: runs the proudction or development backend (never use this command, I will run it manually, you can use cargo check and cargo test)

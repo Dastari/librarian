@@ -4,7 +4,6 @@ import { Button } from '@heroui/button'
 import { Card, CardBody } from '@heroui/card'
 import { Chip } from '@heroui/chip'
 import { Image } from '@heroui/image'
-import { Spinner } from '@heroui/spinner'
 import { Breadcrumbs, BreadcrumbItem } from '@heroui/breadcrumbs'
 import { Progress } from '@heroui/progress'
 import { useDisclosure } from '@heroui/modal'
@@ -413,8 +412,20 @@ function AlbumDetailPage() {
     }
   }, [playableTracks, albumData, startTrackPlayback])
 
-  // Show error state only after loading is complete
-  if (!isLoading && (error || !albumData)) {
+  if (!albumData) {
+    if (isLoading) {
+      return (
+        <div className="container mx-auto p-4">
+          <Card>
+            <CardBody className="flex flex-col items-center justify-center py-12 text-center">
+              <IconDisc size={48} className="mx-auto mb-4 text-default-400" />
+              <p className="text-default-500">Loading album...</p>
+            </CardBody>
+          </Card>
+        </div>
+      )
+    }
+
     return (
       <div className="container mx-auto p-4">
         <Card>
@@ -431,27 +442,29 @@ function AlbumDetailPage() {
     )
   }
 
-  // Use template data during loading, real data when available
-  const displayAlbumData = albumData ?? albumTemplate
-  const displayLibrary = library ?? libraryTemplate
-  const { album, tracks } = displayAlbumData
+  const { album, tracks } = albumData
 
   // Check if album is fully complete (100%)
-  const isComplete = displayAlbumData.completionPercent === 100
+  const isComplete = albumData.completionPercent === 100
 
   return (
-    <ShimmerLoader loading={isLoading} delay={500} templateProps={{ albumData: albumTemplate }}>
-      <div className="container mx-auto p-4">
-        {/* Breadcrumbs */}
-        <Breadcrumbs className="mb-4">
+    <div className="container mx-auto p-4">
+      {/* Breadcrumbs */}
+      <Breadcrumbs className="mb-4">
+        <BreadcrumbItem>
+          <Link to="/libraries">Libraries</Link>
+        </BreadcrumbItem>
+        {library ? (
           <BreadcrumbItem>
-            <Link to="/libraries">Libraries</Link>
+            <Link to="/libraries/$libraryId" params={{ libraryId: library.Id }}>
+              {library.Name}
+            </Link>
           </BreadcrumbItem>
-          <BreadcrumbItem>
-            <Link to="/libraries/$libraryId" params={{ libraryId: displayLibrary.Id }}>{displayLibrary.Name}</Link>
-          </BreadcrumbItem>
-          <BreadcrumbItem>{album.name}</BreadcrumbItem>
-        </Breadcrumbs>
+        ) : (
+          <BreadcrumbItem>Library</BreadcrumbItem>
+        )}
+        <BreadcrumbItem>{album.name}</BreadcrumbItem>
+      </Breadcrumbs>
 
         {/* Album Header */}
         <div className="flex flex-col md:flex-row gap-6 mb-6">
@@ -500,8 +513,8 @@ function AlbumDetailPage() {
             <h1 className="text-3xl font-bold mb-1">{album.name}</h1>
 
             {/* Artist Name */}
-            {displayAlbumData.artistName && (
-              <p className="text-xl text-default-500 mb-3">{displayAlbumData.artistName}</p>
+            {albumData.artistName && (
+              <p className="text-xl text-default-500 mb-3">{albumData.artistName}</p>
             )}
 
             <div className="flex flex-wrap items-center gap-2 text-default-500 mb-4">
@@ -518,21 +531,21 @@ function AlbumDetailPage() {
             <div className="mb-4">
               <div className="flex items-center justify-between text-sm mb-1">
                 <span className="text-default-500">
-                  {displayAlbumData.tracksWithFiles} of {displayAlbumData.trackCount} tracks
+                  {albumData.tracksWithFiles} of {albumData.trackCount} tracks
                 </span>
                 <span className="font-medium">
-                  {displayAlbumData.completionPercent.toFixed(0)}%
+                  {albumData.completionPercent.toFixed(0)}%
                 </span>
               </div>
               <Progress
                 aria-label="Album completion"
-                value={displayAlbumData.completionPercent}
+                value={albumData.completionPercent}
                 color={isComplete ? 'success' : 'primary'}
                 size="sm"
               />
-              {displayAlbumData.missingTracks > 0 && (
+              {albumData.missingTracks > 0 && (
                 <p className="text-sm text-warning mt-1">
-                  {displayAlbumData.missingTracks} track{displayAlbumData.missingTracks !== 1 ? 's' : ''} wanted
+                  {albumData.missingTracks} track{albumData.missingTracks !== 1 ? 's' : ''} wanted
                 </p>
               )}
             </div>
@@ -541,7 +554,7 @@ function AlbumDetailPage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
               <div>
                 <p className="text-xs text-default-400">Tracks</p>
-                <p className="text-lg font-semibold">{displayAlbumData.trackCount}</p>
+                <p className="text-lg font-semibold">{albumData.trackCount}</p>
               </div>
               <div>
                 <p className="text-xs text-default-400">Discs</p>
@@ -588,7 +601,7 @@ function AlbumDetailPage() {
         <TrackTable
           fetchAlbum={fetchAlbum}
           tracks={tracks}
-          albumId={displayAlbumData.album.id}
+          albumId={albumData.album.id}
           onPlay={handlePlayTrack}
           onSearch={handleSearchTrack}
           onShowProperties={handleShowProperties}
@@ -605,6 +618,5 @@ function AlbumDetailPage() {
           title={propertiesTrack ? `${album.name} - ${propertiesTrack.track.title}` : undefined}
         />
       </div>
-    </ShimmerLoader>
   )
 }

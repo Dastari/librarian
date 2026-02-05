@@ -30,7 +30,6 @@ import {
   IconX,
   IconRefresh,
 } from "@tabler/icons-react";
-import { ConfirmModal } from "../../components/ConfirmModal";
 import { DeleteMovieModal } from "../../components/library";
 import { usePlaybackContext } from "../../contexts/PlaybackContext";
 
@@ -52,9 +51,9 @@ export const Route = createFileRoute("/movies/$movieId")({
 
 // MediaFile type for the nested query
 interface MediaFile {
-  id: string;
-  sizeBytes: number;
-  duration: number | null;
+  Id: string;
+  SizeBytes: number;
+  Duration: number | null;
 }
 
 // GraphQL queries

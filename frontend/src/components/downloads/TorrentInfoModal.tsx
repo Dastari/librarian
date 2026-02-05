@@ -13,6 +13,8 @@ import {
   TORRENT_BY_INFO_HASH_QUERY,
   PENDING_FILE_MATCHES_QUERY,
   REMOVE_MATCH_MUTATION,
+  TORRENT_PROGRESS_SUBSCRIPTION,
+  TORRENT_FILE_CHANGED_SUBSCRIPTION,
   type TorrentDetails,
   type TorrentFileInfo,
   type PendingFileMatch,
@@ -22,15 +24,50 @@ import { formatBytes, sanitizeError } from '../../lib/format'
 import { TORRENT_STATE_INFO } from './TorrentCard'
 import { DataTable, type DataTableColumn } from '../data-table'
 import { ErrorState } from '../shared'
-import { IconCheck, IconArrowDown, IconArrowUp, IconFolder, IconLink, IconX, IconTrash, IconCopy } from '@tabler/icons-react'
+import { IconCheck, IconArrowDown, IconArrowUp, IconFolder, IconLink, IconX, IconTrash, IconCopy, IconBolt, IconUsers } from '@tabler/icons-react'
+import { getFileIcon } from "../../lib/fileIcons";
+import { TorrentChangedDocument } from '../../lib/graphql/generated/graphql'
 
 interface TorrentInfoModalProps {
   /** Legacy numeric id (session handle). Prefer torrentInfoHash when using entity list. */
-  torrentId?: number | null
+  torrentId?: number | null;
   /** Entity torrent info hash – fetches one Torrent by InfoHash and shows basic info. */
-  torrentInfoHash?: string | null
-  isOpen: boolean
-  onClose: () => void
+  torrentInfoHash?: string | null;
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+function FileProgressBar({
+  progress,
+  ariaLabel,
+}: {
+  progress: number;
+  ariaLabel: string;
+}) {
+  const percent = Math.max(0, Math.min(100, progress * 100));
+  const labelClass =
+    percent >= 18
+      ? "text-white/90"
+      : percent >= 1
+        ? "text-default-600"
+        : "text-default-400";
+
+  return (
+    <div className="relative w-full min-w-[120px]">
+      <Progress
+        value={percent}
+        size="sm"
+        color={progress >= 1 ? "success" : "primary"}
+        aria-label={ariaLabel}
+        classNames={{ track: "h-4", indicator: "h-4" }}
+      />
+      <div
+        className={`absolute inset-0 flex items-center justify-center text-[10px] font-semibold tabular-nums ${labelClass}`}
+      >
+        {percent.toFixed(0)}%
+      </div>
+    </div>
+  );
 }
 
 // Helper to create file columns with match info
@@ -40,12 +77,12 @@ function createFileColumns(
 ): DataTableColumn<TorrentFileInfo>[] {
   return [
     {
-      key: 'match',
-      label: 'Match',
+      key: "match",
+      label: "Match",
       width: 100,
-      align: 'center',
+      align: "center",
       render: (file) => {
-        const match = matchesByIndex.get(file.index)
+        const match = matchesByIndex.get(file.index);
         if (!match) {
           return (
             <Tooltip content="No match - file not linked to library">
@@ -53,54 +90,84 @@ function createFileColumns(
                 Unmatched
               </Chip>
             </Tooltip>
-          )
+          );
         }
-        const matchType = match.episodeId ? 'Episode' : match.movieId ? 'Movie' : match.trackId ? 'Track' : match.chapterId ? 'Chapter' : 'None'
-        if (matchType === 'None') {
+        const matchType = match.episodeId
+          ? "Episode"
+          : match.movieId
+            ? "Movie"
+            : match.trackId
+              ? "Track"
+              : match.chapterId
+                ? "Chapter"
+                : "None";
+        if (matchType === "None") {
           return (
             <Tooltip content="No library item matched">
-              <Chip size="sm" color="warning" variant="flat" startContent={<IconX size={12} />}>
+              <Chip
+                size="sm"
+                color="warning"
+                variant="flat"
+                startContent={<IconX size={12} />}
+              >
                 None
               </Chip>
             </Tooltip>
-          )
+          );
         }
         return (
           <Tooltip content={`Matched to ${matchType}`}>
-            <Chip size="sm" color="success" variant="flat" startContent={<IconLink size={12} />}>
+            <Chip
+              size="sm"
+              color="success"
+              variant="flat"
+              startContent={<IconLink size={12} />}
+            >
               {matchType}
             </Chip>
           </Tooltip>
-        )
+        );
       },
     },
     {
-      key: 'status',
-      label: 'Status',
+      key: "status",
+      label: "Status",
       width: 90,
-      align: 'center',
+      align: "center",
       render: (file) => {
-        const match = matchesByIndex.get(file.index)
+        const match = matchesByIndex.get(file.index);
         if (!match) {
-          return <span className="text-default-400">-</span>
+          return <span className="text-default-400">-</span>;
         }
         if (match.copied) {
           return (
-            <Tooltip content={`Copied ${match.copiedAt ? new Date(match.copiedAt).toLocaleString() : ''}`}>
-              <Chip size="sm" color="success" variant="flat" startContent={<IconCopy size={12} />}>
+            <Tooltip
+              content={`Copied ${match.copiedAt ? new Date(match.copiedAt).toLocaleString() : ""}`}
+            >
+              <Chip
+                size="sm"
+                color="success"
+                variant="flat"
+                startContent={<IconCopy size={12} />}
+              >
                 Copied
               </Chip>
             </Tooltip>
-          )
+          );
         }
         if (match.copyError) {
           return (
             <Tooltip content={match.copyError}>
-              <Chip size="sm" color="danger" variant="flat" startContent={<IconX size={12} />}>
+              <Chip
+                size="sm"
+                color="danger"
+                variant="flat"
+                startContent={<IconX size={12} />}
+              >
                 Error
               </Chip>
             </Tooltip>
-          )
+          );
         }
         return (
           <Tooltip content="File will be copied when download completes">
@@ -108,44 +175,51 @@ function createFileColumns(
               Pending
             </Chip>
           </Tooltip>
-        )
+        );
       },
     },
     {
-      key: 'path',
-      label: 'File',
+      key: "path",
+      label: "File",
       render: (file) => {
-        const fileName = file.path.split('/').pop() || file.path
-        const directory = file.path.includes('/') 
-          ? file.path.substring(0, file.path.lastIndexOf('/'))
-          : null
-        const match = matchesByIndex.get(file.index)
+        const fileName = file.path.split("/").pop() || file.path;
+        const directory = file.path.includes("/")
+          ? file.path.substring(0, file.path.lastIndexOf("/"))
+          : null;
+        const match = matchesByIndex.get(file.index);
         return (
-          <div className="min-w-0 h-10">
-            <Tooltip content={file.path} delay={500}>
-              <div className="truncate font-medium text-sm max-w-xs lg:max-w-md">
-                {fileName}
-              </div>
-            </Tooltip>
-            {directory && (
-              <div className="text-xs text-default-400 truncate max-w-xs lg:max-w-md">
-                {directory}
-              </div>
-            )}
-            {match?.parsedResolution && (
-              <div className="text-xs text-default-500 mt-0.5">
-                {[match.parsedResolution, match.parsedCodec].filter(Boolean).join(' ')}
-              </div>
-            )}
+          <div className="flex items-start gap-2 min-w-0">
+            <div className="mt-0.5 flex-shrink-0">
+              {getFileIcon(file.path, false, { size: 18 })}
+            </div>
+            <div className="min-w-0 h-10">
+              <Tooltip content={file.path} delay={500}>
+                <div className="truncate font-medium text-sm max-w-xs lg:max-w-md">
+                  {fileName}
+                </div>
+              </Tooltip>
+              {directory && (
+                <div className="text-xs text-default-400 truncate max-w-xs lg:max-w-md">
+                  {directory}
+                </div>
+              )}
+              {match?.parsedResolution && (
+                <div className="text-xs text-default-500 mt-0.5">
+                  {[match.parsedResolution, match.parsedCodec]
+                    .filter(Boolean)
+                    .join(" ")}
+                </div>
+              )}
+            </div>
           </div>
-        )
+        );
       },
     },
     {
-      key: 'size',
-      label: 'Size',
+      key: "size",
+      label: "Size",
       width: 100,
-      align: 'end',
+      align: "end",
       render: (file) => (
         <span className="text-sm tabular-nums text-default-500">
           {formatBytes(file.size)}
@@ -154,35 +228,27 @@ function createFileColumns(
       sortFn: (a, b) => a.size - b.size,
     },
     {
-      key: 'progress',
-      label: 'Progress',
-      width: 140,
-      align: 'center',
+      key: "progress",
+      label: "Progress",
+      width: 180,
+      align: "start",
       render: (file) => (
-        <div className="flex items-center gap-2">
-          <Progress
-            value={file.progress * 100}
-            size="sm"
-            color={file.progress >= 1 ? 'success' : 'primary'}
-            className="w-20"
-            aria-label={`${file.path} progress`}
-          />
-          <span className={`text-xs tabular-nums w-10 text-right ${file.progress >= 1 ? 'text-success' : 'text-default-500'}`}>
-            {(file.progress * 100).toFixed(0)}%
-          </span>
-        </div>
+        <FileProgressBar
+          progress={file.progress}
+          ariaLabel={`${file.path} progress`}
+        />
       ),
       sortFn: (a, b) => a.progress - b.progress,
     },
     {
-      key: 'actions',
-      label: '',
+      key: "actions",
+      label: "",
       width: 50,
-      align: 'center',
+      align: "center",
       render: (file) => {
-        const match = matchesByIndex.get(file.index)
+        const match = matchesByIndex.get(file.index);
         if (!match || !onRemoveMatch) {
-          return null
+          return null;
         }
         return (
           <Tooltip content="Remove match">
@@ -196,140 +262,373 @@ function createFileColumns(
               <IconTrash size={14} />
             </Button>
           </Tooltip>
-        )
+        );
       },
     },
-  ]
+  ];
 }
 
-export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }: TorrentInfoModalProps) {
-  const [details, setDetails] = useState<TorrentDetails | null>(null)
+export function TorrentInfoModal({
+  torrentId,
+  torrentInfoHash,
+  isOpen,
+  onClose,
+}: TorrentInfoModalProps) {
+  const [details, setDetails] = useState<TorrentDetails | null>(null);
   const [entityTorrent, setEntityTorrent] = useState<{
-    Id: string
-    InfoHash: string
-    Name: string
-    State: string
-    Progress: number
-    TotalBytes: number
-    DownloadedBytes: number
-    UploadedBytes: number
-    SavePath: string
-    AddedAt: string
-    Files?: { Edges: Array<{ Node: { FileIndex: number; FilePath: string; FileSize: number; DownloadedBytes: number; Progress: number } }> }
-  } | null>(null)
-  const [fileMatches, setFileMatches] = useState<PendingFileMatch[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+    Id: string;
+    InfoHash: string;
+    Name: string;
+    State: string;
+    Progress: number;
+    TotalBytes: number;
+    DownloadedBytes: number;
+    UploadedBytes: number;
+    SavePath: string;
+    AddedAt: string;
+    Files?: {
+      Edges: Array<{
+        Node: {
+          FileIndex: number;
+          FilePath: string;
+          FileSize: number;
+          DownloadedBytes: number;
+          Progress: number;
+        };
+      }>;
+    };
+  } | null>(null);
+  const [fileMatches, setFileMatches] = useState<PendingFileMatch[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [entityLiveStats, setEntityLiveStats] = useState<{
+    downloadSpeed: number;
+    uploadSpeed: number;
+    peers: number;
+  } | null>(null);
+
+  const fetchEntityTorrent = useCallback(
+    async (showLoading = false) => {
+      if (!torrentInfoHash) return;
+      if (showLoading) {
+        setIsLoading(true);
+      }
+
+      try {
+        const result = await graphqlClient
+          .query<{
+            Torrents: {
+              Edges: Array<{
+                Node: {
+                  Id: string;
+                  InfoHash: string;
+                  Name: string;
+                  State: string;
+                  Progress: number;
+                  TotalBytes: number;
+                  DownloadedBytes: number;
+                  UploadedBytes: number;
+                  SavePath: string;
+                  AddedAt: string;
+                  Files?: {
+                    Edges: Array<{
+                      Node: {
+                        FileIndex: number;
+                        FilePath: string;
+                        FileSize: number;
+                        DownloadedBytes: number;
+                        Progress: number;
+                      };
+                    }>;
+                  };
+                };
+              }>;
+            };
+          }>(TORRENT_BY_INFO_HASH_QUERY, {
+            Where: { InfoHash: { Eq: torrentInfoHash } },
+            Page: { Limit: 1, Offset: 0 },
+          })
+          .toPromise();
+
+        const node = result.data?.Torrents?.Edges?.[0]?.Node;
+        if (node) {
+          setEntityTorrent(node);
+        } else if (showLoading) {
+          setError("Torrent not found");
+        }
+      } catch (e) {
+        if (showLoading) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        if (showLoading) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [torrentInfoHash]
+  );
+
+  const fetchLegacyDetails = useCallback(
+    async (showLoading = false, includeMatches = false) => {
+      if (torrentId == null) return;
+      if (showLoading) {
+        setIsLoading(true);
+      }
+
+      try {
+        const result = await graphqlClient
+          .query<{ torrentDetails: TorrentDetails }>(TORRENT_DETAILS_QUERY, {
+            id: torrentId,
+          })
+          .toPromise();
+
+        if (result.data?.torrentDetails) {
+          const det = result.data.torrentDetails;
+          setDetails(det);
+
+          if (includeMatches) {
+            try {
+              const matchResult = await graphqlClient
+                .query<{ pendingFileMatches: PendingFileMatch[] }>(
+                  PENDING_FILE_MATCHES_QUERY,
+                  { sourceType: "torrent", sourceId: det.infoHash }
+                )
+                .toPromise();
+
+              if (matchResult.data?.pendingFileMatches) {
+                setFileMatches(matchResult.data.pendingFileMatches);
+              }
+            } catch {
+              // File matches are optional, don't fail the whole modal
+              console.warn("Failed to fetch file matches");
+            }
+          }
+        } else if (showLoading && result.error) {
+          setError(sanitizeError(result.error));
+        } else if (showLoading) {
+          setError("Torrent not found");
+        }
+      } catch (err) {
+        if (showLoading) {
+          setError(sanitizeError(err));
+        }
+      } finally {
+        if (showLoading) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [torrentId]
+  );
 
   // Handle removing a match
   const handleRemoveMatch = useCallback(async (matchId: string) => {
     const result = await graphqlClient
-      .mutation<{ removeMatch: RemoveMatchResult }>(REMOVE_MATCH_MUTATION, { matchId })
-      .toPromise()
+      .mutation<{
+        removeMatch: RemoveMatchResult;
+      }>(REMOVE_MATCH_MUTATION, { matchId })
+      .toPromise();
 
     if (result.data?.removeMatch.success) {
-      setFileMatches((prev) => prev.filter((m) => m.id !== matchId))
+      setFileMatches((prev) => prev.filter((m) => m.id !== matchId));
       addToast({
-        title: 'Match Removed',
-        description: 'The file match has been removed',
-        color: 'success',
-      })
+        title: "Match Removed",
+        description: "The file match has been removed",
+        color: "success",
+      });
     } else {
       addToast({
-        title: 'Error',
-        description: result.data?.removeMatch.error || 'Failed to remove match',
-        color: 'danger',
-      })
+        title: "Error",
+        description: result.data?.removeMatch.error || "Failed to remove match",
+        color: "danger",
+      });
     }
-  }, [])
+  }, []);
 
   // Create a map of file index to match for quick lookup
   const matchesByIndex = new Map(
     fileMatches
       .filter((m) => m.sourceFileIndex !== null)
       .map((m) => [m.sourceFileIndex as number, m])
-  )
+  );
 
   useEffect(() => {
-    if (!isOpen) return
+    if (!isOpen) return;
 
-    setDetails(null)
-    setEntityTorrent(null)
-    setFileMatches([])
-    setError(null)
+    setDetails(null);
+    setEntityTorrent(null);
+    setFileMatches([]);
+    setError(null);
+    setEntityLiveStats(null);
 
     if (torrentInfoHash) {
-      setIsLoading(true)
-      graphqlClient
-        .query<{
-          Torrents: {
-            Edges: Array<{
-              Node: {
-                Id: string
-                InfoHash: string
-                Name: string
-                State: string
-                Progress: number
-                TotalBytes: number
-                DownloadedBytes: number
-                UploadedBytes: number
-                SavePath: string
-                AddedAt: string
-                Files?: { Edges: Array<{ Node: { FileIndex: number; FilePath: string; FileSize: number; DownloadedBytes: number; Progress: number } }> }
-              }
-            }>
-          }
-        }>(TORRENT_BY_INFO_HASH_QUERY, {
-          Where: { InfoHash: { Eq: torrentInfoHash } },
-          Page: { Limit: 1, Offset: 0 },
-        })
-        .toPromise()
-        .then((result) => {
-          const node = result.data?.Torrents?.Edges?.[0]?.Node
-          if (node) setEntityTorrent(node)
-          else setError('Torrent not found')
-        })
-        .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-        .finally(() => setIsLoading(false))
-      return
+      fetchEntityTorrent(true);
+      return;
     }
 
     if (torrentId != null) {
-      setIsLoading(true)
-      graphqlClient
-        .query<{ torrentDetails: TorrentDetails }>(TORRENT_DETAILS_QUERY, { id: torrentId })
-        .toPromise()
-        .then(async (result) => {
-          if (result.data?.torrentDetails) {
-            const det = result.data.torrentDetails
-            setDetails(det)
-            
-            // Fetch file matches using the info_hash
-            try {
-              const matchResult = await graphqlClient
-                .query<{ pendingFileMatches: PendingFileMatch[] }>(
-                  PENDING_FILE_MATCHES_QUERY, 
-                  { sourceType: 'torrent', sourceId: det.infoHash }
-                )
-                .toPromise()
-              
-              if (matchResult.data?.pendingFileMatches) {
-                setFileMatches(matchResult.data.pendingFileMatches)
-              }
-            } catch {
-              // File matches are optional, don't fail the whole modal
-              console.warn('Failed to fetch file matches')
-            }
-          } else if (result.error) {
-            setError(sanitizeError(result.error))
-          } else {
-            setError('Torrent not found')
-          }
-        })
-        .catch((err) => setError(sanitizeError(err)))
-        .finally(() => setIsLoading(false))
+      fetchLegacyDetails(true, true);
     }
-  }, [isOpen, torrentId, torrentInfoHash])
+  }, [isOpen, torrentId, torrentInfoHash, fetchEntityTorrent, fetchLegacyDetails]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const subscriptions: Array<{ unsubscribe?: () => void }> = [];
+
+    if (torrentInfoHash && entityTorrent?.Id) {
+      try {
+        const torrentSub = graphqlClient
+          .subscription(TorrentChangedDocument, {
+            Filter: { Id: entityTorrent.Id },
+          })
+          .subscribe({
+            next: () => {
+              fetchEntityTorrent();
+            },
+            error: () => {},
+          });
+        subscriptions.push(torrentSub);
+      } catch {
+        // Ignore subscription setup failures
+      }
+
+      try {
+        const fileSub = graphqlClient
+          .subscription<{
+            TorrentFileChanged: {
+              Action: "Created" | "Updated" | "Deleted";
+              Id: string;
+              TorrentFile?: {
+                TorrentId: string;
+                FileIndex: number;
+                FilePath: string;
+                FileSize: number;
+                DownloadedBytes: number;
+                Progress: number;
+              };
+            };
+          }>(TORRENT_FILE_CHANGED_SUBSCRIPTION, {})
+          .subscribe({
+            next: (result) => {
+              const payload = result.data?.TorrentFileChanged;
+              const torrentFile = payload?.TorrentFile;
+              if (!torrentFile || torrentFile.TorrentId !== entityTorrent.Id) {
+                return;
+              }
+
+              setEntityTorrent((prev) => {
+                if (!prev?.Files?.Edges) return prev;
+                if (torrentFile.TorrentId !== prev.Id) return prev;
+
+                const edges = prev.Files.Edges;
+                const existingIndex = edges.findIndex(
+                  (edge) => edge.Node.FileIndex === torrentFile.FileIndex
+                );
+
+                if (payload.Action === "Deleted") {
+                  if (existingIndex === -1) return prev;
+                  const nextEdges = edges.filter(
+                    (_, index) => index !== existingIndex
+                  );
+                  return {
+                    ...prev,
+                    Files: { ...prev.Files, Edges: nextEdges },
+                  };
+                }
+
+                const nextNode = {
+                  FileIndex: torrentFile.FileIndex,
+                  FilePath: torrentFile.FilePath,
+                  FileSize: torrentFile.FileSize,
+                  DownloadedBytes: torrentFile.DownloadedBytes,
+                  Progress: torrentFile.Progress,
+                };
+
+                if (existingIndex === -1) {
+                  return {
+                    ...prev,
+                    Files: {
+                      ...prev.Files,
+                      Edges: [...edges, { Node: nextNode }],
+                    },
+                  };
+                }
+
+                const nextEdges = edges.map((edge, index) =>
+                  index === existingIndex ? { ...edge, Node: nextNode } : edge
+                );
+
+                return { ...prev, Files: { ...prev.Files, Edges: nextEdges } };
+              });
+            },
+            error: () => {},
+          });
+        subscriptions.push(fileSub);
+      } catch {
+        // Ignore subscription setup failures
+      }
+
+      try {
+        const progressSub = graphqlClient
+          .subscription<{
+            TorrentProgress: {
+              InfoHash: string;
+              DownloadSpeed: number;
+              UploadSpeed: number;
+              Peers: number;
+            };
+          }>(TORRENT_PROGRESS_SUBSCRIPTION)
+          .subscribe({
+            next: (result) => {
+              const progress = result.data?.TorrentProgress;
+              if (!progress || progress.InfoHash !== torrentInfoHash) return;
+              setEntityLiveStats({
+                downloadSpeed: progress.DownloadSpeed ?? 0,
+                uploadSpeed: progress.UploadSpeed ?? 0,
+                peers: progress.Peers ?? 0,
+              });
+            },
+            error: () => {},
+          });
+        subscriptions.push(progressSub);
+      } catch {
+        // Ignore subscription setup failures
+      }
+    }
+
+    if (torrentId != null) {
+      try {
+        const progressSub = graphqlClient
+          .subscription<{
+            TorrentProgress: { Id: number };
+          }>(TORRENT_PROGRESS_SUBSCRIPTION)
+          .subscribe({
+            next: (result) => {
+              if (result.data?.TorrentProgress?.Id === torrentId) {
+                fetchLegacyDetails(false, false);
+              }
+            },
+            error: () => {},
+          });
+        subscriptions.push(progressSub);
+      } catch {
+        // Ignore subscription setup failures
+      }
+    }
+
+    return () => {
+      subscriptions.forEach((sub) => sub.unsubscribe?.());
+    };
+  }, [
+    isOpen,
+    torrentInfoHash,
+    torrentId,
+    entityTorrent?.Id,
+    fetchEntityTorrent,
+    fetchLegacyDetails,
+  ]);
 
   return (
     <Modal
@@ -435,6 +734,39 @@ export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }
                   </div>
                 </CardBody>
               </Card>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <StatCard
+                  title="Downloaded"
+                  value={formatBytes(entityTorrent.DownloadedBytes)}
+                  icon={<IconArrowDown size={20} className="text-blue-400" />}
+                  valueColor="primary"
+                />
+                <StatCard
+                  title="Uploaded"
+                  value={formatBytes(entityTorrent.UploadedBytes)}
+                  icon={<IconArrowUp size={20} className="text-green-400" />}
+                  valueColor="success"
+                />
+                <StatCard
+                  title="Speed"
+                  value={
+                    entityLiveStats
+                      ? `${formatBytes(entityLiveStats.downloadSpeed)}/s`
+                      : "-"
+                  }
+                  subtitle={
+                    entityLiveStats
+                      ? `Up ${formatBytes(entityLiveStats.uploadSpeed)}/s`
+                      : undefined
+                  }
+                  icon={<IconBolt size={20} className="text-amber-400" />}
+                />
+                <StatCard
+                  title="Peers"
+                  value={entityLiveStats ? entityLiveStats.peers.toString() : "-"}
+                  icon={<IconUsers size={20} className="text-default-400" />}
+                />
+              </div>
               <div className="bg-content2/30 rounded-lg p-3">
                 <div className="flex items-center gap-2 mb-1">
                   <IconFolder size={16} className="text-amber-400" />
@@ -458,23 +790,32 @@ export function TorrentInfoModal({ torrentId, torrentInfoHash, isOpen, onClose }
                         key: "FilePath",
                         label: "File",
                         render: (n) => (
-                          <span
-                            className="truncate block max-w-md"
-                            title={n.FilePath}
-                          >
-                            {n.FilePath.split(/[/\\]/).pop() ?? n.FilePath}
-                          </span>
+                          <div className="flex items-start gap-2 min-w-0">
+                            <div className="mt-0.5 flex-shrink-0">
+                              {getFileIcon(n.FilePath, false, { size: 18 })}
+                            </div>
+                            <span className="truncate block" title={n.FilePath}>
+                              {n.FilePath.split(/[/\\]/).pop() ?? n.FilePath}
+                            </span>
+                          </div>
                         ),
                       },
                       {
                         key: "FileSize",
                         label: "Size",
                         render: (n) => formatBytes(n.FileSize),
+                        width: 100,
                       },
                       {
                         key: "Progress",
                         label: "Progress",
-                        render: (n) => `${(n.Progress * 100).toFixed(0)}%`,
+                        render: (n) => (
+                          <FileProgressBar
+                            progress={n.Progress}
+                            ariaLabel={`${n.FilePath} progress`}
+                          />
+                        ),
+                        width: 300,
                       },
                     ]}
                     getRowKey={(n) => n.FileIndex.toString()}

@@ -7,47 +7,45 @@
 // ============================================================================
 
 export const ADD_TORRENT_MUTATION = `
-  mutation AddTorrent($input: AddTorrentInput!) {
-    addTorrent(input: $input) {
-      success
-      torrent {
-        id
-        infoHash
-        name
-        state
-        progress
-        progressPercent
-        size
-        sizeFormatted
+  mutation AddTorrent($Input: AddTorrentInput!) {
+    AddTorrent(Input: $Input) {
+      Success
+      Torrent {
+        Id
+        InfoHash
+        Name
+        State
+        Progress
+        Size
       }
-      error
+      Error
     }
   }
 `;
 
 export const PAUSE_TORRENT_MUTATION = `
-  mutation PauseTorrent($id: Int!) {
-    pauseTorrent(id: $id) {
-      success
-      error
+  mutation PauseTorrent($Id: Int!) {
+    PauseTorrent(Id: $Id) {
+      Success
+      Error
     }
   }
 `;
 
 export const RESUME_TORRENT_MUTATION = `
-  mutation ResumeTorrent($id: Int!) {
-    resumeTorrent(id: $id) {
-      success
-      error
+  mutation ResumeTorrent($Id: Int!) {
+    ResumeTorrent(Id: $Id) {
+      Success
+      Error
     }
   }
 `;
 
 export const REMOVE_TORRENT_MUTATION = `
-  mutation RemoveTorrent($id: Int!, $deleteFiles: Boolean!) {
-    removeTorrent(id: $id, deleteFiles: $deleteFiles) {
-      success
-      error
+  mutation RemoveTorrent($Id: Int!, $DeleteFiles: Boolean!) {
+    RemoveTorrent(Id: $Id, DeleteFiles: $DeleteFiles) {
+      Success
+      Error
     }
   }
 `;
@@ -237,15 +235,15 @@ export const CONSOLIDATE_LIBRARY_MUTATION = `
 // ============================================================================
 
 export const ADD_TV_SHOW_MUTATION = `
-  mutation AddTvShow($libraryId: String!, $input: AddTvShowInput!) {
-    addTvShow(libraryId: $libraryId, input: $input) {
-      success
-      tvShow {
-        id
-        name
-        posterUrl
+  mutation AddTvShow($LibraryId: String!, $Input: AddTvShowInput!) {
+    addTvShow: AddTvShow(LibraryId: $LibraryId, Input: $Input) {
+      success: Success
+      tvShow: Show {
+        Id
+        Name
+        PosterUrl
       }
-      error
+      error: Error
     }
   }
 `;
@@ -438,7 +436,6 @@ export const ADD_MOVIE_MUTATION = `
         Year
         TmdbId
         ImdbId
-        Status
         Overview
         PosterUrl
         BackdropUrl
