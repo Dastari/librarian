@@ -407,27 +407,12 @@ export interface QuickPath {
   path: string;
 }
 
-export interface BrowseDirectoryResult {
-  currentPath: string;
-  parentPath: string | null;
-  entries: FileEntry[];
-  quickPaths: QuickPath[];
-  isLibraryPath: boolean;
-  libraryId: string | null;
-}
-
 // Alias for backward compatibility with FolderBrowserInput
 export interface BrowseResponse {
   currentPath: string;
   parentPath: string | null;
   entries: FileEntry[];
   quickPaths: QuickPath[];
-}
-
-export interface BrowseDirectoryInput {
-  path?: string | null;
-  dirsOnly?: boolean | null;
-  showHidden?: boolean | null;
 }
 
 export interface FileOperationResult {
@@ -1152,12 +1137,6 @@ export interface CreateNamingPatternInput {
   libraryType?: string;
 }
 
-export interface UpdateNamingPatternInput {
-  name?: string;
-  pattern?: string;
-  description?: string;
-}
-
 /** Result of naming pattern mutation */
 export interface NamingPatternResult {
   success: boolean;
@@ -1413,25 +1392,6 @@ export interface IndexerSettingOption {
   label: string;
 }
 
-/** Input for creating an indexer */
-export interface CreateIndexerInput {
-  indexerType: string;
-  name: string;
-  siteUrl?: string | null;
-  credentials: IndexerCredentialInput[];
-  settings: IndexerSettingInput[];
-}
-
-/** Input for updating an indexer */
-export interface UpdateIndexerInput {
-  name?: string | null;
-  enabled?: boolean | null;
-  priority?: number | null;
-  siteUrl?: string | null;
-  credentials?: IndexerCredentialInput[] | null;
-  settings?: IndexerSettingInput[] | null;
-}
-
 /** Input for a credential */
 export interface IndexerCredentialInput {
   credentialType: string;
@@ -1444,71 +1404,12 @@ export interface IndexerSettingInput {
   value: string;
 }
 
-/** Result of an indexer mutation */
-export interface IndexerResult {
-  success: boolean;
-  error: string | null;
-  indexer: IndexerConfig | null;
-}
-
 /** Result of testing an indexer */
 export interface IndexerTestResult {
   success: boolean;
   error: string | null;
   releasesFound: number | null;
   elapsedMs: number | null;
-}
-
-/** Input for searching indexers */
-export interface IndexerSearchInput {
-  query: string;
-  indexerIds?: string[] | null;
-  categories?: number[] | null;
-  season?: number | null;
-  episode?: string | null;
-  imdbId?: string | null;
-  limit?: number | null;
-}
-
-/** Result of an indexer search */
-export interface IndexerSearchResultSet {
-  indexers: IndexerSearchResultItem[];
-  totalReleases: number;
-  totalElapsedMs: number;
-}
-
-/** Search results from a single indexer */
-export interface IndexerSearchResultItem {
-  indexerId: string;
-  indexerName: string;
-  releases: TorrentRelease[];
-  elapsedMs: number;
-  fromCache: boolean;
-  error: string | null;
-}
-
-/** A torrent release from an indexer search */
-export interface TorrentRelease {
-  title: string;
-  guid: string;
-  link: string | null;
-  magnetUri: string | null;
-  infoHash: string | null;
-  details: string | null;
-  publishDate: string;
-  categories: number[];
-  size: number | null;
-  sizeFormatted: string | null;
-  seeders: number | null;
-  leechers: number | null;
-  peers: number | null;
-  grabs: number | null;
-  isFreeleech: boolean;
-  imdbId: string | null;
-  poster: string | null;
-  description: string | null;
-  indexerId: string | null;
-  indexerName: string | null;
 }
 
 // ============================================================================
@@ -1795,87 +1696,6 @@ export interface Connection<T> {
 // ============================================================================
 // Entity-specific Filter Inputs
 // ============================================================================
-
-/** Filter input for movies query */
-export interface MovieWhereInput {
-  title?: StringFilter;
-  year?: IntFilter;
-  monitored?: BoolFilter;
-  hasFile?: BoolFilter;
-  status?: StringFilter;
-  createdAt?: DateFilter;
-}
-
-/** Order by input for movies */
-export interface MovieOrderByInput {
-  field: "title" | "year" | "releaseDate" | "createdAt" | "sortTitle";
-  direction?: OrderDirection;
-}
-
-/** Filter input for TV shows query */
-export interface TvShowWhereInput {
-  name?: StringFilter;
-  year?: IntFilter;
-  status?: StringFilter;
-  monitored?: BoolFilter;
-  network?: StringFilter;
-  createdAt?: DateFilter;
-}
-
-/** Order by input for TV shows */
-export interface TvShowOrderByInput {
-  field: "name" | "year" | "createdAt" | "sortName";
-  direction?: OrderDirection;
-}
-
-/** Filter input for albums query */
-export interface AlbumWhereInput {
-  name?: StringFilter;
-  year?: IntFilter;
-  artistName?: StringFilter;
-  hasFiles?: BoolFilter;
-  albumType?: StringFilter;
-}
-
-/** Order by input for albums */
-export interface AlbumOrderByInput {
-  field: "name" | "year" | "createdAt" | "sortName";
-  direction?: OrderDirection;
-}
-
-/** Filter input for audiobooks query */
-export interface AudiobookWhereInput {
-  title?: StringFilter;
-  authorName?: StringFilter;
-  hasFiles?: BoolFilter;
-  language?: StringFilter;
-}
-
-/** Order by input for audiobooks */
-export interface AudiobookOrderByInput {
-  field: "title" | "createdAt" | "sortTitle";
-  direction?: OrderDirection;
-}
-
-/** Filter input for tracks query */
-export interface TrackWhereInput {
-  title?: StringFilter;
-  artistName?: StringFilter;
-  hasFile?: BoolFilter;
-  status?: StringFilter;
-}
-
-/** Order by input for tracks */
-export interface TrackOrderByInput {
-  field:
-    | "TITLE"
-    | "TRACK_NUMBER"
-    | "DISC_NUMBER"
-    | "ARTIST_NAME"
-    | "DURATION"
-    | "CREATED_AT";
-  direction?: OrderDirection;
-}
 
 // ============================================================================
 // Notification Types

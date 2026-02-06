@@ -168,11 +168,7 @@ export type {
   UpdatePlaybackInput,
   UpdatePlaybackSettingsInput,
   PlaybackResult,
-  // Indexer Search Types
-  IndexerSearchInput,
-  IndexerSearchResultSet,
-  IndexerSearchResultItem,
-  TorrentRelease,
+  // Indexer Types
   IndexerConfig,
   // LLM Parser Types
   LlmParserSettings,

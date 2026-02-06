@@ -21,23 +21,36 @@ import {
   IconCheck,
 } from '@tabler/icons-react'
 import {
-  SEARCH_TV_SHOWS_QUERY,
-  SEARCH_MOVIES_QUERY,
-  ADD_TV_SHOW_MUTATION,
-  ADD_MOVIE_MUTATION,
-  type LibraryNode,
-  type LibraryType,
-  type TvShowSearchResult,
-  type MovieSearchResult,
-  type TorrentRelease,
-} from '../../lib/graphql'
-import { LibrariesDocument } from '../../lib/graphql/generated/graphql'
+  LibrariesDocument,
+  SearchTvShowsDocument,
+  SearchMoviesDocument,
+  AddTvShowDocument,
+  AddMovieDocument,
+  type LibrariesQuery,
+  type SearchTvShowsQuery,
+  type SearchMoviesQuery,
+  type AddTvShowMutation,
+  type AddMovieMutation,
+} from '../../lib/graphql/generated/graphql'
 // import { sanitizeError } from '../../lib/format'
+
+type LibraryNode = LibrariesQuery['Libraries']['Edges'][number]['Node']
+type LibraryType = 'TV' | 'MOVIES' | 'MUSIC' | 'AUDIOBOOKS'
+type TvShowSearchResult = SearchTvShowsQuery['SearchTvShows'][number]
+type MovieSearchResult = SearchMoviesQuery['SearchMovies'][number]
+type SearchRelease = {
+  title: string
+  link?: string | null
+  magnetUri?: string | null
+  sizeFormatted?: string | null
+  seeders?: number | null
+  indexerName?: string | null
+}
 
 export interface AddToLibraryModalProps {
   isOpen: boolean
   onClose: () => void
-  release: TorrentRelease | null
+  release: SearchRelease | null
   onAdded: () => void
 }
 
@@ -149,15 +162,15 @@ const TYPE_ICONS: Record<DetectedType, typeof IconDeviceTv> = {
 
 // Type guards for search results
 function isTvShowSearchResult(item: TvShowSearchResult | MovieSearchResult): item is TvShowSearchResult {
-  return 'name' in item && !('title' in item)
+  return 'Name' in item && !('Title' in item)
 }
 
 // Get display name from either type
 function getItemDisplayName(item: TvShowSearchResult | MovieSearchResult): string {
   if (isTvShowSearchResult(item)) {
-    return item.name
+    return item.Name
   }
-  return item.title
+  return item.Title
 }
 
 export function AddToLibraryModal({
@@ -205,7 +218,7 @@ export function AddToLibraryModal({
       queryPromise(LibrariesDocument, {})
         
         .then(({ data }) => {
-          setLibraries(data?.Libraries.Edges.map((e: any) => e.Node) ?? [])
+          setLibraries(data?.Libraries.Edges.map((edge: LibrariesQuery['Libraries']['Edges'][number]) => edge.Node) ?? [])
         })
         .finally(() => setLoadingLibraries(false))
     }
@@ -236,67 +249,11 @@ export function AddToLibraryModal({
     
     try {
       if (selectedType === 'tv') {
-        interface TvShowSearchNode {
-          Provider: string
-          ProviderId: number
-          Name: string
-          Year: number | null
-          Status: string | null
-          Network: string | null
-          Overview: string | null
-          PosterUrl: string | null
-          TvdbId: number | null
-          ImdbId: string | null
-          Score: number | null
-        }
-        const { data } = await queryPromise<{ SearchTvShows: TvShowSearchNode[] }>(SEARCH_TV_SHOWS_QUERY, { Query: searchQuery })
-          
-        setSearchResults(
-          (data?.SearchTvShows ?? []).map((show) => ({
-            provider: show.Provider,
-            providerId: show.ProviderId,
-            name: show.Name,
-            year: show.Year,
-            status: show.Status,
-            network: show.Network,
-            overview: show.Overview,
-            posterUrl: show.PosterUrl,
-            tvdbId: show.TvdbId,
-            imdbId: show.ImdbId,
-            score: show.Score ?? 0,
-          }))
-        )
+        const { data } = await queryPromise<SearchTvShowsQuery>(SearchTvShowsDocument, { Query: searchQuery })
+        setSearchResults(data?.SearchTvShows ?? [])
       } else if (selectedType === 'movies') {
-        interface MovieSearchNode {
-          Provider: string
-          ProviderId: number
-          Title: string
-          OriginalTitle: string | null
-          Year: number | null
-          Overview: string | null
-          PosterUrl: string | null
-          BackdropUrl: string | null
-          ImdbId: string | null
-          VoteAverage: number | null
-          Popularity: number | null
-        }
-        const { data } = await queryPromise<{ SearchMovies: MovieSearchNode[] }>(SEARCH_MOVIES_QUERY, { Query: searchQuery })
-          
-        setSearchResults(
-          (data?.SearchMovies ?? []).map((movie) => ({
-            provider: movie.Provider,
-            providerId: movie.ProviderId,
-            title: movie.Title,
-            originalTitle: movie.OriginalTitle,
-            year: movie.Year,
-            overview: movie.Overview,
-            posterUrl: movie.PosterUrl,
-            backdropUrl: movie.BackdropUrl,
-            imdbId: movie.ImdbId,
-            voteAverage: movie.VoteAverage,
-            popularity: movie.Popularity,
-          }))
-        )
+        const { data } = await queryPromise<SearchMoviesQuery>(SearchMoviesDocument, { Query: searchQuery })
+        setSearchResults(data?.SearchMovies ?? [])
       } else {
         // Music and audiobooks - no search yet
         setSearchResults([])
@@ -326,12 +283,12 @@ export function AddToLibraryModal({
       if (selectedItem && (selectedType === 'tv' || selectedType === 'movies')) {
         if (selectedType === 'tv') {
           const tvItem = selectedItem as TvShowSearchResult
-          const { data, error } = await mutationPromise<{ AddTvShow: { Success: boolean; Show: { Id: string } | null; Error: string | null } }>(
-              ADD_TV_SHOW_MUTATION,
+          const { data, error } = await mutationPromise<AddTvShowMutation>(
+              AddTvShowDocument,
               {
                 LibraryId: selectedLibraryId,
                 Input: {
-                  TvmazeId: tvItem.providerId,
+                  TvmazeId: tvItem.ProviderId,
                   AutoDownloadMode: 'ALL',
                 },
               }
@@ -344,12 +301,12 @@ export function AddToLibraryModal({
           // TODO: Use data.AddTvShow.Show?.Id to link torrent to show
         } else if (selectedType === 'movies') {
           const movieItem = selectedItem as MovieSearchResult
-          const { data, error } = await mutationPromise<{ AddMovie: { Success: boolean; Movie: { Id: string } | null; Error: string | null } }>(
-              ADD_MOVIE_MUTATION,
+          const { data, error } = await mutationPromise<AddMovieMutation>(
+              AddMovieDocument,
               {
                 LibraryId: selectedLibraryId,
                 Input: {
-                  TmdbId: movieItem.providerId,
+                  TmdbId: movieItem.ProviderId,
                   Monitored: true,
                 },
               }
@@ -570,13 +527,13 @@ export function AddToLibraryModal({
               {searchResults.length > 0 && (
                 <div className="max-h-48 overflow-y-auto space-y-2">
                   {searchResults.map((item) => {
-                    const isTv = 'name' in item && !('title' in item)
+                    const isTv = 'Name' in item && !('Title' in item)
                     const id = isTv
-                      ? String((item as TvShowSearchResult).providerId)
-                      : String((item as MovieSearchResult).providerId)
-                    const name = isTv ? (item as TvShowSearchResult).name : (item as MovieSearchResult).title
-                    const year = isTv ? (item as TvShowSearchResult).year : (item as MovieSearchResult).year
-                    const poster = isTv ? (item as TvShowSearchResult).posterUrl : (item as MovieSearchResult).posterUrl
+                      ? String((item as TvShowSearchResult).ProviderId)
+                      : String((item as MovieSearchResult).ProviderId)
+                    const name = isTv ? (item as TvShowSearchResult).Name : (item as MovieSearchResult).Title
+                    const year = isTv ? (item as TvShowSearchResult).Year : (item as MovieSearchResult).Year
+                    const poster = isTv ? (item as TvShowSearchResult).PosterUrl : (item as MovieSearchResult).PosterUrl
                     const isSelected = selectedItem === item
                     
                     return (

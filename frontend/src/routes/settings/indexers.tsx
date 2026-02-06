@@ -32,9 +32,33 @@ import type {
   IndexerTypeInfo,
   IndexerSettingDefinition,
   IndexerTestResult,
-  IndexerSearchResultSet,
-  TorrentRelease,
 } from '../../lib/graphql/types'
+
+type SearchRelease = {
+  title: string
+  guid: string
+  link?: string | null
+  magnetUri?: string | null
+  size?: number | null
+  sizeFormatted?: string | null
+  seeders?: number | null
+  leechers?: number | null
+  publishDate: string
+  isFreeleech?: boolean | null
+}
+
+type SearchResults = {
+  indexers: Array<{
+    indexerId: string
+    indexerName: string
+    releases: SearchRelease[]
+    elapsedMs?: number | null
+    fromCache?: boolean | null
+    error?: string | null
+  }>
+  totalReleases: number
+  totalElapsedMs: number
+}
 
 // GraphQL response types
 interface IndexersQueryResponse {
@@ -63,10 +87,6 @@ interface TestIndexerResponse {
 
 interface CreateIndexerResponse {
   createIndexer: { success: boolean; error: string | null; indexer: IndexerConfig | null }
-}
-
-interface SearchIndexersResponse {
-  searchIndexers: IndexerSearchResultSet
 }
 
 export const Route = createFileRoute('/settings/indexers')({
@@ -214,7 +234,7 @@ function IndexersSettingsPage() {
   // Search state
   const [searchQuery, setSearchQuery] = useState('')
   const [isSearching, setIsSearching] = useState(false)
-  const [searchResults, setSearchResults] = useState<IndexerSearchResultSet | null>(null)
+  const [searchResults, setSearchResults] = useState<SearchResults | null>(null)
 
   const { isOpen: isAddOpen, onOpen: onAddOpen, onClose: onAddClose } = useDisclosure()
   const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure()
@@ -357,7 +377,7 @@ function IndexersSettingsPage() {
     setSearchResults(null)
 
     try {
-      const result = await queryPromise<SearchIndexersResponse>(SEARCH_INDEXERS_QUERY, {
+      const result = await queryPromise<{ searchIndexers: SearchResults }>(SEARCH_INDEXERS_QUERY, {
           input: {
             query: searchQuery,
             limit: 50,
@@ -1256,12 +1276,12 @@ function EditIndexerModal({
 
 // Search Results Card Component
 interface SearchResultsCardProps {
-  results: IndexerSearchResultSet
+  results: SearchResults
   onClose: () => void
 }
 
 // Extended release type with indexer info
-interface FlattenedRelease extends TorrentRelease {
+interface FlattenedRelease extends SearchRelease {
   indexerName: string
   indexerId: string
   _uniqueKey: string // Composite key for uniqueness

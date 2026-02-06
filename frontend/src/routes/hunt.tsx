@@ -23,12 +23,6 @@ import {
   IconCategory,
   IconServer,
 } from "@tabler/icons-react";
-import {
-  SEARCH_INDEXERS_QUERY,
-  type IndexerSearchResultSet,
-  type TorrentRelease,
-  type IndexerSearchInput,
-} from "../lib/graphql";
 import { queryPromise, mutationPromise } from "../lib/graphql/client";
 import {
   DataTable,
@@ -65,6 +59,69 @@ const MEDIA_TYPES = [
 ] as const;
 
 type MediaType = (typeof MEDIA_TYPES)[number]["value"];
+type SearchRelease = {
+  title: string;
+  guid: string;
+  link?: string | null;
+  magnetUri?: string | null;
+  details?: string | null;
+  publishDate: string;
+  size?: number | null;
+  sizeFormatted?: string | null;
+  seeders?: number | null;
+  leechers?: number | null;
+  isFreeleech?: boolean | null;
+  indexerId: string;
+  indexerName: string;
+};
+
+type SearchIndexersResponse = {
+  searchIndexers: {
+    indexers: Array<{
+      indexerId: string;
+      indexerName: string;
+      releases: SearchRelease[];
+      error?: string | null;
+    }>;
+    totalReleases: number;
+    totalElapsedMs: number;
+  };
+};
+
+type IndexerSearchInput = {
+  query: string;
+  categories?: number[];
+  limit?: number;
+};
+
+const SEARCH_INDEXERS_QUERY = `
+  query SearchIndexers($input: IndexerSearchInput!) {
+    searchIndexers(input: $input) {
+      indexers {
+        indexerId
+        indexerName
+        releases {
+          title
+          guid
+          link
+          magnetUri
+          details
+          publishDate
+          size
+          sizeFormatted
+          seeders
+          leechers
+          isFreeleech
+          indexerId
+          indexerName
+        }
+        error
+      }
+      totalReleases
+      totalElapsedMs
+    }
+  }
+`;
 
 // Torznab category mapping
 const CATEGORY_MAP: Record<MediaType, number[] | undefined> = {
@@ -126,7 +183,7 @@ function SearchPage() {
   // Local state
   const [searchInput, setSearchInput] = useState(query);
   const [isSearching, setIsSearching] = useState(false);
-  const [results, setResults] = useState<TorrentRelease[]>([]);
+  const [results, setResults] = useState<SearchRelease[]>([]);
   const [searchMeta, setSearchMeta] = useState<{
     totalReleases: number;
     totalElapsedMs: number;
@@ -134,7 +191,7 @@ function SearchPage() {
     errors: string[];
   } | null>(null);
   const [, setDownloadingIds] = useState<Set<string>>(new Set());
-  const [selectedRelease, setSelectedRelease] = useState<TorrentRelease | null>(
+  const [selectedRelease, setSelectedRelease] = useState<SearchRelease | null>(
     null,
   );
   const {
@@ -180,9 +237,10 @@ function SearchPage() {
         limit: 100,
       };
 
-      const { data, error } = await queryPromise<{
-          searchIndexers: IndexerSearchResultSet;
-        }>(SEARCH_INDEXERS_QUERY, { input })
+      const { data, error } = await queryPromise<SearchIndexersResponse>(
+        SEARCH_INDEXERS_QUERY,
+        { input },
+      )
         ;
 
       if (error) {
@@ -191,7 +249,7 @@ function SearchPage() {
 
       if (data?.searchIndexers) {
         // Flatten results from all indexers
-        const allReleases: TorrentRelease[] = [];
+        const allReleases: SearchRelease[] = [];
         const errors: string[] = [];
 
         for (const indexer of data.searchIndexers.indexers) {
@@ -246,7 +304,7 @@ function SearchPage() {
   };
 
   const handleDownload = useCallback(
-    async (release: TorrentRelease) => {
+    async (release: SearchRelease) => {
       // Prefer magnet link, fall back to torrent file URL
       const magnetUri = release.magnetUri;
       const torrentUrl = release.link;
@@ -325,7 +383,7 @@ function SearchPage() {
   );
 
   // Table columns
-  const columns: DataTableColumn<TorrentRelease>[] = useMemo(
+  const columns: DataTableColumn<SearchRelease>[] = useMemo(
     () => [
       {
         key: "title",
@@ -434,7 +492,7 @@ function SearchPage() {
   );
 
   // Row actions
-  const rowActions: RowAction<TorrentRelease>[] = useMemo(
+  const rowActions: RowAction<SearchRelease>[] = useMemo(
     () => [
       {
         key: "download",

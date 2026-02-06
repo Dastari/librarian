@@ -210,6 +210,28 @@ The intended final frontend architecture includes:
 - Prefer `previousData` patterns to avoid UI flicker on refetch
 - Use HeroUI components for all UI primitives
 
+### Frontend Data Layer Standards (Mandatory)
+- Use `useQuery`, `useMutation`, and `useSubscription` from Apollo as the default pattern for route pages and feature components.
+- Avoid imperative `await graphqlClient...toPromise()` in routes/components. Treat this as legacy migration-only code.
+- Keep local React state minimal:
+  - Do not duplicate server state in `useState` when Apollo cache/query data can be used directly.
+  - Do not create manual loading/error flags for GraphQL operations when hook state already provides `loading`/`error`.
+  - Specifically: when using Apollo hooks, do not introduce custom `isLoading` state for the same operation.
+- Use `previousData` on detail/list pages to prevent flicker during refetch, subscription-driven updates, and variable changes.
+- Favor schema/codegen types over custom frontend GraphQL result interfaces:
+  - Prefer `*Document`, `*Query`, `*Mutation`, and variable types from generated code.
+  - Custom local types are only acceptable for temporary compatibility when a backend field/query is not yet in schema/codegen.
+- Subscription-first UI behavior:
+  - Library and media routes should subscribe to relevant change events (`LibraryChanged`, `MovieChanged`, `ShowChanged`, `AlbumChanged`, `TrackChanged`, `AudiobookChanged`, etc.).
+  - On change events, refresh using query refetch/cache updates instead of bespoke polling loops.
+- GraphQL naming consistency in frontend documents must follow backend schema conventions:
+  - Operation names, fields, and payload keys should use PascalCase where defined by schema.
+  - Remove/replace legacy lowercase operation names as backend migration completes.
+- Prefer nested GraphQL relations over frontend post-processing transforms when the schema can provide needed relational data directly.
+- New hooks in `frontend/src/hooks` must be justified:
+  - Do not add wrapper hooks that only proxy Apollo hooks without adding clear reusable behavior.
+  - Periodically decommission obsolete hooks after route migrations.
+
 ---
 
 ## Media Pipeline Decision Guide (Q&A)
