@@ -102,31 +102,28 @@ impl TorrentSubscriptions {
             }
         };
 
-        let stream = BroadcastStream::new(rx).filter_map(|event| {
-            match event.ok()? {
-                TorrentEvent::Progress {
-                    id,
-                    info_hash,
-                    progress,
-                    download_speed,
-                    upload_speed,
-                    peers,
-                    state,
-                } => Some(TorrentProgress {
-                    id: id as i32,
-                    info_hash,
-                    progress,
-                    download_speed: download_speed as i64,
-                    upload_speed: upload_speed as i64,
-                    peers: peers as i32,
-                    state: state.to_string(),
-                }),
-                _ => None,
-            }
+        let stream = BroadcastStream::new(rx).filter_map(|event| match event.ok()? {
+            TorrentEvent::Progress {
+                id,
+                info_hash,
+                progress,
+                download_speed,
+                upload_speed,
+                peers,
+                state,
+            } => Some(TorrentProgress {
+                id: id as i32,
+                info_hash,
+                progress,
+                download_speed: download_speed as i64,
+                upload_speed: upload_speed as i64,
+                peers: peers as i32,
+                state: state.to_string(),
+            }),
+            _ => None,
         });
 
-        Box::pin(Box::new(stream)
-            as Box<dyn Stream<Item = TorrentProgress> + Send + Unpin>)
+        Box::pin(Box::new(stream) as Box<dyn Stream<Item = TorrentProgress> + Send + Unpin>)
     }
 
     #[graphql(name = "torrentAdded")]
@@ -163,23 +160,20 @@ impl TorrentSubscriptions {
             }
         };
 
-        let stream = BroadcastStream::new(rx).filter_map(|event| {
-            match event.ok()? {
-                TorrentEvent::Added {
-                    id,
-                    name,
-                    info_hash,
-                } => Some(TorrentAddedEvent {
-                    id: id as i32,
-                    name,
-                    info_hash,
-                }),
-                _ => None,
-            }
+        let stream = BroadcastStream::new(rx).filter_map(|event| match event.ok()? {
+            TorrentEvent::Added {
+                id,
+                name,
+                info_hash,
+            } => Some(TorrentAddedEvent {
+                id: id as i32,
+                name,
+                info_hash,
+            }),
+            _ => None,
         });
 
-        Box::pin(Box::new(stream)
-            as Box<dyn Stream<Item = TorrentAddedEvent> + Send + Unpin>)
+        Box::pin(Box::new(stream) as Box<dyn Stream<Item = TorrentAddedEvent> + Send + Unpin>)
     }
 
     #[graphql(name = "torrentCompleted")]
@@ -216,23 +210,20 @@ impl TorrentSubscriptions {
             }
         };
 
-        let stream = BroadcastStream::new(rx).filter_map(|event| {
-            match event.ok()? {
-                TorrentEvent::Completed {
-                    id,
-                    name,
-                    info_hash,
-                } => Some(TorrentCompletedEvent {
-                    id: id as i32,
-                    name,
-                    info_hash,
-                }),
-                _ => None,
-            }
+        let stream = BroadcastStream::new(rx).filter_map(|event| match event.ok()? {
+            TorrentEvent::Completed {
+                id,
+                name,
+                info_hash,
+            } => Some(TorrentCompletedEvent {
+                id: id as i32,
+                name,
+                info_hash,
+            }),
+            _ => None,
         });
 
-        Box::pin(Box::new(stream)
-            as Box<dyn Stream<Item = TorrentCompletedEvent> + Send + Unpin>)
+        Box::pin(Box::new(stream) as Box<dyn Stream<Item = TorrentCompletedEvent> + Send + Unpin>)
     }
 
     #[graphql(name = "torrentRemoved")]
@@ -269,17 +260,14 @@ impl TorrentSubscriptions {
             }
         };
 
-        let stream = BroadcastStream::new(rx).filter_map(|event| {
-            match event.ok()? {
-                TorrentEvent::Removed { id, info_hash } => Some(TorrentRemovedEvent {
-                    id: id as i32,
-                    info_hash,
-                }),
-                _ => None,
-            }
+        let stream = BroadcastStream::new(rx).filter_map(|event| match event.ok()? {
+            TorrentEvent::Removed { id, info_hash } => Some(TorrentRemovedEvent {
+                id: id as i32,
+                info_hash,
+            }),
+            _ => None,
         });
 
-        Box::pin(Box::new(stream)
-            as Box<dyn Stream<Item = TorrentRemovedEvent> + Send + Unpin>)
+        Box::pin(Box::new(stream) as Box<dyn Stream<Item = TorrentRemovedEvent> + Send + Unpin>)
     }
 }

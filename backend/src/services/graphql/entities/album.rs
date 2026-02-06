@@ -1,15 +1,18 @@
-use async_graphql::{Result, SimpleObject};
+use async_graphql::{Context, InputObject, Object, Result, SimpleObject};
 use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use super::common::AutoDownloadMode;
 use super::track::Track;
 use crate::{
     db::Database,
+    graphql::auth::AuthExt,
     graphql::{
         entities::{Library, TrackOrderByInput, TrackWhereInput},
         orm::{EntityQuery, StringFilter},
     },
+    services::metadata::providers::{AddAlbumOptions, MetadataProvider, MetadataService},
 };
 
 /// Album Entity
@@ -167,6 +170,141 @@ pub struct Album {
 
 #[derive(Default)]
 pub struct AlbumCustomOperations;
+
+/// Search result for MusicBrainz album search.
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "AlbumSearchResult")]
+pub struct AlbumSearchResultGql {
+    #[graphql(name = "Provider")]
+    pub provider: String,
+    #[graphql(name = "ProviderId")]
+    pub provider_id: String,
+    #[graphql(name = "Title")]
+    pub title: String,
+    #[graphql(name = "ArtistName")]
+    pub artist_name: Option<String>,
+    #[graphql(name = "Year")]
+    pub year: Option<i32>,
+    #[graphql(name = "AlbumType")]
+    pub album_type: Option<String>,
+    #[graphql(name = "CoverUrl")]
+    pub cover_url: Option<String>,
+    #[graphql(name = "Score")]
+    pub score: Option<f64>,
+}
+
+#[Object]
+impl AlbumCustomOperations {
+    /// Search albums on MusicBrainz.
+    #[graphql(name = "SearchAlbums")]
+    async fn search_albums(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "Query")] query: String,
+        #[graphql(name = "IncludeEps", default = false)] include_eps: bool,
+        #[graphql(name = "IncludeSingles", default = false)] include_singles: bool,
+        #[graphql(name = "IncludeCompilations", default = false)] include_compilations: bool,
+        #[graphql(name = "IncludeLive", default = false)] include_live: bool,
+        #[graphql(name = "IncludeSoundtracks", default = false)] include_soundtracks: bool,
+    ) -> Result<Vec<AlbumSearchResultGql>> {
+        let _user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        let results = metadata
+            .search_albums(
+                &query,
+                include_eps,
+                include_singles,
+                include_compilations,
+                include_live,
+                include_soundtracks,
+            )
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(results
+            .into_iter()
+            .map(|a| AlbumSearchResultGql {
+                provider: match a.provider {
+                    MetadataProvider::Musicbrainz => "musicbrainz".to_string(),
+                    MetadataProvider::Tmdb => "tmdb".to_string(),
+                    MetadataProvider::Tvmaze => "tvmaze".to_string(),
+                    MetadataProvider::OpenLibrary => "openlibrary".to_string(),
+                },
+                provider_id: a.provider_id,
+                title: a.title,
+                artist_name: a.artist_name,
+                year: a.year,
+                album_type: a.album_type,
+                cover_url: a.cover_url,
+                score: a.score,
+            })
+            .collect())
+    }
+}
+
+#[derive(Debug, InputObject)]
+#[graphql(name = "AddAlbumInput")]
+pub struct AddAlbumInput {
+    #[graphql(name = "LibraryId")]
+    pub library_id: String,
+    #[graphql(name = "MusicbrainzId")]
+    pub musicbrainz_id: String,
+}
+
+#[derive(Debug, SimpleObject)]
+#[graphql(name = "AlbumOperationResult")]
+pub struct AlbumOperationResult {
+    #[graphql(name = "Success")]
+    pub success: bool,
+    #[graphql(name = "Album")]
+    pub album: Option<Album>,
+    #[graphql(name = "Error")]
+    pub error: Option<String>,
+}
+
+#[derive(Default)]
+pub struct AlbumMetadataMutations;
+
+#[Object]
+impl AlbumMetadataMutations {
+    /// Add an album to a library by fetching metadata from MusicBrainz.
+    #[graphql(name = "AddAlbum")]
+    async fn add_album(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "Input")] input: AddAlbumInput,
+    ) -> Result<AlbumOperationResult> {
+        let user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        let library_id = uuid::Uuid::parse_str(&input.library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+        let user_id = uuid::Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        match metadata
+            .add_album_from_provider(AddAlbumOptions {
+                provider: MetadataProvider::Musicbrainz,
+                provider_id: input.musicbrainz_id,
+                library_id,
+                user_id,
+            })
+            .await
+        {
+            Ok(album) => Ok(AlbumOperationResult {
+                success: true,
+                album: Some(album),
+                error: None,
+            }),
+            Err(e) => Ok(AlbumOperationResult {
+                success: false,
+                album: None,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+}
 
 // #[Object]
 // impl AlbumCustomOperations {

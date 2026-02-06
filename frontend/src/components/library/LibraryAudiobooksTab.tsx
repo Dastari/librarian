@@ -13,17 +13,45 @@ import {
   type CardRendererProps,
 } from '../data-table'
 import {
-  graphqlClient,
-  AUDIOBOOKS_CONNECTION_QUERY,
+  AUDIOBOOKS_QUERY,
   AUDIOBOOK_AUTHORS_QUERY,
   type Audiobook,
   type AudiobookAuthor,
 } from '../../lib/graphql'
-import type { Connection } from '../../lib/graphql/types'
 import { IconPlus, IconTrash, IconEye, IconHeadphones, IconUser } from '@tabler/icons-react'
 import { AudiobookCard } from './AudiobookCard'
 import { MediaCardSkeleton } from './MediaCardSkeleton'
-import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
+
+interface AudiobookNode {
+  Id: string
+  AuthorId: string | null
+  LibraryId: string
+  Title: string
+  SortTitle: string | null
+  Subtitle: string | null
+  OpenlibraryId: string | null
+  Isbn: string | null
+  Description: string | null
+  Publisher: string | null
+  Language: string | null
+  Narrators: string[]
+  SeriesName: string | null
+  DurationSecs: number | null
+  CoverUrl: string | null
+  HasFiles: boolean
+  SizeBytes: number | null
+  Path: string | null
+  ChapterCount: number | null
+  DownloadedChapterCount: number | null
+}
+
+interface AudiobookAuthorNode {
+  Id: string
+  LibraryId: string
+  Name: string
+  SortName: string | null
+  OpenlibraryId: string | null
+}
 
 // ============================================================================
 // Component Props
@@ -35,14 +63,6 @@ interface LibraryAudiobooksTabProps {
   loading?: boolean
   onDeleteAudiobook?: (audiobookId: string, audiobookTitle: string) => void
   onAddAudiobook?: () => void
-}
-
-// ============================================================================
-// Types for GraphQL response
-// ============================================================================
-
-interface AudiobooksConnectionResponse {
-  audiobooksConnection: Connection<Audiobook>
 }
 
 // ============================================================================
@@ -71,6 +91,8 @@ export function LibraryAudiobooksTab({
     setSortDirection(direction)
   }, [setSortColumn, setSortDirection])
   
+  const [audiobooks, setAudiobooks] = useState<Audiobook[]>([])
+  const [audiobooksLoading, setAudiobooksLoading] = useState(true)
   const [authors, setAuthors] = useState<AudiobookAuthor[]>([])
   const [authorsLoading, setAuthorsLoading] = useState(true)
 
@@ -82,67 +104,61 @@ export function LibraryAudiobooksTab({
     if (shouldSkipQueries) {
       return
     }
+    const fetchAudiobooks = async () => {
+      try {
+        const result = await queryPromise<{ Audiobooks: { Edges: Array<{ Node: AudiobookNode }> } }>(AUDIOBOOKS_QUERY, { libraryId })
+          
+        const edges = result.data?.Audiobooks?.Edges ?? []
+        setAudiobooks(edges.map((e) => ({
+          id: e.Node.Id,
+          authorId: e.Node.AuthorId,
+          libraryId: e.Node.LibraryId,
+          title: e.Node.Title,
+          sortTitle: e.Node.SortTitle,
+          subtitle: e.Node.Subtitle,
+          openlibraryId: e.Node.OpenlibraryId,
+          isbn: e.Node.Isbn,
+          description: e.Node.Description,
+          publisher: e.Node.Publisher,
+          language: e.Node.Language,
+          narrators: e.Node.Narrators,
+          seriesName: e.Node.SeriesName,
+          durationSecs: e.Node.DurationSecs,
+          coverUrl: e.Node.CoverUrl,
+          hasFiles: e.Node.HasFiles,
+          sizeBytes: e.Node.SizeBytes,
+          path: e.Node.Path,
+          chapterCount: e.Node.ChapterCount,
+          downloadedChapterCount: e.Node.DownloadedChapterCount,
+        })))
+      } catch (err) {
+        console.error('Failed to fetch audiobooks:', err)
+      } finally {
+        setAudiobooksLoading(false)
+      }
+    }
+
     const fetchAuthors = async () => {
       try {
-        const result = await graphqlClient
-          .query<{ audiobookAuthors: AudiobookAuthor[] }>(AUDIOBOOK_AUTHORS_QUERY, { libraryId })
-          .toPromise()
-        if (result.data?.audiobookAuthors) {
-          setAuthors(result.data.audiobookAuthors)
-        }
+        const result = await queryPromise<{ AudiobookAuthors: { Edges: Array<{ Node: AudiobookAuthorNode }> } }>(AUDIOBOOK_AUTHORS_QUERY, { libraryId })
+          
+        const edges = result.data?.AudiobookAuthors?.Edges ?? []
+        setAuthors(edges.map((e) => ({
+          id: e.Node.Id,
+          libraryId: e.Node.LibraryId,
+          name: e.Node.Name,
+          sortName: e.Node.SortName,
+          openlibraryId: e.Node.OpenlibraryId,
+        })))
       } catch (err) {
         console.error('Failed to fetch authors:', err)
       } finally {
         setAuthorsLoading(false)
       }
     }
+    fetchAudiobooks()
     fetchAuthors()
   }, [libraryId, shouldSkipQueries])
-
-  // Map column keys to GraphQL sort fields
-  const sortFieldMap: Record<string, string> = {
-    title: 'TITLE',
-    author: 'AUTHOR_NAME',
-    duration: 'DURATION',
-  }
-
-  // Build filter variables for GraphQL query
-  const queryVariables = useMemo(() => {
-    const vars: Record<string, unknown> = { libraryId }
-    
-    // Add search filter if there's a search term
-    if (searchTerm) {
-      vars.where = {
-        title: { contains: searchTerm },
-      }
-    }
-    
-    // Add order by from sort state
-    const graphqlField = sortFieldMap[sortColumn || 'title'] || 'TITLE'
-    vars.orderBy = {
-      field: graphqlField,
-      direction: sortDirection.toUpperCase(),
-    }
-    
-    return vars
-  }, [libraryId, searchTerm, sortColumn, sortDirection])
-
-  // Use infinite connection hook for server-side pagination
-  const {
-    items: audiobooks,
-    isLoading: audiobooksLoading,
-    isLoadingMore,
-    hasMore,
-    totalCount,
-    loadMore,
-  } = useInfiniteConnection<AudiobooksConnectionResponse, Audiobook>({
-    query: AUDIOBOOKS_CONNECTION_QUERY,
-    variables: queryVariables,
-    getConnection: (data) => data.audiobooksConnection,
-    batchSize: 50,
-    enabled: !shouldSkipQueries,
-    deps: [libraryId, searchTerm],
-  })
 
   const isLoading = audiobooksLoading || authorsLoading
 
@@ -164,11 +180,39 @@ export function LibraryAudiobooksTab({
     return letters
   }, [audiobooks])
 
-  // Filter audiobooks by selected letter
-  const filteredAudiobooks = useMemo(() => {
-    if (!normalizedLetter) return audiobooks
-    return audiobooks.filter((audiobook) => getFirstLetter(audiobook.title) === normalizedLetter)
-  }, [audiobooks, normalizedLetter])
+  const visibleAudiobooks = useMemo(() => {
+    let list = audiobooks
+
+    if (searchTerm) {
+      const q = searchTerm.toLowerCase()
+      list = list.filter((item) => item.title.toLowerCase().includes(q))
+    }
+
+    if (normalizedLetter) {
+      list = list.filter((item) => getFirstLetter(item.title) === normalizedLetter)
+    }
+
+    const sorted = [...list]
+    sorted.sort((a, b) => {
+      let av: string | number = a.title
+      let bv: string | number = b.title
+      if (sortColumn === 'author') {
+        av = (a.authorId && authorMap.get(a.authorId)) ?? ''
+        bv = (b.authorId && authorMap.get(b.authorId)) ?? ''
+      } else if (sortColumn === 'duration') {
+        av = a.durationSecs ?? 0
+        bv = b.durationSecs ?? 0
+      }
+
+      if (typeof av === 'number' && typeof bv === 'number') {
+        return sortDirection === 'asc' ? av - bv : bv - av
+      }
+      const cmp = String(av).localeCompare(String(bv))
+      return sortDirection === 'asc' ? cmp : -cmp
+    })
+
+    return sorted
+  }, [audiobooks, searchTerm, normalizedLetter, sortColumn, sortDirection, authorMap])
 
   // Handle letter change - toggle filter
   const handleLetterChange = useCallback((letter: string | null) => {
@@ -301,7 +345,7 @@ export function LibraryAudiobooksTab({
         <DataTable
           stateKey="library-audiobooks"
           skeletonDelay={500}
-          data={filteredAudiobooks}
+          data={visibleAudiobooks}
           columns={columns}
           getRowKey={(audiobook) => audiobook.id}
           searchPlaceholder="Search audiobooks..."
@@ -318,14 +362,9 @@ export function LibraryAudiobooksTab({
           showItemCount
           ariaLabel="Audiobooks table"
           fillHeight
-          serverSide
-          serverTotalCount={totalCount ?? undefined}
+          serverTotalCount={visibleAudiobooks.length}
           onSearchChange={handleSearchChange}
-          paginationMode="infinite"
-          hasMore={hasMore}
-          onLoadMore={loadMore}
           isLoading={parentLoading || isLoading}
-          isLoadingMore={isLoadingMore}
           headerContent={
             <AlphabetFilter
               selectedLetter={normalizedLetter}

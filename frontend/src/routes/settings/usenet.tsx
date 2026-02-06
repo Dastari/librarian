@@ -20,7 +20,7 @@ import {
   IconArrowUp,
   IconArrowDown,
 } from '@tabler/icons-react'
-import { graphqlClient } from '../../lib/graphql'
+import { queryPromise, mutationPromise } from '../../lib/graphql/client'
 import { sanitizeError } from '../../lib/format'
 import { InlineError } from '../../components/shared'
 
@@ -173,9 +173,8 @@ function UsenetSettingsPage() {
   const loadServers = useCallback(async () => {
     try {
       setLoading(true)
-      const result = await graphqlClient
-        .query<{ usenetServers: UsenetServer[] }>(USENET_SERVERS_QUERY, {})
-        .toPromise()
+      const result = await queryPromise<{ usenetServers: UsenetServer[] }>(USENET_SERVERS_QUERY, {})
+        
       
       if (result.error) {
         throw new Error(result.error.message)
@@ -240,8 +239,7 @@ function UsenetSettingsPage() {
 
       if (editingServer) {
         // Update
-        const result = await graphqlClient
-          .mutation<{ updateUsenetServer: UsenetServerResult }>(
+        const result = await mutationPromise<{ updateUsenetServer: UsenetServerResult }>(
             UPDATE_USENET_SERVER_MUTATION,
             {
               id: editingServer.id,
@@ -257,7 +255,7 @@ function UsenetSettingsPage() {
               },
             }
           )
-          .toPromise()
+          
 
         if (result.error || !result.data?.updateUsenetServer.success) {
           throw new Error(result.data?.updateUsenetServer.error || result.error?.message || 'Failed to update')
@@ -266,8 +264,7 @@ function UsenetSettingsPage() {
         addToast({ title: 'Server updated', color: 'success' })
       } else {
         // Create
-        const result = await graphqlClient
-          .mutation<{ createUsenetServer: UsenetServerResult }>(
+        const result = await mutationPromise<{ createUsenetServer: UsenetServerResult }>(
             CREATE_USENET_SERVER_MUTATION,
             {
               input: {
@@ -282,7 +279,7 @@ function UsenetSettingsPage() {
               },
             }
           )
-          .toPromise()
+          
 
         if (result.error || !result.data?.createUsenetServer.success) {
           throw new Error(result.data?.createUsenetServer.error || result.error?.message || 'Failed to create')
@@ -305,12 +302,11 @@ function UsenetSettingsPage() {
     if (!confirm(`Delete server "${server.name}"?`)) return
 
     try {
-      const result = await graphqlClient
-        .mutation<{ deleteUsenetServer: { success: boolean; error: string | null } }>(
+      const result = await mutationPromise<{ deleteUsenetServer: { success: boolean; error: string | null } }>(
           DELETE_USENET_SERVER_MUTATION,
           { id: server.id }
         )
-        .toPromise()
+        
 
       if (result.error || !result.data?.deleteUsenetServer.success) {
         throw new Error(result.data?.deleteUsenetServer.error || result.error?.message || 'Failed to delete')
@@ -326,15 +322,14 @@ function UsenetSettingsPage() {
   // Toggle enabled
   const handleToggleEnabled = async (server: UsenetServer) => {
     try {
-      const result = await graphqlClient
-        .mutation<{ updateUsenetServer: UsenetServerResult }>(
+      const result = await mutationPromise<{ updateUsenetServer: UsenetServerResult }>(
           UPDATE_USENET_SERVER_MUTATION,
           {
             id: server.id,
             input: { enabled: !server.enabled },
           }
         )
-        .toPromise()
+        
 
       if (result.error || !result.data?.updateUsenetServer.success) {
         throw new Error(result.data?.updateUsenetServer.error || result.error?.message)
@@ -360,12 +355,11 @@ function UsenetSettingsPage() {
 
     // Save new order
     try {
-      const result = await graphqlClient
-        .mutation<{ reorderUsenetServers: { success: boolean; error: string | null } }>(
+      const result = await mutationPromise<{ reorderUsenetServers: { success: boolean; error: string | null } }>(
           REORDER_USENET_SERVERS_MUTATION,
           { ids: newServers.map((s) => s.id) }
         )
-        .toPromise()
+        
 
       if (result.error || !result.data?.reorderUsenetServers.success) {
         throw new Error(result.data?.reorderUsenetServers.error || result.error?.message)

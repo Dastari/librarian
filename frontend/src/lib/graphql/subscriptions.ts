@@ -149,10 +149,25 @@ export const LIBRARY_CHANGED_SUBSCRIPTION = `
 `;
 
 export const MOVIE_CHANGED_SUBSCRIPTION = `
-  subscription MovieChanged($Filter: MovieChangedFilter) {
+  subscription MovieChanged($Filter: SubscriptionFilterInput) {
     MovieChanged(Filter: $Filter) {
       Action
       Id
+      Movie {
+        LibraryId
+      }
+    }
+  }
+`;
+
+export const SHOW_CHANGED_SUBSCRIPTION = `
+  subscription ShowChanged($Filter: SubscriptionFilterInput) {
+    ShowChanged(Filter: $Filter) {
+      Action
+      Id
+      Show {
+        LibraryId
+      }
     }
   }
 `;

@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { Button } from "@heroui/button";
 import { Chip } from "@heroui/chip";
 import { Checkbox } from "@heroui/checkbox";
@@ -15,7 +15,6 @@ import {
   IconRefresh,
 } from "@tabler/icons-react";
 import {
-  graphqlClient,
   NOTIFICATIONS_QUERY,
   MARK_NOTIFICATION_READ_MUTATION,
   MARK_ALL_NOTIFICATIONS_READ_MUTATION,
@@ -27,6 +26,7 @@ import {
   type NotificationResolution,
   type PaginatedNotifications,
 } from "../lib/graphql";
+import { useQuery, useMutation, gql } from "../lib/graphql/client";
 import {
   DataTable,
   type DataTableColumn,
@@ -105,9 +105,6 @@ function formatTimestamp(isoString: string): string {
 type TabKey = "all" | "unread" | "action_required";
 
 function NotificationsPage() {
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [totalCount, setTotalCount] = useState(0);
   const [selectedNotification, setSelectedNotification] =
     useState<Notification | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
@@ -119,56 +116,53 @@ function NotificationsPage() {
     onClose: onDetailClose,
   } = useDisclosure();
 
-  const fetchNotifications = useCallback(async () => {
-    setIsLoading(true);
-
-    const filter: Record<string, boolean | undefined> = {};
+  const notificationsFilter = useMemo(() => {
     if (activeTab === "unread") {
-      filter.unreadOnly = true;
-    } else if (activeTab === "action_required") {
-      filter.unresolvedOnly = true;
+      return { unreadOnly: true };
     }
-
-    try {
-      const result = await graphqlClient
-        .query<{ notifications: PaginatedNotifications }>(NOTIFICATIONS_QUERY, {
-          filter: Object.keys(filter).length > 0 ? filter : undefined,
-          limit: 50,
-          offset: 0,
-        })
-        .toPromise();
-
-      if (result.data?.notifications) {
-        setNotifications(result.data.notifications.notifications);
-        setTotalCount(result.data.notifications.totalCount);
-      }
-    } catch (error) {
-      console.error("Failed to fetch notifications:", error);
-      addToast({
-        title: "Error",
-        description: "Failed to fetch notifications",
-        color: "danger",
-      });
-    } finally {
-      setIsLoading(false);
+    if (activeTab === "action_required") {
+      return { unresolvedOnly: true };
     }
+    return undefined;
   }, [activeTab]);
 
-  useEffect(() => {
-    fetchNotifications();
-  }, [fetchNotifications]);
+  const notificationsQuery = useQuery<{ notifications: PaginatedNotifications }>(
+    gql`${NOTIFICATIONS_QUERY}`,
+    {
+      variables: {
+        filter: notificationsFilter,
+        limit: 50,
+        offset: 0,
+      },
+      fetchPolicy: "cache-and-network",
+    },
+  );
+
+  const notifications =
+    notificationsQuery.data?.notifications?.notifications ??
+    notificationsQuery.previousData?.notifications?.notifications ??
+    [];
+  const totalCount =
+    notificationsQuery.data?.notifications?.totalCount ??
+    notificationsQuery.previousData?.notifications?.totalCount ??
+    0;
+  const isLoading = notificationsQuery.loading;
+
+  const [markNotificationRead] = useMutation(gql`${MARK_NOTIFICATION_READ_MUTATION}`);
+  const [markAllNotificationsRead] = useMutation(
+    gql`${MARK_ALL_NOTIFICATIONS_READ_MUTATION}`,
+  );
+  const [resolveNotification] = useMutation(gql`${RESOLVE_NOTIFICATION_MUTATION}`);
+  const [deleteNotification] = useMutation(gql`${DELETE_NOTIFICATION_MUTATION}`);
+
+  const fetchNotifications = useCallback(() => {
+    void notificationsQuery.refetch();
+  }, [notificationsQuery]);
 
   const handleMarkRead = async (id: string) => {
     try {
-      await graphqlClient
-        .mutation(MARK_NOTIFICATION_READ_MUTATION, { id })
-        .toPromise();
-
-      setNotifications((prev) =>
-        prev.map((n) =>
-          n.id === id ? { ...n, readAt: new Date().toISOString() } : n,
-        ),
-      );
+      await markNotificationRead({ variables: { id } });
+      fetchNotifications();
     } catch (error) {
       addToast({
         title: "Error",
@@ -180,22 +174,21 @@ function NotificationsPage() {
 
   const handleMarkAllRead = async () => {
     try {
-      const result = await graphqlClient
-        .mutation<{
-          markAllNotificationsRead: { success: boolean; count: number };
-        }>(MARK_ALL_NOTIFICATIONS_READ_MUTATION, {})
-        .toPromise();
+      const result = await markAllNotificationsRead({
+        variables: {},
+      });
 
-      if (result.data?.markAllNotificationsRead.success) {
-        setNotifications((prev) =>
-          prev.map((n) => ({
-            ...n,
-            readAt: n.readAt || new Date().toISOString(),
-          })),
-        );
+      const data = result.data as
+        | {
+          markAllNotificationsRead: { success: boolean; count: number };
+        }
+        | undefined;
+
+      if (data?.markAllNotificationsRead.success) {
+        fetchNotifications();
         addToast({
           title: "Success",
-          description: `Marked ${result.data.markAllNotificationsRead.count} notifications as read`,
+          description: `Marked ${data.markAllNotificationsRead.count} notifications as read`,
           color: "success",
         });
       }
@@ -213,22 +206,8 @@ function NotificationsPage() {
     resolution: NotificationResolution,
   ) => {
     try {
-      await graphqlClient
-        .mutation(RESOLVE_NOTIFICATION_MUTATION, { input: { id, resolution } })
-        .toPromise();
-
-      setNotifications((prev) =>
-        prev.map((n) =>
-          n.id === id
-            ? {
-                ...n,
-                resolvedAt: new Date().toISOString(),
-                resolution,
-                readAt: n.readAt || new Date().toISOString(),
-              }
-            : n,
-        ),
-      );
+      await resolveNotification({ variables: { input: { id, resolution } } });
+      fetchNotifications();
 
       onDetailClose();
 
@@ -248,11 +227,8 @@ function NotificationsPage() {
 
   const handleDelete = async (id: string) => {
     try {
-      await graphqlClient
-        .mutation(DELETE_NOTIFICATION_MUTATION, { id })
-        .toPromise();
-
-      setNotifications((prev) => prev.filter((n) => n.id !== id));
+      await deleteNotification({ variables: { id } });
+      fetchNotifications();
 
       addToast({ title: "Notification deleted", color: "success" });
     } catch (error) {
@@ -279,16 +255,14 @@ function NotificationsPage() {
     let deletedCount = 0;
     for (const id of selectedIds) {
       try {
-        await graphqlClient
-          .mutation(DELETE_NOTIFICATION_MUTATION, { id })
-          .toPromise();
+        await deleteNotification({ variables: { id } });
         deletedCount++;
       } catch {
         // Continue deleting others
       }
     }
 
-    setNotifications((prev) => prev.filter((n) => !selectedIds.has(n.id)));
+    fetchNotifications();
     setSelectedIds(new Set());
 
     addToast({

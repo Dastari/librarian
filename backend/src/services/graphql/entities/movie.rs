@@ -1,4 +1,4 @@
-use async_graphql::{Context, SimpleObject, InputObject, Object};
+use async_graphql::{Context, InputObject, Object, SimpleObject};
 use std::sync::Arc;
 
 use macros::{GraphQLEntity, GraphQLOperations};
@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::db::Database;
 use crate::services::graphql::AuthUser;
 
-use super::common::{calculate_content_status, ContentStatus, ContentType};
+use super::common::{ContentStatus, ContentType, calculate_content_status};
 use super::media_file::MediaFile;
 
 // Re-export types used for movie creation from metadata
@@ -516,6 +516,36 @@ impl MovieMetadataMutations {
                     error: None,
                 })
             }
+            Err(e) => Ok(MovieOperationResult {
+                success: false,
+                movie: None,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    /// Refresh a movie's metadata and artwork from TMDB.
+    #[graphql(name = "RefreshMovie")]
+    async fn refresh_movie(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "Id")] id: String,
+    ) -> async_graphql::Result<MovieOperationResult> {
+        use crate::graphql::auth::AuthExt;
+        use crate::services::metadata::providers::MetadataService;
+
+        let user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        let user_id = uuid::Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        match metadata.refresh_movie_from_provider(&id, user_id).await {
+            Ok(movie) => Ok(MovieOperationResult {
+                success: true,
+                movie: Some(movie),
+                error: None,
+            }),
             Err(e) => Ok(MovieOperationResult {
                 success: false,
                 movie: None,

@@ -1,19 +1,23 @@
 import { createFileRoute, Link, redirect, useNavigate } from '@tanstack/react-router'
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { Button } from '@heroui/button'
+import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
 import { Card, CardBody } from '@heroui/card'
 import { Chip } from '@heroui/chip'
 import { Image } from '@heroui/image'
 import { Breadcrumbs, BreadcrumbItem } from '@heroui/breadcrumbs'
 import { Progress } from '@heroui/progress'
 import { useDisclosure } from '@heroui/modal'
+import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
+import { addToast } from '@heroui/toast'
 import { RouteError } from '../../components/RouteError'
 import { sanitizeError, formatBytes, formatDuration } from '../../lib/format'
 import {
-  graphqlClient,
   ALBUM_WITH_TRACKS_QUERY,
   LIBRARY_QUERY,
+  DELETE_ALBUM_MUTATION,
 } from '../../lib/graphql'
+import { useQuery, useMutation, gql } from '../../lib/graphql/client'
 import type {
   AlbumWithTracks,
   Library,
@@ -28,6 +32,8 @@ import {
   IconPlayerPlay,
   IconPlayerPause,
   IconInfoCircle,
+  IconTrash,
+  IconDotsVertical,
 } from '@tabler/icons-react'
 // Note: IconPlayerPause is used for artwork overlay
 import { FilePropertiesModal } from '../../components/FilePropertiesModal'
@@ -50,6 +56,51 @@ export const Route = createFileRoute('/albums/$albumId')({
   component: AlbumDetailPage,
   errorComponent: RouteError,
 })
+
+const ALBUM_WITH_TRACKS_QUERY_DOC = gql`${ALBUM_WITH_TRACKS_QUERY}`
+const LIBRARY_QUERY_DOC = gql`${LIBRARY_QUERY}`
+const DELETE_ALBUM_MUTATION_DOC = gql`${DELETE_ALBUM_MUTATION}`
+
+interface TrackNode {
+  Id: string
+  AlbumId: string
+  LibraryId: string
+  Title: string
+  TrackNumber: number
+  DiscNumber: number | null
+  MusicbrainzId: string | null
+  Isrc: string | null
+  DurationSecs: number | null
+  Explicit: boolean
+  ArtistName: string | null
+  ArtistId: string | null
+  MediaFileId: string | null
+  Status: string
+  DownloadProgress: number | null
+}
+
+interface AlbumNode {
+  Id: string
+  ArtistId: string
+  LibraryId: string
+  Name: string
+  SortName: string | null
+  Year: number | null
+  MusicbrainzId: string | null
+  AlbumType: string | null
+  Genres: string[]
+  Label: string | null
+  Country: string | null
+  ReleaseDate: string | null
+  CoverUrl: string | null
+  TrackCount: number | null
+  DiscCount: number | null
+  TotalDurationSecs: number | null
+  HasFiles: boolean
+  SizeBytes: number | null
+  Path: string | null
+  Tracks: { Edges: Array<{ Node: TrackNode }> }
+}
 
 // Helper to format audio codec display name
 function formatAudioCodec(codec: string | null): string {
@@ -287,49 +338,115 @@ function AlbumDetailPage() {
   // Check if this album is currently playing
   const isThisAlbumPlaying = session?.albumId === albumId && session?.isPlaying
 
-  const [albumData, setAlbumData] = useState<AlbumWithTracks | null>(null)
-  const [library, setLibrary] = useState<Library | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const { isOpen: isPropertiesOpen, onOpen: onPropertiesOpen, onClose: onPropertiesClose } = useDisclosure()
+  const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure()
   const [propertiesTrack, setPropertiesTrack] = useState<TrackWithStatus | null>(null)
+  const {
+    data: albumQueryData,
+    previousData: previousAlbumQueryData,
+    loading: isLoading,
+    refetch: refetchAlbum,
+  } = useQuery<{ Album: AlbumNode | null }>(ALBUM_WITH_TRACKS_QUERY_DOC, {
+    variables: { Id: albumId },
+    fetchPolicy: 'cache-and-network',
+  })
 
-  // Fetch album data
-  const fetchAlbum = useCallback(async () => {
-    try {
-      const result = await graphqlClient
-        .query<{ albumWithTracks: AlbumWithTracks | null }>(ALBUM_WITH_TRACKS_QUERY, { id: albumId })
-        .toPromise()
+  const toTrackStatus = useCallback((status: string): TrackWithStatus['track']['status'] => {
+    const normalized = status.toLowerCase()
+    if (normalized === 'downloaded') return 'downloaded'
+    if (normalized === 'downloading') return 'downloading'
+    if (normalized === 'wanted') return 'wanted'
+    return 'missing'
+  }, [])
 
-      if (result.error) {
-        throw new Error(sanitizeError(result.error.message))
-      }
+  const albumNode = albumQueryData?.Album ?? previousAlbumQueryData?.Album ?? null
 
-      if (result.data?.albumWithTracks) {
-        setAlbumData(result.data.albumWithTracks)
-
-        // Fetch library info
-        const libResult = await graphqlClient
-          .query<{
-            Library: import('../../lib/graphql/generated/graphql').Library | null
-          }>(LIBRARY_QUERY, { Id: result.data.albumWithTracks.album.libraryId })
-          .toPromise()
-        if (libResult.data?.Library) {
-          setLibrary(libResult.data.Library)
-        }
-      } else {
-        setError('Album not found')
-      }
-    } catch (e) {
-      setError(sanitizeError(e))
-    } finally {
-      setIsLoading(false)
+  const albumData = useMemo<AlbumWithTracks | null>(() => {
+    if (!albumNode) return null
+    const tracks: TrackWithStatus[] = (albumNode.Tracks?.Edges ?? []).map((edge) => ({
+      track: {
+        id: edge.Node.Id,
+        albumId: edge.Node.AlbumId,
+        libraryId: edge.Node.LibraryId,
+        title: edge.Node.Title,
+        trackNumber: edge.Node.TrackNumber,
+        discNumber: edge.Node.DiscNumber ?? 1,
+        musicbrainzId: edge.Node.MusicbrainzId,
+        isrc: edge.Node.Isrc,
+        durationSecs: edge.Node.DurationSecs,
+        explicit: edge.Node.Explicit,
+        artistName: edge.Node.ArtistName,
+        artistId: edge.Node.ArtistId,
+        mediaFileId: edge.Node.MediaFileId,
+        hasFile: Boolean(edge.Node.MediaFileId),
+        status: toTrackStatus(edge.Node.Status),
+        downloadProgress: edge.Node.DownloadProgress,
+      },
+      hasFile: Boolean(edge.Node.MediaFileId),
+      filePath: null,
+      fileSize: null,
+      audioCodec: null,
+      bitrate: null,
+      audioChannels: null,
+    }))
+    const tracksWithFiles = tracks.filter((t) => t.hasFile).length
+    const missingTracks = tracks.filter((t) => !t.hasFile).length
+    const completionPercent = tracks.length > 0 ? (tracksWithFiles / tracks.length) * 100 : 0
+    return {
+      album: {
+        id: albumNode.Id,
+        artistId: albumNode.ArtistId,
+        libraryId: albumNode.LibraryId,
+        name: albumNode.Name,
+        sortName: albumNode.SortName,
+        year: albumNode.Year,
+        musicbrainzId: albumNode.MusicbrainzId,
+        albumType: albumNode.AlbumType,
+        genres: albumNode.Genres,
+        label: albumNode.Label,
+        country: albumNode.Country,
+        releaseDate: albumNode.ReleaseDate,
+        coverUrl: albumNode.CoverUrl,
+        trackCount: albumNode.TrackCount,
+        discCount: albumNode.DiscCount,
+        totalDurationSecs: albumNode.TotalDurationSecs,
+        hasFiles: albumNode.HasFiles,
+        sizeBytes: albumNode.SizeBytes,
+        path: albumNode.Path,
+        downloadedTrackCount: tracksWithFiles,
+      },
+      artistName: tracks.find((t) => Boolean(t.track.artistName))?.track.artistName ?? null,
+      tracks,
+      trackCount: albumNode.TrackCount ?? tracks.length,
+      tracksWithFiles,
+      missingTracks,
+      completionPercent,
     }
-  }, [albumId])
+  }, [albumNode, toTrackStatus])
 
-  useEffect(() => {
-    fetchAlbum()
-  }, [fetchAlbum])
+  const {
+    data: libraryData,
+    previousData: previousLibraryData,
+    refetch: refetchLibrary,
+  } = useQuery<{ Library: Library | null }>(LIBRARY_QUERY_DOC, {
+    variables: { Id: albumData?.album.libraryId ?? '' },
+    skip: !albumData?.album.libraryId,
+    fetchPolicy: 'cache-and-network',
+  })
+
+  const library = libraryData?.Library ?? previousLibraryData?.Library ?? null
+  const error = !isLoading && !albumData ? 'Album not found' : null
+
+  const fetchAlbum = useCallback(() => {
+    void refetchAlbum()
+    if (albumData?.album.libraryId) {
+      void refetchLibrary()
+    }
+  }, [albumData?.album.libraryId, refetchAlbum, refetchLibrary])
+
+  const [deleteAlbum, { loading: isDeleting }] = useMutation<{ DeleteAlbum: { Success: boolean; Error?: string } }>(
+    DELETE_ALBUM_MUTATION_DOC,
+  )
 
   // Keep data fresh with periodic updates and torrent completion events
   // This ensures download progress is updated in real-time
@@ -384,6 +501,39 @@ function AlbumDetailPage() {
     setPropertiesTrack(track)
     onPropertiesOpen()
   }, [onPropertiesOpen])
+
+  const handleDeleteAlbum = useCallback(async () => {
+    if (!albumData) return
+    try {
+      const result = await deleteAlbum({ variables: { Id: albumData.album.id } })
+
+      if (result.data?.DeleteAlbum?.Success) {
+        addToast({
+          title: 'Album deleted',
+          description: `${albumData.album.name} has been removed.`,
+          color: 'success',
+        })
+        navigate({
+          to: '/libraries/$libraryId',
+          params: { libraryId: albumData.album.libraryId },
+        })
+      } else {
+        addToast({
+          title: 'Delete failed',
+          description: result.data?.DeleteAlbum?.Error || 'Failed to delete album',
+          color: 'danger',
+        })
+      }
+    } catch (e) {
+      addToast({
+        title: 'Error',
+        description: sanitizeError(e),
+        color: 'danger',
+      })
+    } finally {
+      onDeleteClose()
+    }
+  }, [albumData, deleteAlbum, navigate, onDeleteClose])
 
   // Calculate totals from tracks if not available on album
   const totalDurationSecs = useMemo(() => {
@@ -510,7 +660,59 @@ function AlbumDetailPage() {
 
           {/* Album Info */}
           <div className="flex-1">
-            <h1 className="text-3xl font-bold mb-1">{album.name}</h1>
+            <div className="flex items-start justify-between gap-4 mb-1">
+              <h1 className="text-3xl font-bold">{album.name}</h1>
+              <Dropdown>
+                <DropdownTrigger>
+                  <Button
+                    isIconOnly
+                    size="sm"
+                    variant="light"
+                    aria-label="Album actions"
+                  >
+                    <IconDotsVertical size={18} />
+                  </Button>
+                </DropdownTrigger>
+                <DropdownMenu
+                  aria-label="Album actions menu"
+                  onAction={(key) => {
+                    if (key === 'search') {
+                      handleManualHunt()
+                    } else if (key === 'refresh') {
+                      void fetchAlbum()
+                    } else if (key === 'properties') {
+                      const firstPlayable = playableTracks[0]
+                      if (firstPlayable) {
+                        setPropertiesTrack(firstPlayable)
+                        onPropertiesOpen()
+                      }
+                    } else if (key === 'delete') {
+                      onDeleteOpen()
+                    }
+                  }}
+                >
+                  <DropdownItem key="search" startContent={<IconSearch size={16} />}>
+                    Search for Album
+                  </DropdownItem>
+                  <DropdownItem key="refresh" startContent={<IconRefresh size={16} />}>
+                    Refresh
+                  </DropdownItem>
+                  {playableTracks.length > 0 ? (
+                    <DropdownItem key="properties" startContent={<IconInfoCircle size={16} />}>
+                      Properties
+                    </DropdownItem>
+                  ) : null}
+                  <DropdownItem
+                    key="delete"
+                    startContent={<IconTrash size={16} className="text-red-400" />}
+                    className="text-danger"
+                    color="danger"
+                  >
+                    Delete
+                  </DropdownItem>
+                </DropdownMenu>
+              </Dropdown>
+            </div>
 
             {/* Artist Name */}
             {albumData.artistName && (
@@ -576,25 +778,6 @@ function AlbumDetailPage() {
               </div>
             </div>
 
-            {/* Actions */}
-            <div className="flex flex-wrap gap-2">
-              {!isComplete && (
-                <Button
-                  color="primary"
-                  startContent={<IconSearch size={16} />}
-                  onPress={handleManualHunt}
-                >
-                  Hunt for Album
-                </Button>
-              )}
-              <Button
-                variant="flat"
-                startContent={<IconRefresh size={16} />}
-                onPress={fetchAlbum}
-              >
-                Refresh
-              </Button>
-            </div>
           </div>
         </div>
 
@@ -617,6 +800,27 @@ function AlbumDetailPage() {
           mediaFileId={propertiesTrack?.track.mediaFileId ?? null}
           title={propertiesTrack ? `${album.name} - ${propertiesTrack.track.title}` : undefined}
         />
+        <Modal isOpen={isDeleteOpen} onClose={onDeleteClose}>
+          <ModalContent>
+            <ModalHeader>Delete Album</ModalHeader>
+            <ModalBody>
+              <p>
+                Are you sure you want to delete <strong>{album.name}</strong>?
+              </p>
+              <p className="text-sm text-default-500 mt-2">
+                This will remove the album from the library. Associated files will not be deleted.
+              </p>
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="flat" onPress={onDeleteClose}>
+                Cancel
+              </Button>
+              <Button color="danger" onPress={handleDeleteAlbum} isLoading={isDeleting}>
+                Delete
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
       </div>
   )
 }

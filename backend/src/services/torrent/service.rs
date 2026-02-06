@@ -19,9 +19,9 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::db::Database;
-use crate::services::manager::{Service, ServiceHealth};
 use crate::services::graphql::AuthUser;
 use crate::services::graphql::LibrarianSchema;
+use crate::services::manager::{Service, ServiceHealth};
 use crate::services::torrent::client::{
     TorrentEvent, TorrentFile, TorrentInfo, TorrentServiceConfig, TorrentState, UpnpResult,
     add_torrent_opts, get_info_hash_hex, perform_upnp,
@@ -442,16 +442,16 @@ impl Service for TorrentService {
 
         // Sync session -> DB and restore from DB (best-effort)
         if let Some(ref user) = auth_user {
-            if let Err(e) = database::sync_session_to_database(&session, &db, &schema, user, &config)
-                .await
+            if let Err(e) =
+                database::sync_session_to_database(&session, &db, &schema, user, &config).await
             {
                 warn!(error = %e, "Failed to sync session torrents to database");
             }
         } else {
             warn!("No user found in database, skipping session sync");
         }
-        if let Err(e) = database::restore_from_database(&session, &db, &schema, auth_user.as_ref())
-            .await
+        if let Err(e) =
+            database::restore_from_database(&session, &db, &schema, auth_user.as_ref()).await
         {
             warn!(error = %e, "Failed to restore torrents from database");
         }

@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useEffect } from 'react'
 import { useQueryState, parseAsString, parseAsStringLiteral } from 'nuqs'
 import { Button } from "@heroui/button";
 import { Image } from '@heroui/image'
@@ -29,6 +29,8 @@ interface LibraryShowsTabProps {
   loading?: boolean
   onDeleteShow: (showId: string, showName: string) => void
   onAddShow: () => void
+  /** Callback to provide the refresh function to the parent */
+  onRefreshReady?: (refreshFn: () => void) => void
 }
 
 // ============================================================================
@@ -59,7 +61,13 @@ const SORT_FIELD_MAP: Record<string, string> = {
   createdAt: "CreatedAt",
 };
 
-export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteShow, onAddShow }: LibraryShowsTabProps) {
+export function LibraryShowsTab({
+  libraryId,
+  loading: parentLoading,
+  onDeleteShow,
+  onAddShow,
+  onRefreshReady,
+}: LibraryShowsTabProps) {
   // URL-persisted state via nuqs (clean URLs when using defaults)
   const [selectedLetter, setSelectedLetter] = useQueryState('letter', parseAsString.withDefault(''))
   const [searchTerm, setSearchTerm] = useQueryState('q', parseAsString.withDefault(''))
@@ -98,6 +106,7 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
     hasMore,
     totalCount,
     loadMore,
+    refresh,
   } = useInfiniteConnection<TvShowsConnectionResponse, Show>({
     query: TV_SHOWS_CONNECTION_QUERY,
     variables: queryVariables,
@@ -115,6 +124,13 @@ export function LibraryShowsTab({ libraryId, loading: parentLoading, onDeleteSho
     enabled: !shouldSkipQueries,
     deps: [libraryId, searchTerm],
   })
+
+  // Provide refresh function to parent for subscription updates
+  useEffect(() => {
+    if (onRefreshReady) {
+      onRefreshReady(refresh)
+    }
+  }, [refresh, onRefreshReady])
 
   // Get letters that have shows (from loaded data)
   const availableLetters = useMemo(() => {

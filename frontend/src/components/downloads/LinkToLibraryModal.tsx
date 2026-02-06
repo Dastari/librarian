@@ -21,7 +21,6 @@ import {
   IconDisc,
 } from "@tabler/icons-react";
 import {
-  graphqlClient,
   ORGANIZE_TORRENT_MUTATION,
   type LibraryNode,
   type OrganizeTorrentResult,
@@ -152,11 +151,10 @@ export function LinkToLibraryModal({
       setSelectedLibraryId(null);
       setSelectedAlbumId(null);
       setAlbums([]);
-      graphqlClient
-        .query(LibrariesDocument, {})
-        .toPromise()
+      queryPromise(LibrariesDocument, {})
+        
         .then((result) => {
-          setLibraries(result.data?.Libraries.Edges.map((e) => e.Node) ?? []);
+          setLibraries(result.data?.Libraries.Edges.map((e: any) => e.Node) ?? []);
         })
         .finally(() => setLoading(false));
     }
@@ -167,11 +165,10 @@ export function LinkToLibraryModal({
     if (selectedLibraryId && isMusicLibrary) {
       setLoadingAlbums(true);
       setSelectedAlbumId(null);
-      graphqlClient
-        .query<{ albums: Album[] }>(ALBUMS_FOR_LIBRARY_QUERY, {
+      queryPromise<{ albums: Album[] }>(ALBUMS_FOR_LIBRARY_QUERY, {
           libraryId: selectedLibraryId,
         })
-        .toPromise()
+        
         .then((result) => {
           if (result.data?.albums) {
             setAlbums(result.data.albums);
@@ -236,8 +233,7 @@ export function LinkToLibraryModal({
         return;
       }
 
-      const result = await graphqlClient
-        .mutation<{ organizeTorrent: OrganizeTorrentResult }>(
+      const result = await mutationPromise<{ organizeTorrent: OrganizeTorrentResult }>(
           ORGANIZE_TORRENT_MUTATION,
           {
             id: numericId,
@@ -245,7 +241,7 @@ export function LinkToLibraryModal({
             albumId: selectedAlbumId,
           }
         )
-        .toPromise();
+        ;
 
       if (result.data?.organizeTorrent) {
         const { success, messages } = result.data.organizeTorrent;

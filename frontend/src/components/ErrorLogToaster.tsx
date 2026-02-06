@@ -8,7 +8,6 @@
 import { useEffect, useRef } from 'react'
 import { addToast } from '@heroui/toast'
 import {
-  graphqlClient,
   ERROR_LOGS_SUBSCRIPTION,
   type LogEventSubscription,
 } from '../lib/graphql'
@@ -31,7 +30,7 @@ export function ErrorLogToaster() {
     const sub = graphqlClient
       .subscription<{ errorLogs: LogEventSubscription }>(ERROR_LOGS_SUBSCRIPTION, {})
       .subscribe({
-        next: (result) => {
+        next: (result: any) => {
           if (result.data?.errorLogs) {
             const log = result.data.errorLogs
 
@@ -74,7 +73,7 @@ export function ErrorLogToaster() {
             })
           }
         },
-        error: (error) => {
+        error: (error: any) => {
           // Don't spam the user with subscription errors
           console.error('Error log subscription error:', error)
         },

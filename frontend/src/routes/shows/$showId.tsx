@@ -2,6 +2,7 @@ import { createFileRoute, Link, redirect, useNavigate } from '@tanstack/react-ro
 import { useState, useCallback, useMemo } from "react";
 import { useQuery, useMutation, gql } from "../../lib/graphql/client";
 import { Button } from "@heroui/button";
+import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/dropdown";
 import { Card, CardBody } from "@heroui/card";
 import { Chip } from "@heroui/chip";
 import { Image } from "@heroui/image";
@@ -9,6 +10,7 @@ import { Spinner } from "@heroui/spinner";
 import { Accordion, AccordionItem } from '@heroui/accordion'
 import { Breadcrumbs, BreadcrumbItem } from '@heroui/breadcrumbs'
 import { useDisclosure } from '@heroui/modal'
+import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
 import { addToast } from "@heroui/toast";
 import { RouteError } from "../../components/RouteError";
 import { sanitizeError, formatBytes, formatDate } from "../../lib/format";
@@ -17,13 +19,14 @@ import {
   IconDeviceTv,
   IconClipboard,
   IconPlayerPlay,
+  IconPlayerPause,
   IconPlayerTrackNext,
+  IconDotsVertical,
   IconRefresh,
   IconSearch,
   IconTrash,
   IconInfoCircle,
 } from "@tabler/icons-react";
-import { Tooltip } from "@heroui/tooltip";
 import {
   PlayPauseIndicator,
   MediaItemStatusChip,
@@ -34,7 +37,6 @@ import type { Show, Library } from "../../lib/graphql/generated/graphql";
 import {
   TV_SHOW_QUERY,
   LIBRARY_QUERY,
-  EPISODES_QUERY,
 } from "../../lib/graphql/queries";
 import {
   REFRESH_TV_SHOW_MUTATION,
@@ -99,7 +101,6 @@ interface SeasonData {
 // GraphQL queries
 const SHOW_QUERY = gql`${TV_SHOW_QUERY}`
 const LIBRARY_GQL = gql`${LIBRARY_QUERY}`
-const EPISODES = gql`${EPISODES_QUERY}`
 const REFRESH_SHOW = gql`${REFRESH_TV_SHOW_MUTATION}`
 const DELETE_SHOW = gql`${DELETE_TV_SHOW_MUTATION}`
 
@@ -408,7 +409,7 @@ function EpisodeTable({
 function ShowDetailPage() {
   const navigate = useNavigate();
   const { showId } = Route.useParams();
-  const { startEpisodePlayback } = usePlaybackContext();
+  const { startEpisodePlayback, session, updatePlayback } = usePlaybackContext();
 
   const {
     isOpen: isDeleteOpen,
@@ -436,16 +437,42 @@ function ShowDetailPage() {
   });
   const show = showData?.Show ?? previousShowData?.Show;
 
-  // Query episodes
-  const { data: episodesData, previousData: previousEpisodesData } = useQuery<{
-    episodes: Episode[];
-  }>(EPISODES, {
-    variables: { tvShowId: showId },
-    skip: !show,
-    fetchPolicy: "cache-and-network",
-  });
-  const episodes =
-    episodesData?.episodes ?? previousEpisodesData?.episodes ?? [];
+  const episodes = useMemo<Episode[]>(() => {
+    const edges = show?.Episodes?.Edges ?? [];
+    return edges.map(({ Node: ep }) => {
+      const mediaFile = ep.MediaFile ?? null;
+      return {
+        Id: ep.Id,
+        ShowId: ep.ShowId,
+        Season: ep.Season,
+        Episode: ep.Episode,
+        AbsoluteNumber: ep.AbsoluteNumber ?? null,
+        Title: ep.Title ?? null,
+        Overview: ep.Overview ?? null,
+        AirDate: ep.AirDate ?? null,
+        Runtime: ep.Runtime ?? mediaFile?.Duration ?? null,
+        TvmazeId: ep.TvmazeId ?? null,
+        TmdbId: ep.TmdbId ?? null,
+        TvdbId: ep.TvdbId ?? null,
+        ImdbId: null,
+        MediaFileId: ep.MediaFileId ?? null,
+        Resolution: mediaFile?.Resolution ?? null,
+        VideoCodec: mediaFile?.VideoCodec ?? null,
+        AudioCodec: mediaFile?.AudioCodec ?? null,
+        AudioChannels: mediaFile?.AudioChannels ?? null,
+        IsHdr: mediaFile?.IsHdr ?? null,
+        HdrType: mediaFile?.HdrType ?? null,
+        FileSizeBytes: mediaFile?.Size ?? null,
+        FileSizeFormatted: mediaFile?.Size ? formatBytes(mediaFile.Size) : null,
+        WatchProgress: null,
+        WatchPosition: null,
+        IsWatched: false,
+        DownloadProgress: null,
+        CreatedAt: ep.CreatedAt,
+        UpdatedAt: ep.UpdatedAt,
+      };
+    });
+  }, [show]);
 
   // Query library
   const { data: libraryData, previousData: previousLibraryData } = useQuery<{
@@ -459,20 +486,20 @@ function ShowDetailPage() {
 
   // Mutations
   const [refreshShow, { loading: refreshing }] = useMutation<{
-    refreshTvShow: { success: boolean; error: string | null };
+    RefreshShow: { Success: boolean; Error: string | null };
   }>(REFRESH_SHOW);
   const [deleteShow, { loading: deleting }] = useMutation<{
-    deleteTvShow: { success: boolean; error: string | null };
+    DeleteShow: { Success: boolean; Error: string | null };
   }>(DELETE_SHOW);
 
   const handleRefresh = async () => {
     try {
-      const { data } = await refreshShow({ variables: { id: showId } });
-      if (!data?.refreshTvShow?.success) {
+      const { data } = await refreshShow({ variables: { Id: showId } });
+      if (!data?.RefreshShow?.Success) {
         addToast({
           title: "Error",
           description: sanitizeError(
-            data?.refreshTvShow?.error || "Failed to refresh show"
+            data?.RefreshShow?.Error || "Failed to refresh show"
           ),
           color: "danger",
         });
@@ -496,12 +523,12 @@ function ShowDetailPage() {
 
   const handleDelete = async () => {
     try {
-      const { data } = await deleteShow({ variables: { id: showId } });
-      if (!data?.deleteTvShow?.success) {
+      const { data } = await deleteShow({ variables: { Id: showId } });
+      if (!data?.DeleteShow?.Success) {
         addToast({
           title: "Error",
           description: sanitizeError(
-            data?.deleteTvShow?.error || "Failed to delete show"
+            data?.DeleteShow?.Error || "Failed to delete show"
           ),
           color: "danger",
         });
@@ -600,6 +627,18 @@ function ShowDetailPage() {
       [episodes]
     );
 
+  const playableEpisodes = useMemo(
+    () =>
+      [...episodes]
+        .filter((e) => !!e.MediaFileId)
+        .sort((a, b) =>
+          a.Season === b.Season ? a.Episode - b.Episode : a.Season - b.Season
+        ),
+    [episodes]
+  );
+
+  const isThisShowPlaying = session?.tvShowId === showId && !!session?.isPlaying;
+
   // Loading state
   if (showLoading && !show) {
     return (
@@ -629,7 +668,7 @@ function ShowDetailPage() {
     <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col mb-20">
       {/* Header */}
       <div className="flex flex-col md:flex-row gap-6 mb-8">
-        <div className="shrink-0">
+        <div className="shrink-0 relative group">
           {show.PosterUrl ? (
             <Image
               src={show.PosterUrl}
@@ -640,6 +679,29 @@ function ShowDetailPage() {
             <div className="w-48 h-72 bg-default-200 rounded-lg flex items-center justify-center">
               <IconDeviceTv size={64} className="text-blue-400" />
             </div>
+          )}
+          {playableEpisodes.length > 0 && (
+            <button
+              onClick={() => {
+                if (isThisShowPlaying) {
+                  updatePlayback({ isPlaying: false });
+                } else {
+                  void handlePlay(playableEpisodes[0]);
+                }
+              }}
+              className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 rounded-lg cursor-pointer"
+              aria-label={isThisShowPlaying ? "Pause Show" : "Play Show"}
+            >
+              <div
+                className={`w-16 h-16 rounded-full ${isThisShowPlaying ? "bg-warning" : "bg-primary"} flex items-center justify-center shadow-lg hover:scale-110 transition-transform`}
+              >
+                {isThisShowPlaying ? (
+                  <IconPlayerPause size={32} className="text-white" />
+                ) : (
+                  <IconPlayerPlay size={32} className="text-white ml-1" />
+                )}
+              </div>
+            </button>
           )}
         </div>
 
@@ -659,30 +721,64 @@ function ShowDetailPage() {
                 <span className="text-default-500 ml-2">({show.Year})</span>
               )}
             </h1>
-            <div className="flex items-center gap-1 shrink-0">
-              <Tooltip content="Refresh Metadata">
+            <Dropdown>
+              <DropdownTrigger>
                 <Button
                   isIconOnly
-                  variant="light"
                   size="sm"
-                  onPress={handleRefresh}
-                  isLoading={refreshing}
+                  variant="light"
+                  aria-label="Show actions"
                 >
-                  <IconRefresh size={18} />
+                  <IconDotsVertical size={18} />
                 </Button>
-              </Tooltip>
-              <Tooltip content="Delete Show">
-                <Button
-                  isIconOnly
-                  variant="light"
-                  size="sm"
+              </DropdownTrigger>
+              <DropdownMenu
+                aria-label="Show actions menu"
+                onAction={(key) => {
+                  if (key === "search") {
+                    navigate({ to: "/hunt", search: { q: show.Name, type: "tv" } });
+                  } else if (key === "refresh") {
+                    void handleRefresh();
+                  } else if (key === "properties") {
+                    const firstPlayable = playableEpisodes[0];
+                    if (firstPlayable) {
+                      handleShowProperties(firstPlayable);
+                    }
+                  } else if (key === "delete") {
+                    onDeleteOpen();
+                  }
+                }}
+              >
+                <DropdownItem
+                  key="search"
+                  startContent={<IconSearch size={16} />}
+                >
+                  Search for Show
+                </DropdownItem>
+                <DropdownItem
+                  key="refresh"
+                  startContent={<IconRefresh size={16} />}
+                >
+                  Refresh
+                </DropdownItem>
+                {playableEpisodes.length > 0 ? (
+                  <DropdownItem
+                    key="properties"
+                    startContent={<IconInfoCircle size={16} />}
+                  >
+                    Properties
+                  </DropdownItem>
+                ) : null}
+                <DropdownItem
+                  key="delete"
+                  startContent={<IconTrash size={16} className="text-red-400" />}
+                  className="text-danger"
                   color="danger"
-                  onPress={onDeleteOpen}
                 >
-                  <IconTrash size={18} />
-                </Button>
-              </Tooltip>
-            </div>
+                  Delete
+                </DropdownItem>
+              </DropdownMenu>
+            </Dropdown>
           </div>
 
           <div className="flex flex-wrap gap-2 mb-4">
@@ -739,6 +835,7 @@ function ShowDetailPage() {
               Mode: {show.AutoDownloadMode}
             </Chip>
           </div>
+
         </div>
       </div>
 
@@ -838,12 +935,22 @@ function ShowDetailPage() {
       </div>
 
       {/* Delete Confirmation Modal */}
-      {show && isDeleteOpen && (
-        <Card>
-          <CardBody>
-            <p>Are you sure you want to delete {show.Name}?</p>
-            <div className="flex gap-2 mt-4">
-              <Button onPress={onDeleteClose}>Cancel</Button>
+      {show && (
+        <Modal isOpen={isDeleteOpen} onClose={onDeleteClose}>
+          <ModalContent>
+            <ModalHeader>Delete Show</ModalHeader>
+            <ModalBody>
+              <p>
+                Are you sure you want to delete <strong>{show.Name}</strong>?
+              </p>
+              <p className="text-sm text-default-500 mt-2">
+                This will remove the show from the library. Associated files will not be deleted.
+              </p>
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="flat" onPress={onDeleteClose}>
+                Cancel
+              </Button>
               <Button
                 color="danger"
                 onPress={handleDelete}
@@ -851,9 +958,9 @@ function ShowDetailPage() {
               >
                 Delete
               </Button>
-            </div>
-          </CardBody>
-        </Card>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
       )}
 
       {/* File Properties Modal */}

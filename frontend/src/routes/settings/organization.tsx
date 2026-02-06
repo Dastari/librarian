@@ -32,7 +32,6 @@ import {
 } from '@tabler/icons-react'
 import type { NamingPattern } from '../../lib/graphql/generated/graphql'
 import {
-  graphqlClient,
   NAMING_PATTERNS_QUERY,
   CREATE_NAMING_PATTERN_MUTATION,
   UPDATE_NAMING_PATTERN_MUTATION,
@@ -45,6 +44,7 @@ import {
   type TestFilenameParserResult,
   type FilenameParseResult,
 } from '../../lib/graphql'
+import { queryPromise, mutationPromise } from '../../lib/graphql/client'
 import { DataTable, type DataTableColumn, type CardRendererProps, type RowAction } from '../../components/data-table'
 import { previewNamingPattern, sanitizeError } from '../../lib/format'
 import { SettingsHeader } from '../../components/shared'
@@ -267,9 +267,8 @@ function OrganizationSettingsPage() {
   const fetchPatterns = useCallback(async () => {
     try {
       setIsLoadingPatterns(true)
-      const result = await graphqlClient
-        .query<NamingPatternsQueryResponse>(NAMING_PATTERNS_QUERY, {})
-        .toPromise()
+      const result = await queryPromise<NamingPatternsQueryResponse>(NAMING_PATTERNS_QUERY, {})
+        
 
       if (result.error) {
         throw new Error(result.error.message)
@@ -295,7 +294,7 @@ function OrganizationSettingsPage() {
 
   const fetchLlmSettings = useCallback(async () => {
     try {
-      const result = await graphqlClient.query<{ llmParserSettings: LlmParserSettings }>(LLM_PARSER_SETTINGS_QUERY, {}).toPromise()
+      const result = await queryPromise<{ llmParserSettings: LlmParserSettings }>(LLM_PARSER_SETTINGS_QUERY, {})
       if (result.data?.llmParserSettings) {
         const s = result.data.llmParserSettings
         setOriginalLlmSettings(s)
@@ -360,8 +359,7 @@ function OrganizationSettingsPage() {
     setIsSavingPattern(true)
     try {
       const now = new Date().toISOString()
-      const result = await graphqlClient
-        .mutation<CreateNamingPatternResponse>(CREATE_NAMING_PATTERN_MUTATION, {
+      const result = await mutationPromise<CreateNamingPatternResponse>(CREATE_NAMING_PATTERN_MUTATION, {
           Input: {
             Name: formData.name.trim(),
             Pattern: formData.pattern.trim(),
@@ -374,7 +372,7 @@ function OrganizationSettingsPage() {
             UserId: '',
           },
         })
-        .toPromise()
+        
 
       if (result.data?.CreateNamingPattern?.Success) {
         addToast({
@@ -412,8 +410,7 @@ function OrganizationSettingsPage() {
 
     setIsSavingPattern(true)
     try {
-      const result = await graphqlClient
-        .mutation<UpdateNamingPatternResponse>(UPDATE_NAMING_PATTERN_MUTATION, {
+      const result = await mutationPromise<UpdateNamingPatternResponse>(UPDATE_NAMING_PATTERN_MUTATION, {
           Id: selectedPattern.Id,
           Input: {
             Name: editFormData.name.trim(),
@@ -421,7 +418,7 @@ function OrganizationSettingsPage() {
             Description: editFormData.description.trim() || null,
           },
         })
-        .toPromise()
+        
 
       if (result.data?.UpdateNamingPattern?.Success) {
         addToast({
@@ -451,11 +448,10 @@ function OrganizationSettingsPage() {
 
     setIsSavingPattern(true)
     try {
-      const result = await graphqlClient
-        .mutation<DeleteNamingPatternResponse>(DELETE_NAMING_PATTERN_MUTATION, {
+      const result = await mutationPromise<DeleteNamingPatternResponse>(DELETE_NAMING_PATTERN_MUTATION, {
           Id: selectedPattern.Id,
         })
-        .toPromise()
+        
 
       if (result.data?.DeleteNamingPattern?.Success) {
         addToast({
@@ -482,11 +478,10 @@ function OrganizationSettingsPage() {
 
   const handleSetDefault = async (pattern: NamingPattern) => {
     try {
-      const result = await graphqlClient
-        .mutation<SetDefaultNamingPatternResponse>(SET_DEFAULT_NAMING_PATTERN_MUTATION, {
+      const result = await mutationPromise<SetDefaultNamingPatternResponse>(SET_DEFAULT_NAMING_PATTERN_MUTATION, {
           Id: pattern.Id,
         })
-        .toPromise()
+        
 
       if (result.data?.SetDefaultNamingPattern?.Success) {
         addToast({
@@ -514,8 +509,7 @@ function OrganizationSettingsPage() {
   const handleSaveLlm = async () => {
     setIsSavingLlm(true)
     try {
-      const result = await graphqlClient
-        .mutation<{ updateLlmParserSettings: SettingsResult }>(UPDATE_LLM_PARSER_SETTINGS_MUTATION, {
+      const result = await mutationPromise<{ updateLlmParserSettings: SettingsResult }>(UPDATE_LLM_PARSER_SETTINGS_MUTATION, {
           input: {
             enabled: llmEnabled,
             ollamaUrl,
@@ -531,7 +525,7 @@ function OrganizationSettingsPage() {
             modelAudiobooks: modelAudiobooks || null,
           },
         })
-        .toPromise()
+        
 
       if (result.data?.updateLlmParserSettings.success) {
         setOriginalLlmSettings({
@@ -597,11 +591,10 @@ function OrganizationSettingsPage() {
     setConnectionStatus('untested')
     setConnectionError(null)
     try {
-      const result = await graphqlClient
-        .mutation<{ testOllamaConnection: OllamaConnectionResult }>(TEST_OLLAMA_CONNECTION_MUTATION, {
+      const result = await mutationPromise<{ testOllamaConnection: OllamaConnectionResult }>(TEST_OLLAMA_CONNECTION_MUTATION, {
           url: ollamaUrl,
         })
-        .toPromise()
+        
 
       if (result.data?.testOllamaConnection.success) {
         setConnectionStatus('success')
@@ -638,11 +631,10 @@ function OrganizationSettingsPage() {
     setIsParsing(true)
     setParseResult(null)
     try {
-      const result = await graphqlClient
-        .mutation<{ testFilenameParser: TestFilenameParserResult }>(TEST_FILENAME_PARSER_MUTATION, {
+      const result = await mutationPromise<{ testFilenameParser: TestFilenameParserResult }>(TEST_FILENAME_PARSER_MUTATION, {
           filename: testFilename,
         })
-        .toPromise()
+        
 
       if (result.data?.testFilenameParser) {
         setParseResult(result.data.testFilenameParser)

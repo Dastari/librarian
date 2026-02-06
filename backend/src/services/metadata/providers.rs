@@ -10,16 +10,16 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 use uuid::Uuid;
 
-use async_graphql::{Request, Variables};
 use super::musicbrainz::MusicBrainzClient;
 use super::settings::MetadataSettings;
 use super::tmdb::TmdbClient;
 use super::tvmaze::TvMazeClient;
 use crate::db::Database;
+use crate::services::graphql::entities::common::AutoDownloadMode;
+use crate::services::graphql::entities::{Album, Artist, Audiobook, Movie, Show};
 use crate::services::graphql::{AuthUser, LibrarianSchema};
 use crate::services::manager::ServicesManager;
-use crate::services::graphql::entities::{Movie, Show};
-use crate::services::graphql::entities::common::AutoDownloadMode;
+use async_graphql::{Request, Variables};
 
 /// Metadata provider enum
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,6 +111,48 @@ pub struct TvShowDetails {
     pub imdb_id: Option<String>,
 }
 
+/// Unified album search result (from MusicBrainz search)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlbumSearchResult {
+    pub provider: MetadataProvider,
+    pub provider_id: String,
+    pub title: String,
+    pub artist_name: Option<String>,
+    pub year: Option<i32>,
+    pub album_type: Option<String>,
+    pub cover_url: Option<String>,
+    pub score: Option<f64>,
+}
+
+/// Unified audiobook search result (from OpenLibrary search)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudiobookSearchResult {
+    pub provider: MetadataProvider,
+    pub provider_id: String,
+    pub title: String,
+    pub author_name: Option<String>,
+    pub year: Option<i32>,
+    pub cover_url: Option<String>,
+    pub isbn: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Unified audiobook details (from OpenLibrary work details)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudiobookDetails {
+    pub provider: MetadataProvider,
+    pub provider_id: String,
+    pub title: String,
+    pub sort_title: Option<String>,
+    pub author_name: Option<String>,
+    pub description: Option<String>,
+    pub publisher: Option<String>,
+    pub language: Option<String>,
+    pub isbn: Option<String>,
+    pub published_date: Option<String>,
+    pub cover_url: Option<String>,
+}
+
 /// Options for adding a movie from a metadata provider
 #[derive(Debug, Clone)]
 pub struct AddMovieOptions {
@@ -137,6 +179,24 @@ pub struct AddTvShowOptions {
     pub path: Option<String>,
 }
 
+/// Options for adding an album from a metadata provider
+#[derive(Debug, Clone)]
+pub struct AddAlbumOptions {
+    pub provider: MetadataProvider,
+    pub provider_id: String,
+    pub library_id: Uuid,
+    pub user_id: Uuid,
+}
+
+/// Options for adding an audiobook from a metadata provider
+#[derive(Debug, Clone)]
+pub struct AddAudiobookOptions {
+    pub provider: MetadataProvider,
+    pub provider_id: String,
+    pub library_id: Uuid,
+    pub user_id: Uuid,
+}
+
 /// Metadata service configuration
 #[derive(Debug, Clone, Default)]
 pub struct MetadataServiceConfig {
@@ -157,7 +217,11 @@ pub struct MetadataService {
 }
 
 impl MetadataService {
-    pub fn new(db: Database, services: Arc<ServicesManager>, config: MetadataServiceConfig) -> Self {
+    pub fn new(
+        db: Database,
+        services: Arc<ServicesManager>,
+        config: MetadataServiceConfig,
+    ) -> Self {
         let tmdb = config
             .tmdb_api_key
             .as_ref()
@@ -391,7 +455,11 @@ impl MetadataService {
                     network,
                     overview,
                     poster_url: show.image.as_ref().and_then(|i| i.medium.clone()),
-                    tvdb_id: show.externals.as_ref().and_then(|e| e.thetvdb).map(|v| v as i32),
+                    tvdb_id: show
+                        .externals
+                        .as_ref()
+                        .and_then(|e| e.thetvdb)
+                        .map(|v| v as i32),
                     imdb_id: show.externals.as_ref().and_then(|e| e.imdb.clone()),
                     score: Some(r.score),
                 }
@@ -400,6 +468,124 @@ impl MetadataService {
 
         debug!(count = shows.len(), "Found TV shows");
         Ok(shows)
+    }
+
+    /// Search for albums on MusicBrainz
+    pub async fn search_albums(
+        &self,
+        query: &str,
+        include_eps: bool,
+        include_singles: bool,
+        include_compilations: bool,
+        include_live: bool,
+        include_soundtracks: bool,
+    ) -> Result<Vec<AlbumSearchResult>> {
+        let musicbrainz = self.get_musicbrainz_client().await?;
+
+        let mut types = vec!["Album".to_string()];
+        if include_eps {
+            types.push("EP".to_string());
+        }
+        if include_singles {
+            types.push("Single".to_string());
+        }
+        if include_compilations {
+            types.push("Compilation".to_string());
+        }
+        if include_live {
+            types.push("Live".to_string());
+        }
+        if include_soundtracks {
+            types.push("Soundtrack".to_string());
+        }
+
+        let albums = musicbrainz.search_albums_with_types(query, &types).await?;
+
+        Ok(albums
+            .into_iter()
+            .map(|album| {
+                let provider_id = album.id.to_string();
+                let title = album.title.clone();
+                let artist_name = album.artist_names();
+                let year = album.year();
+                let album_type = Some(album.normalized_type());
+                let score = album.score.map(|v| v as f64);
+                // Use CAA thumbnail endpoint directly for search results.
+                // It redirects when artwork exists and keeps search lightweight.
+                let cover_url = Some(format!(
+                    "https://coverartarchive.org/release-group/{}/front-250",
+                    provider_id
+                ));
+
+                AlbumSearchResult {
+                    provider: MetadataProvider::Musicbrainz,
+                    provider_id,
+                    title,
+                    artist_name,
+                    year,
+                    album_type,
+                    cover_url,
+                    score,
+                }
+            })
+            .collect())
+    }
+
+    /// Search for audiobooks on OpenLibrary
+    pub async fn search_audiobooks(&self, query: &str) -> Result<Vec<AudiobookSearchResult>> {
+        #[derive(Debug, Deserialize)]
+        struct OpenLibraryDoc {
+            key: Option<String>,
+            title: Option<String>,
+            author_name: Option<Vec<String>>,
+            first_publish_year: Option<i32>,
+            cover_i: Option<i64>,
+            isbn: Option<Vec<String>>,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct OpenLibrarySearchResponse {
+            docs: Vec<OpenLibraryDoc>,
+        }
+
+        let client = reqwest::Client::new();
+        let response = client
+            .get("https://openlibrary.org/search.json")
+            .query(&[("q", query)])
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<OpenLibrarySearchResponse>()
+            .await?;
+
+        Ok(response
+            .docs
+            .into_iter()
+            .filter_map(|doc| {
+                let key = doc.key?;
+                let provider_id = key
+                    .strip_prefix("/works/")
+                    .unwrap_or(key.as_str())
+                    .to_string();
+                let title = doc.title?;
+                let cover_url = doc
+                    .cover_i
+                    .map(|id| format!("https://covers.openlibrary.org/b/id/{}-L.jpg", id));
+                let author_name = doc.author_name.and_then(|v| v.first().cloned());
+                let isbn = doc.isbn.and_then(|v| v.first().cloned());
+
+                Some(AudiobookSearchResult {
+                    provider: MetadataProvider::OpenLibrary,
+                    provider_id,
+                    title,
+                    author_name,
+                    year: doc.first_publish_year,
+                    cover_url,
+                    isbn,
+                    description: None,
+                })
+            })
+            .collect())
     }
 
     /// Get movie details from TMDB
@@ -478,7 +664,11 @@ impl MetadataService {
             provider_id: tvmaze_id,
             name: show.name.clone(),
             sort_name: Some(show.name.clone()),
-            year: show.premiered.as_ref().and_then(|d| d.get(0..4)).and_then(|y| y.parse().ok()),
+            year: show
+                .premiered
+                .as_ref()
+                .and_then(|d| d.get(0..4))
+                .and_then(|y| y.parse().ok()),
             status: show.status.clone(),
             overview: show.clean_summary(),
             network,
@@ -486,8 +676,110 @@ impl MetadataService {
             genres: show.genres.clone(),
             poster_url: show.image.as_ref().and_then(|i| i.original.clone()),
             backdrop_url: None,
-            tvdb_id: show.externals.as_ref().and_then(|e| e.thetvdb).map(|v| v as i32),
+            tvdb_id: show
+                .externals
+                .as_ref()
+                .and_then(|e| e.thetvdb)
+                .map(|v| v as i32),
             imdb_id: show.externals.as_ref().and_then(|e| e.imdb.clone()),
+        })
+    }
+
+    /// Get audiobook details from OpenLibrary work API
+    pub async fn get_audiobook(&self, openlibrary_id: &str) -> Result<AudiobookDetails> {
+        #[derive(Debug, Deserialize)]
+        struct OpenLibraryWorkAuthor {
+            author: OpenLibraryAuthorRef,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct OpenLibraryAuthorRef {
+            key: String,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct OpenLibraryDescriptionObject {
+            value: String,
+        }
+
+        #[derive(Debug, Deserialize)]
+        #[serde(untagged)]
+        enum OpenLibraryDescription {
+            Text(String),
+            Object(OpenLibraryDescriptionObject),
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct OpenLibraryWork {
+            title: Option<String>,
+            description: Option<OpenLibraryDescription>,
+            covers: Option<Vec<i64>>,
+            authors: Option<Vec<OpenLibraryWorkAuthor>>,
+            first_publish_date: Option<String>,
+            languages: Option<Vec<serde_json::Value>>,
+        }
+
+        #[derive(Debug, Deserialize)]
+        struct OpenLibraryAuthor {
+            name: Option<String>,
+        }
+
+        let client = reqwest::Client::new();
+        let work_url = format!("https://openlibrary.org/works/{}.json", openlibrary_id);
+        let work = client
+            .get(work_url)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<OpenLibraryWork>()
+            .await?;
+
+        let description = match work.description {
+            Some(OpenLibraryDescription::Text(text)) => Some(text),
+            Some(OpenLibraryDescription::Object(obj)) => Some(obj.value),
+            None => None,
+        };
+
+        let cover_url = work
+            .covers
+            .and_then(|covers| covers.first().copied())
+            .map(|id| format!("https://covers.openlibrary.org/b/id/{}-L.jpg", id));
+
+        let author_name = if let Some(authors) = work.authors {
+            if let Some(author_ref) = authors.first() {
+                let author_url = format!("https://openlibrary.org{}.json", author_ref.author.key);
+                client
+                    .get(author_url)
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .json::<OpenLibraryAuthor>()
+                    .await?
+                    .name
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(AudiobookDetails {
+            provider: MetadataProvider::OpenLibrary,
+            provider_id: openlibrary_id.to_string(),
+            title: work
+                .title
+                .unwrap_or_else(|| "Unknown Audiobook".to_string()),
+            sort_title: None,
+            author_name,
+            description,
+            publisher: None,
+            language: work
+                .languages
+                .and_then(|langs| langs.first().cloned())
+                .and_then(|v| v.get("key").and_then(|k| k.as_str()).map(|s| s.to_string())),
+            isbn: None,
+            published_date: work.first_publish_date,
+            cover_url,
         })
     }
 
@@ -676,6 +968,15 @@ impl MetadataService {
             let existing_show = Show::get(&self.db, &show_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Show not found after query"))?;
+            let wanted_default = options.monitor_type != AutoDownloadMode::None;
+            // Ensure episodes are backfilled even when show already exists.
+            self.sync_show_episodes_from_tvmaze(
+                &auth_user,
+                &existing_show.id,
+                options.provider_id,
+                wanted_default,
+            )
+            .await?;
             debug!("Show '{}' already exists in library", existing_show.name);
             return Ok(existing_show);
         }
@@ -747,6 +1048,15 @@ impl MetadataService {
             .await?
             .ok_or_else(|| anyhow::anyhow!("Show not found after creation"))?;
 
+        // Populate episodes through generated mutations so subscription notifications fire.
+        self.sync_show_episodes_from_tvmaze(
+            &auth_user,
+            &show.id,
+            options.provider_id,
+            auto_download,
+        )
+        .await?;
+
         // Cache artwork in background
         let artwork_service = crate::services::ArtworkService::new(self.db.clone());
         let poster_url = details.poster_url.clone();
@@ -754,6 +1064,626 @@ impl MetadataService {
         tokio::spawn(async move {
             artwork_service
                 .cache_show_artwork(&show_id, poster_url.as_deref(), backdrop_url.as_deref())
+                .await;
+        });
+
+        Ok(show)
+    }
+
+    /// Sync episodes for a show from TVMaze using generated Episode mutations.
+    async fn sync_show_episodes_from_tvmaze(
+        &self,
+        auth_user: &AuthUser,
+        show_id: &str,
+        tvmaze_id: u32,
+        wanted_default: bool,
+    ) -> Result<()> {
+        let tvmaze = self.get_tvmaze_client().await?;
+        let episodes = tvmaze.get_episodes(tvmaze_id).await?;
+        let ts = Self::now_iso_string();
+
+        for ep in episodes {
+            let existing = self
+                .execute_query(
+                    auth_user,
+                    r#"query EpisodeByTvmaze($Where: EpisodeWhereInput, $Page: PageInput) {
+                        Episodes(Where: $Where, Page: $Page) {
+                            Edges { Node { Id Wanted } }
+                        }
+                    }"#,
+                    serde_json::json!({
+                        "Where": {
+                            "ShowId": { "Eq": show_id },
+                            "TvmazeId": { "Eq": ep.id as i32 }
+                        },
+                        "Page": { "Limit": 1, "Offset": 0 }
+                    }),
+                )
+                .await?;
+
+            let existing_edge = existing
+                .get("Episodes")
+                .and_then(|v| v.get("Edges"))
+                .and_then(|v| v.as_array())
+                .and_then(|edges| edges.first())
+                .and_then(|edge| edge.get("Node"));
+
+            let title = Some(ep.name.clone());
+            let overview = ep.clean_summary();
+            let season = ep.season as i32;
+            let episode_number = ep.number as i32;
+            let runtime = ep.runtime.map(|r| r as i32);
+            let tvmaze_ep_id = Some(ep.id as i32);
+
+            if let Some(node) = existing_edge {
+                let existing_id = node
+                    .get("Id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("Episode id missing in existing lookup"))?;
+                let existing_wanted = node
+                    .get("Wanted")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(wanted_default);
+
+                let updated = self
+                    .execute_mutation(
+                        auth_user,
+                        r#"mutation UpdateEpisodeFromTvmaze($Id: String!, $Input: UpdateEpisodeInput!) {
+                            UpdateEpisode(Id: $Id, Input: $Input) { Success Error }
+                        }"#,
+                        serde_json::json!({
+                            "Id": existing_id,
+                            "Input": {
+                                "ShowId": show_id,
+                                "Season": season,
+                                "Episode": episode_number,
+                                "Title": title,
+                                "Overview": overview,
+                                "AirDate": ep.airdate,
+                                "Runtime": runtime,
+                                "TvmazeId": tvmaze_ep_id,
+                                "Wanted": existing_wanted
+                            }
+                        }),
+                    )
+                    .await?;
+
+                let ok = updated
+                    .get("UpdateEpisode")
+                    .and_then(|v| v.get("Success"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if !ok {
+                    let err = updated
+                        .get("UpdateEpisode")
+                        .and_then(|v| v.get("Error"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Failed to update episode");
+                    anyhow::bail!(err.to_string());
+                }
+            } else {
+                let created = self
+                    .execute_mutation(
+                        auth_user,
+                        r#"mutation CreateEpisodeFromTvmaze($Input: CreateEpisodeInput!) {
+                            CreateEpisode(Input: $Input) { Success Error }
+                        }"#,
+                        serde_json::json!({
+                            "Input": {
+                                "ShowId": show_id,
+                                "Season": season,
+                                "Episode": episode_number,
+                                "Title": title,
+                                "Overview": overview,
+                                "AirDate": ep.airdate,
+                                "Runtime": runtime,
+                                "TvmazeId": tvmaze_ep_id,
+                                "Wanted": wanted_default,
+                                "CreatedAt": ts,
+                                "UpdatedAt": ts
+                            }
+                        }),
+                    )
+                    .await?;
+
+                let ok = created
+                    .get("CreateEpisode")
+                    .and_then(|v| v.get("Success"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if !ok {
+                    let err = created
+                        .get("CreateEpisode")
+                        .and_then(|v| v.get("Error"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Failed to create episode");
+                    anyhow::bail!(err.to_string());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Add an album from MusicBrainz to a library.
+    pub async fn add_album_from_provider(&self, options: AddAlbumOptions) -> Result<Album> {
+        if options.provider != MetadataProvider::Musicbrainz {
+            anyhow::bail!("Only MusicBrainz is supported for album metadata");
+        }
+
+        let provider_id = options.provider_id.clone();
+        let release_group_id = Uuid::parse_str(&options.provider_id)
+            .map_err(|e| anyhow::anyhow!("Invalid MusicBrainz ID: {}", e))?;
+        let musicbrainz = self.get_musicbrainz_client().await?;
+        let release_group = musicbrainz.get_release_group(release_group_id).await?;
+
+        let auth_user = AuthUser {
+            user_id: options.user_id.to_string(),
+            email: None,
+            role: None,
+        };
+
+        let existing = self
+            .execute_query(
+                &auth_user,
+                r#"query AlbumByMusicbrainz($Where: AlbumWhereInput, $Page: PageInput) {
+                    Albums(Where: $Where, Page: $Page) {
+                        Edges { Node { Id } }
+                    }
+                }"#,
+                serde_json::json!({
+                    "Where": {
+                        "LibraryId": { "Eq": options.library_id.to_string() },
+                        "MusicbrainzId": { "Eq": provider_id.clone() }
+                    },
+                    "Page": { "Limit": 1, "Offset": 0 }
+                }),
+            )
+            .await?;
+
+        if let Some(existing_id) = existing
+            .get("Albums")
+            .and_then(|v| v.get("Edges"))
+            .and_then(|v| v.as_array())
+            .and_then(|edges| edges.first())
+            .and_then(|edge| edge.get("Node"))
+            .and_then(|node| node.get("Id"))
+            .and_then(|id| id.as_str())
+        {
+            return Album::get(&self.db, existing_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Album not found after lookup"));
+        }
+
+        let artist_name = release_group
+            .artist_names()
+            .unwrap_or_else(|| "Unknown Artist".to_string());
+        let artist_mbid = release_group
+            .artist_credit
+            .as_ref()
+            .and_then(|credits| credits.first())
+            .map(|credit| credit.artist.id.to_string());
+
+        let existing_artist = self
+            .execute_query(
+                &auth_user,
+                r#"query ArtistLookup($Where: ArtistWhereInput, $Page: PageInput) {
+                    Artists(Where: $Where, Page: $Page) {
+                        Edges { Node { Id } }
+                    }
+                }"#,
+                serde_json::json!({
+                    "Where": {
+                        "LibraryId": { "Eq": options.library_id.to_string() },
+                        "Name": { "Eq": artist_name.clone() }
+                    },
+                    "Page": { "Limit": 1, "Offset": 0 }
+                }),
+            )
+            .await?;
+
+        let artist_id = if let Some(id) = existing_artist
+            .get("Artists")
+            .and_then(|v| v.get("Edges"))
+            .and_then(|v| v.as_array())
+            .and_then(|edges| edges.first())
+            .and_then(|edge| edge.get("Node"))
+            .and_then(|node| node.get("Id"))
+            .and_then(|id| id.as_str())
+            .map(|s| s.to_string())
+        {
+            id
+        } else {
+            let ts = Self::now_iso_string();
+            let created = self
+                .execute_mutation(
+                    &auth_user,
+                    r#"mutation CreateArtist($Input: CreateArtistInput!) {
+                        CreateArtist(Input: $Input) { Success Error Artist { Id } }
+                    }"#,
+                    serde_json::json!({
+                        "Input": {
+                            "LibraryId": options.library_id.to_string(),
+                            "UserId": options.user_id.to_string(),
+                            "Name": artist_name.clone(),
+                            "SortName": artist_name.clone(),
+                            "MusicbrainzId": artist_mbid,
+                            "CreatedAt": ts,
+                            "UpdatedAt": ts
+                        }
+                    }),
+                )
+                .await?;
+
+            let success = created
+                .get("CreateArtist")
+                .and_then(|v| v.get("Success"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !success {
+                let err = created
+                    .get("CreateArtist")
+                    .and_then(|v| v.get("Error"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Failed to create artist");
+                anyhow::bail!(err.to_string());
+            }
+
+            created
+                .get("CreateArtist")
+                .and_then(|v| v.get("Artist"))
+                .and_then(|v| v.get("Id"))
+                .and_then(|id| id.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| anyhow::anyhow!("Artist not found after creation"))?
+        };
+
+        let ts = Self::now_iso_string();
+        let created_album = self
+            .execute_mutation(
+                &auth_user,
+                r#"mutation CreateAlbum($Input: CreateAlbumInput!) {
+                    CreateAlbum(Input: $Input) { Success Error Album { Id } }
+                }"#,
+                serde_json::json!({
+                    "Input": {
+                        "ArtistId": artist_id,
+                        "LibraryId": options.library_id.to_string(),
+                        "UserId": options.user_id.to_string(),
+                        "Name": release_group.title,
+                        "SortName": release_group.title,
+                        "Year": release_group.year(),
+                        "MusicbrainzId": provider_id.clone(),
+                        "AlbumType": release_group.normalized_type(),
+                        "Genres": Vec::<String>::new(),
+                        "AutoDownload": false,
+                        "AutoDownloadMode": "NONE",
+                        "HasFiles": false,
+                        "CoverUrl": musicbrainz.get_cover_art(release_group_id).await.ok().flatten(),
+                        "CreatedAt": ts,
+                        "UpdatedAt": ts
+                    }
+                }),
+            )
+            .await?;
+
+        let success = created_album
+            .get("CreateAlbum")
+            .and_then(|v| v.get("Success"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !success {
+            let err = created_album
+                .get("CreateAlbum")
+                .and_then(|v| v.get("Error"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Failed to create album");
+            anyhow::bail!(err.to_string());
+        }
+
+        let created_album_id = created_album
+            .get("CreateAlbum")
+            .and_then(|v| v.get("Album"))
+            .and_then(|v| v.get("Id"))
+            .and_then(|id| id.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Album not found after creation"))?;
+
+        Album::get(&self.db, created_album_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Album not found after creation"))
+    }
+
+    /// Add an audiobook from OpenLibrary to a library.
+    pub async fn add_audiobook_from_provider(
+        &self,
+        options: AddAudiobookOptions,
+    ) -> Result<Audiobook> {
+        if options.provider != MetadataProvider::OpenLibrary {
+            anyhow::bail!("Only OpenLibrary is supported for audiobook metadata");
+        }
+
+        let details = self.get_audiobook(&options.provider_id).await?;
+        let auth_user = AuthUser {
+            user_id: options.user_id.to_string(),
+            email: None,
+            role: None,
+        };
+
+        let existing = self
+            .execute_query(
+                &auth_user,
+                r#"query AudiobookByProvider($Where: AudiobookWhereInput, $Page: PageInput) {
+                    Audiobooks(Where: $Where, Page: $Page) {
+                        Edges { Node { Id } }
+                    }
+                }"#,
+                serde_json::json!({
+                    "Where": {
+                        "LibraryId": { "Eq": options.library_id.to_string() },
+                        "AudibleId": { "Eq": options.provider_id.clone() }
+                    },
+                    "Page": { "Limit": 1, "Offset": 0 }
+                }),
+            )
+            .await?;
+
+        if let Some(existing_id) = existing
+            .get("Audiobooks")
+            .and_then(|v| v.get("Edges"))
+            .and_then(|v| v.as_array())
+            .and_then(|edges| edges.first())
+            .and_then(|edge| edge.get("Node"))
+            .and_then(|node| node.get("Id"))
+            .and_then(|id| id.as_str())
+        {
+            return Audiobook::get(&self.db, existing_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Audiobook not found after lookup"));
+        }
+
+        let audiobook_id = Uuid::new_v4().to_string();
+        let ts = Self::now_iso_string();
+        let created = self
+            .execute_mutation(
+                &auth_user,
+                r#"mutation CreateAudiobook($Input: CreateAudiobookInput!) {
+                    CreateAudiobook(Input: $Input) { Success Error }
+                }"#,
+                serde_json::json!({
+                    "Input": {
+                        "Id": audiobook_id,
+                        "LibraryId": options.library_id.to_string(),
+                        "UserId": options.user_id.to_string(),
+                        "Title": details.title,
+                        "SortTitle": details.sort_title,
+                        "AuthorName": details.author_name,
+                        "Description": details.description,
+                        "Publisher": details.publisher,
+                        "Language": details.language,
+                        "Isbn": details.isbn,
+                        "PublishedDate": details.published_date,
+                        "CoverUrl": details.cover_url,
+                        "AudibleId": details.provider_id,
+                        "AutoDownload": false,
+                        "AutoDownloadMode": "NONE",
+                        "HasFiles": false,
+                        "Narrators": Vec::<String>::new(),
+                        "CreatedAt": ts,
+                        "UpdatedAt": ts
+                    }
+                }),
+            )
+            .await?;
+
+        let success = created
+            .get("CreateAudiobook")
+            .and_then(|v| v.get("Success"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !success {
+            let err = created
+                .get("CreateAudiobook")
+                .and_then(|v| v.get("Error"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Failed to create audiobook");
+            anyhow::bail!(err.to_string());
+        }
+
+        Audiobook::get(&self.db, &audiobook_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Audiobook not found after creation"))
+    }
+
+    /// Refresh movie metadata from provider and persist via generated GraphQL UpdateMovie mutation.
+    pub async fn refresh_movie_from_provider(
+        &self,
+        movie_id: &str,
+        user_id: Uuid,
+    ) -> Result<Movie> {
+        let movie = Movie::get(&self.db, movie_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Movie not found"))?;
+
+        if movie.user_id != user_id.to_string() {
+            anyhow::bail!("Movie not found");
+        }
+
+        let tmdb_id = movie
+            .tmdb_id
+            .ok_or_else(|| anyhow::anyhow!("Movie has no TmdbId"))?;
+
+        let details = self.get_movie(tmdb_id as u32).await?;
+
+        let auth_user = AuthUser {
+            user_id: user_id.to_string(),
+            email: None,
+            role: None,
+        };
+
+        let data = self
+            .execute_mutation(
+                &auth_user,
+                r#"mutation RefreshMovie($Id: String!, $Input: UpdateMovieInput!) {
+                    UpdateMovie(Id: $Id, Input: $Input) { Success Error }
+                }"#,
+                serde_json::json!({
+                    "Id": movie.id,
+                    "Input": {
+                        "Title": details.title,
+                        "SortTitle": details.original_title.clone().unwrap_or_else(|| details.title.clone()),
+                        "OriginalTitle": details.original_title,
+                        "Year": details.year,
+                        "TmdbId": details.provider_id as i32,
+                        "ImdbId": details.imdb_id,
+                        "Overview": details.overview,
+                        "Tagline": details.tagline,
+                        "Runtime": details.runtime,
+                        "Genres": details.genres,
+                        "Director": details.director,
+                        "CastNames": details.cast_names,
+                        "ProductionCountries": details.production_countries,
+                        "SpokenLanguages": details.spoken_languages,
+                        "TmdbRating": details.vote_average.map(|v| v.to_string()),
+                        "TmdbVoteCount": details.vote_count,
+                        "ReleaseDate": details.release_date,
+                        "Certification": details.certification,
+                        "CollectionId": details.collection_id,
+                        "CollectionName": details.collection_name,
+                        "CollectionPosterUrl": details.collection_poster_url,
+                        "Status": details.tmdb_status,
+                    }
+                }),
+            )
+            .await?;
+
+        let updated = data
+            .get("UpdateMovie")
+            .and_then(|v| v.get("Success"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !updated {
+            let err = data
+                .get("UpdateMovie")
+                .and_then(|v| v.get("Error"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Failed to refresh movie");
+            anyhow::bail!(err.to_string());
+        }
+
+        let movie = Movie::get(&self.db, movie_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Movie not found after refresh"))?;
+
+        // Refresh cached artwork in background.
+        let artwork_service = crate::services::ArtworkService::new(self.db.clone());
+        let refreshed_movie_id = movie.id.clone();
+        let poster_url = details.poster_url.clone();
+        let backdrop_url = details.backdrop_url.clone();
+        tokio::spawn(async move {
+            artwork_service
+                .cache_movie_artwork(
+                    &refreshed_movie_id,
+                    poster_url.as_deref(),
+                    backdrop_url.as_deref(),
+                )
+                .await;
+        });
+
+        Ok(movie)
+    }
+
+    /// Refresh TV show metadata from provider and persist via generated GraphQL UpdateShow mutation.
+    pub async fn refresh_tv_show_from_provider(
+        &self,
+        show_id: &str,
+        user_id: Uuid,
+    ) -> Result<Show> {
+        let show = Show::get(&self.db, show_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Show not found"))?;
+
+        if show.user_id != user_id.to_string() {
+            anyhow::bail!("Show not found");
+        }
+
+        let tvmaze_id = show
+            .tvmaze_id
+            .ok_or_else(|| anyhow::anyhow!("Show has no TvmazeId"))?;
+
+        let details = self.get_tv_show(tvmaze_id as u32).await?;
+
+        let auth_user = AuthUser {
+            user_id: user_id.to_string(),
+            email: None,
+            role: None,
+        };
+
+        let data = self
+            .execute_mutation(
+                &auth_user,
+                r#"mutation RefreshShow($Id: String!, $Input: UpdateShowInput!) {
+                    UpdateShow(Id: $Id, Input: $Input) { Success Error }
+                }"#,
+                serde_json::json!({
+                    "Id": show.id,
+                    "Input": {
+                        "Name": details.name,
+                        "SortName": details.sort_name,
+                        "Year": details.year,
+                        "TvmazeId": details.provider_id as i32,
+                        "TvdbId": details.tvdb_id,
+                        "ImdbId": details.imdb_id,
+                        "Overview": details.overview,
+                        "Network": details.network,
+                        "Runtime": details.runtime,
+                        "Genres": details.genres,
+                        "PosterUrl": details.poster_url,
+                        "BackdropUrl": details.backdrop_url,
+                        "ContentRating": details.status,
+                    }
+                }),
+            )
+            .await?;
+
+        let updated = data
+            .get("UpdateShow")
+            .and_then(|v| v.get("Success"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !updated {
+            let err = data
+                .get("UpdateShow")
+                .and_then(|v| v.get("Error"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Failed to refresh show");
+            anyhow::bail!(err.to_string());
+        }
+
+        let show = Show::get(&self.db, show_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Show not found after refresh"))?;
+
+        // Keep episodes in sync with provider metadata via generated mutations.
+        self.sync_show_episodes_from_tvmaze(
+            &auth_user,
+            &show.id,
+            tvmaze_id as u32,
+            show.auto_download,
+        )
+        .await?;
+
+        // Refresh cached artwork in background.
+        let artwork_service = crate::services::ArtworkService::new(self.db.clone());
+        let refreshed_show_id = show.id.clone();
+        let poster_url = details.poster_url.clone();
+        let backdrop_url = details.backdrop_url.clone();
+        tokio::spawn(async move {
+            artwork_service
+                .cache_show_artwork(
+                    &refreshed_show_id,
+                    poster_url.as_deref(),
+                    backdrop_url.as_deref(),
+                )
                 .await;
         });
 

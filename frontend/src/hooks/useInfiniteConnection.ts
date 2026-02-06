@@ -1,5 +1,4 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { graphqlClient } from '../lib/graphql'
 import { sanitizeError } from '../lib/format'
 import type { Connection, PageInfo, Edge } from '../lib/graphql/types'
 
@@ -128,7 +127,7 @@ export function useInfiniteConnection<TData, TNode>({
         after: isInitial ? null : endCursorRef.current,
       }
 
-      const result = await graphqlClient.query<TData>(query, paginatedVariables).toPromise()
+      const result = await queryPromise<TData>(query, paginatedVariables)
 
       if (!isMountedRef.current) return
 

@@ -12,7 +12,6 @@ import { Spinner } from "@heroui/spinner";
 import { addToast } from "@heroui/toast";
 import { IconShieldCheck, IconAlertCircle } from "@tabler/icons-react";
 import { useAuth } from "../hooks/useAuth";
-import { graphqlClient } from "../lib/graphql";
 import { NeedsSetupDocument } from "../lib/graphql/generated/graphql";
 
 interface SignInModalProps {
@@ -51,9 +50,8 @@ export function SignInModal({
   const checkSetupStatus = async () => {
     setCheckingSetup(true);
     try {
-      const result = await graphqlClient
-        .query(NeedsSetupDocument, {})
-        .toPromise();
+      const result = await queryPromise(NeedsSetupDocument, {})
+        ;
 
       if (result.data) {
         setNeedsSetup(result.data.NeedsSetup);

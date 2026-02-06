@@ -9,7 +9,6 @@ import {
 import { Button } from "@heroui/button";
 import { addToast } from "@heroui/toast";
 import { IconTrash } from "@tabler/icons-react";
-import { graphqlClient } from "../../lib/graphql";
 import { DeleteLibraryDocument } from "../../lib/graphql/generated/graphql";
 
 export interface DeleteLibraryModalProps {
@@ -57,9 +56,8 @@ export function DeleteLibraryModal({
 
     try {
       setIsDeleting(true);
-      const { data, error } = await graphqlClient
-        .mutation(DeleteLibraryDocument, { Id: libraryId })
-        .toPromise();
+      const { data, error } = await mutationPromise(DeleteLibraryDocument, { Id: libraryId })
+        ;
 
       if (error || !data?.DeleteLibrary.Success) {
         addToast({

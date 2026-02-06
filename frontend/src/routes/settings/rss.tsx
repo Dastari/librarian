@@ -11,7 +11,6 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/d
 import { addToast } from '@heroui/toast'
 import { ConfirmModal } from '../../components/ConfirmModal'
 import {
-  graphqlClient,
   RSS_FEEDS_QUERY,
   CREATE_RSS_FEED_MUTATION,
   UPDATE_RSS_FEED_MUTATION,
@@ -22,6 +21,7 @@ import {
   type RssFeedResult,
   type RssFeedTestResult,
 } from '../../lib/graphql'
+import { queryPromise, mutationPromise } from '../../lib/graphql/client'
 import { usePeriodicRefresh, useFocusRefresh } from '../../hooks/useSubscription'
 import { IconRefresh, IconPlayerPause, IconPlayerPlay, IconPencil, IconTrash, IconTestPipe, IconBulb } from '@tabler/icons-react'
 import { sanitizeError } from '../../lib/format'
@@ -65,9 +65,8 @@ function RssSettingsPage() {
 
   const fetchFeeds = useCallback(async (isBackgroundRefresh = false) => {
     try {
-      const result = await graphqlClient
-        .query<{ rssFeeds: RssFeed[] }>(RSS_FEEDS_QUERY, {})
-        .toPromise()
+      const result = await queryPromise<{ rssFeeds: RssFeed[] }>(RSS_FEEDS_QUERY, {})
+        
       if (result.data?.rssFeeds) {
         setFeeds(result.data.rssFeeds)
       }
@@ -120,8 +119,7 @@ function RssSettingsPage() {
     setIsAdding(true)
 
     try {
-      const result = await graphqlClient
-        .mutation<{ createRssFeed: RssFeedResult }>(CREATE_RSS_FEED_MUTATION, {
+      const result = await mutationPromise<{ createRssFeed: RssFeedResult }>(CREATE_RSS_FEED_MUTATION, {
           input: {
             name: data.name,
             url: data.url,
@@ -129,7 +127,7 @@ function RssSettingsPage() {
             pollIntervalMinutes: data.pollIntervalMinutes,
           },
         })
-        .toPromise()
+        
 
       if (result.data?.createRssFeed.success) {
         addToast({
@@ -162,8 +160,7 @@ function RssSettingsPage() {
     setIsEditing(true)
 
     try {
-      const result = await graphqlClient
-        .mutation<{ updateRssFeed: RssFeedResult }>(UPDATE_RSS_FEED_MUTATION, {
+      const result = await mutationPromise<{ updateRssFeed: RssFeedResult }>(UPDATE_RSS_FEED_MUTATION, {
           id: editingFeed.id,
           input: {
             name: data.name,
@@ -172,7 +169,7 @@ function RssSettingsPage() {
             pollIntervalMinutes: data.pollIntervalMinutes,
           },
         })
-        .toPromise()
+        
 
       if (result.data?.updateRssFeed.success) {
         addToast({
@@ -210,9 +207,8 @@ function RssSettingsPage() {
     if (!feedToDelete) return
 
     try {
-      const result = await graphqlClient
-        .mutation<{ deleteRssFeed: MutationResult }>(DELETE_RSS_FEED_MUTATION, { id: feedToDelete.id })
-        .toPromise()
+      const result = await mutationPromise<{ deleteRssFeed: MutationResult }>(DELETE_RSS_FEED_MUTATION, { id: feedToDelete.id })
+        
 
       if (result.data?.deleteRssFeed.success) {
         addToast({
@@ -239,11 +235,10 @@ function RssSettingsPage() {
   }
 
   const handleTestFeed = async (url: string): Promise<RssFeedTestResult> => {
-    const result = await graphqlClient
-      .mutation<{ testRssFeed: RssFeedTestResult }>(TEST_RSS_FEED_MUTATION, {
+    const result = await mutationPromise<{ testRssFeed: RssFeedTestResult }>(TEST_RSS_FEED_MUTATION, {
         url,
       })
-      .toPromise()
+      
 
     if (result.data?.testRssFeed) {
       return result.data.testRssFeed
@@ -256,9 +251,8 @@ function RssSettingsPage() {
     setPollingFeedId(id)
 
     try {
-      const result = await graphqlClient
-        .mutation<{ pollRssFeed: RssFeedResult }>(POLL_RSS_FEED_MUTATION, { id })
-        .toPromise()
+      const result = await mutationPromise<{ pollRssFeed: RssFeedResult }>(POLL_RSS_FEED_MUTATION, { id })
+        
 
       if (result.data?.pollRssFeed.success) {
         addToast({
@@ -287,8 +281,7 @@ function RssSettingsPage() {
 
   const handleToggleEnabled = async (feed: RssFeed) => {
     try {
-      const result = await graphqlClient
-        .mutation<{ updateRssFeed: RssFeedResult }>(UPDATE_RSS_FEED_MUTATION, {
+      const result = await mutationPromise<{ updateRssFeed: RssFeedResult }>(UPDATE_RSS_FEED_MUTATION, {
           id: feed.id,
           input: {
             name: feed.name,
@@ -297,7 +290,7 @@ function RssSettingsPage() {
             pollIntervalMinutes: feed.pollIntervalMinutes,
           },
         })
-        .toPromise()
+        
 
       if (result.data?.updateRssFeed.success) {
         addToast({

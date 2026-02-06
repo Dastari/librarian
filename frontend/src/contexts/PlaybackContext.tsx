@@ -9,7 +9,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { useRouteContext } from '@tanstack/react-router';
 import {
-  graphqlClient,
   MeDocument,
   PlaybackSessionsDocument,
   START_PLAYBACK_MUTATION,
@@ -218,7 +217,7 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   const refreshSession = useCallback(async () => {
     try {
-      const meResult = await graphqlClient.query(MeDocument, {}).toPromise();
+      const meResult = await queryPromise(MeDocument, {});
       const userId = meResult.data?.Me?.Id;
       if (!userId) {
         clearAllState();
@@ -226,13 +225,12 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const result = await graphqlClient
-        .query(PlaybackSessionsDocument, {
+      const result = await queryPromise(PlaybackSessionsDocument, {
           Where: { UserId: { Eq: userId } },
           OrderBy: [{ LastUpdatedAt: "Desc" }],
           Page: { Limit: 1, Offset: 0 },
         })
-        .toPromise();
+        ;
 
       const node = result.data?.PlaybackSessions?.Edges?.[0]?.Node;
       if (node) {
@@ -242,12 +240,108 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         // For audio sessions, fetch the track/album or audiobook data
         if (session.contentType === 'TRACK' && session.albumId && session.trackId) {
           try {
-            const albumResult = await graphqlClient
-              .query<{ albumWithTracks: AlbumWithTracks | null }>(ALBUM_WITH_TRACKS_QUERY, { id: session.albumId })
-              .toPromise();
+            interface TrackNode {
+              Id: string
+              AlbumId: string
+              LibraryId: string
+              Title: string
+              TrackNumber: number
+              DiscNumber: number | null
+              MusicbrainzId: string | null
+              Isrc: string | null
+              DurationSecs: number | null
+              Explicit: boolean
+              ArtistName: string | null
+              ArtistId: string | null
+              MediaFileId: string | null
+              Status: string
+              DownloadProgress: number | null
+            }
+
+            interface AlbumNode {
+              Id: string
+              ArtistId: string
+              LibraryId: string
+              Name: string
+              SortName: string | null
+              Year: number | null
+              MusicbrainzId: string | null
+              AlbumType: string | null
+              Genres: string[]
+              Label: string | null
+              Country: string | null
+              ReleaseDate: string | null
+              CoverUrl: string | null
+              TrackCount: number | null
+              DiscCount: number | null
+              TotalDurationSecs: number | null
+              HasFiles: boolean
+              SizeBytes: number | null
+              Path: string | null
+              Tracks: { Edges: Array<{ Node: TrackNode }> }
+            }
+
+            const toTrackStatus = (status: string): import('../lib/graphql').TrackStatus => {
+              const normalized = status.toLowerCase();
+              if (normalized === 'downloaded') return 'downloaded';
+              if (normalized === 'downloading') return 'downloading';
+              if (normalized === 'wanted') return 'wanted';
+              return 'missing';
+            };
+
+            const albumResult = await queryPromise<{ Album: AlbumNode | null }>(ALBUM_WITH_TRACKS_QUERY, { Id: session.albumId })
+              ;
             
-            if (albumResult.data?.albumWithTracks) {
-              const { album, tracks } = albumResult.data.albumWithTracks;
+            if (albumResult.data?.Album) {
+              const albumNode = albumResult.data.Album;
+              const album: AlbumWithTracks['album'] = {
+                id: albumNode.Id,
+                artistId: albumNode.ArtistId,
+                libraryId: albumNode.LibraryId,
+                name: albumNode.Name,
+                sortName: albumNode.SortName,
+                year: albumNode.Year,
+                musicbrainzId: albumNode.MusicbrainzId,
+                albumType: albumNode.AlbumType,
+                genres: albumNode.Genres,
+                label: albumNode.Label,
+                country: albumNode.Country,
+                releaseDate: albumNode.ReleaseDate,
+                coverUrl: albumNode.CoverUrl,
+                trackCount: albumNode.TrackCount,
+                discCount: albumNode.DiscCount,
+                totalDurationSecs: albumNode.TotalDurationSecs,
+                hasFiles: albumNode.HasFiles,
+                sizeBytes: albumNode.SizeBytes,
+                path: albumNode.Path,
+                downloadedTrackCount: null,
+              };
+              const tracks: AlbumWithTracks['tracks'] = (albumNode.Tracks?.Edges ?? []).map((edge) => ({
+                track: {
+                  id: edge.Node.Id,
+                  albumId: edge.Node.AlbumId,
+                  libraryId: edge.Node.LibraryId,
+                  title: edge.Node.Title,
+                  trackNumber: edge.Node.TrackNumber,
+                  discNumber: edge.Node.DiscNumber ?? 1,
+                  musicbrainzId: edge.Node.MusicbrainzId,
+                  isrc: edge.Node.Isrc,
+                  durationSecs: edge.Node.DurationSecs,
+                  explicit: edge.Node.Explicit,
+                  artistName: edge.Node.ArtistName,
+                  artistId: edge.Node.ArtistId,
+                  mediaFileId: edge.Node.MediaFileId,
+                  hasFile: Boolean(edge.Node.MediaFileId),
+                  status: toTrackStatus(edge.Node.Status),
+                  downloadProgress: edge.Node.DownloadProgress,
+                },
+                hasFile: Boolean(edge.Node.MediaFileId),
+                filePath: null,
+                fileSize: null,
+                audioCodec: null,
+                bitrate: null,
+                audioChannels: null,
+              }));
               setCurrentAlbum(album);
               
               // Find the current track
@@ -285,12 +379,81 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
           }
         } else if (session.contentType === 'AUDIOBOOK' && session.audiobookId) {
           try {
-            const audiobookResult = await graphqlClient
-              .query<{ audiobookWithChapters: AudiobookWithChapters | null }>(AUDIOBOOK_WITH_CHAPTERS_QUERY, { id: session.audiobookId })
-              .toPromise();
+            interface AudiobookNode {
+              Id: string
+              AuthorId: string | null
+              LibraryId: string
+              Title: string
+              SortTitle: string | null
+              Subtitle: string | null
+              OpenlibraryId: string | null
+              Isbn: string | null
+              Description: string | null
+              Publisher: string | null
+              Language: string | null
+              Narrators: string[]
+              SeriesName: string | null
+              DurationSecs: number | null
+              CoverUrl: string | null
+              HasFiles: boolean
+              SizeBytes: number | null
+              Path: string | null
+              Chapters: {
+                Edges: Array<{
+                  Node: {
+                    Id: string
+                    AudiobookId: string
+                    ChapterNumber: number
+                    Title: string | null
+                    StartSecs: number
+                    EndSecs: number
+                    DurationSecs: number | null
+                    MediaFileId: string | null
+                    Status: string
+                    DownloadProgress: number | null
+                  }
+                }>
+              }
+            }
+            const audiobookResult = await queryPromise<{ Audiobook: AudiobookNode | null }>(AUDIOBOOK_WITH_CHAPTERS_QUERY, { Id: session.audiobookId })
+              ;
             
-            if (audiobookResult.data?.audiobookWithChapters) {
-              const { audiobook, chapters } = audiobookResult.data.audiobookWithChapters;
+            if (audiobookResult.data?.Audiobook) {
+              const audiobookNode = audiobookResult.data.Audiobook;
+              const audiobook: AudiobookWithChapters['audiobook'] = {
+                id: audiobookNode.Id,
+                authorId: audiobookNode.AuthorId,
+                libraryId: audiobookNode.LibraryId,
+                title: audiobookNode.Title,
+                sortTitle: audiobookNode.SortTitle,
+                subtitle: audiobookNode.Subtitle,
+                openlibraryId: audiobookNode.OpenlibraryId,
+                isbn: audiobookNode.Isbn,
+                description: audiobookNode.Description,
+                publisher: audiobookNode.Publisher,
+                language: audiobookNode.Language,
+                narrators: audiobookNode.Narrators,
+                seriesName: audiobookNode.SeriesName,
+                durationSecs: audiobookNode.DurationSecs,
+                coverUrl: audiobookNode.CoverUrl,
+                hasFiles: audiobookNode.HasFiles,
+                sizeBytes: audiobookNode.SizeBytes,
+                path: audiobookNode.Path,
+                chapterCount: null,
+                downloadedChapterCount: null,
+              };
+              const chapters = (audiobookNode.Chapters?.Edges ?? []).map((edge) => ({
+                id: edge.Node.Id,
+                audiobookId: edge.Node.AudiobookId,
+                chapterNumber: edge.Node.ChapterNumber,
+                title: edge.Node.Title,
+                startSecs: edge.Node.StartSecs,
+                endSecs: edge.Node.EndSecs,
+                durationSecs: edge.Node.DurationSecs,
+                mediaFileId: edge.Node.MediaFileId,
+                status: edge.Node.Status as import('../lib/graphql').ChapterStatus,
+                downloadProgress: edge.Node.DownloadProgress,
+              }));
               setCurrentAudiobook(audiobook);
               
               // Find the current chapter (use mediaFileId to match since we may not have chapterId directly)
@@ -352,9 +515,8 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     metadata?: CurrentContentMetadata
   ): Promise<boolean> => {
     try {
-      const result = await graphqlClient
-        .mutation<{ startPlayback: PlaybackResult }>(START_PLAYBACK_MUTATION, { input })
-        .toPromise();
+      const result = await mutationPromise<{ startPlayback: PlaybackResult }>(START_PLAYBACK_MUTATION, { input })
+        ;
       
       if (result.data?.startPlayback.success && result.data.startPlayback.session) {
         setSession(result.data.startPlayback.session);
@@ -451,9 +613,8 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const result = await graphqlClient
-        .mutation<{ updatePlayback: PlaybackResult }>(UPDATE_PLAYBACK_MUTATION, { input })
-        .toPromise();
+      const result = await mutationPromise<{ updatePlayback: PlaybackResult }>(UPDATE_PLAYBACK_MUTATION, { input })
+        ;
       
       if (result.data?.updatePlayback.success && result.data.updatePlayback.session) {
         setSession(result.data.updatePlayback.session);
@@ -469,9 +630,8 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
 
   const stopPlayback = useCallback(async (): Promise<boolean> => {
     try {
-      const result = await graphqlClient
-        .mutation<{ stopPlayback: PlaybackResult }>(STOP_PLAYBACK_MUTATION, {})
-        .toPromise();
+      const result = await mutationPromise<{ stopPlayback: PlaybackResult }>(STOP_PLAYBACK_MUTATION, {})
+        ;
       
       if (result.data?.stopPlayback.success) {
         clearAllState();

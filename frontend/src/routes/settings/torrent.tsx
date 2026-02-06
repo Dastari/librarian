@@ -5,7 +5,7 @@ import { Switch } from '@heroui/switch'
 import { Accordion, AccordionItem } from '@heroui/accordion'
 import { Button } from '@heroui/button'
 import { addToast } from '@heroui/toast'
-import { graphqlClient } from '../../lib/graphql/client'
+import { queryPromise, mutationPromise } from '../../lib/graphql/client'
 import {
   TorrentAppSettingsDocument,
   CreateAppSettingDocument,
@@ -105,7 +105,7 @@ function TorrentSettingsPage() {
 
   const fetchSettings = useCallback(async () => {
     try {
-      const result = await graphqlClient.query(TorrentAppSettingsDocument, {}).toPromise()
+      const result = await queryPromise(TorrentAppSettingsDocument, {})
       const data = result.data as TorrentAppSettingsQuery | undefined
       const edges = data?.AppSettings?.Edges ?? []
       const settings = appSettingsToTorrentSettings(edges)
@@ -134,7 +134,7 @@ function TorrentSettingsPage() {
 
   const fetchUpnpStatus = useCallback(async () => {
     try {
-      const result = await graphqlClient.query<{ upnpStatus: UpnpResult | null }>(UPnP_STATUS_QUERY, {}).toPromise()
+      const result = await queryPromise<{ upnpStatus: UpnpResult | null }>(UPnP_STATUS_QUERY, {})
       if (result.data?.upnpStatus) setUpnpStatus(result.data.upnpStatus)
     } catch {
       console.warn('Failed to fetch UPnP status')
@@ -144,9 +144,9 @@ function TorrentSettingsPage() {
   const testPortAccessibility = useCallback(async () => {
     setIsTestingPort(true)
     try {
-      const result = await graphqlClient.query<{ testPortAccessibility: PortTestResult }>(TEST_PORT_ACCESSIBILITY_QUERY, {
+      const result = await queryPromise<{ testPortAccessibility: PortTestResult }>(TEST_PORT_ACCESSIBILITY_QUERY, {
         port: listenPort,
-      }).toPromise()
+      })
       if (result.data?.testPortAccessibility) {
         setPortTestResult(result.data.testPortAccessibility)
         addToast({
@@ -167,9 +167,8 @@ function TorrentSettingsPage() {
   const attemptUpnpForwarding = useCallback(async () => {
     setIsAttemptingUpnp(true)
     try {
-      const result = await graphqlClient
-        .mutation<{ attemptUpnpPortForwarding: UpnpResult }>(ATTEMPT_UPNP_PORT_FORWARDING_MUTATION, {})
-        .toPromise()
+      const result = await mutationPromise<{ attemptUpnpPortForwarding: UpnpResult }>(ATTEMPT_UPNP_PORT_FORWARDING_MUTATION, {})
+        
       if (result.data?.attemptUpnpPortForwarding) {
         const upnpResult = result.data.attemptUpnpPortForwarding
         setUpnpStatus(upnpResult)
@@ -210,10 +209,10 @@ function TorrentSettingsPage() {
         const settingKey = TORRENT_KEYS[key]
         const id = settingIds.get(settingKey)
         if (id) {
-          const res = await graphqlClient.mutation(UpdateAppSettingDocument, {
+          const res = await mutationPromise(UpdateAppSettingDocument, {
             Id: id,
             Input: { Value: value },
-          }).toPromise()
+          })
           const data = res.data as { UpdateAppSetting?: { Success: boolean; Error?: string | null } }
           if (!data?.UpdateAppSetting?.Success) {
             addToast({
@@ -224,7 +223,7 @@ function TorrentSettingsPage() {
             return
           }
         } else {
-          const res = await graphqlClient.mutation(CreateAppSettingDocument, {
+          const res = await mutationPromise(CreateAppSettingDocument, {
             Input: {
               Key: settingKey,
               Value: value,
@@ -232,7 +231,7 @@ function TorrentSettingsPage() {
               CreatedAt: now,
               UpdatedAt: now,
             },
-          }).toPromise()
+          })
           const data = res.data as { CreateAppSetting?: { Success: boolean; Error?: string | null } }
           if (!data?.CreateAppSetting?.Success) {
             addToast({

@@ -4,9 +4,9 @@
 //! Relations use DataLoader batching to avoid N+1 queries.
 
 use async_graphql::{Context, InputObject, Object, SimpleObject};
-use std::sync::Arc;
 use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::graphql::auth::AuthExt;
 use crate::graphql::entities::Library;
@@ -303,6 +303,33 @@ impl ShowMetadataMutations {
             })
             .await
         {
+            Ok(show) => Ok(TvShowOperationResult {
+                success: true,
+                show: Some(show),
+                error: None,
+            }),
+            Err(e) => Ok(TvShowOperationResult {
+                success: false,
+                show: None,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    /// Refresh a show's metadata and artwork from TVMaze.
+    #[graphql(name = "RefreshShow")]
+    async fn refresh_show(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "Id")] id: String,
+    ) -> async_graphql::Result<TvShowOperationResult> {
+        let user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        let user_id = uuid::Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        match metadata.refresh_tv_show_from_provider(&id, user_id).await {
             Ok(show) => Ok(TvShowOperationResult {
                 success: true,
                 show: Some(show),

@@ -15,11 +15,9 @@ import {
   IconPlus,
 } from '@tabler/icons-react'
 import {
-  graphqlClient,
   SEARCH_ALBUMS_QUERY,
   ADD_ALBUM_MUTATION,
   type AlbumSearchResult,
-  type AlbumResult,
 } from '../../lib/graphql'
 
 // ============================================================================
@@ -138,8 +136,18 @@ export function AddAlbumModal({
     setSearchResults([])
 
     try {
-      const result = await graphqlClient
-        .query<{ searchAlbums: AlbumSearchResult[] }>(SEARCH_ALBUMS_QUERY, {
+      const result = await queryPromise<{
+          SearchAlbums: Array<{
+            Provider: string
+            ProviderId: string
+            Title: string
+            ArtistName: string | null
+            Year: number | null
+            AlbumType: string | null
+            CoverUrl: string | null
+            Score: number | null
+          }>
+        }>(SEARCH_ALBUMS_QUERY, {
           query: searchQuery,
           includeEps: filters.includeEps,
           includeSingles: filters.includeSingles,
@@ -147,12 +155,23 @@ export function AddAlbumModal({
           includeLive: filters.includeLive,
           includeSoundtracks: filters.includeSoundtracks,
         })
-        .toPromise()
+        
 
       if (result.error) {
         setError(result.error.message)
-      } else if (result.data?.searchAlbums) {
-        setSearchResults(result.data.searchAlbums)
+      } else if (result.data?.SearchAlbums) {
+        setSearchResults(
+          result.data.SearchAlbums.map((item) => ({
+            provider: item.Provider,
+            providerId: item.ProviderId,
+            title: item.Title,
+            artistName: item.ArtistName,
+            year: item.Year,
+            albumType: item.AlbumType,
+            coverUrl: item.CoverUrl,
+            score: item.Score,
+          }))
+        )
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed')
@@ -167,25 +186,29 @@ export function AddAlbumModal({
       setError(null)
 
       try {
-        const mutationResult = await graphqlClient
-          .mutation<{ addAlbum: AlbumResult }>(ADD_ALBUM_MUTATION, {
-            input: {
-              musicbrainzId: result.providerId,
-              libraryId,
+        const mutationResult = await mutationPromise<{
+            AddAlbum: {
+              Success: boolean
+              Error: string | null
+            }
+          }>(ADD_ALBUM_MUTATION, {
+            Input: {
+              MusicbrainzId: result.providerId,
+              LibraryId: libraryId,
             },
           })
-          .toPromise()
+          
 
         if (mutationResult.error) {
           setError(mutationResult.error.message)
-        } else if (mutationResult.data?.addAlbum.success) {
+        } else if (mutationResult.data?.AddAlbum.Success) {
           // Remove from search results
           setSearchResults((prev) =>
             prev.filter((r) => r.providerId !== result.providerId)
           )
           onAlbumAdded?.()
-        } else if (mutationResult.data?.addAlbum.error) {
-          setError(mutationResult.data.addAlbum.error)
+        } else if (mutationResult.data?.AddAlbum.Error) {
+          setError(mutationResult.data.AddAlbum.Error)
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to add album')

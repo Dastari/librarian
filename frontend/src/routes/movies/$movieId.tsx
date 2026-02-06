@@ -4,9 +4,10 @@ import {
   redirect,
   useNavigate,
 } from "@tanstack/react-router";
-import { useState, useEffect, useCallback } from "react";
+import { useEffect, useCallback } from "react";
 import { useQuery, useMutation, gql } from "../../lib/graphql/client";
 import { Button } from "@heroui/button";
+import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/dropdown";
 import { Card, CardBody } from "@heroui/card";
 import { Chip } from "@heroui/chip";
 import { Image } from "@heroui/image";
@@ -14,7 +15,6 @@ import { Spinner } from "@heroui/spinner";
 import { Breadcrumbs, BreadcrumbItem } from "@heroui/breadcrumbs";
 import { useDisclosure } from "@heroui/modal";
 import { addToast } from "@heroui/toast";
-import { Tooltip } from "@heroui/tooltip";
 import { RouteError } from "../../components/RouteError";
 import { sanitizeError, formatBytes } from "../../lib/format";
 import type { Movie, Library } from "../../lib/graphql/generated/graphql";
@@ -22,6 +22,9 @@ import {
   IconMovie,
   IconTrash,
   IconPlayerPlay,
+  IconPlayerPause,
+  IconDotsVertical,
+  IconInfoCircle,
   IconCalendar,
   IconClock,
   IconStar,
@@ -31,6 +34,7 @@ import {
   IconRefresh,
 } from "@tabler/icons-react";
 import { DeleteMovieModal } from "../../components/library";
+import { FilePropertiesModal } from "../../components/FilePropertiesModal";
 import { usePlaybackContext } from "../../contexts/PlaybackContext";
 
 export const Route = createFileRoute("/movies/$movieId")({
@@ -52,7 +56,7 @@ export const Route = createFileRoute("/movies/$movieId")({
 // MediaFile type for the nested query
 interface MediaFile {
   Id: string;
-  SizeBytes: number;
+  Size: number;
   Duration: number | null;
 }
 
@@ -88,25 +92,30 @@ const MOVIE_QUERY = gql`
       ReleaseDate
       ProductionCountries
       SpokenLanguages
-      Library {
-        Id
-        Name
-      }
       MediaFile {
         Id
-        SizeBytes
+        Size
         Duration
       }
     }
   }
 `;
 
+const LIBRARY_NAME_QUERY = gql`
+  query LibraryName($Id: String!) {
+    Library(Id: $Id) {
+      Id
+      Name
+    }
+  }
+`;
+
 const REFRESH_MOVIE = gql`
-  mutation RefreshMovie($id: String!) {
-    RefreshMovie(id: $id) {
-      success
-      error
-      movie {
+  mutation RefreshMovie($Id: String!) {
+    RefreshMovie(Id: $Id) {
+      Success
+      Error
+      Movie {
         Id
         Title
         Overview
@@ -123,34 +132,45 @@ const REFRESH_MOVIE = gql`
 function MovieDetailPage() {
   const { movieId } = Route.useParams();
   const navigate = useNavigate();
-  const [loadingPlay, setLoadingPlay] = useState(false);
   const {
     isOpen: isDeleteOpen,
     onOpen: onDeleteOpen,
     onClose: onDeleteClose,
   } = useDisclosure();
-  const { startMoviePlayback } = usePlaybackContext();
+  const {
+    isOpen: isPropertiesOpen,
+    onOpen: onPropertiesOpen,
+    onClose: onPropertiesClose,
+  } = useDisclosure();
+  const { startMoviePlayback, session, updatePlayback } = usePlaybackContext();
 
-  // Query movie with library and media file
+  // Query movie and media file
   const {
     data: movieData,
     previousData: previousMovieData,
     loading: movieLoading,
     refetch,
   } = useQuery<{
-    Movie: (Movie & { Library?: Library; MediaFile?: MediaFile }) | null;
+    Movie: (Movie & { MediaFile?: MediaFile }) | null;
   }>(MOVIE_QUERY, {
     variables: { Id: movieId },
     fetchPolicy: "cache-and-network",
   });
   const movie = movieData?.Movie ?? previousMovieData?.Movie;
+  const { data: libraryData } = useQuery<{
+    Library: Pick<Library, "Id" | "Name"> | null;
+  }>(LIBRARY_NAME_QUERY, {
+    variables: { Id: movie?.LibraryId ?? "" },
+    skip: !movie?.LibraryId,
+    fetchPolicy: "cache-and-network",
+  });
 
   // Mutations
-  const [refreshMovie, { loading: refreshing }] = useMutation<{
-    refreshMovie: {
-      success: boolean;
-      error: string | null;
-      movie: Partial<Movie> | null;
+  const [refreshMovie] = useMutation<{
+    RefreshMovie: {
+      Success: boolean;
+      Error: string | null;
+      Movie: Partial<Movie> | null;
     };
   }>(REFRESH_MOVIE);
 
@@ -174,7 +194,6 @@ function MovieDetailPage() {
       return;
     }
 
-    setLoadingPlay(true);
     try {
       await startMoviePlayback(
         movie.Id,
@@ -190,19 +209,17 @@ function MovieDetailPage() {
         description: "Failed to start playback",
         color: "danger",
       });
-    } finally {
-      setLoadingPlay(false);
     }
   }, [movie, startMoviePlayback]);
 
   const handleRefresh = async () => {
     try {
-      const { data } = await refreshMovie({ variables: { id: movieId } });
-      if (!data?.refreshMovie?.success) {
+      const { data } = await refreshMovie({ variables: { Id: movieId } });
+      if (!data?.RefreshMovie?.Success) {
         addToast({
           title: "Error",
           description: sanitizeError(
-            data?.refreshMovie?.error || "Failed to refresh metadata"
+            data?.RefreshMovie?.Error || "Failed to refresh metadata"
           ),
           color: "danger",
         });
@@ -240,6 +257,9 @@ function MovieDetailPage() {
     navigate({ to: "/hunt", search: { q: searchQuery, type: "movies" } });
   }, [movie, navigate]);
 
+  const isThisMoviePlaying =
+    session?.movieId === movieId && !!session?.isPlaying;
+
   // Loading state
   if (movieLoading && !movie) {
     return (
@@ -270,7 +290,7 @@ function MovieDetailPage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row gap-6 mb-8">
         {/* Poster */}
-        <div className="shrink-0">
+        <div className="shrink-0 relative group">
           {movie.PosterUrl ? (
             <Image
               src={movie.PosterUrl}
@@ -282,6 +302,29 @@ function MovieDetailPage() {
               <IconMovie size={64} className="text-purple-400" />
             </div>
           )}
+          {movie.MediaFileId && movie.MediaFile && (
+            <button
+              onClick={() => {
+                if (isThisMoviePlaying) {
+                  updatePlayback({ isPlaying: false });
+                } else {
+                  void handlePlay();
+                }
+              }}
+              className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 rounded-lg cursor-pointer"
+              aria-label={isThisMoviePlaying ? "Pause Movie" : "Play Movie"}
+            >
+              <div
+                className={`w-16 h-16 rounded-full ${isThisMoviePlaying ? "bg-warning" : "bg-primary"} flex items-center justify-center shadow-lg hover:scale-110 transition-transform`}
+              >
+                {isThisMoviePlaying ? (
+                  <IconPlayerPause size={32} className="text-white" />
+                ) : (
+                  <IconPlayerPlay size={32} className="text-white ml-1" />
+                )}
+              </div>
+            </button>
+          )}
         </div>
 
         {/* Details */}
@@ -289,7 +332,7 @@ function MovieDetailPage() {
           <Breadcrumbs className="mb-2">
             <BreadcrumbItem href="/libraries">Libraries</BreadcrumbItem>
             <BreadcrumbItem href={`/libraries/${movie.LibraryId}`}>
-              {movie.Library?.Name || "Library"}
+              {libraryData?.Library?.Name || "Library"}
             </BreadcrumbItem>
             <BreadcrumbItem isCurrent>{movie.Title}</BreadcrumbItem>
           </Breadcrumbs>
@@ -301,30 +344,61 @@ function MovieDetailPage() {
                 <span className="text-default-500 ml-2">({movie.Year})</span>
               )}
             </h1>
-            <div className="flex items-center gap-1 shrink-0">
-              <Tooltip content="Refresh Metadata & Artwork">
+            <Dropdown>
+              <DropdownTrigger>
                 <Button
                   isIconOnly
-                  variant="light"
                   size="sm"
-                  onPress={handleRefresh}
-                  isLoading={refreshing}
+                  variant="light"
+                  aria-label="Movie actions"
                 >
-                  <IconRefresh size={18} />
+                  <IconDotsVertical size={18} />
                 </Button>
-              </Tooltip>
-              <Tooltip content="Delete Movie">
-                <Button
-                  isIconOnly
-                  variant="light"
-                  size="sm"
+              </DropdownTrigger>
+              <DropdownMenu
+                aria-label="Movie actions menu"
+                onAction={(key) => {
+                  if (key === "search") {
+                    handleSearchMovie();
+                  } else if (key === "refresh") {
+                    void handleRefresh();
+                  } else if (key === "properties") {
+                    onPropertiesOpen();
+                  } else if (key === "delete") {
+                    onDeleteOpen();
+                  }
+                }}
+              >
+                <DropdownItem
+                  key="search"
+                  startContent={<IconSearch size={16} />}
+                >
+                  Search for Movie
+                </DropdownItem>
+                <DropdownItem
+                  key="refresh"
+                  startContent={<IconRefresh size={16} />}
+                >
+                  Refresh
+                </DropdownItem>
+                {movie.MediaFileId ? (
+                  <DropdownItem
+                    key="properties"
+                    startContent={<IconInfoCircle size={16} />}
+                  >
+                    Properties
+                  </DropdownItem>
+                ) : null}
+                <DropdownItem
+                  key="delete"
+                  startContent={<IconTrash size={16} className="text-red-400" />}
+                  className="text-danger"
                   color="danger"
-                  onPress={onDeleteOpen}
                 >
-                  <IconTrash size={18} />
-                </Button>
-              </Tooltip>
-            </div>
+                  Delete
+                </DropdownItem>
+              </DropdownMenu>
+            </Dropdown>
           </div>
 
           {/* Tagline */}
@@ -450,44 +524,17 @@ function MovieDetailPage() {
           </div>
 
           {/* Stats */}
-          {movie.MediaFile && movie.MediaFile.SizeBytes > 0 && (
+          {movie.MediaFile && movie.MediaFile.Size > 0 && (
             <div className="flex gap-4 text-sm text-default-500 mb-4">
               <div>
                 <span className="font-semibold text-foreground">
-                  {formatBytes(movie.MediaFile.SizeBytes)}
+                  {formatBytes(movie.MediaFile.Size)}
                 </span>
                 <span> on disk</span>
               </div>
             </div>
           )}
 
-          {/* Actions */}
-          <div className="flex gap-2 mt-6">
-            {movie.MediaFileId ? (
-              <Button
-                color="success"
-                startContent={
-                  loadingPlay ? (
-                    <Spinner size="sm" color="current" />
-                  ) : (
-                    <IconPlayerPlay size={16} />
-                  )
-                }
-                onPress={handlePlay}
-                isDisabled={loadingPlay}
-              >
-                {loadingPlay ? "Loading..." : "Play"}
-              </Button>
-            ) : (
-              <Button
-                color="primary"
-                startContent={<IconSearch size={16} />}
-                onPress={handleSearchMovie}
-              >
-                Hunt for Movie
-              </Button>
-            )}
-          </div>
         </div>
       </div>
 
@@ -522,6 +569,12 @@ function MovieDetailPage() {
         onClose={onDeleteClose}
         movie={movie ? { id: movie.Id, title: movie.Title } : null}
         onDeleted={handleDeleted}
+      />
+      <FilePropertiesModal
+        isOpen={isPropertiesOpen}
+        onClose={onPropertiesClose}
+        mediaFileId={movie.MediaFileId ?? null}
+        title={movie ? movie.Title : undefined}
       />
     </div>
   );

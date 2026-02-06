@@ -1,9 +1,14 @@
-use async_graphql::{Result, SimpleObject};
+use async_graphql::{Context, InputObject, Object, Result, SimpleObject};
 use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use super::chapter::Chapter;
 use super::common::AutoDownloadMode;
+use crate::graphql::auth::AuthExt;
+use crate::services::metadata::providers::{
+    AddAudiobookOptions, MetadataProvider, MetadataService,
+};
 
 #[derive(
     GraphQLEntity,
@@ -140,6 +145,129 @@ pub struct Audiobook {
 
 #[derive(Default)]
 pub struct AudiobookCustomOperations;
+
+/// Search result for OpenLibrary audiobook search.
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "AudiobookSearchResult")]
+pub struct AudiobookSearchResultGql {
+    #[graphql(name = "Provider")]
+    pub provider: String,
+    #[graphql(name = "ProviderId")]
+    pub provider_id: String,
+    #[graphql(name = "Title")]
+    pub title: String,
+    #[graphql(name = "AuthorName")]
+    pub author_name: Option<String>,
+    #[graphql(name = "Year")]
+    pub year: Option<i32>,
+    #[graphql(name = "CoverUrl")]
+    pub cover_url: Option<String>,
+    #[graphql(name = "Isbn")]
+    pub isbn: Option<String>,
+    #[graphql(name = "Description")]
+    pub description: Option<String>,
+}
+
+#[Object]
+impl AudiobookCustomOperations {
+    /// Search audiobooks on OpenLibrary.
+    #[graphql(name = "SearchAudiobooks")]
+    async fn search_audiobooks(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "Query")] query: String,
+    ) -> Result<Vec<AudiobookSearchResultGql>> {
+        let _user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        let results = metadata
+            .search_audiobooks(&query)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(results
+            .into_iter()
+            .map(|a| AudiobookSearchResultGql {
+                provider: match a.provider {
+                    MetadataProvider::OpenLibrary => "openlibrary".to_string(),
+                    MetadataProvider::Musicbrainz => "musicbrainz".to_string(),
+                    MetadataProvider::Tmdb => "tmdb".to_string(),
+                    MetadataProvider::Tvmaze => "tvmaze".to_string(),
+                },
+                provider_id: a.provider_id,
+                title: a.title,
+                author_name: a.author_name,
+                year: a.year,
+                cover_url: a.cover_url,
+                isbn: a.isbn,
+                description: a.description,
+            })
+            .collect())
+    }
+}
+
+#[derive(Debug, InputObject)]
+#[graphql(name = "AddAudiobookInput")]
+pub struct AddAudiobookInput {
+    #[graphql(name = "LibraryId")]
+    pub library_id: String,
+    #[graphql(name = "OpenlibraryId")]
+    pub openlibrary_id: String,
+}
+
+#[derive(Debug, SimpleObject)]
+#[graphql(name = "AudiobookOperationResult")]
+pub struct AudiobookOperationResult {
+    #[graphql(name = "Success")]
+    pub success: bool,
+    #[graphql(name = "Audiobook")]
+    pub audiobook: Option<Audiobook>,
+    #[graphql(name = "Error")]
+    pub error: Option<String>,
+}
+
+#[derive(Default)]
+pub struct AudiobookMetadataMutations;
+
+#[Object]
+impl AudiobookMetadataMutations {
+    /// Add an audiobook to a library by fetching metadata from OpenLibrary.
+    #[graphql(name = "AddAudiobook")]
+    async fn add_audiobook(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "Input")] input: AddAudiobookInput,
+    ) -> Result<AudiobookOperationResult> {
+        let user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        let library_id = uuid::Uuid::parse_str(&input.library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+        let user_id = uuid::Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        match metadata
+            .add_audiobook_from_provider(AddAudiobookOptions {
+                provider: MetadataProvider::OpenLibrary,
+                provider_id: input.openlibrary_id,
+                library_id,
+                user_id,
+            })
+            .await
+        {
+            Ok(audiobook) => Ok(AudiobookOperationResult {
+                success: true,
+                audiobook: Some(audiobook),
+                error: None,
+            }),
+            Err(e) => Ok(AudiobookOperationResult {
+                success: false,
+                audiobook: None,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+}
 
 // // ============================================================================
 // // Custom Operations (non-CRUD - external API calls)

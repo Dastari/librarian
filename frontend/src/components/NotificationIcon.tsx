@@ -3,7 +3,6 @@ import { Button } from "@heroui/button";
 import { Badge } from "@heroui/badge";
 import { Tooltip } from "@heroui/tooltip";
 import { IconBell } from "@tabler/icons-react";
-import { graphqlClient } from "../lib/graphql";
 import {
   NotificationsDocument,
   NotificationChangedDocument,
@@ -18,12 +17,11 @@ function useUnreadNotificationCount() {
 
   const fetchCount = useCallback(async () => {
     try {
-      const { data } = await graphqlClient
-        .query(NotificationsDocument, {
+      const { data } = await queryPromise(NotificationsDocument, {
           Where: UNREAD_WHERE,
           Page: { Limit: 1, Offset: 0 },
         })
-        .toPromise();
+        ;
       const total = data?.Notifications?.PageInfo?.TotalCount;
       setCount(total ?? 0);
     } catch {
@@ -38,8 +36,7 @@ function useUnreadNotificationCount() {
   useEffect(() => {
     let sub: { unsubscribe: () => void } | null = null;
     try {
-      sub = graphqlClient
-        .subscription(NotificationChangedDocument, {})
+      sub = subscriptionStream(NotificationChangedDocument, {})
         .subscribe({
           next: () => fetchCount(),
           error: () => {},

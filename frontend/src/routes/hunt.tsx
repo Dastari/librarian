@@ -24,12 +24,12 @@ import {
   IconServer,
 } from "@tabler/icons-react";
 import {
-  graphqlClient,
   SEARCH_INDEXERS_QUERY,
   type IndexerSearchResultSet,
   type TorrentRelease,
   type IndexerSearchInput,
 } from "../lib/graphql";
+import { queryPromise, mutationPromise } from "../lib/graphql/client";
 import {
   DataTable,
   type DataTableColumn,
@@ -180,11 +180,10 @@ function SearchPage() {
         limit: 100,
       };
 
-      const { data, error } = await graphqlClient
-        .query<{
+      const { data, error } = await queryPromise<{
           searchIndexers: IndexerSearchResultSet;
         }>(SEARCH_INDEXERS_QUERY, { input })
-        .toPromise();
+        ;
 
       if (error) {
         throw new Error(sanitizeError(error));
@@ -285,14 +284,13 @@ function SearchPage() {
         // Use magnet field for magnet links, url field for .torrent file URLs
         const isMagnet = magnetUri?.startsWith("magnet:");
 
-        const { data, error } = await graphqlClient
-          .mutation<AddTorrentResponse>(ADD_TORRENT, {
+        const { data, error } = await mutationPromise<AddTorrentResponse>(ADD_TORRENT, {
             Input: {
               Magnet: isMagnet ? magnetUri : undefined,
               Url: !isMagnet ? magnetUri || torrentUrl : undefined,
             },
           })
-          .toPromise();
+          ;
 
         if (error) {
           throw new Error(sanitizeError(error));
@@ -464,7 +462,7 @@ function SearchPage() {
       <div>
         <h1 className="text-2xl font-bold">Hunt</h1>
         <p className="text-default-500 text-sm">
-          Hunt for content across all configured indexers
+          Search for content across all configured indexers
         </p>
       </div>
 

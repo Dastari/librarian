@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import {
-  graphqlClient,
   CONTENT_DOWNLOAD_PROGRESS_SUBSCRIPTION,
   type ContentDownloadProgressEvent,
   type ContentDownloadType,
@@ -91,12 +90,12 @@ export function useContentDownloadProgress(
         }
       )
       .subscribe({
-        next: (result) => {
+        next: (result: any) => {
           if (result.data?.contentDownloadProgress) {
             handleProgress(result.data.contentDownloadProgress)
           }
         },
-        error: (err) => {
+        error: (err: any) => {
           console.debug('[ContentProgress] Subscription error:', err)
         },
       })

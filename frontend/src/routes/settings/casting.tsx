@@ -26,7 +26,6 @@ import {
   IconStarFilled,
 } from '@tabler/icons-react';
 import {
-  graphqlClient,
   CAST_DEVICES_QUERY,
   CAST_SETTINGS_QUERY,
   DISCOVER_CAST_DEVICES_MUTATION,
@@ -39,6 +38,7 @@ import {
   type CastDeviceResult,
   type CastSettingsResult,
 } from '../../lib/graphql';
+import { queryPromise, mutationPromise } from '../../lib/graphql/client';
 
 export const Route = createFileRoute('/settings/casting')({
   component: CastingSettingsPage,
@@ -68,8 +68,8 @@ function CastingSettingsPage() {
     setIsLoading(true);
     try {
       const [devicesRes, settingsRes] = await Promise.all([
-        graphqlClient.query<{ CastDevices: CastDevice[] }>(CAST_DEVICES_QUERY, {}).toPromise(),
-        graphqlClient.query<{ CastSettings: CastSettings }>(CAST_SETTINGS_QUERY, {}).toPromise(),
+        queryPromise<{ CastDevices: CastDevice[] }>(CAST_DEVICES_QUERY, {}),
+        queryPromise<{ CastSettings: CastSettings }>(CAST_SETTINGS_QUERY, {}),
       ]);
 
       if (devicesRes.data?.CastDevices) {
@@ -86,9 +86,8 @@ function CastingSettingsPage() {
   const handleDiscover = async () => {
     setIsDiscovering(true);
     try {
-      const result = await graphqlClient
-        .mutation<{ discoverCastDevices: CastDevice[] }>(DISCOVER_CAST_DEVICES_MUTATION, {})
-        .toPromise();
+      const result = await mutationPromise<{ discoverCastDevices: CastDevice[] }>(DISCOVER_CAST_DEVICES_MUTATION, {})
+        ;
       if (result.data?.discoverCastDevices) {
         setDevices(result.data.discoverCastDevices);
       }
@@ -107,15 +106,14 @@ function CastingSettingsPage() {
     setAddError(null);
 
     try {
-      const result = await graphqlClient
-        .mutation<{ addCastDevice: CastDeviceResult }>(ADD_CAST_DEVICE_MUTATION, {
+      const result = await mutationPromise<{ addCastDevice: CastDeviceResult }>(ADD_CAST_DEVICE_MUTATION, {
           input: {
             address: newDeviceAddress.trim(),
             port: newDevicePort ? parseInt(newDevicePort) : undefined,
             name: newDeviceName.trim() || undefined,
           },
         })
-        .toPromise();
+        ;
 
       if (result.data?.addCastDevice.success && result.data.addCastDevice.device) {
         setDevices((prev) => [...prev, result.data!.addCastDevice.device!]);
@@ -135,12 +133,11 @@ function CastingSettingsPage() {
 
   const handleToggleFavorite = async (device: CastDevice) => {
     try {
-      const result = await graphqlClient
-        .mutation<{ updateCastDevice: CastDeviceResult }>(UPDATE_CAST_DEVICE_MUTATION, {
+      const result = await mutationPromise<{ updateCastDevice: CastDeviceResult }>(UPDATE_CAST_DEVICE_MUTATION, {
           id: device.id,
           input: { isFavorite: !device.isFavorite },
         })
-        .toPromise();
+        ;
 
       if (result.data?.updateCastDevice.success && result.data.updateCastDevice.device) {
         setDevices((prev) =>
@@ -154,12 +151,11 @@ function CastingSettingsPage() {
 
   const handleRemoveDevice = async (deviceId: string) => {
     try {
-      const result = await graphqlClient
-        .mutation<{ removeCastDevice: { success: boolean; error?: string } }>(
+      const result = await mutationPromise<{ removeCastDevice: { success: boolean; error?: string } }>(
           REMOVE_CAST_DEVICE_MUTATION,
           { id: deviceId }
         )
-        .toPromise();
+        ;
 
       if (result.data?.removeCastDevice.success) {
         setDevices((prev) => prev.filter((d) => d.id !== deviceId));
@@ -174,11 +170,10 @@ function CastingSettingsPage() {
 
     setIsSavingSettings(true);
     try {
-      const result = await graphqlClient
-        .mutation<{ updateCastSettings: CastSettingsResult }>(UPDATE_CAST_SETTINGS_MUTATION, {
+      const result = await mutationPromise<{ updateCastSettings: CastSettingsResult }>(UPDATE_CAST_SETTINGS_MUTATION, {
           input: updates,
         })
-        .toPromise();
+        ;
 
       if (result.data?.updateCastSettings.success && result.data.updateCastSettings.settings) {
         setSettings(result.data.updateCastSettings.settings);

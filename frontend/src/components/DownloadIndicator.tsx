@@ -4,7 +4,6 @@ import { Badge } from "@heroui/badge";
 import { Tooltip } from "@heroui/tooltip";
 import { Link } from "@tanstack/react-router";
 import { IconDownload } from "@tabler/icons-react";
-import { graphqlClient } from "../lib/graphql";
 import {
   ActiveDownloadCountDocument,
   TorrentChangedDocument,
@@ -19,12 +18,11 @@ function useActiveDownloadCount() {
 
   const fetchCount = useCallback(async () => {
     try {
-      const { data } = await graphqlClient
-        .query(ActiveDownloadCountDocument, {
+      const { data } = await queryPromise(ActiveDownloadCountDocument, {
           Where: DOWNLOADING_WHERE,
           Page: PAGE_ONE,
         })
-        .toPromise();
+        ;
       const total = data?.Torrents?.PageInfo?.TotalCount;
       setCount(total ?? 0);
     } catch {
@@ -39,8 +37,7 @@ function useActiveDownloadCount() {
   useEffect(() => {
     let sub: { unsubscribe: () => void } | null = null;
     try {
-      sub = graphqlClient
-        .subscription(TorrentChangedDocument, {})
+      sub = subscriptionStream(TorrentChangedDocument, {})
         .subscribe({
           next: () => fetchCount(),
           error: () => {},

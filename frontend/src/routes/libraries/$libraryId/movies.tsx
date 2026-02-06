@@ -40,15 +40,24 @@ function MoviesPage() {
   const refreshMoviesRef = useRef<(() => void) | null>(null);
 
   // Subscribe to movie changes for this library
-  useSubscription<{ MovieChanged: { Id: string; Action: ChangeAction } }>(
+  useSubscription<{
+    MovieChanged: {
+      Id: string;
+      Action: ChangeAction;
+      Movie?: { LibraryId: string } | null;
+    };
+  }>(
     MOVIE_CHANGED,
     {
       variables: {
-        Filter: { LibraryId: { Eq: library.Id } },
+        Filter: { Actions: ["Created", "Updated", "Deleted"] },
       },
       onData: ({ data }) => {
         const event = data.data?.MovieChanged;
         if (!event) return;
+
+        // SubscriptionFilterInput only supports Id/Actions, so filter by library in client.
+        if (event.Movie?.LibraryId && event.Movie.LibraryId !== library.Id) return;
 
         // Refresh the movies list on any change
         if (refreshMoviesRef.current) {

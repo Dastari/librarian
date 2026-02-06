@@ -8,10 +8,10 @@ import { Divider } from '@heroui/divider'
 import { addToast } from '@heroui/toast'
 import { IconPlayerPlay, IconDeviceFloppy } from '@tabler/icons-react'
 import {
-  graphqlClient,
   PlaybackSyncIntervalDocument,
   UpdateAppSettingDocument,
 } from '../../lib/graphql'
+import { useQuery, useMutation } from '../../lib/graphql/client'
 
 export const Route = createFileRoute('/settings/')({
   component: GeneralSettingsPage,
@@ -20,57 +20,37 @@ export const Route = createFileRoute('/settings/')({
 const PLAYBACK_SYNC_KEY = 'playback_sync_interval'
 
 function GeneralSettingsPage() {
-  const [settingId, setSettingId] = useState<string | null>(null)
   const [savedSyncInterval, setSavedSyncInterval] = useState<number | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
   const [syncInterval, setSyncInterval] = useState(15)
 
-  // Load playback sync interval from app settings
+  const { data, previousData, loading } = useQuery(PlaybackSyncIntervalDocument, {
+    variables: { Key: PLAYBACK_SYNC_KEY },
+    fetchPolicy: 'cache-and-network',
+  })
+
+  const [updateAppSetting, { loading: saving }] = useMutation(UpdateAppSettingDocument)
+
+  const node = data?.AppSettings?.Edges?.[0]?.Node ?? previousData?.AppSettings?.Edges?.[0]?.Node
+  const settingId = node?.Id ?? null
+
   useEffect(() => {
-    async function loadSettings() {
-      try {
-        const result = await graphqlClient
-          .query(PlaybackSyncIntervalDocument, { Key: PLAYBACK_SYNC_KEY })
-          .toPromise()
-
-        const node = result.data?.AppSettings?.Edges?.[0]?.Node
-        if (node) {
-          setSettingId(node.Id)
-          const val = Number(node.Value)
-          if (Number.isFinite(val)) {
-            setSyncInterval(val)
-            setSavedSyncInterval(val)
-          }
-        }
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err)
-        if (!errorMsg.toLowerCase().includes('authentication')) {
-          console.error('Failed to load settings:', err)
-          addToast({
-            title: 'Error',
-            description: 'Failed to load playback settings',
-            color: 'danger',
-          })
-        }
-      } finally {
-        setLoading(false)
-      }
+    if (!node) return
+    const val = Number(node.Value)
+    if (Number.isFinite(val)) {
+      setSyncInterval(val)
+      setSavedSyncInterval(val)
     }
-
-    loadSettings()
-  }, [])
+  }, [node?.Id, node?.Value])
 
   const handleSave = async () => {
     if (settingId == null) return
-    setSaving(true)
     try {
-      const result = await graphqlClient
-        .mutation(UpdateAppSettingDocument, {
+      const result = await updateAppSetting({
+        variables: {
           Id: settingId,
           Input: { Value: String(syncInterval) },
-        })
-        .toPromise()
+        },
+      })
 
       const payload = result.data?.UpdateAppSetting
       if (payload?.Success) {
@@ -94,8 +74,6 @@ function GeneralSettingsPage() {
         description: 'Failed to save playback settings',
         color: 'danger',
       })
-    } finally {
-      setSaving(false)
     }
   }
 

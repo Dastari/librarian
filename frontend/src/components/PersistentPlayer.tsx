@@ -21,7 +21,7 @@ import { CastButton } from './cast';
 import { VolumeControl } from './VolumeControl';
 import { getMediaStreamUrl } from './VideoPlayer';
 import type { Show } from '../lib/graphql/generated/graphql';
-import { graphqlClient, TV_SHOW_QUERY, EPISODES_QUERY, PlaybackSyncIntervalDocument, type Episode } from '../lib/graphql';
+import { TV_SHOW_QUERY, EPISODES_QUERY, PlaybackSyncIntervalDocument, type Episode } from '../lib/graphql';
 import { useCast } from '../hooks/useCast';
 
 // Default sync interval (will be overridden by settings)
@@ -76,9 +76,8 @@ export function PersistentPlayer() {
 
   // Fetch playback sync interval from app settings
   useEffect(() => {
-    graphqlClient
-      .query(PlaybackSyncIntervalDocument, { Key: 'playback_sync_interval' })
-      .toPromise()
+    queryPromise(PlaybackSyncIntervalDocument, { Key: 'playback_sync_interval' })
+      
       .then((result) => {
         const value = result.data?.AppSettings?.Edges?.[0]?.Node?.Value;
         if (value != null) {
@@ -102,12 +101,60 @@ export function PersistentPlayer() {
   // Load metadata when session changes
   useEffect(() => {
     if (session?.tvShowId && session?.episodeId && !currentShow) {
+      interface EpisodeNode {
+        Id: string
+        ShowId: string
+        Season: number
+        Episode: number
+        AbsoluteNumber: number | null
+        Title: string | null
+        Overview: string | null
+        AirDate: string | null
+        Runtime: number | null
+        TvmazeId: number | null
+        TmdbId: number | null
+        TvdbId: number | null
+        MediaFileId: string | null
+        Wanted: boolean
+        Status: string
+        CreatedAt: string
+        UpdatedAt: string
+      }
       Promise.all([
-        graphqlClient.query<{ Show: Show | null }>(TV_SHOW_QUERY, { Id: session.tvShowId }).toPromise(),
-        graphqlClient.query<{ episodes: Episode[] }>(EPISODES_QUERY, { tvShowId: session.tvShowId }).toPromise(),
+        queryPromise<{ Show: Show | null }>(TV_SHOW_QUERY, { Id: session.tvShowId }),
+        queryPromise<{ Episodes: { Edges: Array<{ Node: EpisodeNode }> } }>(EPISODES_QUERY, { tvShowId: session.tvShowId }),
       ]).then(([showRes, epRes]) => {
         if (showRes.data?.Show) setCurrentShow(showRes.data.Show as unknown as Parameters<typeof setCurrentShow>[0]);
-        const ep = epRes.data?.episodes?.find(e => e.id === session.episodeId);
+        const mappedEpisodes: Episode[] = (epRes.data?.Episodes?.Edges ?? []).map((edge) => ({
+          id: edge.Node.Id,
+          tvShowId: edge.Node.ShowId,
+          season: edge.Node.Season,
+          episode: edge.Node.Episode,
+          absoluteNumber: edge.Node.AbsoluteNumber,
+          title: edge.Node.Title,
+          overview: edge.Node.Overview,
+          airDate: edge.Node.AirDate,
+          runtime: edge.Node.Runtime,
+          tvmazeId: edge.Node.TvmazeId,
+          tmdbId: edge.Node.TmdbId,
+          tvdbId: edge.Node.TvdbId,
+          mediaFileId: edge.Node.MediaFileId,
+          wanted: edge.Node.Wanted,
+          resolution: null,
+          videoCodec: null,
+          audioCodec: null,
+          audioChannels: null,
+          isHdr: null,
+          hdrType: null,
+          videoBitrate: null,
+          fileSizeBytes: null,
+          fileSizeFormatted: null,
+          watchProgress: null,
+          watchPosition: null,
+          isWatched: false,
+          downloadProgress: null,
+        }));
+        const ep = mappedEpisodes.find(e => e.id === session.episodeId);
         if (ep) setCurrentEpisode(ep);
       });
     }

@@ -8,11 +8,9 @@ import {
   type DataTableColumn,
   type CardRendererProps,
 } from '../data-table'
-import { graphqlClient, ARTISTS_CONNECTION_QUERY, ALBUMS_QUERY, type Artist, type Album } from '../../lib/graphql'
-import type { Connection } from '../../lib/graphql/types'
+import { ARTISTS_QUERY, ALBUMS_QUERY, type Artist, type Album } from '../../lib/graphql'
 import { IconUser, IconDisc, IconMicrophone } from '@tabler/icons-react'
 import { SquareCardSkeleton } from './MediaCardSkeleton'
-import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 // ============================================================================
 // Component Props
@@ -25,12 +23,34 @@ interface LibraryArtistsTabProps {
   onSelectArtist?: (artistId: string) => void
 }
 
-// ============================================================================
-// Types for GraphQL response
-// ============================================================================
+interface AlbumNode {
+  Id: string
+  ArtistId: string
+  LibraryId: string
+  Name: string
+  SortName: string | null
+  Year: number | null
+  MusicbrainzId: string | null
+  AlbumType: string | null
+  Genres: string[]
+  Label: string | null
+  Country: string | null
+  ReleaseDate: string | null
+  CoverUrl: string | null
+  TrackCount: number | null
+  DiscCount: number | null
+  TotalDurationSecs: number | null
+  HasFiles: boolean
+  SizeBytes: number | null
+  Path: string | null
+}
 
-interface ArtistsConnectionResponse {
-  artistsConnection: Connection<Artist>
+interface ArtistNode {
+  Id: string
+  LibraryId: string
+  Name: string
+  SortName: string | null
+  MusicbrainzId: string | null
 }
 
 // ============================================================================
@@ -106,79 +126,76 @@ export function LibraryArtistsTab({
     setSortColumn(column)
     setSortDirection(direction)
   }, [setSortColumn, setSortDirection])
-  
+
   const [albums, setAlbums] = useState<Album[]>([])
   const [albumsLoading, setAlbumsLoading] = useState(true)
+  const [artists, setArtists] = useState<Artist[]>([])
+  const [artistsLoading, setArtistsLoading] = useState(true)
 
-  // Fetch albums for counting (still load all for accurate counts)
-  // Skip if parent is loading or libraryId is a template placeholder
+  // Check if we should skip queries (loading or template ID)
+  const shouldSkipQueries = parentLoading || libraryId.startsWith('template')
+
   useEffect(() => {
-    if (parentLoading || libraryId.startsWith('template')) {
-      return
-    }
+    if (shouldSkipQueries) return
+
     const fetchAlbums = async () => {
       try {
-        const result = await graphqlClient
-          .query<{ albums: Album[] }>(ALBUMS_QUERY, { libraryId })
-          .toPromise()
-        if (result.data?.albums) {
-          setAlbums(result.data.albums)
-        }
+        const result = await queryPromise<{ Albums: { Edges: Array<{ Node: AlbumNode }> } }>(ALBUMS_QUERY, { libraryId })
+          
+        const edges = result.data?.Albums?.Edges ?? []
+        setAlbums(
+          edges.map((e) => ({
+            id: e.Node.Id,
+            artistId: e.Node.ArtistId,
+            libraryId: e.Node.LibraryId,
+            name: e.Node.Name,
+            sortName: e.Node.SortName,
+            year: e.Node.Year,
+            musicbrainzId: e.Node.MusicbrainzId,
+            albumType: e.Node.AlbumType,
+            genres: e.Node.Genres,
+            label: e.Node.Label,
+            country: e.Node.Country,
+            releaseDate: e.Node.ReleaseDate,
+            coverUrl: e.Node.CoverUrl,
+            trackCount: e.Node.TrackCount,
+            discCount: e.Node.DiscCount,
+            totalDurationSecs: e.Node.TotalDurationSecs,
+            hasFiles: e.Node.HasFiles,
+            sizeBytes: e.Node.SizeBytes,
+            path: e.Node.Path,
+            downloadedTrackCount: null,
+          }))
+        )
       } catch (err) {
         console.error('Failed to fetch albums:', err)
       } finally {
         setAlbumsLoading(false)
       }
     }
-    fetchAlbums()
-  }, [libraryId, parentLoading])
 
-  // Map column keys to GraphQL sort fields
-  const sortFieldMap: Record<string, string> = {
-    name: 'NAME',
-    albums: 'ALBUM_COUNT',
-  }
-
-  // Build filter variables for GraphQL query
-  const queryVariables = useMemo(() => {
-    const vars: Record<string, unknown> = { libraryId }
-    
-    // Add search filter if there's a search term
-    if (searchTerm) {
-      vars.where = {
-        name: { contains: searchTerm },
+    const fetchArtists = async () => {
+      try {
+        const result = await queryPromise<{ Artists: { Edges: Array<{ Node: ArtistNode }> } }>(ARTISTS_QUERY, { libraryId })
+          
+        const edges = result.data?.Artists?.Edges ?? []
+        setArtists(edges.map((e) => ({
+          id: e.Node.Id,
+          libraryId: e.Node.LibraryId,
+          name: e.Node.Name,
+          sortName: e.Node.SortName,
+          musicbrainzId: e.Node.MusicbrainzId,
+        })))
+      } catch (err) {
+        console.error('Failed to fetch artists:', err)
+      } finally {
+        setArtistsLoading(false)
       }
     }
-    
-    // Add order by from sort state
-    const graphqlField = sortFieldMap[sortColumn || 'name'] || 'NAME'
-    vars.orderBy = {
-      field: graphqlField,
-      direction: sortDirection.toUpperCase(),
-    }
-    
-    return vars
-  }, [libraryId, searchTerm, sortColumn, sortDirection])
 
-  // Check if we should skip queries (loading or template ID)
-  const shouldSkipQueries = parentLoading || libraryId.startsWith('template')
-
-  // Use infinite connection hook for server-side pagination
-  const {
-    items: artists,
-    isLoading: artistsLoading,
-    isLoadingMore,
-    hasMore,
-    totalCount,
-    loadMore,
-  } = useInfiniteConnection<ArtistsConnectionResponse, Artist>({
-    query: ARTISTS_CONNECTION_QUERY,
-    variables: queryVariables,
-    getConnection: (data) => data.artistsConnection,
-    batchSize: 50,
-    enabled: !shouldSkipQueries,
-    deps: [libraryId, searchTerm],
-  })
+    void fetchAlbums()
+    void fetchArtists()
+  }, [libraryId, shouldSkipQueries])
 
   const isLoading = artistsLoading || albumsLoading
 
@@ -201,11 +218,32 @@ export function LibraryArtistsTab({
     return letters
   }, [artists])
 
-  // Filter artists by selected letter
+  const sortedArtists = useMemo(() => {
+    const sorted = [...artists]
+    sorted.sort((a, b) => {
+      if (sortColumn === 'albums') {
+        const av = albumCountByArtist.get(a.id) ?? 0
+        const bv = albumCountByArtist.get(b.id) ?? 0
+        return sortDirection === 'asc' ? av - bv : bv - av
+      }
+      const cmp = a.name.localeCompare(b.name)
+      return sortDirection === 'asc' ? cmp : -cmp
+    })
+    return sorted
+  }, [artists, sortColumn, sortDirection, albumCountByArtist])
+
+  // Filter artists by selected letter and search term
   const filteredArtists = useMemo(() => {
-    if (!normalizedLetter) return artists
-    return artists.filter((artist) => getFirstLetter(artist.name) === normalizedLetter)
-  }, [artists, normalizedLetter])
+    let list = sortedArtists
+    if (searchTerm) {
+      const q = searchTerm.toLowerCase()
+      list = list.filter((artist) => artist.name.toLowerCase().includes(q))
+    }
+    if (normalizedLetter) {
+      list = list.filter((artist) => getFirstLetter(artist.name) === normalizedLetter)
+    }
+    return list
+  }, [sortedArtists, searchTerm, normalizedLetter])
 
   // Handle letter change - toggle filter
   const handleLetterChange = useCallback((letter: string | null) => {
@@ -286,14 +324,9 @@ export function LibraryArtistsTab({
           showItemCount
           ariaLabel="Artists table"
           fillHeight
-          serverSide
-          serverTotalCount={totalCount ?? undefined}
+          serverTotalCount={filteredArtists.length}
           onSearchChange={handleSearchChange}
-          paginationMode="infinite"
-          hasMore={hasMore}
-          onLoadMore={loadMore}
           isLoading={parentLoading || isLoading}
-          isLoadingMore={isLoadingMore}
           headerContent={
             <AlphabetFilter
               selectedLetter={normalizedLetter}

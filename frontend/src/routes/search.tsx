@@ -18,10 +18,10 @@ import {
 } from '@tabler/icons-react'
 import type { Movie, Show } from '../lib/graphql/generated/graphql'
 import {
-  graphqlClient,
   ALL_TV_SHOWS_QUERY,
   ALL_MOVIES_QUERY,
 } from '../lib/graphql'
+import { useQuery, gql } from '../lib/graphql/client'
 import { RouteError } from '../components/RouteError'
 
 export const Route = createFileRoute('/search')({
@@ -53,43 +53,41 @@ interface SearchResult {
   libraryName?: string
 }
 
+const ALL_TV_SHOWS_QUERY_DOC = gql`${ALL_TV_SHOWS_QUERY}`
+const ALL_MOVIES_QUERY_DOC = gql`${ALL_MOVIES_QUERY}`
+
 function LibrarySearchPage() {
   const navigate = useNavigate()
   const [query, setQuery] = useQueryState('q', parseAsString.withDefault(''))
   const [searchInput, setSearchInput] = useState(query)
   const [mediaType, setMediaType] = useState<MediaType>('all')
-  const [isSearching, setIsSearching] = useState(false)
-  const [shows, setShows] = useState<Show[]>([])
-  const [movies, setMovies] = useState<Movie[]>([])
+
+  const { data: showsData, previousData: previousShowsData, loading: showsLoading } = useQuery<{
+    Shows: { Edges: Array<{ Node: Show }> }
+  }>(ALL_TV_SHOWS_QUERY_DOC, {
+    fetchPolicy: 'cache-and-network',
+  })
+
+  const { data: moviesData, previousData: previousMoviesData, loading: moviesLoading } = useQuery<{
+    Movies: { Edges: Array<{ Node: Movie }> }
+  }>(ALL_MOVIES_QUERY_DOC, {
+    fetchPolicy: 'cache-and-network',
+  })
+
+  const shows = useMemo(
+    () => (showsData?.Shows?.Edges ?? previousShowsData?.Shows?.Edges ?? []).map((e) => e.Node),
+    [showsData?.Shows?.Edges, previousShowsData?.Shows?.Edges],
+  )
+  const movies = useMemo(
+    () => (moviesData?.Movies?.Edges ?? previousMoviesData?.Movies?.Edges ?? []).map((e) => e.Node),
+    [moviesData?.Movies?.Edges, previousMoviesData?.Movies?.Edges],
+  )
+  const isSearching = showsLoading || moviesLoading
 
   // Sync search input with query param
   useEffect(() => {
     setSearchInput(query)
   }, [query])
-
-  // Fetch all content on mount
-  useEffect(() => {
-    fetchAllContent()
-  }, [])
-
-  const fetchAllContent = async () => {
-    setIsSearching(true)
-    try {
-      const [showsResult, moviesResult] = await Promise.all([
-        graphqlClient.query<{ Shows: { Edges: Array<{ Node: Show }> } }>(ALL_TV_SHOWS_QUERY, {}).toPromise(),
-        graphqlClient.query<{ Movies: { Edges: Array<{ Node: Movie }> } }>(ALL_MOVIES_QUERY, {}).toPromise(),
-      ])
-
-      const showNodes = showsResult.data?.Shows?.Edges?.map((e) => e.Node) ?? []
-      setShows(showNodes)
-      const movieNodes = moviesResult.data?.Movies?.Edges?.map((e) => e.Node) ?? []
-      setMovies(movieNodes)
-    } catch (err) {
-      console.error('Failed to fetch content:', err)
-    } finally {
-      setIsSearching(false)
-    }
-  }
 
   // Filter and convert to search results
   const searchResults = useMemo<SearchResult[]>(() => {
@@ -307,7 +305,7 @@ function LibrarySearchPage() {
                 search: { q: query, type: 'all' },
               })}
             >
-              Hunt for "{query}" online
+              Search for "{query}" online
             </Button>
           </CardBody>
         </Card>

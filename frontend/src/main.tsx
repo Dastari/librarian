@@ -19,7 +19,7 @@ import {
   setTokens,
   clearTokens,
 } from "./lib/auth";
-import { graphqlClient, apolloClient } from "./lib/graphql";
+import { apolloClient } from "./lib/graphql";
 import {
   RefreshTokenDocument,
   MeDocument,
@@ -74,11 +74,10 @@ function InnerApp() {
     }
 
     try {
-      const result = await graphqlClient
-        .mutation(RefreshTokenDocument, {
+      const result = await mutationPromise(RefreshTokenDocument, {
           input: { RefreshToken: refreshToken },
         })
-        .toPromise();
+        ;
 
       const payload = result.data?.RefreshToken;
       if (payload?.Success && payload.Tokens) {
@@ -145,9 +144,8 @@ function InnerApp() {
         } else {
           // Token is still valid, verify with server
           try {
-            const result = await graphqlClient
-              .query(MeDocument, {})
-              .toPromise();
+            const result = await queryPromise(MeDocument, {})
+              ;
 
             if (result.data?.Me) {
               const meUser = result.data.Me;

@@ -9,16 +9,13 @@ import {
   type CardRendererProps,
 } from '../data-table'
 import {
-  graphqlClient,
-  AUDIOBOOK_AUTHORS_CONNECTION_QUERY,
+  AUDIOBOOK_AUTHORS_QUERY,
   AUDIOBOOKS_QUERY,
   type AudiobookAuthor,
   type Audiobook,
 } from '../../lib/graphql'
-import type { Connection } from '../../lib/graphql/types'
 import { IconUser, IconBook, IconHeadphones } from '@tabler/icons-react'
 import { SquareCardSkeleton } from './MediaCardSkeleton'
-import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 // ============================================================================
 // Component Props
@@ -31,12 +28,35 @@ interface LibraryAuthorsTabProps {
   onSelectAuthor?: (authorId: string) => void
 }
 
-// ============================================================================
-// Types for GraphQL response
-// ============================================================================
+interface AudiobookNode {
+  Id: string
+  AuthorId: string | null
+  LibraryId: string
+  Title: string
+  SortTitle: string | null
+  Subtitle: string | null
+  OpenlibraryId: string | null
+  Isbn: string | null
+  Description: string | null
+  Publisher: string | null
+  Language: string | null
+  Narrators: string[]
+  SeriesName: string | null
+  DurationSecs: number | null
+  CoverUrl: string | null
+  HasFiles: boolean
+  SizeBytes: number | null
+  Path: string | null
+  ChapterCount: number | null
+  DownloadedChapterCount: number | null
+}
 
-interface AuthorsConnectionResponse {
-  audiobookAuthorsConnection: Connection<AudiobookAuthor>
+interface AudiobookAuthorNode {
+  Id: string
+  LibraryId: string
+  Name: string
+  SortName: string | null
+  OpenlibraryId: string | null
 }
 
 // ============================================================================
@@ -115,75 +135,71 @@ export function LibraryAuthorsTab({
   
   const [audiobooks, setAudiobooks] = useState<Audiobook[]>([])
   const [audiobooksLoading, setAudiobooksLoading] = useState(true)
+  const [authors, setAuthors] = useState<AudiobookAuthor[]>([])
+  const [authorsLoading, setAuthorsLoading] = useState(true)
 
   // Check if we should skip queries (loading or template ID)
   const shouldSkipQueries = parentLoading || libraryId.startsWith('template')
 
-  // Fetch audiobooks for counting (still load all for accurate counts)
   useEffect(() => {
-    if (shouldSkipQueries) {
-      return
-    }
+    if (shouldSkipQueries) return
+
     const fetchAudiobooks = async () => {
       try {
-        const result = await graphqlClient
-          .query<{ audiobooks: Audiobook[] }>(AUDIOBOOKS_QUERY, { libraryId })
-          .toPromise()
-        if (result.data?.audiobooks) {
-          setAudiobooks(result.data.audiobooks)
-        }
+        const result = await queryPromise<{ Audiobooks: { Edges: Array<{ Node: AudiobookNode }> } }>(AUDIOBOOKS_QUERY, { libraryId })
+          
+        const edges = result.data?.Audiobooks?.Edges ?? []
+        setAudiobooks(edges.map((e) => ({
+          id: e.Node.Id,
+          authorId: e.Node.AuthorId,
+          libraryId: e.Node.LibraryId,
+          title: e.Node.Title,
+          sortTitle: e.Node.SortTitle,
+          subtitle: e.Node.Subtitle,
+          openlibraryId: e.Node.OpenlibraryId,
+          isbn: e.Node.Isbn,
+          description: e.Node.Description,
+          publisher: e.Node.Publisher,
+          language: e.Node.Language,
+          narrators: e.Node.Narrators,
+          seriesName: e.Node.SeriesName,
+          durationSecs: e.Node.DurationSecs,
+          coverUrl: e.Node.CoverUrl,
+          hasFiles: e.Node.HasFiles,
+          sizeBytes: e.Node.SizeBytes,
+          path: e.Node.Path,
+          chapterCount: e.Node.ChapterCount,
+          downloadedChapterCount: e.Node.DownloadedChapterCount,
+        })))
       } catch (err) {
         console.error('Failed to fetch audiobooks:', err)
       } finally {
         setAudiobooksLoading(false)
       }
     }
-    fetchAudiobooks()
-  }, [libraryId, shouldSkipQueries])
 
-  // Map column keys to GraphQL sort fields
-  const sortFieldMap: Record<string, string> = {
-    name: 'NAME',
-    audiobooks: 'AUDIOBOOK_COUNT',
-  }
-
-  // Build filter variables for GraphQL query
-  const queryVariables = useMemo(() => {
-    const vars: Record<string, unknown> = { libraryId }
-    
-    // Add search filter if there's a search term
-    if (searchTerm) {
-      vars.where = {
-        name: { contains: searchTerm },
+    const fetchAuthors = async () => {
+      try {
+        const result = await queryPromise<{ AudiobookAuthors: { Edges: Array<{ Node: AudiobookAuthorNode }> } }>(AUDIOBOOK_AUTHORS_QUERY, { libraryId })
+          
+        const edges = result.data?.AudiobookAuthors?.Edges ?? []
+        setAuthors(edges.map((e) => ({
+          id: e.Node.Id,
+          libraryId: e.Node.LibraryId,
+          name: e.Node.Name,
+          sortName: e.Node.SortName,
+          openlibraryId: e.Node.OpenlibraryId,
+        })))
+      } catch (err) {
+        console.error('Failed to fetch authors:', err)
+      } finally {
+        setAuthorsLoading(false)
       }
     }
-    
-    // Add order by from sort state
-    const graphqlField = sortFieldMap[sortColumn || 'name'] || 'NAME'
-    vars.orderBy = {
-      field: graphqlField,
-      direction: sortDirection.toUpperCase(),
-    }
-    
-    return vars
-  }, [libraryId, searchTerm, sortColumn, sortDirection])
 
-  // Use infinite connection hook for server-side pagination
-  const {
-    items: authors,
-    isLoading: authorsLoading,
-    isLoadingMore,
-    hasMore,
-    totalCount,
-    loadMore,
-  } = useInfiniteConnection<AuthorsConnectionResponse, AudiobookAuthor>({
-    query: AUDIOBOOK_AUTHORS_CONNECTION_QUERY,
-    variables: queryVariables,
-    getConnection: (data) => data.audiobookAuthorsConnection,
-    batchSize: 50,
-    enabled: !shouldSkipQueries,
-    deps: [libraryId, searchTerm],
-  })
+    void fetchAudiobooks()
+    void fetchAuthors()
+  }, [libraryId, shouldSkipQueries])
 
   const isLoading = authorsLoading || audiobooksLoading
 
@@ -208,11 +224,31 @@ export function LibraryAuthorsTab({
     return letters
   }, [authors])
 
-  // Filter authors by selected letter
+  const sortedAuthors = useMemo(() => {
+    const sorted = [...authors]
+    sorted.sort((a, b) => {
+      if (sortColumn === 'audiobooks') {
+        const av = bookCountByAuthor.get(a.id) || 0
+        const bv = bookCountByAuthor.get(b.id) || 0
+        return sortDirection === 'asc' ? av - bv : bv - av
+      }
+      const cmp = a.name.localeCompare(b.name)
+      return sortDirection === 'asc' ? cmp : -cmp
+    })
+    return sorted
+  }, [authors, sortColumn, sortDirection, bookCountByAuthor])
+
   const filteredAuthors = useMemo(() => {
-    if (!normalizedLetter) return authors
-    return authors.filter((author) => getFirstLetter(author.name) === normalizedLetter)
-  }, [authors, normalizedLetter])
+    let list = sortedAuthors
+    if (searchTerm) {
+      const q = searchTerm.toLowerCase()
+      list = list.filter((author) => author.name.toLowerCase().includes(q))
+    }
+    if (normalizedLetter) {
+      list = list.filter((author) => getFirstLetter(author.name) === normalizedLetter)
+    }
+    return list
+  }, [sortedAuthors, searchTerm, normalizedLetter])
 
   // Handle letter change - toggle filter
   const handleLetterChange = useCallback((letter: string | null) => {
@@ -293,14 +329,9 @@ export function LibraryAuthorsTab({
           showItemCount
           ariaLabel="Authors table"
           fillHeight
-          serverSide
-          serverTotalCount={totalCount ?? undefined}
+          serverTotalCount={filteredAuthors.length}
           onSearchChange={handleSearchChange}
-          paginationMode="infinite"
-          hasMore={hasMore}
-          onLoadMore={loadMore}
           isLoading={parentLoading || isLoading}
-          isLoadingMore={isLoadingMore}
           headerContent={
             <AlphabetFilter
               selectedLetter={normalizedLetter}

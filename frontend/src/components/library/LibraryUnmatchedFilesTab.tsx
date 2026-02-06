@@ -11,7 +11,7 @@ import {
   IconTrash,
   IconLink,
 } from '@tabler/icons-react'
-import { graphqlClient, UNMATCHED_FILES_QUERY, type MediaFile } from '../../lib/graphql'
+import { UNMATCHED_FILES_QUERY, type MediaFile } from '../../lib/graphql'
 import { sanitizeError } from '../../lib/format'
 import { ErrorState } from '../shared'
 import { ManualMatchModal } from './ManualMatchModal'
@@ -39,9 +39,8 @@ export function LibraryUnmatchedFilesTab({ libraryId, libraryPath, libraryType, 
     setIsLoading(true)
     setError(null)
     try {
-      const result = await graphqlClient
-        .query<UnmatchedFilesResponse>(UNMATCHED_FILES_QUERY, { libraryId })
-        .toPromise()
+      const result = await queryPromise<UnmatchedFilesResponse>(UNMATCHED_FILES_QUERY, { libraryId })
+        
       
       if (result.error) {
         setError(sanitizeError(result.error))

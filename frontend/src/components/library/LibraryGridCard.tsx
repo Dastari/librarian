@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Card } from "@heroui/card";
 import {
@@ -50,6 +50,110 @@ export function LibraryGridCard({ library, onScan, onDelete }: LibraryGridCardPr
   const typeInfo = getLibraryTypeInfo(library.LibraryType as LibraryType);
   const gradient =
     LIBRARY_GRADIENTS[library.LibraryType] || LIBRARY_GRADIENTS.OTHER;
+  const recentArtworkUrls = useMemo(() => {
+    if (library.LibraryType === "MOVIES") {
+      return (library.Movies?.Edges ?? [])
+        .map((edge) => edge.Node.PosterUrl)
+        .filter((url): url is string => Boolean(url));
+    }
+
+    if (library.LibraryType === "TV") {
+      return (library.Shows?.Edges ?? [])
+        .map((edge) => edge.Node.PosterUrl)
+        .filter((url): url is string => Boolean(url));
+    }
+
+    if (library.LibraryType === "MUSIC") {
+      return (library.Albums?.Edges ?? [])
+        .map((edge) => edge.Node.CoverUrl)
+        .filter((url): url is string => Boolean(url));
+    }
+
+    if (library.LibraryType === "AUDIOBOOKS") {
+      return (library.Audiobooks?.Edges ?? [])
+        .map((edge) => edge.Node.CoverUrl)
+        .filter((url): url is string => Boolean(url));
+    }
+
+    return [];
+  }, [
+    library.LibraryType,
+    library.Movies?.Edges,
+    library.Shows?.Edges,
+    library.Albums?.Edges,
+    library.Audiobooks?.Edges,
+  ]);
+  const coverSignature = useMemo(
+    () => recentArtworkUrls.join("|"),
+    [recentArtworkUrls],
+  );
+  const [frontCoverIndex, setFrontCoverIndex] = useState(0);
+  const [backCoverIndex, setBackCoverIndex] = useState<number | null>(null);
+  const [showFrontLayer, setShowFrontLayer] = useState(true);
+  const intervalRef = useRef<number | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const frontCoverIndexRef = useRef(0);
+  const backCoverIndexRef = useRef<number | null>(null);
+  const showFrontLayerRef = useRef(true);
+
+  useEffect(() => {
+    setFrontCoverIndex(0);
+    setBackCoverIndex(null);
+    setShowFrontLayer(true);
+    frontCoverIndexRef.current = 0;
+    backCoverIndexRef.current = null;
+    showFrontLayerRef.current = true;
+  }, [library.Id, coverSignature]);
+
+  useEffect(() => {
+    if (intervalRef.current !== null) {
+      window.clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    if (frameRef.current !== null) {
+      window.cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+    if (recentArtworkUrls.length < 2) return;
+
+    intervalRef.current = window.setInterval(() => {
+      if (showFrontLayerRef.current) {
+        const nextBackIndex =
+          (frontCoverIndexRef.current + 1) % recentArtworkUrls.length;
+        setBackCoverIndex(nextBackIndex);
+        backCoverIndexRef.current = nextBackIndex;
+        frameRef.current = window.requestAnimationFrame(() => {
+          setShowFrontLayer(false);
+          showFrontLayerRef.current = false;
+        });
+      } else {
+        const currentBackIndex =
+          backCoverIndexRef.current ?? frontCoverIndexRef.current;
+        const nextFrontIndex = (currentBackIndex + 1) % recentArtworkUrls.length;
+        setFrontCoverIndex(nextFrontIndex);
+        frontCoverIndexRef.current = nextFrontIndex;
+        frameRef.current = window.requestAnimationFrame(() => {
+          setShowFrontLayer(true);
+          showFrontLayerRef.current = true;
+        });
+      }
+    }, 5000);
+
+    return () => {
+      if (intervalRef.current !== null) {
+        window.clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      if (frameRef.current !== null) {
+        window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+    };
+  }, [recentArtworkUrls.length]);
+
+  const frontCoverUrl = recentArtworkUrls[frontCoverIndex];
+  const backCoverUrl =
+    backCoverIndex !== null ? recentArtworkUrls[backCoverIndex] : null;
 
   const handleCardClick = useCallback(() => {
     navigate({
@@ -83,11 +187,36 @@ export function LibraryGridCard({ library, onScan, onDelete }: LibraryGridCardPr
 
       {/* Background gradient with icon */}
       <div className="absolute inset-0 w-full h-full">
-        <div className={`absolute inset-0 bg-linear-to-br ${gradient}`}>
-          <div className="absolute inset-0 flex items-center justify-center opacity-30">
-            <typeInfo.Icon size={80} />
+        {frontCoverUrl ? (
+          <>
+            {backCoverUrl && (
+              <img
+                src={backCoverUrl}
+                alt={`${library.Name} artwork`}
+                className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ${
+                  showFrontLayer ? "opacity-0" : "opacity-100"
+                }`}
+              />
+            )}
+            <img
+              src={frontCoverUrl}
+              alt={`${library.Name} artwork`}
+              className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ${
+                showFrontLayer ? "opacity-100" : "opacity-0"
+              }`}
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/45" />
+            <div className="absolute inset-0 flex items-center justify-center opacity-20">
+              <typeInfo.Icon size={80} />
+            </div>
+          </>
+        ) : (
+          <div className={`absolute inset-0 bg-linear-to-br ${gradient}`}>
+            <div className="absolute inset-0 flex items-center justify-center opacity-30">
+              <typeInfo.Icon size={80} />
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Type badge - top left */}

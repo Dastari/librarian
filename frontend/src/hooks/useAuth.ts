@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from "react";
-import { graphqlClient } from "../lib/graphql/client";
 import {
   LoginDocument,
   RegisterDocument,
@@ -40,11 +39,10 @@ export function useAuth() {
     }
 
     try {
-      const result = await graphqlClient
-        .mutation(RefreshTokenDocument, {
+      const result = await mutationPromise(RefreshTokenDocument, {
           input: { RefreshToken: refreshToken },
         })
-        .toPromise();
+        ;
 
       const payload = result.data?.RefreshToken;
       if (payload?.Success && payload.Tokens) {
@@ -150,11 +148,10 @@ export function useAuth() {
   const signIn = async (email: string, password: string) => {
     setError(null);
 
-    const result = await graphqlClient
-      .mutation(LoginDocument, {
+    const result = await mutationPromise(LoginDocument, {
         input: { UsernameOrEmail: email, Password: password },
       })
-      .toPromise();
+      ;
 
     if (result.error) {
       throw new Error(result.error.message || "Login failed");
@@ -198,15 +195,14 @@ export function useAuth() {
   const signUp = async (email: string, name: string, password: string) => {
     setError(null);
 
-    const result = await graphqlClient
-      .mutation(RegisterDocument, {
+    const result = await mutationPromise(RegisterDocument, {
         input: {
           Email: email,
           Name: name,
           Password: password,
         },
       })
-      .toPromise();
+      ;
 
     if (result.error) {
       throw new Error(result.error.message || "Registration failed");
@@ -246,11 +242,10 @@ export function useAuth() {
 
     try {
       if (refreshToken) {
-        await graphqlClient
-          .mutation(LogoutDocument, {
+        await mutationPromise(LogoutDocument, {
             input: { RefreshToken: refreshToken },
           })
-          .toPromise();
+          ;
       }
     } catch (err) {
       // Log but don't throw - we still want to clear local state

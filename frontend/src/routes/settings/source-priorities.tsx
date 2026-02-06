@@ -21,7 +21,7 @@ import {
   IconMusic,
   IconBook,
 } from '@tabler/icons-react'
-import { graphqlClient } from '../../lib/graphql'
+import { queryPromise, mutationPromise } from '../../lib/graphql/client'
 import { sanitizeError } from '../../lib/format'
 import { InlineError } from '../../components/shared'
 
@@ -136,12 +136,8 @@ function SourcePrioritiesPage() {
       setLoading(true)
       
       const [rulesResult, sourcesResult] = await Promise.all([
-        graphqlClient
-          .query<{ sourcePriorityRules: SourcePriorityRule[] }>(PRIORITY_RULES_QUERY, {})
-          .toPromise(),
-        graphqlClient
-          .query<{ availableSources: AvailableSource[] }>(AVAILABLE_SOURCES_QUERY, {})
-          .toPromise(),
+        queryPromise<{ sourcePriorityRules: SourcePriorityRule[] }>(PRIORITY_RULES_QUERY, {}),
+        queryPromise<{ availableSources: AvailableSource[] }>(AVAILABLE_SOURCES_QUERY, {}),
       ])
 
       if (rulesResult.error) throw new Error(rulesResult.error.message)
@@ -231,8 +227,7 @@ function SourcePrioritiesPage() {
 
       const libraryType = selectedTab === 'default' ? null : selectedTab
 
-      const result = await graphqlClient
-        .mutation<{
+      const result = await mutationPromise<{
           setSourcePriorityRule: { success: boolean; error: string | null }
         }>(SET_PRIORITY_RULE_MUTATION, {
           input: {
@@ -247,7 +242,7 @@ function SourcePrioritiesPage() {
             searchAllSources: searchAll,
           },
         })
-        .toPromise()
+        
 
       if (result.error || !result.data?.setSourcePriorityRule.success) {
         throw new Error(result.data?.setSourcePriorityRule.error || result.error?.message || 'Failed to save')
@@ -270,12 +265,11 @@ function SourcePrioritiesPage() {
     try {
       const libraryType = selectedTab === 'default' ? null : selectedTab
 
-      const result = await graphqlClient
-        .mutation<{ deleteSourcePriorityRule: { success: boolean; error: string | null } }>(
+      const result = await mutationPromise<{ deleteSourcePriorityRule: { success: boolean; error: string | null } }>(
           DELETE_PRIORITY_RULE_MUTATION,
           { libraryType }
         )
-        .toPromise()
+        
 
       if (result.error || !result.data?.deleteSourcePriorityRule.success) {
         throw new Error(result.data?.deleteSourcePriorityRule.error || result.error?.message)

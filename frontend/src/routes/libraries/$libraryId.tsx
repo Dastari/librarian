@@ -10,6 +10,7 @@ import {
   useEffect,
   useCallback,
   useRef,
+  useMemo,
   createContext,
   useContext,
 } from "react";
@@ -39,17 +40,121 @@ import type {
   LibraryResult,
 } from "../../lib/graphql/generated/graphql";
 import {
-  graphqlClient,
-  LIBRARY_QUERY,
-  TV_SHOWS_QUERY,
-  DELETE_TV_SHOW_MUTATION,
-  UPDATE_LIBRARY_MUTATION,
-  SCAN_LIBRARY_MUTATION,
-  LIBRARY_CHANGED_SUBSCRIPTION,
+  useQuery,
+  useMutation,
+  useSubscription,
+  gql,
+} from "../../lib/graphql/client";
+import {
   getLibraryTypeInfo,
   type LibraryType,
   type UpdateLibraryInput,
 } from "../../lib/graphql";
+
+const LIBRARY_DETAIL_QUERY = gql`
+  query LibraryDetail($Id: String!) {
+    Library(Id: $Id) {
+      Id
+      Name
+      Path
+      LibraryType
+      Scanning
+    }
+  }
+`;
+
+const LIBRARY_SHOWS_QUERY = gql`
+  query LibraryShows($libraryId: String!) {
+    Shows(Where: { LibraryId: { Eq: $libraryId } }, Page: { Limit: 5000, Offset: 0 }) {
+      Edges {
+        Node {
+          Id
+          LibraryId
+          Title
+          SortTitle
+          TvmazeId
+          TmdbId
+          ImdbId
+          Status
+          Year
+          PosterUrl
+          BackdropUrl
+          Path
+          Monitored
+          Genres
+          Runtime
+          Network
+          AirDay
+          AirTime
+          FirstAirDate
+          LastAirDate
+          Overview
+          Rating
+          VoteCount
+          Certification
+          EpisodeCount
+          EpisodeFileCount
+          SeasonCount
+          DownloadedEpisodeCount
+          MissingEpisodeCount
+          DownloadingEpisodeCount
+          HasFiles
+          LastInfoSync
+          LastDiskSync
+          NextAiring
+          CreatedAt
+          UpdatedAt
+          Ended
+        }
+      }
+    }
+  }
+`;
+
+const DELETE_SHOW_MUTATION = gql`
+  mutation DeleteShow($Id: String!) {
+    DeleteShow(Id: $Id) {
+      Success
+      Error
+    }
+  }
+`;
+
+const UPDATE_LIBRARY_MUTATION = gql`
+  mutation UpdateLibrary($Id: String!, $Input: UpdateLibraryInput!) {
+    UpdateLibrary(Id: $Id, Input: $Input) {
+      Success
+      Error
+      Library {
+        Id
+      }
+    }
+  }
+`;
+
+const SCAN_LIBRARY_MUTATION = gql`
+  mutation ScanLibrary($Id: String!) {
+    ScanLibrary(Id: $Id) {
+      Status
+      Message
+    }
+  }
+`;
+
+const LIBRARY_CHANGED_SUBSCRIPTION = gql`
+  subscription LibraryChanged {
+    LibraryChanged {
+      Id
+      Library {
+        Id
+        Name
+        Path
+        LibraryType
+        Scanning
+      }
+    }
+  }
+`;
 
 // Context for sharing library data with subroutes
 export interface LibraryContextValue {
@@ -109,47 +214,59 @@ function LibraryDetailLayout() {
     onClose: onConfirmClose,
   } = useDisclosure();
 
-  // State - keep previous data to prevent flashes during refetch
-  const [library, setLibrary] = useState<Library | null>(null);
-  const [tvShows, setTvShows] = useState<Show[]>([]);
-  const [initialLoading, setInitialLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState(false);
   const [showToDelete, setShowToDelete] = useState<{
     id: string;
     name: string;
   } | null>(null);
   const [isScanning, setIsScanning] = useState(false);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [libraryResult, showsResult] = await Promise.all([
-        graphqlClient
-          .query<{ Library: Library | null }>(LIBRARY_QUERY, { Id: libraryId })
-          .toPromise(),
-        graphqlClient
-          .query<{
-            Shows: { Edges: Array<{ Node: Show }> };
-          }>(TV_SHOWS_QUERY, { libraryId })
-          .toPromise(),
-      ]);
+  const {
+    data: libraryData,
+    previousData: previousLibraryData,
+    loading: libraryLoading,
+    refetch: refetchLibrary,
+  } = useQuery<{ Library: Library | null }>(LIBRARY_DETAIL_QUERY, {
+    variables: { Id: libraryId },
+    fetchPolicy: "cache-and-network",
+  });
 
-      if (libraryResult.data?.Library) {
-        setLibrary(libraryResult.data.Library);
-      }
-      if (showsResult.data?.Shows?.Edges) {
-        setTvShows(showsResult.data.Shows.Edges.map((edge) => edge.Node));
-      }
-    } catch (err) {
-      console.error("Failed to fetch data:", err);
-    } finally {
-      setInitialLoading(false);
-    }
-  }, [libraryId]);
+  const {
+    data: showsData,
+    previousData: previousShowsData,
+    loading: showsLoading,
+    refetch: refetchShows,
+  } = useQuery<{ Shows: { Edges: Array<{ Node: Show }> } }>(LIBRARY_SHOWS_QUERY, {
+    variables: { libraryId },
+    fetchPolicy: "cache-and-network",
+  });
 
-  useEffect(() => {
-    setInitialLoading(true);
-    fetchData();
-  }, [fetchData]);
+  const library = libraryData?.Library ?? previousLibraryData?.Library ?? null;
+  const tvShows = useMemo(
+    () => (showsData?.Shows?.Edges ?? previousShowsData?.Shows?.Edges ?? []).map((edge) => edge.Node),
+    [showsData?.Shows?.Edges, previousShowsData?.Shows?.Edges],
+  );
+
+  const refetchAll = useCallback(() => {
+    void Promise.all([refetchLibrary(), refetchShows()]);
+  }, [refetchLibrary, refetchShows]);
+
+  const [deleteShow, { loading: deletingShow }] = useMutation<{
+    DeleteShow: { Success: boolean; Error: string | null };
+  }>(DELETE_SHOW_MUTATION);
+
+  const [updateLibraryMutation, { loading: updatingLibrary }] = useMutation<{
+    UpdateLibrary: LibraryResult;
+  }>(UPDATE_LIBRARY_MUTATION);
+
+  const [scanLibraryMutation, { loading: scanMutationLoading }] = useMutation<{
+    ScanLibrary: { Status: string; Message: string | null };
+  }>(SCAN_LIBRARY_MUTATION);
+
+  const { data: libraryChangedData } = useSubscription<{
+    LibraryChanged: LibraryChangedEvent;
+  }>(LIBRARY_CHANGED_SUBSCRIPTION, {
+    skip: !library,
+  });
 
   // Determine active tab from URL
   const getActiveTab = useCallback((): LibraryTab => {
@@ -190,7 +307,7 @@ function LibraryDetailLayout() {
     } else if (library?.Scanning && !isScanning) {
       setIsScanning(true);
     }
-  }, [library?.Scanning, isScanning]);
+  }, [library?.Scanning, isScanning, library]);
 
   // Update page title
   useEffect(() => {
@@ -200,16 +317,17 @@ function LibraryDetailLayout() {
     return () => {
       document.title = "Librarian";
     };
-  }, [library?.Name]);
+  }, [library]);
 
   // Subscribe to data changes for live updates
-  useDataReactivity(fetchData, {
+  useDataReactivity(refetchAll, {
     onTorrentComplete: true,
     periodicInterval: 30000,
     onFocus: true,
   });
 
   // Subscribe to content download progress
+  const initialLoading = libraryLoading && !library;
   const downloadProgress = useContentDownloadProgress({
     libraryId,
     enabled: !initialLoading && !!library,
@@ -218,44 +336,29 @@ function LibraryDetailLayout() {
   // Track previous scanning state for toast notifications
   const prevScanningRef = useRef(library?.Scanning);
 
-  // Subscribe to library changes
   useEffect(() => {
     if (!library) return;
 
-    const sub = graphqlClient
-      .subscription<{
-        LibraryChanged: LibraryChangedEvent;
-      }>(LIBRARY_CHANGED_SUBSCRIPTION, {})
-      .subscribe({
-        next: (result) => {
-          const event = result.data?.LibraryChanged;
-          if (event?.Id === library.Id && event.Library) {
-            const wasScanning = prevScanningRef.current;
-            const nowScanning = event.Library.Scanning;
-            prevScanningRef.current = nowScanning;
+    const event = libraryChangedData?.LibraryChanged;
+    if (!event || event.Id !== library.Id || !event.Library) return;
 
-            // Update library state directly from subscription
-            setLibrary(event.Library);
+    const wasScanning = prevScanningRef.current;
+    const nowScanning = event.Library.Scanning;
+    prevScanningRef.current = nowScanning;
 
-            if (wasScanning && !nowScanning) {
-              setIsScanning(false);
-              addToast({
-                title: "Scan Complete",
-                description: `Finished scanning ${library.Name}`,
-                color: "success",
-              });
-            } else if (!wasScanning && nowScanning) {
-              setIsScanning(true);
-            }
-
-            // Refresh shows data on library changes
-            fetchData();
-          }
-        },
+    if (wasScanning && !nowScanning) {
+      setIsScanning(false);
+      addToast({
+        title: "Scan Complete",
+        description: `Finished scanning ${library.Name}`,
+        color: "success",
       });
+    } else if (!wasScanning && nowScanning) {
+      setIsScanning(true);
+    }
 
-    return () => sub.unsubscribe();
-  }, [library?.Id, library?.Name, fetchData]);
+    refetchAll();
+  }, [libraryChangedData, library, refetchAll]);
 
   const handleDeleteShowClick = useCallback(
     (showId: string, showName: string) => {
@@ -265,21 +368,17 @@ function LibraryDetailLayout() {
     [onConfirmOpen],
   );
 
-  const handleDeleteShow = async () => {
+  const handleDeleteShow = useCallback(async () => {
     if (!showToDelete) return;
 
     try {
-      const { data, error } = await graphqlClient
-        .mutation<{
-          deleteTvShow: { success: boolean; error: string | null };
-        }>(DELETE_TV_SHOW_MUTATION, { id: showToDelete.id })
-        .toPromise();
+      const { data } = await deleteShow({ variables: { Id: showToDelete.id } });
 
-      if (error || !data?.deleteTvShow.success) {
+      if (!data?.DeleteShow.Success) {
         addToast({
           title: "Error",
           description: sanitizeError(
-            data?.deleteTvShow.error || "Failed to delete show",
+            data?.DeleteShow.Error || "Failed to delete show",
           ),
           color: "danger",
         });
@@ -293,32 +392,29 @@ function LibraryDetailLayout() {
         color: "success",
       });
 
-      fetchData();
+      refetchAll();
     } catch (err) {
       console.error("Failed to delete show:", err);
     }
     onConfirmClose();
-  };
+  }, [deleteShow, onConfirmClose, refetchAll, showToDelete]);
 
   const handleUpdateLibrary = useCallback(
     async (input: UpdateLibraryInput) => {
       if (!library) return;
 
       try {
-        setActionLoading(true);
-        const { data, error } = await graphqlClient
-          .mutation<{ UpdateLibrary: LibraryResult }>(UPDATE_LIBRARY_MUTATION, {
+        const { data } = await updateLibraryMutation({
+          variables: {
             Id: library.Id,
             Input: input,
-          })
-          .toPromise();
+          },
+        });
 
-        if (error || !data?.UpdateLibrary.Success) {
-          const errorMsg =
-            data?.UpdateLibrary.Error || error?.message || "Unknown error";
+        if (!data?.UpdateLibrary.Success) {
           addToast({
             title: "Error",
-            description: `Failed to update library: ${errorMsg}`,
+            description: `Failed to update library: ${data?.UpdateLibrary.Error || "Unknown error"}`,
             color: "danger",
           });
           return;
@@ -330,7 +426,7 @@ function LibraryDetailLayout() {
           color: "success",
         });
 
-        fetchData();
+        refetchAll();
       } catch (err) {
         console.error("Failed to update library:", err);
         addToast({
@@ -338,33 +434,17 @@ function LibraryDetailLayout() {
           description: "Failed to update library",
           color: "danger",
         });
-      } finally {
-        setActionLoading(false);
       }
     },
-    [library, fetchData],
+    [library, refetchAll, updateLibraryMutation],
   );
 
-  const handleScanLibrary = async () => {
+  const handleScanLibrary = useCallback(async () => {
     if (!library) return;
 
     setIsScanning(true);
     try {
-      const { data, error } = await graphqlClient
-        .mutation<{
-          ScanLibrary: { Status: string; Message: string | null };
-        }>(SCAN_LIBRARY_MUTATION, { Id: library.Id })
-        .toPromise();
-
-      if (error) {
-        addToast({
-          title: "Error",
-          description: sanitizeError(error),
-          color: "danger",
-        });
-        setIsScanning(false);
-        return;
-      }
+      const { data } = await scanLibraryMutation({ variables: { Id: library.Id } });
 
       addToast({
         title: "Scan Started",
@@ -374,11 +454,15 @@ function LibraryDetailLayout() {
     } catch (err) {
       console.error("Failed to scan library:", err);
       setIsScanning(false);
+      addToast({
+        title: "Error",
+        description: "Failed to start scan",
+        color: "danger",
+      });
     }
-  };
+  }, [library, scanLibraryMutation]);
 
-  // Not found state - only show after loading is complete
-  if (!initialLoading && !library) {
+  if (!libraryLoading && !library) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-8">
         <Card className="bg-content1">
@@ -393,7 +477,6 @@ function LibraryDetailLayout() {
     );
   }
 
-  // Initial loading state
   if (initialLoading && !library) {
     return (
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col grow">
@@ -404,18 +487,17 @@ function LibraryDetailLayout() {
     );
   }
 
-  // Safety check - should not reach here but TypeScript needs it
   if (!library) return null;
 
   const typeInfo = getLibraryTypeInfo(library.LibraryType as LibraryType);
-  const scanningActive = isScanning || library.Scanning;
+  const scanningActive = isScanning || library.Scanning || scanMutationLoading;
 
   const contextValue: LibraryContextValue = {
     library,
-    loading: initialLoading,
+    loading: libraryLoading || showsLoading,
     tvShows,
-    refetch: fetchData,
-    actionLoading,
+    refetch: refetchAll,
+    actionLoading: updatingLibrary || deletingShow,
     handleDeleteShowClick,
     handleUpdateLibrary,
     onOpenAddShow: onOpen,
@@ -425,7 +507,6 @@ function LibraryDetailLayout() {
   return (
     <LibraryContext.Provider value={contextValue}>
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col grow">
-        {/* Header */}
         <div className="mb-6">
           <Breadcrumbs className="mb-2">
             <BreadcrumbItem href="/libraries">Libraries</BreadcrumbItem>
@@ -458,7 +539,6 @@ function LibraryDetailLayout() {
           </div>
         </div>
 
-        {/* Tabbed Content */}
         <LibraryLayout
           activeTab={getActiveTab()}
           libraryId={libraryId}
@@ -467,15 +547,13 @@ function LibraryDetailLayout() {
           <Outlet />
         </LibraryLayout>
 
-        {/* Add Show Modal */}
         <AddShowModal
           isOpen={isOpen}
           onClose={onClose}
           libraryId={libraryId}
-          onAdded={fetchData}
+          onAdded={refetchAll}
         />
 
-        {/* Confirm Delete Modal */}
         <ConfirmModal
           isOpen={isConfirmOpen}
           onClose={onConfirmClose}

@@ -5,7 +5,7 @@ import { Switch } from '@heroui/switch'
 import { Spinner } from '@heroui/spinner'
 import { IconTemplate, IconPencil } from '@tabler/icons-react'
 import type { NamingPattern } from '../../lib/graphql/generated/graphql'
-import { graphqlClient, NAMING_PATTERNS_QUERY } from '../../lib/graphql'
+import { NAMING_PATTERNS_QUERY } from '../../lib/graphql'
 import { previewNamingPattern } from '../../lib/format'
 
 interface NamingPatternSelectorProps {
@@ -65,9 +65,8 @@ export function NamingPatternSelector({
   useEffect(() => {
     const fetchPatterns = async () => {
       try {
-        const result = await graphqlClient
-          .query<{ NamingPatterns: { Edges: Array<{ Node: NamingPattern }> } }>(NAMING_PATTERNS_QUERY, {})
-          .toPromise()
+        const result = await queryPromise<{ NamingPatterns: { Edges: Array<{ Node: NamingPattern }> } }>(NAMING_PATTERNS_QUERY, {})
+          
         
         if (result.data?.NamingPatterns?.Edges) {
           const nodes = result.data.NamingPatterns.Edges.map(e => e.Node)

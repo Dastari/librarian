@@ -16,7 +16,6 @@ import {
   IconAlertCircle,
   IconBellRinging,
 } from "@tabler/icons-react";
-import { graphqlClient } from "../lib/graphql";
 import {
   NotificationsDocument,
   UpdateNotificationDocument,
@@ -109,16 +108,15 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
     if (!isOpen) return;
 
     setIsLoading(true);
-    graphqlClient
-      .query(NotificationsDocument, {
+    queryPromise(NotificationsDocument, {
         Where: UNREAD_WHERE,
         OrderBy: RECENT_ORDER,
         Page: RECENT_PAGE,
       })
-      .toPromise()
+      
       .then((result) => {
         if (result.data?.Notifications?.Edges) {
-          const list = result.data.Notifications.Edges.map((e) =>
+          const list = result.data.Notifications.Edges.map((e: any) =>
             nodeToNotification(e.Node),
           );
           setNotifications(list);
@@ -129,12 +127,11 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
 
   const handleMarkRead = async (id: string) => {
     const now = new Date().toISOString();
-    await graphqlClient
-      .mutation(UpdateNotificationDocument, {
+    await mutationPromise(UpdateNotificationDocument, {
         Id: id,
         Input: { ReadAt: now },
       })
-      .toPromise();
+      ;
 
     setNotifications((prev) =>
       prev.map((n) =>
@@ -146,12 +143,11 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
   const handleMarkAllRead = async () => {
     const now = new Date().toISOString();
     for (const n of notifications) {
-      await graphqlClient
-        .mutation(UpdateNotificationDocument, {
+      await mutationPromise(UpdateNotificationDocument, {
           Id: n.id,
           Input: { ReadAt: now },
         })
-        .toPromise();
+        ;
     }
     setNotifications((prev) =>
       prev.map((n) => ({ ...n, readAt: now })),
@@ -163,8 +159,7 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
     resolution: NotificationResolution,
   ) => {
     const now = new Date().toISOString();
-    await graphqlClient
-      .mutation(UpdateNotificationDocument, {
+    await mutationPromise(UpdateNotificationDocument, {
         Id: id,
         Input: {
           ResolvedAt: now,
@@ -172,7 +167,7 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
           ReadAt: now,
         },
       })
-      .toPromise();
+      ;
 
     setNotifications((prev) =>
       prev.map((n) =>
@@ -189,9 +184,8 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
   };
 
   const handleDelete = async (id: string) => {
-    await graphqlClient
-      .mutation(DeleteNotificationDocument, { Id: id })
-      .toPromise();
+    await mutationPromise(DeleteNotificationDocument, { Id: id })
+      ;
 
     setNotifications((prev) => prev.filter((n) => n.id !== id));
   };

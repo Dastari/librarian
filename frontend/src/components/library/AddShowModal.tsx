@@ -9,7 +9,6 @@ import { Chip } from '@heroui/chip'
 import { Spinner } from '@heroui/spinner'
 import { addToast } from '@heroui/toast'
 import {
-  graphqlClient,
   SEARCH_TV_SHOWS_QUERY,
   ADD_TV_SHOW_MUTATION,
   type TvShowSearchResult,
@@ -39,16 +38,29 @@ export function AddShowModal({
   const [selectedShow, setSelectedShow] = useState<TvShowSearchResult | null>(null)
   const [monitorType, setMonitorType] = useState<AutoDownloadMode>('ALL')
 
+  interface TvShowSearchNode {
+    Provider: string
+    ProviderId: number
+    Name: string
+    Year: number | null
+    Status: string | null
+    Network: string | null
+    Overview: string | null
+    PosterUrl: string | null
+    TvdbId: number | null
+    ImdbId: string | null
+    Score: number | null
+  }
+
   const handleSearch = async () => {
     if (!searchQuery.trim()) return
 
     try {
       setSearching(true)
-      const { data, error } = await graphqlClient
-        .query<{ SearchTvShows: TvShowSearchResult[] }>(SEARCH_TV_SHOWS_QUERY, {
+      const { data, error } = await queryPromise<{ SearchTvShows: TvShowSearchNode[] }>(SEARCH_TV_SHOWS_QUERY, {
           Query: searchQuery,
         })
-        .toPromise()
+        
 
       if (error) {
         addToast({
@@ -59,7 +71,21 @@ export function AddShowModal({
         return
       }
 
-      setSearchResults(data?.SearchTvShows || [])
+      setSearchResults(
+        (data?.SearchTvShows ?? []).map((show) => ({
+          provider: show.Provider,
+          providerId: show.ProviderId,
+          name: show.Name,
+          year: show.Year,
+          status: show.Status,
+          network: show.Network,
+          overview: show.Overview,
+          posterUrl: show.PosterUrl,
+          tvdbId: show.TvdbId,
+          imdbId: show.ImdbId,
+          score: show.Score ?? 0,
+        }))
+      )
     } catch (err) {
       console.error('Search failed:', err)
     } finally {
@@ -72,12 +98,11 @@ export function AddShowModal({
 
     try {
       setAdding(true)
-      const { data, error } = await graphqlClient
-        .mutation<{
-          addTvShow: {
-            success: boolean
-            tvShow: { Id: string } | null
-            error: string | null
+      const { data, error } = await mutationPromise<{
+          AddTvShow: {
+            Success: boolean
+            Show: { Id: string } | null
+            Error: string | null
           }
         }>(ADD_TV_SHOW_MUTATION, {
           LibraryId: libraryId,
@@ -86,12 +111,12 @@ export function AddShowModal({
             AutoDownloadMode: monitorType,
           },
         })
-        .toPromise()
+        
 
-      if (error || !data?.addTvShow.success) {
+      if (error || !data?.AddTvShow.Success) {
         addToast({
           title: 'Error',
-          description: sanitizeError(data?.addTvShow.error || 'Failed to add show'),
+          description: sanitizeError(data?.AddTvShow.Error || 'Failed to add show'),
           color: 'danger',
         })
         return

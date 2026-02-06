@@ -21,7 +21,6 @@ import {
   IconCheck,
 } from '@tabler/icons-react'
 import {
-  graphqlClient,
   SEARCH_TV_SHOWS_QUERY,
   SEARCH_MOVIES_QUERY,
   ADD_TV_SHOW_MUTATION,
@@ -203,11 +202,10 @@ export function AddToLibraryModal({
   useEffect(() => {
     if (isOpen) {
       setLoadingLibraries(true)
-      graphqlClient
-        .query(LibrariesDocument, {})
-        .toPromise()
+      queryPromise(LibrariesDocument, {})
+        
         .then(({ data }) => {
-          setLibraries(data?.Libraries.Edges.map((e) => e.Node) ?? [])
+          setLibraries(data?.Libraries.Edges.map((e: any) => e.Node) ?? [])
         })
         .finally(() => setLoadingLibraries(false))
     }
@@ -238,15 +236,67 @@ export function AddToLibraryModal({
     
     try {
       if (selectedType === 'tv') {
-        const { data } = await graphqlClient
-          .query<{ SearchTvShows: TvShowSearchResult[] }>(SEARCH_TV_SHOWS_QUERY, { Query: searchQuery })
-          .toPromise()
-        setSearchResults(data?.SearchTvShows || [])
+        interface TvShowSearchNode {
+          Provider: string
+          ProviderId: number
+          Name: string
+          Year: number | null
+          Status: string | null
+          Network: string | null
+          Overview: string | null
+          PosterUrl: string | null
+          TvdbId: number | null
+          ImdbId: string | null
+          Score: number | null
+        }
+        const { data } = await queryPromise<{ SearchTvShows: TvShowSearchNode[] }>(SEARCH_TV_SHOWS_QUERY, { Query: searchQuery })
+          
+        setSearchResults(
+          (data?.SearchTvShows ?? []).map((show) => ({
+            provider: show.Provider,
+            providerId: show.ProviderId,
+            name: show.Name,
+            year: show.Year,
+            status: show.Status,
+            network: show.Network,
+            overview: show.Overview,
+            posterUrl: show.PosterUrl,
+            tvdbId: show.TvdbId,
+            imdbId: show.ImdbId,
+            score: show.Score ?? 0,
+          }))
+        )
       } else if (selectedType === 'movies') {
-        const { data } = await graphqlClient
-          .query<{ SearchMovies: MovieSearchResult[] }>(SEARCH_MOVIES_QUERY, { Query: searchQuery })
-          .toPromise()
-        setSearchResults(data?.SearchMovies || [])
+        interface MovieSearchNode {
+          Provider: string
+          ProviderId: number
+          Title: string
+          OriginalTitle: string | null
+          Year: number | null
+          Overview: string | null
+          PosterUrl: string | null
+          BackdropUrl: string | null
+          ImdbId: string | null
+          VoteAverage: number | null
+          Popularity: number | null
+        }
+        const { data } = await queryPromise<{ SearchMovies: MovieSearchNode[] }>(SEARCH_MOVIES_QUERY, { Query: searchQuery })
+          
+        setSearchResults(
+          (data?.SearchMovies ?? []).map((movie) => ({
+            provider: movie.Provider,
+            providerId: movie.ProviderId,
+            title: movie.Title,
+            originalTitle: movie.OriginalTitle,
+            year: movie.Year,
+            overview: movie.Overview,
+            posterUrl: movie.PosterUrl,
+            backdropUrl: movie.BackdropUrl,
+            imdbId: movie.ImdbId,
+            voteAverage: movie.VoteAverage,
+            popularity: movie.Popularity,
+          }))
+        )
       } else {
         // Music and audiobooks - no search yet
         setSearchResults([])
@@ -276,8 +326,7 @@ export function AddToLibraryModal({
       if (selectedItem && (selectedType === 'tv' || selectedType === 'movies')) {
         if (selectedType === 'tv') {
           const tvItem = selectedItem as TvShowSearchResult
-          const { data, error } = await graphqlClient
-            .mutation<{ addTvShow: { success: boolean; tvShow: { Id: string } | null; error: string | null } }>(
+          const { data, error } = await mutationPromise<{ AddTvShow: { Success: boolean; Show: { Id: string } | null; Error: string | null } }>(
               ADD_TV_SHOW_MUTATION,
               {
                 LibraryId: selectedLibraryId,
@@ -287,16 +336,15 @@ export function AddToLibraryModal({
                 },
               }
             )
-            .toPromise()
+            
           
-          if (error || !data?.addTvShow.success) {
-            throw new Error(data?.addTvShow.error || 'Failed to add TV show')
+          if (error || !data?.AddTvShow.Success) {
+            throw new Error(data?.AddTvShow.Error || 'Failed to add TV show')
           }
-          // TODO: Use data.addTvShow.tvShow?.id to link torrent to show
+          // TODO: Use data.AddTvShow.Show?.Id to link torrent to show
         } else if (selectedType === 'movies') {
           const movieItem = selectedItem as MovieSearchResult
-          const { data, error } = await graphqlClient
-            .mutation<{ AddMovie: { Success: boolean; Movie: { Id: string } | null; Error: string | null } }>(
+          const { data, error } = await mutationPromise<{ AddMovie: { Success: boolean; Movie: { Id: string } | null; Error: string | null } }>(
               ADD_MOVIE_MUTATION,
               {
                 LibraryId: selectedLibraryId,
@@ -306,7 +354,7 @@ export function AddToLibraryModal({
                 },
               }
             )
-            .toPromise()
+            
           
           if (error || !data?.AddMovie.Success) {
             throw new Error(data?.AddMovie.Error || 'Failed to add movie')
@@ -346,14 +394,13 @@ export function AddToLibraryModal({
         // Use magnet field for magnet links, url field for .torrent file URLs
         const isMagnet = magnetUri?.startsWith('magnet:')
         
-        const { data, error } = await graphqlClient
-          .mutation<AddTorrentResponse>(ADD_TORRENT, {
+        const { data, error } = await mutationPromise<AddTorrentResponse>(ADD_TORRENT, {
             Input: {
               Magnet: isMagnet ? magnetUri : undefined,
               Url: !isMagnet ? (magnetUri || torrentUrl) : undefined,
             },
           })
-          .toPromise()
+          
         
         if (error || !data?.AddTorrent?.Success) {
           throw new Error(data?.AddTorrent?.Error || 'Failed to add torrent')

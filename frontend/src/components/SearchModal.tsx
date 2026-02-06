@@ -9,7 +9,6 @@ import { ScrollShadow } from "@heroui/scroll-shadow";
 import { IconSearch, IconDeviceTv, IconMovie } from "@tabler/icons-react";
 import type { Movie, Show } from "../lib/graphql/generated/graphql";
 import {
-  graphqlClient,
   ALL_TV_SHOWS_QUERY,
   ALL_MOVIES_QUERY,
 } from "../lib/graphql";
@@ -54,16 +53,14 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
     setIsLoading(true);
     try {
       const [showsResult, moviesResult] = await Promise.all([
-        graphqlClient
-          .query<{
+        queryPromise<{
             Shows: { Edges: Array<{ Node: Show }> };
           }>(ALL_TV_SHOWS_QUERY, {})
-          .toPromise(),
-        graphqlClient
-          .query<{
+          ,
+        queryPromise<{
             Movies: { Edges: Array<{ Node: Movie }> };
           }>(ALL_MOVIES_QUERY, {})
-          .toPromise(),
+          ,
       ]);
 
       const showNodes =
@@ -182,7 +179,7 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
                 className="text-primary cursor-pointer hover:underline"
                 onClick={handleHuntClick}
               >
-                Hunt for "{searchQuery}" online →
+                Search for "{searchQuery}" online →
               </span>
             )}
           </div>
@@ -260,7 +257,7 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
                 className="text-primary cursor-pointer hover:underline"
                 onClick={handleHuntClick}
               >
-                Hunt for "{searchQuery}" online →
+                Search for "{searchQuery}" online →
               </span>
             </div>
           ) : (

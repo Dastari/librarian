@@ -18,7 +18,6 @@ import {
   IconAlertCircle,
 } from '@tabler/icons-react'
 import {
-  graphqlClient,
   MANUAL_MATCH_MUTATION,
   type MediaFile,
   type ManualMatchResult,
@@ -61,15 +60,25 @@ const MOVIES_QUERY = `
 
 const ALBUMS_QUERY = `
   query Albums($libraryId: String!) {
-    albums(libraryId: $libraryId) {
-      id
-      name
-      year
-      artist
-      tracks {
-        id
-        trackNumber
-        title
+    Albums(Where: { LibraryId: { Eq: $libraryId } }, Page: { Limit: 500, Offset: 0 }) {
+      Edges {
+        Node {
+          Id
+          Name
+          Year
+          Artist {
+            Name
+          }
+          Tracks {
+            Edges {
+              Node {
+                Id
+                TrackNumber
+                Title
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -77,14 +86,22 @@ const ALBUMS_QUERY = `
 
 const AUDIOBOOKS_QUERY = `
   query Audiobooks($libraryId: String!) {
-    audiobooks(libraryId: $libraryId) {
-      id
-      title
-      author
-      chapters {
-        id
-        chapterNumber
-        title
+    Audiobooks(Where: { LibraryId: { Eq: $libraryId } }, Page: { Limit: 500, Offset: 0 }) {
+      Edges {
+        Node {
+          Id
+          Title
+          AuthorName
+          Chapters {
+            Edges {
+              Node {
+                Id
+                ChapterNumber
+                Title
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -132,6 +149,22 @@ interface Album {
   tracks: Track[]
 }
 
+interface AlbumNode {
+  Id: string
+  Name: string
+  Year: number | null
+  Artist: { Name: string } | null
+  Tracks: {
+    Edges: Array<{
+      Node: {
+        Id: string
+        TrackNumber: number | null
+        Title: string | null
+      }
+    }>
+  }
+}
+
 interface Track {
   id: string
   trackNumber: number | null
@@ -143,6 +176,21 @@ interface Audiobook {
   title: string
   author: string | null
   chapters: Chapter[]
+}
+
+interface AudiobookNode {
+  Id: string
+  Title: string
+  AuthorName: string | null
+  Chapters: {
+    Edges: Array<{
+      Node: {
+        Id: string
+        ChapterNumber: number | null
+        Title: string | null
+      }
+    }>
+  }
 }
 
 interface Chapter {
@@ -202,9 +250,8 @@ export function ManualMatchModal({
 
       try {
         if (normalizedType === 'TV') {
-          const result = await graphqlClient
-            .query<{ Shows: { Edges: Array<{ Node: ShowNode }> } }>(TV_SHOWS_QUERY, { libraryId })
-            .toPromise()
+          const result = await queryPromise<{ Shows: { Edges: Array<{ Node: ShowNode }> } }>(TV_SHOWS_QUERY, { libraryId })
+            
           if (result.data?.Shows?.Edges) {
             const list: TvShow[] = result.data.Shows.Edges.map((e) => {
               const n = e.Node
@@ -236,21 +283,41 @@ export function ManualMatchModal({
             setTvShows(list)
           }
         } else if (normalizedType === 'MOVIES') {
-          const result = await graphqlClient
-            .query<{ Movies: { Edges: Array<{ Node: Movie }> } }>(MOVIES_QUERY, { libraryId })
-            .toPromise()
+          const result = await queryPromise<{ Movies: { Edges: Array<{ Node: Movie }> } }>(MOVIES_QUERY, { libraryId })
+            
           if (result.data?.Movies?.Edges) {
             setMovies(result.data.Movies.Edges.map((e) => e.Node))
           }
         } else if (normalizedType === 'MUSIC') {
-          const result = await graphqlClient.query<{ albums: Album[] }>(ALBUMS_QUERY, { libraryId }).toPromise()
-          if (result.data?.albums) {
-            setAlbums(result.data.albums)
+          const result = await queryPromise<{ Albums: { Edges: Array<{ Node: AlbumNode }> } }>(ALBUMS_QUERY, { libraryId })
+            
+          if (result.data?.Albums?.Edges) {
+            setAlbums(result.data.Albums.Edges.map((edge) => ({
+              id: edge.Node.Id,
+              name: edge.Node.Name,
+              year: edge.Node.Year,
+              artist: edge.Node.Artist?.Name ?? null,
+              tracks: (edge.Node.Tracks?.Edges ?? []).map((trackEdge) => ({
+                id: trackEdge.Node.Id,
+                trackNumber: trackEdge.Node.TrackNumber,
+                title: trackEdge.Node.Title,
+              })),
+            })))
           }
         } else if (normalizedType === 'AUDIOBOOKS') {
-          const result = await graphqlClient.query<{ audiobooks: Audiobook[] }>(AUDIOBOOKS_QUERY, { libraryId }).toPromise()
-          if (result.data?.audiobooks) {
-            setAudiobooks(result.data.audiobooks)
+          const result = await queryPromise<{ Audiobooks: { Edges: Array<{ Node: AudiobookNode }> } }>(AUDIOBOOKS_QUERY, { libraryId })
+            
+          if (result.data?.Audiobooks?.Edges) {
+            setAudiobooks(result.data.Audiobooks.Edges.map((edge) => ({
+              id: edge.Node.Id,
+              title: edge.Node.Title,
+              author: edge.Node.AuthorName,
+              chapters: (edge.Node.Chapters?.Edges ?? []).map((ch) => ({
+                id: ch.Node.Id,
+                chapterNumber: ch.Node.ChapterNumber,
+                title: ch.Node.Title,
+              })),
+            })))
           }
         }
       } catch (err) {
@@ -325,8 +392,7 @@ export function ManualMatchModal({
     setError(null)
 
     try {
-      const result = await graphqlClient
-        .mutation<{ manualMatch: ManualMatchResult }>(MANUAL_MATCH_MUTATION, {
+      const result = await mutationPromise<{ manualMatch: ManualMatchResult }>(MANUAL_MATCH_MUTATION, {
           mediaFileId: mediaFile.id,
           episodeId: selectedEpisodeId || null,
           movieId: selectedMovieId || null,
@@ -335,7 +401,7 @@ export function ManualMatchModal({
           audiobookId: selectedAudiobookId || null,
           chapterId: selectedChapterId || null,
         })
-        .toPromise()
+        
 
       if (result.error) {
         setError(result.error.message)

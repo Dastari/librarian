@@ -236,50 +236,58 @@ export const CONSOLIDATE_LIBRARY_MUTATION = `
 
 export const ADD_TV_SHOW_MUTATION = `
   mutation AddTvShow($LibraryId: String!, $Input: AddTvShowInput!) {
-    addTvShow: AddTvShow(LibraryId: $LibraryId, Input: $Input) {
-      success: Success
-      tvShow: Show {
+    AddTvShow(LibraryId: $LibraryId, Input: $Input) {
+      Success
+      Show {
         Id
         Name
         PosterUrl
       }
-      error: Error
+      Error
     }
   }
 `;
 
 export const DELETE_TV_SHOW_MUTATION = `
-  mutation DeleteTvShow($id: String!) {
-    deleteTvShow(id: $id) {
-      success
-      error
+  mutation DeleteShow($Id: String!) {
+    DeleteShow(Id: $Id) {
+      Success
+      Error
     }
   }
 `;
 
 export const REFRESH_TV_SHOW_MUTATION = `
-  mutation RefreshTvShow($id: String!) {
-    refreshTvShow(id: $id) {
-      success
-      tvShow {
-        id
-        episodeCount
+  mutation RefreshShow($Id: String!) {
+    RefreshShow(Id: $Id) {
+      Success
+      Show {
+        Id
+        Name
+        Overview
+        PosterUrl
+        BackdropUrl
       }
-      error
+      Error
     }
   }
 `;
 
 export const REFRESH_MOVIE_MUTATION = `
-  mutation RefreshMovie($id: String!) {
-    refreshMovie(id: $id) {
-      success
-      movie {
-        id
-        posterUrl
-        backdropUrl
+  mutation RefreshMovie($Id: String!) {
+    RefreshMovie(Id: $Id) {
+      Success
+      Movie {
+        Id
+        Title
+        Overview
+        Tagline
+        PosterUrl
+        BackdropUrl
+        TmdbRating
+        TmdbVoteCount
       }
-      error
+      Error
     }
   }
 `;
@@ -386,37 +394,24 @@ export const POLL_RSS_FEED_MUTATION = `
 // ============================================================================
 
 export const UPDATE_TV_SHOW_MUTATION = `
-  mutation UpdateTvShow($id: String!, $input: UpdateTvShowInput!) {
-    updateTvShow(id: $id, input: $input) {
-      success
-      tvShow {
-        id
-        libraryId
-        name
-        sortName
-        year
-        status
-        monitored
-        monitorType
-        path
-        autoDownloadOverride
-        autoHuntOverride
-        backfillExisting
-        organizeFilesOverride
-        renameStyleOverride
-        episodeCount
-        episodeFileCount
-        sizeBytes
-        allowedResolutionsOverride
-        allowedVideoCodecsOverride
-        allowedAudioFormatsOverride
-        requireHdrOverride
-        allowedHdrTypesOverride
-        allowedSourcesOverride
-        releaseGroupBlacklistOverride
-        releaseGroupWhitelistOverride
+  mutation UpdateShow($Id: String!, $Input: UpdateShowInput!) {
+    UpdateShow(Id: $Id, Input: $Input) {
+      Success
+      Show {
+        Id
+        LibraryId
+        Name
+        SortName
+        Year
+        Path
+        AutoDownload
+        AutoDownloadMode
+        Network
+        Overview
+        PosterUrl
+        BackdropUrl
       }
-      error
+      Error
     }
   }
 `;
@@ -448,19 +443,19 @@ export const ADD_MOVIE_MUTATION = `
 `;
 
 export const UPDATE_MOVIE_MUTATION = `
-  mutation UpdateMovie($id: String!, $input: UpdateMovieInput!) {
-    updateMovie(id: $id, input: $input) {
-      success
-      movie {
-        id
-        libraryId
-        title
-        year
-        status
-        monitored
-        mediaFileId
+  mutation UpdateMovie($Id: String!, $Input: UpdateMovieInput!) {
+    UpdateMovie(Id: $Id, Input: $Input) {
+      Success
+      Movie {
+        Id
+        LibraryId
+        Title
+        Year
+        Status
+        Monitored
+        MediaFileId
       }
-      error
+      Error
     }
   }
 `;
@@ -470,32 +465,32 @@ export const UPDATE_MOVIE_MUTATION = `
 // ============================================================================
 
 export const ADD_ALBUM_MUTATION = `
-  mutation AddAlbum($input: AddAlbumInput!) {
-    addAlbum(input: $input) {
-      success
-      album {
-        id
-        artistId
-        libraryId
-        name
-        sortName
-        year
-        musicbrainzId
-        albumType
-        genres
-        coverUrl
-        hasFiles
+  mutation AddAlbum($Input: AddAlbumInput!) {
+    AddAlbum(Input: $Input) {
+      Success
+      Album {
+        Id
+        ArtistId
+        LibraryId
+        Name
+        SortName
+        Year
+        MusicbrainzId
+        AlbumType
+        Genres
+        CoverUrl
+        HasFiles
       }
-      error
+      Error
     }
   }
 `;
 
 export const DELETE_ALBUM_MUTATION = `
-  mutation DeleteAlbum($id: String!) {
-    deleteAlbum(id: $id) {
-      success
-      error
+  mutation DeleteAlbum($Id: String!) {
+    DeleteAlbum(Id: $Id) {
+      Success
+      Error
     }
   }
 `;
@@ -505,28 +500,28 @@ export const DELETE_ALBUM_MUTATION = `
 // ============================================================================
 
 export const ADD_AUDIOBOOK_MUTATION = `
-  mutation AddAudiobook($input: AddAudiobookInput!) {
-    addAudiobook(input: $input) {
-      success
-      audiobook {
-        id
-        authorId
-        libraryId
-        title
-        sortTitle
-        coverUrl
-        hasFiles
+  mutation AddAudiobook($Input: AddAudiobookInput!) {
+    AddAudiobook(Input: $Input) {
+      Success
+      Audiobook {
+        Id
+        LibraryId
+        Title
+        SortTitle
+        AuthorName
+        CoverUrl
+        HasFiles
       }
-      error
+      Error
     }
   }
 `;
 
 export const DELETE_AUDIOBOOK_MUTATION = `
-  mutation DeleteAudiobook($id: String!) {
-    deleteAudiobook(id: $id) {
-      success
-      error
+  mutation DeleteAudiobook($Id: String!) {
+    DeleteAudiobook(Id: $Id) {
+      Success
+      Error
     }
   }
 `;

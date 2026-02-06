@@ -24,7 +24,7 @@ import {
 import { usePlaybackContext, type RepeatMode } from '../contexts/PlaybackContext';
 import { VolumeControl } from './VolumeControl';
 import { getMediaStreamUrl } from './VideoPlayer';
-import { graphqlClient, PlaybackSyncIntervalDocument } from '../lib/graphql';
+import { PlaybackSyncIntervalDocument } from '../lib/graphql';
 
 // Default sync interval (will be overridden by settings)
 const DEFAULT_SYNC_INTERVAL = 15000;
@@ -74,9 +74,8 @@ export function PersistentAudioPlayer() {
 
   // Fetch playback sync interval from app settings
   useEffect(() => {
-    graphqlClient
-      .query(PlaybackSyncIntervalDocument, { Key: 'playback_sync_interval' })
-      .toPromise()
+    queryPromise(PlaybackSyncIntervalDocument, { Key: 'playback_sync_interval' })
+      
       .then((result) => {
         const value = result.data?.AppSettings?.Edges?.[0]?.Node?.Value;
         if (value != null) {

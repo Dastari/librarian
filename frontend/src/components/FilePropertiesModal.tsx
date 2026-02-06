@@ -24,7 +24,6 @@ import {
   IconTags,
 } from '@tabler/icons-react'
 import {
-  graphqlClient,
   MEDIA_FILE_DETAILS_QUERY,
   type MediaFileDetails,
   type VideoStreamInfo,
@@ -182,9 +181,8 @@ export function FilePropertiesModal({
       setLoading(true)
       setError(null)
 
-      const result = await graphqlClient
-        .query<{ mediaFileDetails: MediaFileDetails | null }>(MEDIA_FILE_DETAILS_QUERY, { mediaFileId })
-        .toPromise()
+      const result = await queryPromise<{ mediaFileDetails: MediaFileDetails | null }>(MEDIA_FILE_DETAILS_QUERY, { mediaFileId })
+        
 
       if (result.error) {
         setError(result.error.message)

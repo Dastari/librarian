@@ -25,7 +25,11 @@ import { Code } from "@heroui/code";
 import { Select, SelectItem } from "@heroui/select";
 import { Switch } from "@heroui/switch";
 import { ConfirmModal } from "../../components/ConfirmModal";
-import { graphqlClient } from "../../lib/graphql";
+import {
+  queryPromise,
+  mutationPromise,
+  subscriptionStream,
+} from "../../lib/graphql/client";
 import {
   AppLogsDocument,
   AppLogChangedDocument,
@@ -242,13 +246,12 @@ function LogsSettingsPage() {
             ? [{ Level: currentSortDirection === "desc" ? SortDirection.Desc : SortDirection.Asc }]
             : [{ Target: currentSortDirection === "desc" ? SortDirection.Desc : SortDirection.Asc }];
 
-      const result = await graphqlClient
-        .query(AppLogsDocument, {
+      const result = await queryPromise(AppLogsDocument, {
           Where: where,
           OrderBy: orderBy,
           Page: { Limit: pageSize, Offset: offsetRef.current },
         })
-        .toPromise();
+        ;
 
       if (result.data?.AppLogs) {
         const connection = result.data.AppLogs;
@@ -320,8 +323,7 @@ function LogsSettingsPage() {
   useEffect(() => {
     if (!isLiveFeedEnabled) return;
 
-    const subscription = graphqlClient
-      .subscription(AppLogChangedDocument, {})
+    const subscription = subscriptionStream(AppLogChangedDocument, {})
       .subscribe({
         next: (result) => {
           const event = result.data?.AppLogChanged;
@@ -362,11 +364,10 @@ function LogsSettingsPage() {
         "Are you sure you want to delete ALL logs? This cannot be undone.",
       onConfirm: async () => {
         try {
-          const result = await graphqlClient
-            .mutation(DeleteAppLogsDocument, {
+          const result = await mutationPromise(DeleteAppLogsDocument, {
               Where: { Timestamp: { Gte: "1970-01-01T00:00:00.000Z" } },
             })
-            .toPromise();
+            ;
           const payload = result.data?.DeleteAppLogs;
           if (payload?.success) {
             addToast({
@@ -405,11 +406,10 @@ function LogsSettingsPage() {
     date.setDate(date.getDate() - days);
     const isoBefore = date.toISOString();
     try {
-      const result = await graphqlClient
-        .mutation(DeleteAppLogsDocument, {
+      const result = await mutationPromise(DeleteAppLogsDocument, {
           Where: { Timestamp: { Lt: isoBefore } },
         })
-        .toPromise();
+        ;
       const payload = result.data?.DeleteAppLogs;
       if (payload?.success) {
         addToast({

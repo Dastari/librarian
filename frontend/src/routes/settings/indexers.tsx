@@ -23,7 +23,7 @@ import {
   IconDownload,
   IconUsers,
 } from '@tabler/icons-react'
-import { graphqlClient } from '../../lib/graphql'
+import { queryPromise, mutationPromise } from '../../lib/graphql/client'
 import { formatBytes, sanitizeError } from '../../lib/format'
 import { DataTable, type DataTableColumn, type CardRendererProps, type RowAction } from '../../components/data-table'
 import { InlineError } from '../../components/shared'
@@ -224,7 +224,7 @@ function IndexersSettingsPage() {
   // Fetch indexers
   const fetchIndexers = async () => {
     try {
-      const result = await graphqlClient.query<IndexersQueryResponse>(INDEXERS_QUERY, {}).toPromise()
+      const result = await queryPromise<IndexersQueryResponse>(INDEXERS_QUERY, {})
       if (result.data?.indexers) {
         setIndexers(result.data.indexers)
       }
@@ -242,7 +242,7 @@ function IndexersSettingsPage() {
   // Fetch available types
   const fetchAvailableTypes = async () => {
     try {
-      const result = await graphqlClient.query<AvailableTypesQueryResponse>(AVAILABLE_TYPES_QUERY, {}).toPromise()
+      const result = await queryPromise<AvailableTypesQueryResponse>(AVAILABLE_TYPES_QUERY, {})
       if (result.data?.availableIndexerTypes) {
         setAvailableTypes(result.data.availableIndexerTypes)
       }
@@ -262,12 +262,11 @@ function IndexersSettingsPage() {
 
   // Toggle indexer enabled
   const toggleEnabled = async (indexer: IndexerConfig) => {
-    const result = await graphqlClient
-      .mutation<UpdateIndexerResponse>(UPDATE_INDEXER_MUTATION, {
+    const result = await mutationPromise<UpdateIndexerResponse>(UPDATE_INDEXER_MUTATION, {
         id: indexer.id,
         input: { enabled: !indexer.enabled },
       })
-      .toPromise()
+      
 
     if (result.data?.updateIndexer?.success) {
       setIndexers((prev) =>
@@ -288,9 +287,8 @@ function IndexersSettingsPage() {
   const deleteIndexer = async () => {
     if (!indexerToDelete) return
 
-    const result = await graphqlClient
-      .mutation<DeleteIndexerResponse>(DELETE_INDEXER_MUTATION, { id: indexerToDelete.id })
-      .toPromise()
+    const result = await mutationPromise<DeleteIndexerResponse>(DELETE_INDEXER_MUTATION, { id: indexerToDelete.id })
+      
 
     if (result.data?.deleteIndexer?.success) {
       setIndexers((prev) => prev.filter((idx) => idx.id !== indexerToDelete.id))
@@ -316,9 +314,8 @@ function IndexersSettingsPage() {
     setTestingIds((prev) => new Set(prev).add(indexer.id))
 
     try {
-      const result = await graphqlClient
-        .mutation<TestIndexerResponse>(TEST_INDEXER_MUTATION, { id: indexer.id })
-        .toPromise()
+      const result = await mutationPromise<TestIndexerResponse>(TEST_INDEXER_MUTATION, { id: indexer.id })
+        
 
       if (result.data?.testIndexer) {
         setTestResults((prev) => ({
@@ -360,14 +357,13 @@ function IndexersSettingsPage() {
     setSearchResults(null)
 
     try {
-      const result = await graphqlClient
-        .query<SearchIndexersResponse>(SEARCH_INDEXERS_QUERY, {
+      const result = await queryPromise<SearchIndexersResponse>(SEARCH_INDEXERS_QUERY, {
           input: {
             query: searchQuery,
             limit: 50,
           },
         })
-        .toPromise()
+        
 
       if (result.data?.searchIndexers) {
         setSearchResults(result.data.searchIndexers)
@@ -791,9 +787,7 @@ function AddIndexerModal({
   useEffect(() => {
     if (!selectedType) return
 
-    graphqlClient
-      .query<SettingDefinitionsQueryResponse>(SETTING_DEFINITIONS_QUERY, { indexerType: selectedType })
-      .toPromise()
+    queryPromise<SettingDefinitionsQueryResponse>(SETTING_DEFINITIONS_QUERY, { indexerType: selectedType })
       .then((result) => {
         if (result.data?.indexerSettingDefinitions) {
           setSettingDefinitions(result.data.indexerSettingDefinitions)
@@ -845,8 +839,7 @@ function AddIndexerModal({
         value,
       }))
 
-      const result = await graphqlClient
-        .mutation<CreateIndexerResponse>(CREATE_INDEXER_MUTATION, {
+      const result = await mutationPromise<CreateIndexerResponse>(CREATE_INDEXER_MUTATION, {
           input: {
             indexerType: selectedType,
             name,
@@ -854,7 +847,7 @@ function AddIndexerModal({
             settings: settingsInput,
           },
         })
-        .toPromise()
+        
 
       if (result.data?.createIndexer?.success) {
         onComplete()
@@ -1100,12 +1093,11 @@ function EditIndexerModal({
         input.credentials = credentials
       }
 
-      const result = await graphqlClient
-        .mutation<UpdateIndexerResponse>(UPDATE_INDEXER_MUTATION, {
+      const result = await mutationPromise<UpdateIndexerResponse>(UPDATE_INDEXER_MUTATION, {
           id: indexer.id,
           input,
         })
-        .toPromise()
+        
 
       if (result.data?.updateIndexer?.success) {
         onComplete()
@@ -1435,4 +1427,3 @@ function SearchResultsCard({ results, onClose }: SearchResultsCardProps) {
     </Card>
   )
 }
-

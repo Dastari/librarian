@@ -190,11 +190,10 @@ pub async fn upsert_from_session(
     uploaded_bytes: i64,
     save_path: &str,
 ) -> Result<(), anyhow::Error> {
-    let existing: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM torrents WHERE info_hash = ?")
-            .bind(info_hash)
-            .fetch_optional(pool)
-            .await?;
+    let existing: Option<(String,)> = sqlx::query_as("SELECT id FROM torrents WHERE info_hash = ?")
+        .bind(info_hash)
+        .fetch_optional(pool)
+        .await?;
 
     if let Some((id,)) = existing {
         let data = execute_mutation(
@@ -384,11 +383,10 @@ async fn get_torrent_id_by_info_hash(
     pool: &Database,
     info_hash: &str,
 ) -> Result<Option<String>, anyhow::Error> {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM torrents WHERE info_hash = ?")
-            .bind(info_hash)
-            .fetch_optional(pool)
-            .await?;
+    let row: Option<(String,)> = sqlx::query_as("SELECT id FROM torrents WHERE info_hash = ?")
+        .bind(info_hash)
+        .fetch_optional(pool)
+        .await?;
     Ok(row.map(|(id,)| id))
 }
 

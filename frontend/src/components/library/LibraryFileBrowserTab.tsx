@@ -20,7 +20,6 @@ import {
   deleteFiles,
   copyFiles,
   moveFiles,
-  graphqlClient,
   MEDIA_FILE_BY_PATH_QUERY,
   type BrowseDirectoryEntry,
   type BrowseQuickPath,
@@ -235,9 +234,8 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
   const handleProperties = async (entry: BrowseDirectoryEntry) => {
     // For any file (not directory), try to look up in the database
     if (!entry.IsDir) {
-      const result = await graphqlClient
-        .query<{ mediaFileByPath: MediaFile | null }>(MEDIA_FILE_BY_PATH_QUERY, { path: entry.Path })
-        .toPromise()
+      const result = await queryPromise<{ mediaFileByPath: MediaFile | null }>(MEDIA_FILE_BY_PATH_QUERY, { path: entry.Path })
+        
 
       if (result.data?.mediaFileByPath) {
         // File is in the database, show detailed properties modal

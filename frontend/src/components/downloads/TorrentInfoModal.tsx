@@ -8,7 +8,6 @@ import { Card, CardBody } from '@heroui/card'
 import { Tooltip } from '@heroui/tooltip'
 import { addToast } from '@heroui/toast'
 import {
-  graphqlClient,
   TORRENT_DETAILS_QUERY,
   TORRENT_BY_INFO_HASH_QUERY,
   PENDING_FILE_MATCHES_QUERY,
@@ -315,8 +314,7 @@ export function TorrentInfoModal({
       }
 
       try {
-        const result = await graphqlClient
-          .query<{
+        const result = await queryPromise<{
             Torrents: {
               Edges: Array<{
                 Node: {
@@ -348,7 +346,7 @@ export function TorrentInfoModal({
             Where: { InfoHash: { Eq: torrentInfoHash } },
             Page: { Limit: 1, Offset: 0 },
           })
-          .toPromise();
+          ;
 
         const node = result.data?.Torrents?.Edges?.[0]?.Node;
         if (node) {
@@ -377,11 +375,10 @@ export function TorrentInfoModal({
       }
 
       try {
-        const result = await graphqlClient
-          .query<{ torrentDetails: TorrentDetails }>(TORRENT_DETAILS_QUERY, {
+        const result = await queryPromise<{ torrentDetails: TorrentDetails }>(TORRENT_DETAILS_QUERY, {
             id: torrentId,
           })
-          .toPromise();
+          ;
 
         if (result.data?.torrentDetails) {
           const det = result.data.torrentDetails;
@@ -389,12 +386,11 @@ export function TorrentInfoModal({
 
           if (includeMatches) {
             try {
-              const matchResult = await graphqlClient
-                .query<{ pendingFileMatches: PendingFileMatch[] }>(
+              const matchResult = await queryPromise<{ pendingFileMatches: PendingFileMatch[] }>(
                   PENDING_FILE_MATCHES_QUERY,
                   { sourceType: "torrent", sourceId: det.infoHash }
                 )
-                .toPromise();
+                ;
 
               if (matchResult.data?.pendingFileMatches) {
                 setFileMatches(matchResult.data.pendingFileMatches);
@@ -424,11 +420,10 @@ export function TorrentInfoModal({
 
   // Handle removing a match
   const handleRemoveMatch = useCallback(async (matchId: string) => {
-    const result = await graphqlClient
-      .mutation<{
+    const result = await mutationPromise<{
         removeMatch: RemoveMatchResult;
       }>(REMOVE_MATCH_MUTATION, { matchId })
-      .toPromise();
+      ;
 
     if (result.data?.removeMatch.success) {
       setFileMatches((prev) => prev.filter((m) => m.id !== matchId));
@@ -479,10 +474,7 @@ export function TorrentInfoModal({
 
     if (torrentInfoHash && entityTorrent?.Id) {
       try {
-        const torrentSub = graphqlClient
-          .subscription(TorrentChangedDocument, {
-            Filter: { Id: entityTorrent.Id },
-          })
+        const torrentSub = subscriptionStream(TorrentChangedDocument, {})
           .subscribe({
             next: () => {
               fetchEntityTorrent();
@@ -495,8 +487,7 @@ export function TorrentInfoModal({
       }
 
       try {
-        const fileSub = graphqlClient
-          .subscription<{
+        const fileSub = subscriptionStream<{
             TorrentFileChanged: {
               Action: "Created" | "Updated" | "Deleted";
               Id: string;
@@ -511,7 +502,7 @@ export function TorrentInfoModal({
             };
           }>(TORRENT_FILE_CHANGED_SUBSCRIPTION, {})
           .subscribe({
-            next: (result) => {
+            next: (result: any) => {
               const payload = result.data?.TorrentFileChanged;
               const torrentFile = payload?.TorrentFile;
               if (!torrentFile || torrentFile.TorrentId !== entityTorrent.Id) {
@@ -571,8 +562,7 @@ export function TorrentInfoModal({
       }
 
       try {
-        const progressSub = graphqlClient
-          .subscription<{
+        const progressSub = subscriptionStream<{
             TorrentProgress: {
               InfoHash: string;
               DownloadSpeed: number;
@@ -581,7 +571,7 @@ export function TorrentInfoModal({
             };
           }>(TORRENT_PROGRESS_SUBSCRIPTION)
           .subscribe({
-            next: (result) => {
+            next: (result: any) => {
               const progress = result.data?.TorrentProgress;
               if (!progress || progress.InfoHash !== torrentInfoHash) return;
               setEntityLiveStats({
@@ -600,12 +590,11 @@ export function TorrentInfoModal({
 
     if (torrentId != null) {
       try {
-        const progressSub = graphqlClient
-          .subscription<{
+        const progressSub = subscriptionStream<{
             TorrentProgress: { Id: number };
           }>(TORRENT_PROGRESS_SUBSCRIPTION)
           .subscribe({
-            next: (result) => {
+            next: (result: any) => {
               if (result.data?.TorrentProgress?.Id === torrentId) {
                 fetchLegacyDetails(false, false);
               }
@@ -784,7 +773,7 @@ export function TorrentInfoModal({
                     Files ({entityTorrent.Files.Edges.length})
                   </span>
                   <DataTable
-                    data={entityTorrent.Files.Edges.map((e) => e.Node)}
+                    data={entityTorrent.Files.Edges.map((e: any) => e.Node)}
                     columns={[
                       {
                         key: "FilePath",

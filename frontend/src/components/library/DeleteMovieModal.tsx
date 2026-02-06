@@ -3,7 +3,6 @@ import { Button } from '@heroui/button'
 import { addToast } from '@heroui/toast'
 import { useState } from 'react'
 import { IconAlertTriangle } from '@tabler/icons-react'
-import { graphqlClient } from '../../lib/graphql'
 import { sanitizeError } from '../../lib/format'
 
 const DELETE_MOVIE_MUTATION = `
@@ -30,12 +29,11 @@ export function DeleteMovieModal({ isOpen, onClose, movie, onDeleted }: DeleteMo
 
     setIsDeleting(true)
     try {
-      const { data, error } = await graphqlClient
-        .mutation<{ DeleteMovie: { Success: boolean; Error: string | null } }>(
+      const { data, error } = await mutationPromise<{ DeleteMovie: { Success: boolean; Error: string | null } }>(
           DELETE_MOVIE_MUTATION,
           { Id: movie.id }
         )
-        .toPromise()
+        
 
       if (error || !data?.DeleteMovie.Success) {
         addToast({

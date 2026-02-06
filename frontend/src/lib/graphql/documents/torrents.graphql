@@ -6,9 +6,8 @@ query ActiveDownloadCount($Where: TorrentWhereInput, $Page: PageInput) {
   }
 }
 
-subscription TorrentChanged($Filter: SubscriptionFilterInput) {
-  TorrentChanged(Filter: $Filter) {
-    Action
-    Id
+subscription TorrentChanged {
+  TorrentChanged: torrentProgress {
+    Id: id
   }
 }

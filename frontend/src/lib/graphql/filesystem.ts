@@ -4,7 +4,6 @@
  * Uses codegen-generated documents and PascalCase types from the backend schema.
  */
 
-import { graphqlClient } from './client';
 import {
   BrowseDirectoryDocument,
   type BrowseDirectoryQuery,
@@ -47,15 +46,14 @@ export async function browseDirectory(
   path?: string,
   dirsOnly = true
 ): Promise<BrowseDirectoryResult> {
-  const result = await graphqlClient
-    .query(BrowseDirectoryDocument, {
+  const result = await queryPromise(BrowseDirectoryDocument, {
       Input: {
         Path: path ?? null,
         DirsOnly: dirsOnly,
         ShowHidden: false,
       },
     })
-    .toPromise();
+    ;
 
   if (result.error) {
     throw new Error(result.error.message);
@@ -78,11 +76,10 @@ export async function browseDirectory(
 export async function createDirectory(
   path: string
 ): Promise<{ success: boolean; path?: string; error?: string }> {
-  const result = await graphqlClient
-    .mutation<{ CreateDirectory: FileOperationPayloadPascal }>(CREATE_DIRECTORY_MUTATION, {
+  const result = await mutationPromise<{ CreateDirectory: FileOperationPayloadPascal }>(CREATE_DIRECTORY_MUTATION, {
       Input: { Path: path },
     })
-    .toPromise();
+    ;
 
   if (result.error) {
     return {
@@ -117,11 +114,10 @@ export async function deleteFiles(
   paths: string[],
   recursive = true
 ): Promise<FileOperationResult> {
-  const result = await graphqlClient
-    .mutation<{ DeleteFiles: FileOperationPayloadPascal }>(DELETE_FILES_MUTATION, {
+  const result = await mutationPromise<{ DeleteFiles: FileOperationPayloadPascal }>(DELETE_FILES_MUTATION, {
       Input: { Paths: paths, Recursive: recursive },
     })
-    .toPromise();
+    ;
 
   if (result.error) {
     return {
@@ -159,11 +155,10 @@ export async function copyFiles(
   destination: string,
   overwrite = false
 ): Promise<FileOperationResult> {
-  const result = await graphqlClient
-    .mutation<{ CopyFiles: FileOperationPayloadPascal }>(COPY_FILES_MUTATION, {
+  const result = await mutationPromise<{ CopyFiles: FileOperationPayloadPascal }>(COPY_FILES_MUTATION, {
       Input: { Sources: sources, Destination: destination, Overwrite: overwrite },
     })
-    .toPromise();
+    ;
 
   if (result.error) {
     return {
@@ -201,11 +196,10 @@ export async function moveFiles(
   destination: string,
   overwrite = false
 ): Promise<FileOperationResult> {
-  const result = await graphqlClient
-    .mutation<{ MoveFiles: FileOperationPayloadPascal }>(MOVE_FILES_MUTATION, {
+  const result = await mutationPromise<{ MoveFiles: FileOperationPayloadPascal }>(MOVE_FILES_MUTATION, {
       Input: { Sources: sources, Destination: destination, Overwrite: overwrite },
     })
-    .toPromise();
+    ;
 
   if (result.error) {
     return {
@@ -241,11 +235,10 @@ export async function renameFile(
   path: string,
   newName: string
 ): Promise<FileOperationResult> {
-  const result = await graphqlClient
-    .mutation<{ RenameFile: FileOperationPayloadPascal }>(RENAME_FILE_MUTATION, {
+  const result = await mutationPromise<{ RenameFile: FileOperationPayloadPascal }>(RENAME_FILE_MUTATION, {
       Input: { Path: path, NewName: newName },
     })
-    .toPromise();
+    ;
 
   if (result.error) {
     return {

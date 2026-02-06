@@ -10,10 +10,10 @@ import { addToast } from '@heroui/toast'
 import { Chip } from '@heroui/chip'
 import { Spinner } from '@heroui/spinner'
 import {
-  graphqlClient,
   PARSE_AND_IDENTIFY_QUERY,
   type ParseAndIdentifyResult,
 } from '../../lib/graphql'
+import { queryPromise, mutationPromise } from '../../lib/graphql/client'
 import {
   MetadataAppSettingsDocument,
   UpdateAppSettingDocument,
@@ -126,9 +126,8 @@ function MetadataSettingsPage() {
   const fetchSettings = async () => {
     try {
       setLoading(true)
-      const { data, error } = await graphqlClient
-        .query<MetadataAppSettingsQuery>(MetadataAppSettingsDocument, {})
-        .toPromise();
+      const { data, error } = await queryPromise<MetadataAppSettingsQuery>(MetadataAppSettingsDocument, {})
+        ;
 
       if (error) {
         throw error;
@@ -223,12 +222,11 @@ function MetadataSettingsPage() {
 
         if (existingId) {
           // Update existing setting using UpdateAppSetting mutation
-          const res = await graphqlClient
-            .mutation(UpdateAppSettingDocument, {
+          const res = await mutationPromise(UpdateAppSettingDocument, {
               Id: existingId,
               Input: { Value: value },
             })
-            .toPromise();
+            ;
 
           const data = res.data as {
             UpdateAppSetting?: { Success: boolean; Error?: string | null };
@@ -245,8 +243,7 @@ function MetadataSettingsPage() {
           }
         } else {
           // Create new setting
-          const res = await graphqlClient
-            .mutation(CreateAppSettingDocument, {
+          const res = await mutationPromise(CreateAppSettingDocument, {
               Input: {
                 Key: key,
                 Value: value,
@@ -255,7 +252,7 @@ function MetadataSettingsPage() {
                 UpdatedAt: now,
               },
             })
-            .toPromise();
+            ;
 
           const data = res.data as {
             CreateAppSetting?: {
@@ -317,12 +314,11 @@ function MetadataSettingsPage() {
       setTesting(true)
       setTestResult(null)
 
-      const { data, error } = await graphqlClient
-        .query<{ parseAndIdentifyMedia: ParseAndIdentifyResult }>(
+      const { data, error } = await queryPromise<{ parseAndIdentifyMedia: ParseAndIdentifyResult }>(
           PARSE_AND_IDENTIFY_QUERY,
           { title: testInput }
         )
-        .toPromise()
+        
 
       if (error) {
         addToast({

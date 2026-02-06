@@ -273,24 +273,60 @@ export const LIBRARIES_WITH_COUNTS_QUERY = `
           LastScannedAt
           CreatedAt
           UpdatedAt
-          Shows {
+          Shows(
+            OrderBy: { UpdatedAt: Desc }
+            Page: { Limit: 8, Offset: 0 }
+          ) {
             PageInfo {
               TotalCount
             }
+            Edges {
+              Node {
+                Id
+                PosterUrl
+              }
+            }
           }
-          Movies {
+          Movies(
+            OrderBy: { UpdatedAt: Desc }
+            Page: { Limit: 8, Offset: 0 }
+          ) {
             PageInfo {
               TotalCount
             }
+            Edges {
+              Node {
+                Id
+                PosterUrl
+              }
+            }
           }
-          Albums {
+          Albums(
+            OrderBy: { UpdatedAt: Desc }
+            Page: { Limit: 8, Offset: 0 }
+          ) {
             PageInfo {
               TotalCount
             }
+            Edges {
+              Node {
+                Id
+                CoverUrl
+              }
+            }
           }
-          Audiobooks {
+          Audiobooks(
+            OrderBy: { UpdatedAt: Desc }
+            Page: { Limit: 8, Offset: 0 }
+          ) {
             PageInfo {
               TotalCount
+            }
+            Edges {
+              Node {
+                Id
+                CoverUrl
+              }
             }
           }
         }
@@ -459,7 +495,7 @@ export const TV_SHOW_QUERY = `
       CreatedAt
       UpdatedAt
       UserId
-      Episodes {
+      Episodes(Page: { Limit: 2000 }) {
         Edges {
           Node {
             Id
@@ -474,20 +510,20 @@ export const TV_SHOW_QUERY = `
             TvmazeId
             TmdbId
             TvdbId
-            ImdbId
             MediaFileId
-            Resolution
-            VideoCodec
-            AudioCodec
-            AudioChannels
-            IsHdr
-            HdrType
-            FileSizeBytes
-            FileSizeFormatted
-            WatchProgress
-            WatchPosition
-            IsWatched
-            DownloadProgress
+            Wanted
+            Status
+            MediaFile {
+              Id
+              Size
+              Duration
+              Resolution
+              VideoCodec
+              AudioCodec
+              AudioChannels
+              IsHdr
+              HdrType
+            }
             CreatedAt
             UpdatedAt
           }
@@ -500,17 +536,17 @@ export const TV_SHOW_QUERY = `
 export const SEARCH_TV_SHOWS_QUERY = `
   query SearchTvShows($Query: String!) {
     SearchTvShows(Query: $Query) {
-      provider: Provider
-      providerId: ProviderId
-      name: Name
-      year: Year
-      status: Status
-      network: Network
-      overview: Overview
-      posterUrl: PosterUrl
-      tvdbId: TvdbId
-      imdbId: ImdbId
-      score: Score
+      Provider
+      ProviderId
+      Name
+      Year
+      Status
+      Network
+      Overview
+      PosterUrl
+      TvdbId
+      ImdbId
+      Score
     }
   }
 `;
@@ -655,17 +691,17 @@ export const MOVIE_QUERY = `
 export const SEARCH_MOVIES_QUERY = `
   query SearchMovies($Query: String!, $Year: Int) {
     SearchMovies(Query: $Query, Year: $Year) {
-      provider: Provider
-      providerId: ProviderId
-      title: Title
-      originalTitle: OriginalTitle
-      year: Year
-      overview: Overview
-      posterUrl: PosterUrl
-      backdropUrl: BackdropUrl
-      imdbId: ImdbId
-      voteAverage: VoteAverage
-      popularity: Popularity
+      Provider
+      ProviderId
+      Title
+      OriginalTitle
+      Year
+      Overview
+      PosterUrl
+      BackdropUrl
+      ImdbId
+      VoteAverage
+      Popularity
     }
   }
 `;
@@ -676,26 +712,30 @@ export const SEARCH_MOVIES_QUERY = `
 
 export const ALBUMS_QUERY = `
   query Albums($libraryId: String!) {
-    albums(libraryId: $libraryId) {
-      id
-      artistId
-      libraryId
-      name
-      sortName
-      year
-      musicbrainzId
-      albumType
-      genres
-      label
-      country
-      releaseDate
-      coverUrl
-      trackCount
-      discCount
-      totalDurationSecs
-      hasFiles
-      sizeBytes
-      path
+    Albums(Where: { LibraryId: { Eq: $libraryId } }, Page: { Limit: 500, Offset: 0 }) {
+      Edges {
+        Node {
+          Id
+          ArtistId
+          LibraryId
+          Name
+          SortName
+          Year
+          MusicbrainzId
+          AlbumType
+          Genres
+          Label
+          Country
+          ReleaseDate
+          CoverUrl
+          TrackCount
+          DiscCount
+          TotalDurationSecs
+          HasFiles
+          SizeBytes
+          Path
+        }
+      }
     }
   }
 `;
@@ -727,114 +767,102 @@ export const ALBUM_QUERY = `
 `;
 
 export const ALBUMS_CONNECTION_QUERY = `
-  query AlbumsConnection($libraryId: String!, $first: Int, $after: String, $where: AlbumWhereInput, $orderBy: AlbumOrderByInput) {
-    albumsConnection(libraryId: $libraryId, first: $first, after: $after, where: $where, orderBy: $orderBy) {
-      edges {
-        node {
-          id
-          artistId
-          libraryId
-          name
-          sortName
-          year
-          albumType
-          coverUrl
-          hasFiles
-          trackCount
-          downloadedTrackCount
+  query AlbumsConnection($where: AlbumWhereInput, $orderBy: AlbumOrderByInput, $page: PageInput) {
+    Albums(Where: $where, OrderBy: $orderBy, Page: $page) {
+      Edges {
+        Node {
+          Id
+          ArtistId
+          LibraryId
+          Name
+          SortName
+          Year
+          AlbumType
+          CoverUrl
+          HasFiles
+          TrackCount
+          DownloadedTrackCount
         }
-        cursor
+        Cursor
       }
-      pageInfo {
-        hasNextPage
-        hasPreviousPage
-        startCursor
-        endCursor
-        totalCount
+      PageInfo {
+        HasNextPage
+        HasPreviousPage
+        StartCursor
+        EndCursor
+        TotalCount
       }
     }
   }
 `;
 
 export const ARTISTS_CONNECTION_QUERY = `
-  query ArtistsConnection($libraryId: String!, $first: Int, $after: String, $where: ArtistWhereInput, $orderBy: ArtistOrderByInput) {
-    artistsConnection(libraryId: $libraryId, first: $first, after: $after, where: $where, orderBy: $orderBy) {
-      edges {
-        node {
-          id
-          libraryId
-          name
-          sortName
-          musicbrainzId
+  query ArtistsConnection($where: ArtistWhereInput, $orderBy: ArtistOrderByInput, $page: PageInput) {
+    Artists(Where: $where, OrderBy: $orderBy, Page: $page) {
+      Edges {
+        Node {
+          Id
+          LibraryId
+          Name
+          SortName
+          MusicbrainzId
         }
-        cursor
+        Cursor
       }
-      pageInfo {
-        hasNextPage
-        hasPreviousPage
-        startCursor
-        endCursor
-        totalCount
+      PageInfo {
+        HasNextPage
+        HasPreviousPage
+        StartCursor
+        EndCursor
+        TotalCount
       }
     }
   }
 `;
 
 export const ALBUM_WITH_TRACKS_QUERY = `
-  query AlbumWithTracks($id: String!) {
-    albumWithTracks(id: $id) {
-      album {
-        id
-        artistId
-        libraryId
-        name
-        sortName
-        year
-        musicbrainzId
-        albumType
-        genres
-        label
-        country
-        releaseDate
-        coverUrl
-        trackCount
-        discCount
-        totalDurationSecs
-        hasFiles
-        sizeBytes
-        path
-      }
-      artistName
-      tracks {
-        track {
-          id
-          albumId
-          libraryId
-          title
-          trackNumber
-          discNumber
-          musicbrainzId
-          isrc
-          durationSecs
-          explicit
-          artistName
-          artistId
-          mediaFileId
-          hasFile
-          status
-          downloadProgress
+  query AlbumWithTracks($Id: String!) {
+    Album(Id: $Id) {
+      Id
+      ArtistId
+      LibraryId
+      Name
+      SortName
+      Year
+      MusicbrainzId
+      AlbumType
+      Genres
+      Label
+      Country
+      ReleaseDate
+      CoverUrl
+      TrackCount
+      DiscCount
+      TotalDurationSecs
+      HasFiles
+      SizeBytes
+      Path
+      Tracks(Page: { Limit: 5000, Offset: 0 }) {
+        Edges {
+          Node {
+            Id
+            AlbumId
+            LibraryId
+            Title
+            TrackNumber
+            DiscNumber
+            MusicbrainzId
+            Isrc
+            DurationSecs
+            Explicit
+            ArtistName
+            ArtistId
+            MediaFileId
+            Status
+            DownloadProgress
+          }
         }
-        hasFile
-        filePath
-        fileSize
-        audioCodec
-        bitrate
-        audioChannels
       }
-      trackCount
-      tracksWithFiles
-      missingTracks
-      completionPercent
     }
   }
 `;
@@ -910,12 +938,16 @@ export const TRACKS_CONNECTION_QUERY = `
 
 export const ARTISTS_QUERY = `
   query Artists($libraryId: String!) {
-    artists(libraryId: $libraryId) {
-      id
-      libraryId
-      name
-      sortName
-      musicbrainzId
+    Artists(Where: { LibraryId: { Eq: $libraryId } }, Page: { Limit: 500, Offset: 0 }) {
+      Edges {
+        Node {
+          Id
+          LibraryId
+          Name
+          SortName
+          MusicbrainzId
+        }
+      }
     }
   }
 `;
@@ -929,22 +961,22 @@ export const SEARCH_ALBUMS_QUERY = `
     $includeLive: Boolean
     $includeSoundtracks: Boolean
   ) {
-    searchAlbums(
-      query: $query
-      includeEps: $includeEps
-      includeSingles: $includeSingles
-      includeCompilations: $includeCompilations
-      includeLive: $includeLive
-      includeSoundtracks: $includeSoundtracks
+    SearchAlbums(
+      Query: $query
+      IncludeEps: $includeEps
+      IncludeSingles: $includeSingles
+      IncludeCompilations: $includeCompilations
+      IncludeLive: $includeLive
+      IncludeSoundtracks: $includeSoundtracks
     ) {
-      provider
-      providerId
-      title
-      artistName
-      year
-      albumType
-      coverUrl
-      score
+      Provider
+      ProviderId
+      Title
+      ArtistName
+      Year
+      AlbumType
+      CoverUrl
+      Score
     }
   }
 `;
@@ -955,197 +987,202 @@ export const SEARCH_ALBUMS_QUERY = `
 
 export const AUDIOBOOKS_QUERY = `
   query Audiobooks($libraryId: String!) {
-    audiobooks(libraryId: $libraryId) {
-      id
-      authorId
-      libraryId
-      title
-      sortTitle
-      subtitle
-      openlibraryId
-      isbn
-      description
-      publisher
-      language
-      narrators
-      seriesName
-      durationSecs
-      coverUrl
-      hasFiles
-      sizeBytes
-      path
+    Audiobooks(Where: { LibraryId: { Eq: $libraryId } }, Page: { Limit: 500, Offset: 0 }) {
+      Edges {
+        Node {
+          Id
+          AuthorId
+          LibraryId
+          Title
+          SortTitle
+          Subtitle
+          OpenlibraryId
+          Isbn
+          Description
+          Publisher
+          Language
+          Narrators
+          SeriesName
+          DurationSecs
+          CoverUrl
+          HasFiles
+          SizeBytes
+          Path
+          ChapterCount
+          DownloadedChapterCount
+        }
+      }
     }
   }
 `;
 
 export const AUDIOBOOK_QUERY = `
-  query Audiobook($id: String!) {
-    audiobook(id: $id) {
-      id
-      authorId
-      libraryId
-      title
-      sortTitle
-      subtitle
-      openlibraryId
-      isbn
-      description
-      publisher
-      language
-      narrators
-      seriesName
-      durationSecs
-      coverUrl
-      hasFiles
-      sizeBytes
-      path
+  query Audiobook($Id: String!) {
+    Audiobook(Id: $Id) {
+      Id
+      AuthorId
+      LibraryId
+      Title
+      SortTitle
+      Subtitle
+      OpenlibraryId
+      Isbn
+      Description
+      Publisher
+      Language
+      Narrators
+      SeriesName
+      DurationSecs
+      CoverUrl
+      HasFiles
+      SizeBytes
+      Path
     }
   }
 `;
 
 export const AUDIOBOOK_WITH_CHAPTERS_QUERY = `
-  query AudiobookWithChapters($id: String!) {
-    audiobookWithChapters(id: $id) {
-      audiobook {
-        id
-        authorId
-        libraryId
-        title
-        sortTitle
-        subtitle
-        openlibraryId
-        isbn
-        description
-        publisher
-        language
-        narrators
-        seriesName
-        durationSecs
-        coverUrl
-        hasFiles
-        sizeBytes
-        path
+  query AudiobookWithChapters($Id: String!) {
+    Audiobook(Id: $Id) {
+      Id
+      AuthorId
+      LibraryId
+      Title
+      SortTitle
+      Subtitle
+      OpenlibraryId
+      Isbn
+      Description
+      Publisher
+      Language
+      Narrators
+      SeriesName
+      DurationSecs
+      CoverUrl
+      HasFiles
+      SizeBytes
+      Path
+      Chapters(Page: { Limit: 5000, Offset: 0 }) {
+        Edges {
+          Node {
+            Id
+            AudiobookId
+            ChapterNumber
+            Title
+            StartSecs
+            EndSecs
+            DurationSecs
+            MediaFileId
+            Status
+            DownloadProgress
+          }
+        }
       }
-      author {
-        id
-        libraryId
-        name
-        sortName
-        openlibraryId
-      }
-      chapters {
-        id
-        audiobookId
-        chapterNumber
-        title
-        startSecs
-        endSecs
-        durationSecs
-        mediaFileId
-        status
-        downloadProgress
-      }
-      chapterCount
-      chaptersWithFiles
-      missingChapters
-      completionPercent
     }
   }
 `;
 
 export const AUDIOBOOK_CHAPTERS_QUERY = `
   query AudiobookChapters($audiobookId: String!) {
-    audiobookChapters(audiobookId: $audiobookId) {
-      id
-      audiobookId
-      chapterNumber
-      title
-      startSecs
-      endSecs
-      durationSecs
-      mediaFileId
-      status
-      downloadProgress
+    Chapters(Where: { AudiobookId: { Eq: $audiobookId } }, Page: { Limit: 5000, Offset: 0 }) {
+      Edges {
+        Node {
+          Id
+          AudiobookId
+          ChapterNumber
+          Title
+          StartSecs
+          EndSecs
+          DurationSecs
+          MediaFileId
+          Status
+          DownloadProgress
+        }
+      }
     }
   }
 `;
 
 export const AUDIOBOOK_AUTHORS_QUERY = `
   query AudiobookAuthors($libraryId: String!) {
-    audiobookAuthors(libraryId: $libraryId) {
-      id
-      libraryId
-      name
-      sortName
-      openlibraryId
+    AudiobookAuthors(Where: { LibraryId: { Eq: $libraryId } }, Page: { Limit: 500, Offset: 0 }) {
+      Edges {
+        Node {
+          Id
+          LibraryId
+          Name
+          SortName
+          OpenlibraryId
+        }
+      }
     }
   }
 `;
 
 export const SEARCH_AUDIOBOOKS_QUERY = `
   query SearchAudiobooks($query: String!) {
-    searchAudiobooks(query: $query) {
-      provider
-      providerId
-      title
-      authorName
-      year
-      coverUrl
-      isbn
-      description
+    SearchAudiobooks(Query: $query) {
+      Provider
+      ProviderId
+      Title
+      AuthorName
+      Year
+      CoverUrl
+      Isbn
+      Description
     }
   }
 `;
 
 export const AUDIOBOOKS_CONNECTION_QUERY = `
-  query AudiobooksConnection($libraryId: String!, $first: Int, $after: String, $where: AudiobookWhereInput, $orderBy: AudiobookOrderByInput) {
-    audiobooksConnection(libraryId: $libraryId, first: $first, after: $after, where: $where, orderBy: $orderBy) {
-      edges {
-        node {
-          id
-          authorId
-          libraryId
-          title
-          sortTitle
-          subtitle
-          coverUrl
-          hasFiles
-          seriesName
-          chapterCount
-          downloadedChapterCount
+  query AudiobooksConnection($where: AudiobookWhereInput, $orderBy: AudiobookOrderByInput, $page: PageInput) {
+    Audiobooks(Where: $where, OrderBy: $orderBy, Page: $page) {
+      Edges {
+        Node {
+          Id
+          AuthorId
+          LibraryId
+          Title
+          SortTitle
+          Subtitle
+          CoverUrl
+          HasFiles
+          SeriesName
+          ChapterCount
+          DownloadedChapterCount
         }
-        cursor
+        Cursor
       }
-      pageInfo {
-        hasNextPage
-        hasPreviousPage
-        startCursor
-        endCursor
-        totalCount
+      PageInfo {
+        HasNextPage
+        HasPreviousPage
+        StartCursor
+        EndCursor
+        TotalCount
       }
     }
   }
 `;
 
 export const AUDIOBOOK_AUTHORS_CONNECTION_QUERY = `
-  query AudiobookAuthorsConnection($libraryId: String!, $first: Int, $after: String, $where: AudiobookAuthorWhereInput, $orderBy: AudiobookAuthorOrderByInput) {
-    audiobookAuthorsConnection(libraryId: $libraryId, first: $first, after: $after, where: $where, orderBy: $orderBy) {
-      edges {
-        node {
-          id
-          libraryId
-          name
-          sortName
-          openlibraryId
+  query AudiobookAuthorsConnection($where: AudiobookAuthorWhereInput, $orderBy: AudiobookAuthorOrderByInput, $page: PageInput) {
+    AudiobookAuthors(Where: $where, OrderBy: $orderBy, Page: $page) {
+      Edges {
+        Node {
+          Id
+          LibraryId
+          Name
+          SortName
+          OpenlibraryId
         }
-        cursor
+        Cursor
       }
-      pageInfo {
-        hasNextPage
-        hasPreviousPage
-        startCursor
-        endCursor
-        totalCount
+      PageInfo {
+        HasNextPage
+        HasPreviousPage
+        StartCursor
+        EndCursor
+        TotalCount
       }
     }
   }
@@ -1157,47 +1194,52 @@ export const AUDIOBOOK_AUTHORS_CONNECTION_QUERY = `
 
 export const EPISODES_QUERY = `
   query Episodes($tvShowId: String!) {
-    episodes(tvShowId: $tvShowId) {
-      id
-      tvShowId
-      season
-      episode
-      absoluteNumber
-      title
-      overview
-      airDate
-      runtime
-      tvmazeId
-      tmdbId
-      tvdbId
-      mediaFileId
-      resolution
-      videoCodec
-      audioCodec
-      audioChannels
-      isHdr
-      hdrType
-      videoBitrate
-      fileSizeBytes
-      fileSizeFormatted
-      watchProgress
-      watchPosition
-      isWatched
-      downloadProgress
+    Episodes(Where: { ShowId: { Eq: $tvShowId } }, Page: { Limit: 2000, Offset: 0 }) {
+      Edges {
+        Node {
+          Id
+          ShowId
+          Season
+          Episode
+          AbsoluteNumber
+          Title
+          Overview
+          AirDate
+          Runtime
+          TvmazeId
+          TmdbId
+          TvdbId
+          MediaFileId
+          Wanted
+          Status
+          CreatedAt
+          UpdatedAt
+        }
+      }
     }
   }
 `;
 
 export const WANTED_EPISODES_QUERY = `
   query WantedEpisodes($libraryId: String) {
-    wantedEpisodes(libraryId: $libraryId) {
-      id
-      tvShowId
-      season
-      episode
-      title
-      airDate
-      mediaFileId
+    Episodes(
+      Where: {
+        LibraryId: { Eq: $libraryId }
+        Wanted: { Eq: true }
+      }
+      Page: { Limit: 2000, Offset: 0 }
+    ) {
+      Edges {
+        Node {
+          Id
+          ShowId
+          Season
+          Episode
+          Title
+          AirDate
+          MediaFileId
+        }
+      }
     }
   }
 `;

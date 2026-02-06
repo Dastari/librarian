@@ -9,7 +9,6 @@ import { Switch } from '@heroui/switch'
 import { Spinner } from '@heroui/spinner'
 import { addToast } from '@heroui/toast'
 import {
-  graphqlClient,
   SEARCH_MOVIES_QUERY,
   ADD_MOVIE_MUTATION,
   type Movie,
@@ -39,16 +38,29 @@ export function AddMovieModal({
   const [selectedMovie, setSelectedMovie] = useState<MovieSearchResult | null>(null)
   const [monitored, setMonitored] = useState(true)
 
+  interface MovieSearchNode {
+    Provider: string
+    ProviderId: number
+    Title: string
+    OriginalTitle: string | null
+    Year: number | null
+    Overview: string | null
+    PosterUrl: string | null
+    BackdropUrl: string | null
+    ImdbId: string | null
+    VoteAverage: number | null
+    Popularity: number | null
+  }
+
   const handleSearch = async () => {
     if (!searchQuery.trim()) return
 
     try {
       setSearching(true)
-      const { data, error } = await graphqlClient
-        .query<{ SearchMovies: MovieSearchResult[] }>(SEARCH_MOVIES_QUERY, {
+      const { data, error } = await queryPromise<{ SearchMovies: MovieSearchNode[] }>(SEARCH_MOVIES_QUERY, {
           Query: searchQuery,
         })
-        .toPromise()
+        
 
       if (error) {
         addToast({
@@ -59,7 +71,21 @@ export function AddMovieModal({
         return
       }
 
-      setSearchResults(data?.SearchMovies || [])
+      setSearchResults(
+        (data?.SearchMovies ?? []).map((movie) => ({
+          provider: movie.Provider,
+          providerId: movie.ProviderId,
+          title: movie.Title,
+          originalTitle: movie.OriginalTitle,
+          year: movie.Year,
+          overview: movie.Overview,
+          posterUrl: movie.PosterUrl,
+          backdropUrl: movie.BackdropUrl,
+          imdbId: movie.ImdbId,
+          voteAverage: movie.VoteAverage,
+          popularity: movie.Popularity,
+        }))
+      )
     } catch (err) {
       console.error('Search failed:', err)
     } finally {
@@ -72,8 +98,7 @@ export function AddMovieModal({
 
     try {
       setAdding(true)
-      const { data, error } = await graphqlClient
-        .mutation<{
+      const { data, error } = await mutationPromise<{
           AddMovie: {
             Success: boolean
             Movie: Movie | null
@@ -86,7 +111,7 @@ export function AddMovieModal({
             Monitored: monitored,
           },
         })
-        .toPromise()
+        
 
       if (error || !data?.AddMovie.Success) {
         addToast({

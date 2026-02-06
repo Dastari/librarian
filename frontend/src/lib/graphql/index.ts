@@ -401,6 +401,7 @@ export {
   // Library Subscriptions
   LIBRARY_CHANGED_SUBSCRIPTION,
   MOVIE_CHANGED_SUBSCRIPTION,
+  SHOW_CHANGED_SUBSCRIPTION,
   // Media File Subscriptions
   MEDIA_FILE_UPDATED_SUBSCRIPTION,
   // Filesystem Subscriptions

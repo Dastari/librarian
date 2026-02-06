@@ -6,20 +6,31 @@ import { Button } from '@heroui/button'
 import { addToast } from '@heroui/toast'
 import { useLibraryContext } from '../$libraryId'
 import { LibraryAlbumsTab, AddAlbumModal } from '../../../components/library'
-import { graphqlClient, DELETE_ALBUM_MUTATION } from '../../../lib/graphql'
+import { useMutation, gql } from '../../../lib/graphql/client'
 
 export const Route = createFileRoute('/libraries/$libraryId/albums')({
   component: AlbumsPage,
 })
+
+const DELETE_ALBUM = gql`
+  mutation DeleteAlbum($Id: String!) {
+    DeleteAlbum(Id: $Id) {
+      Success
+      Error
+    }
+  }
+`
 
 function AlbumsPage() {
   const { library, loading } = useLibraryContext()
   const { isOpen, onOpen, onClose } = useDisclosure()
   const [refreshKey, setRefreshKey] = useState(0)
 
-  // Delete confirmation state
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
-  const [isDeleting, setIsDeleting] = useState(false)
+
+  const [deleteAlbum, { loading: isDeleting }] = useMutation<{
+    DeleteAlbum: { Success: boolean; Error?: string }
+  }>(DELETE_ALBUM)
 
   const handleAlbumAdded = useCallback(() => {
     onClose()
@@ -33,16 +44,10 @@ function AlbumsPage() {
   const confirmDelete = useCallback(async () => {
     if (!deleteTarget) return
 
-    setIsDeleting(true)
     try {
-      const result = await graphqlClient
-        .mutation<{ deleteAlbum: { success: boolean; error?: string } }>(
-          DELETE_ALBUM_MUTATION,
-          { id: deleteTarget.id }
-        )
-        .toPromise()
+      const { data } = await deleteAlbum({ variables: { Id: deleteTarget.id } })
 
-      if (result.data?.deleteAlbum.success) {
+      if (data?.DeleteAlbum.Success) {
         addToast({
           title: 'Album deleted',
           description: `${deleteTarget.name} has been removed from the library.`,
@@ -52,7 +57,7 @@ function AlbumsPage() {
       } else {
         addToast({
           title: 'Delete failed',
-          description: result.data?.deleteAlbum.error || 'Failed to delete album',
+          description: data?.DeleteAlbum.Error || 'Failed to delete album',
           color: 'danger',
         })
       }
@@ -64,10 +69,9 @@ function AlbumsPage() {
         color: 'danger',
       })
     } finally {
-      setIsDeleting(false)
       setDeleteTarget(null)
     }
-  }, [deleteTarget])
+  }, [deleteAlbum, deleteTarget])
 
   return (
     <>
@@ -85,7 +89,6 @@ function AlbumsPage() {
         onAlbumAdded={handleAlbumAdded}
       />
 
-      {/* Delete confirmation modal */}
       <Modal isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)}>
         <ModalContent>
           <ModalHeader>Delete Album</ModalHeader>

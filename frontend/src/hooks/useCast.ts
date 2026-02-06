@@ -5,7 +5,6 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { graphqlClient } from '../lib/graphql';
 import {
   CastDevicesDocument,
   CastSessionsDocument,
@@ -108,16 +107,16 @@ export function useCast(): UseCastResult {
     try {
       setError(null);
       const [devicesRes, sessionsRes, settingsRes] = await Promise.all([
-        graphqlClient.query(CastDevicesDocument, {}).toPromise(),
-        graphqlClient.query(CastSessionsDocument, {}).toPromise(),
-        graphqlClient.query(CastSettingsDocument, { Page: { Limit: 1, Offset: 0 } }).toPromise(),
+        queryPromise(CastDevicesDocument, {}),
+        queryPromise(CastSessionsDocument, {}),
+        queryPromise(CastSettingsDocument, { Page: { Limit: 1, Offset: 0 } }),
       ]);
 
       if (devicesRes.data?.CastDevices?.Edges) {
-        setDevices(devicesRes.data.CastDevices.Edges.map((e) => deviceNodeToApp(e.Node)));
+        setDevices(devicesRes.data.CastDevices.Edges.map((e: any) => deviceNodeToApp(e.Node)));
       }
       if (sessionsRes.data?.CastSessions?.Edges) {
-        const sessions = sessionsRes.data.CastSessions.Edges.map((e) => sessionNodeToApp(e.Node));
+        const sessions = sessionsRes.data.CastSessions.Edges.map((e: any) => sessionNodeToApp(e.Node));
         setActiveSession(sessions[0] ?? null);
       }
       if (settingsRes.data?.CastSettings?.Edges?.length) {
@@ -137,9 +136,8 @@ export function useCast(): UseCastResult {
   const discoverDevices = useCallback(async () => {
     setIsDiscovering(true);
     try {
-      const result = await graphqlClient
-        .mutation<{ discoverCastDevices: CastDevice[] }>(DISCOVER_CAST_DEVICES_MUTATION, {})
-        .toPromise();
+      const result = await mutationPromise<{ discoverCastDevices: CastDevice[] }>(DISCOVER_CAST_DEVICES_MUTATION, {})
+        ;
 
       if (result.data?.discoverCastDevices) {
         setDevices(result.data.discoverCastDevices);
@@ -155,9 +153,8 @@ export function useCast(): UseCastResult {
 
   const castMedia = useCallback(async (input: CastMediaInput): Promise<CastSessionResult> => {
     try {
-      const result = await graphqlClient
-        .mutation<{ castMedia: CastSessionResult }>(CAST_MEDIA_MUTATION, { input })
-        .toPromise();
+      const result = await mutationPromise<{ castMedia: CastSessionResult }>(CAST_MEDIA_MUTATION, { input })
+        ;
 
       if (result.data?.castMedia.success && result.data.castMedia.session) {
         setActiveSession(result.data.castMedia.session);
@@ -176,11 +173,10 @@ export function useCast(): UseCastResult {
   const play = useCallback(async () => {
     if (!activeSession) return;
     try {
-      const result = await graphqlClient
-        .mutation<{ castPlay: CastSessionResult }>(CAST_PLAY_MUTATION, {
+      const result = await mutationPromise<{ castPlay: CastSessionResult }>(CAST_PLAY_MUTATION, {
           sessionId: activeSession.id,
         })
-        .toPromise();
+        ;
       if (result.data?.castPlay?.session) {
         setActiveSession((prev) => (prev ? { ...prev, ...result.data!.castPlay!.session! } : null));
       }
@@ -192,11 +188,10 @@ export function useCast(): UseCastResult {
   const pause = useCallback(async () => {
     if (!activeSession) return;
     try {
-      const result = await graphqlClient
-        .mutation<{ castPause: CastSessionResult }>(CAST_PAUSE_MUTATION, {
+      const result = await mutationPromise<{ castPause: CastSessionResult }>(CAST_PAUSE_MUTATION, {
           sessionId: activeSession.id,
         })
-        .toPromise();
+        ;
       if (result.data?.castPause?.session) {
         setActiveSession((prev) => (prev ? { ...prev, ...result.data!.castPause!.session! } : null));
       }
@@ -208,9 +203,8 @@ export function useCast(): UseCastResult {
   const stop = useCallback(async () => {
     if (!activeSession) return;
     try {
-      await graphqlClient
-        .mutation(CAST_STOP_MUTATION, { sessionId: activeSession.id })
-        .toPromise();
+      await mutationPromise(CAST_STOP_MUTATION, { sessionId: activeSession.id })
+        ;
       setActiveSession(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to stop');
@@ -221,12 +215,11 @@ export function useCast(): UseCastResult {
     async (position: number) => {
       if (!activeSession) return;
       try {
-        const result = await graphqlClient
-          .mutation<{ castSeek: CastSessionResult }>(CAST_SEEK_MUTATION, {
+        const result = await mutationPromise<{ castSeek: CastSessionResult }>(CAST_SEEK_MUTATION, {
             sessionId: activeSession.id,
             position,
           })
-          .toPromise();
+          ;
         if (result.data?.castSeek?.session) {
           setActiveSession((prev) =>
             prev ? { ...prev, ...result.data!.castSeek!.session! } : null,
@@ -243,12 +236,11 @@ export function useCast(): UseCastResult {
     async (volume: number) => {
       if (!activeSession) return;
       try {
-        const result = await graphqlClient
-          .mutation<{ castSetVolume: CastSessionResult }>(CAST_SET_VOLUME_MUTATION, {
+        const result = await mutationPromise<{ castSetVolume: CastSessionResult }>(CAST_SET_VOLUME_MUTATION, {
             sessionId: activeSession.id,
             volume,
           })
-          .toPromise();
+          ;
         if (result.data?.castSetVolume?.session) {
           setActiveSession((prev) =>
             prev ? { ...prev, ...result.data!.castSetVolume!.session! } : null,
@@ -265,12 +257,11 @@ export function useCast(): UseCastResult {
     async (muted: boolean) => {
       if (!activeSession) return;
       try {
-        const result = await graphqlClient
-          .mutation<{ castSetMuted: CastSessionResult }>(CAST_SET_MUTED_MUTATION, {
+        const result = await mutationPromise<{ castSetMuted: CastSessionResult }>(CAST_SET_MUTED_MUTATION, {
             sessionId: activeSession.id,
             muted,
           })
-          .toPromise();
+          ;
         if (result.data?.castSetMuted?.session) {
           setActiveSession((prev) =>
             prev ? { ...prev, ...result.data!.castSetMuted!.session! } : null,

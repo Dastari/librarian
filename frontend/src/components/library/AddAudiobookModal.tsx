@@ -13,11 +13,9 @@ import {
   IconPlus,
 } from '@tabler/icons-react'
 import {
-  graphqlClient,
   SEARCH_AUDIOBOOKS_QUERY,
   ADD_AUDIOBOOK_MUTATION,
   type AudiobookSearchResult,
-  type AudiobookResult,
 } from '../../lib/graphql'
 
 // ============================================================================
@@ -115,16 +113,37 @@ export function AddAudiobookModal({
     setSearchResults([])
 
     try {
-      const result = await graphqlClient
-        .query<{ searchAudiobooks: AudiobookSearchResult[] }>(SEARCH_AUDIOBOOKS_QUERY, {
+      const result = await queryPromise<{
+          SearchAudiobooks: Array<{
+            Provider: string
+            ProviderId: string
+            Title: string
+            AuthorName: string | null
+            Year: number | null
+            CoverUrl: string | null
+            Isbn: string | null
+            Description: string | null
+          }>
+        }>(SEARCH_AUDIOBOOKS_QUERY, {
           query: searchQuery,
         })
-        .toPromise()
+        
 
       if (result.error) {
         setError(result.error.message)
-      } else if (result.data?.searchAudiobooks) {
-        setSearchResults(result.data.searchAudiobooks)
+      } else if (result.data?.SearchAudiobooks) {
+        setSearchResults(
+          result.data.SearchAudiobooks.map((item) => ({
+            provider: item.Provider,
+            providerId: item.ProviderId,
+            title: item.Title,
+            authorName: item.AuthorName,
+            year: item.Year,
+            coverUrl: item.CoverUrl,
+            isbn: item.Isbn,
+            description: item.Description,
+          }))
+        )
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed')
@@ -139,25 +158,29 @@ export function AddAudiobookModal({
       setError(null)
 
       try {
-        const mutationResult = await graphqlClient
-          .mutation<{ addAudiobook: AudiobookResult }>(ADD_AUDIOBOOK_MUTATION, {
-            input: {
-              openlibraryId: result.providerId,
-              libraryId,
+        const mutationResult = await mutationPromise<{
+            AddAudiobook: {
+              Success: boolean
+              Error: string | null
+            }
+          }>(ADD_AUDIOBOOK_MUTATION, {
+            Input: {
+              OpenlibraryId: result.providerId,
+              LibraryId: libraryId,
             },
           })
-          .toPromise()
+          
 
         if (mutationResult.error) {
           setError(mutationResult.error.message)
-        } else if (mutationResult.data?.addAudiobook.success) {
+        } else if (mutationResult.data?.AddAudiobook.Success) {
           // Remove from search results
           setSearchResults((prev) =>
             prev.filter((r) => r.providerId !== result.providerId)
           )
           onAudiobookAdded?.()
-        } else if (mutationResult.data?.addAudiobook.error) {
-          setError(mutationResult.data.addAudiobook.error)
+        } else if (mutationResult.data?.AddAudiobook.Error) {
+          setError(mutationResult.data.AddAudiobook.Error)
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to add audiobook')

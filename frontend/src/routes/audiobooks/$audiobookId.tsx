@@ -1,6 +1,7 @@
 import { createFileRoute, Link, redirect, useNavigate } from '@tanstack/react-router'
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Button } from '@heroui/button'
+import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
 import { Card, CardBody } from '@heroui/card'
 import { Chip } from '@heroui/chip'
 import { Image } from '@heroui/image'
@@ -12,11 +13,11 @@ import { addToast } from '@heroui/toast'
 import { RouteError } from '../../components/RouteError'
 import { sanitizeError, formatBytes, formatDuration } from '../../lib/format'
 import {
-  graphqlClient,
   AUDIOBOOK_WITH_CHAPTERS_QUERY,
   LIBRARY_QUERY,
   DELETE_AUDIOBOOK_MUTATION,
 } from '../../lib/graphql'
+import { useQuery, useMutation, gql } from '../../lib/graphql/client'
 import type {
   AudiobookWithChapters,
   AudiobookChapter,
@@ -29,10 +30,14 @@ import {
   IconSearch,
   IconRefresh,
   IconPlayerPlay,
+  IconPlayerPause,
+  IconDotsVertical,
+  IconInfoCircle,
   IconTrash,
   IconUser,
 } from '@tabler/icons-react'
 import { ChapterStatusChip, PlayPauseIndicator } from '../../components/shared'
+import { FilePropertiesModal } from '../../components/FilePropertiesModal'
 import { usePlaybackContext } from '../../contexts/PlaybackContext'
 import { useDataReactivity } from '../../hooks/useSubscription'
 
@@ -51,6 +56,47 @@ export const Route = createFileRoute('/audiobooks/$audiobookId')({
   component: AudiobookDetailPage,
   errorComponent: RouteError,
 })
+
+const AUDIOBOOK_WITH_CHAPTERS_QUERY_DOC = gql`${AUDIOBOOK_WITH_CHAPTERS_QUERY}`
+const LIBRARY_QUERY_DOC = gql`${LIBRARY_QUERY}`
+const DELETE_AUDIOBOOK_MUTATION_DOC = gql`${DELETE_AUDIOBOOK_MUTATION}`
+
+interface AudiobookNode {
+  Id: string
+  AuthorId: string | null
+  LibraryId: string
+  Title: string
+  SortTitle: string | null
+  Subtitle: string | null
+  OpenlibraryId: string | null
+  Isbn: string | null
+  Description: string | null
+  Publisher: string | null
+  Language: string | null
+  Narrators: string[]
+  SeriesName: string | null
+  DurationSecs: number | null
+  CoverUrl: string | null
+  HasFiles: boolean
+  SizeBytes: number | null
+  Path: string | null
+  Chapters: {
+    Edges: Array<{
+      Node: {
+        Id: string
+        AudiobookId: string
+        ChapterNumber: number
+        Title: string | null
+        StartSecs: number
+        EndSecs: number
+        DurationSecs: number | null
+        MediaFileId: string | null
+        Status: string
+        DownloadProgress: number | null
+      }
+    }>
+  }
+}
 
 // Chapter table columns
 const chapterColumns: DataTableColumn<AudiobookChapter>[] = [
@@ -104,9 +150,10 @@ interface ChapterTableProps {
   audiobookId: string
   onPlay: (chapter: AudiobookChapter) => void
   onSearch: (chapter: AudiobookChapter) => void
+  fetchAudiobook: () => void
 }
 
-function ChapterTable({ chapters, audiobookId, onPlay, onSearch }: ChapterTableProps) {
+function ChapterTable({ chapters, audiobookId, onPlay, onSearch, fetchAudiobook }: ChapterTableProps) {
   // Get session and updatePlayback directly from context for reliable updates
   const { session, updatePlayback } = usePlaybackContext()
 
@@ -170,11 +217,30 @@ function ChapterTable({ chapters, audiobookId, onPlay, onSearch }: ChapterTableP
     <DataTable
       key={tableKey}
       skeletonDelay={500}
+      headerContent={
+        <div className="p-4">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <IconHeadphones size={20} className="text-orange-400" />
+            Chapters
+          </h2>
+        </div>
+      }
       data={chapters}
       columns={chapterColumns}
+      emptyContent={
+        <div className="p-8 text-center">
+          <IconHeadphones size={48} className="mx-auto mb-4 text-default-400" />
+          <h3 className="text-lg font-semibold mb-2">No Chapters</h3>
+          <p className="text-default-500 mb-4">
+            Chapter information hasn't been fetched yet.
+          </p>
+          <Button variant="flat" onPress={fetchAudiobook}>
+            Refresh Audiobook
+          </Button>
+        </div>
+      }
       getRowKey={(ch) => ch.id}
       ariaLabel="Audiobook chapters"
-      removeWrapper
       isCompact
       showItemCount={false}
       hideToolbar
@@ -190,14 +256,95 @@ function ChapterTable({ chapters, audiobookId, onPlay, onSearch }: ChapterTableP
 function AudiobookDetailPage() {
   const { audiobookId } = Route.useParams()
   const navigate = useNavigate()
-  const { startAudiobookPlayback } = usePlaybackContext()
+  const { startAudiobookPlayback, session, updatePlayback } = usePlaybackContext()
 
-  const [audiobookData, setAudiobookData] = useState<AudiobookWithChapters | null>(null)
-  const [library, setLibrary] = useState<Library | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [isDeleting, setIsDeleting] = useState(false)
   const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure()
+  const { isOpen: isPropertiesOpen, onOpen: onPropertiesOpen, onClose: onPropertiesClose } = useDisclosure()
+  const [propertiesMediaFileId, setPropertiesMediaFileId] = useState<string | null>(null)
+  const {
+    data: audiobookQueryData,
+    previousData: previousAudiobookQueryData,
+    loading: isLoading,
+    refetch: refetchAudiobook,
+  } = useQuery<{ Audiobook: AudiobookNode | null }>(AUDIOBOOK_WITH_CHAPTERS_QUERY_DOC, {
+    variables: { Id: audiobookId },
+    fetchPolicy: 'cache-and-network',
+  })
+
+  const audiobookNode = audiobookQueryData?.Audiobook ?? previousAudiobookQueryData?.Audiobook ?? null
+
+  const audiobookData = useMemo<AudiobookWithChapters | null>(() => {
+    if (!audiobookNode) return null
+    const chapters = (audiobookNode.Chapters?.Edges ?? []).map((edge) => ({
+      id: edge.Node.Id,
+      audiobookId: edge.Node.AudiobookId,
+      chapterNumber: edge.Node.ChapterNumber,
+      title: edge.Node.Title,
+      startSecs: edge.Node.StartSecs,
+      endSecs: edge.Node.EndSecs,
+      durationSecs: edge.Node.DurationSecs,
+      mediaFileId: edge.Node.MediaFileId,
+      status: edge.Node.Status as AudiobookChapter['status'],
+      downloadProgress: edge.Node.DownloadProgress,
+    }))
+    const chaptersWithFiles = chapters.filter((ch) => Boolean(ch.mediaFileId)).length
+    const missingChapters = chapters.filter((ch) => !ch.mediaFileId).length
+    const completionPercent = chapters.length > 0 ? Math.round((chaptersWithFiles / chapters.length) * 100) : 0
+    return {
+      audiobook: {
+        id: audiobookNode.Id,
+        authorId: audiobookNode.AuthorId,
+        libraryId: audiobookNode.LibraryId,
+        title: audiobookNode.Title,
+        sortTitle: audiobookNode.SortTitle,
+        subtitle: audiobookNode.Subtitle,
+        openlibraryId: audiobookNode.OpenlibraryId,
+        isbn: audiobookNode.Isbn,
+        description: audiobookNode.Description,
+        publisher: audiobookNode.Publisher,
+        language: audiobookNode.Language,
+        narrators: audiobookNode.Narrators,
+        seriesName: audiobookNode.SeriesName,
+        durationSecs: audiobookNode.DurationSecs,
+        coverUrl: audiobookNode.CoverUrl,
+        hasFiles: audiobookNode.HasFiles,
+        sizeBytes: audiobookNode.SizeBytes,
+        path: audiobookNode.Path,
+        chapterCount: chapters.length,
+        downloadedChapterCount: chaptersWithFiles,
+      },
+      author: null,
+      chapters,
+      chapterCount: chapters.length,
+      chaptersWithFiles,
+      missingChapters,
+      completionPercent,
+    }
+  }, [audiobookNode])
+
+  const {
+    data: libraryData,
+    previousData: previousLibraryData,
+    refetch: refetchLibrary,
+  } = useQuery<{ Library: Library | null }>(LIBRARY_QUERY_DOC, {
+    variables: { Id: audiobookData?.audiobook.libraryId ?? '' },
+    skip: !audiobookData?.audiobook.libraryId,
+    fetchPolicy: 'cache-and-network',
+  })
+
+  const library = libraryData?.Library ?? previousLibraryData?.Library ?? null
+  const error = !isLoading && !audiobookData ? 'Audiobook not found' : null
+
+  const fetchAudiobook = useCallback(() => {
+    void refetchAudiobook()
+    if (audiobookData?.audiobook.libraryId) {
+      void refetchLibrary()
+    }
+  }, [audiobookData?.audiobook.libraryId, refetchAudiobook, refetchLibrary])
+
+  const [deleteAudiobook, { loading: isDeleting }] = useMutation<{
+    DeleteAudiobook: { Success: boolean; Error?: string }
+  }>(DELETE_AUDIOBOOK_MUTATION_DOC)
 
   // Update page title
   useEffect(() => {
@@ -208,48 +355,6 @@ function AudiobookDetailPage() {
       document.title = 'Librarian'
     }
   }, [audiobookData])
-
-  // Fetch audiobook data
-  const fetchAudiobook = useCallback(async () => {
-    try {
-      const result = await graphqlClient
-        .query<{ audiobookWithChapters: AudiobookWithChapters | null }>(
-          AUDIOBOOK_WITH_CHAPTERS_QUERY,
-          { id: audiobookId }
-        )
-        .toPromise()
-
-      if (result.error) {
-        throw new Error(sanitizeError(result.error.message))
-      }
-
-      if (result.data?.audiobookWithChapters) {
-        setAudiobookData(result.data.audiobookWithChapters)
-
-        // Fetch library info
-        const libResult = await graphqlClient
-          .query<{
-            Library: import('../../lib/graphql/generated/graphql').Library | null
-          }>(LIBRARY_QUERY, {
-            Id: result.data.audiobookWithChapters.audiobook.libraryId,
-          })
-          .toPromise()
-        if (libResult.data?.Library) {
-          setLibrary(libResult.data.Library)
-        }
-      } else {
-        setError('Audiobook not found')
-      }
-    } catch (e) {
-      setError(sanitizeError(e))
-    } finally {
-      setIsLoading(false)
-    }
-  }, [audiobookId])
-
-  useEffect(() => {
-    fetchAudiobook()
-  }, [fetchAudiobook])
 
   // Keep data fresh with periodic updates and torrent completion events
   // This ensures download progress is updated in real-time
@@ -262,16 +367,10 @@ function AudiobookDetailPage() {
   // Handle delete
   const handleDelete = useCallback(async () => {
     if (!audiobookData) return
-    setIsDeleting(true)
     try {
-      const result = await graphqlClient
-        .mutation<{ deleteAudiobook: { success: boolean; error?: string } }>(
-          DELETE_AUDIOBOOK_MUTATION,
-          { id: audiobookId }
-        )
-        .toPromise()
+      const result = await deleteAudiobook({ variables: { Id: audiobookId } })
 
-      if (result.data?.deleteAudiobook.success) {
+      if (result.data?.DeleteAudiobook?.Success) {
         addToast({
           title: 'Audiobook deleted',
           description: `${audiobookData.audiobook.title} has been removed.`,
@@ -281,7 +380,7 @@ function AudiobookDetailPage() {
       } else {
         addToast({
           title: 'Delete failed',
-          description: result.data?.deleteAudiobook.error || 'Failed to delete audiobook',
+          description: result.data?.DeleteAudiobook?.Error || 'Failed to delete audiobook',
           color: 'danger',
         })
       }
@@ -292,10 +391,9 @@ function AudiobookDetailPage() {
         color: 'danger',
       })
     } finally {
-      setIsDeleting(false)
       onDeleteClose()
     }
-  }, [audiobookData, audiobookId, navigate, onDeleteClose])
+  }, [audiobookData, audiobookId, deleteAudiobook, navigate, onDeleteClose])
 
   // Navigate to hunt page for this audiobook
   const handleManualHunt = useCallback(() => {
@@ -359,6 +457,14 @@ function AudiobookDetailPage() {
   }
 
   const { audiobook, chapters, author } = audiobookData
+  const playableChapters = chapters.filter((ch) => !!ch.mediaFileId)
+  const isThisAudiobookPlaying = session?.audiobookId === audiobookId && !!session?.isPlaying
+  const handleOpenProperties = useCallback(() => {
+    const firstPlayable = playableChapters[0]
+    if (!firstPlayable?.mediaFileId) return
+    setPropertiesMediaFileId(firstPlayable.mediaFileId)
+    onPropertiesOpen()
+  }, [onPropertiesOpen, playableChapters])
 
   return (
     <div className="container mx-auto p-4  mb-20">
@@ -382,7 +488,7 @@ function AudiobookDetailPage() {
         {/* Audiobook Header */}
         <div className="flex flex-col md:flex-row gap-6 mb-6">
           {/* Cover Art */}
-          <div className="w-64 shrink-0">
+          <div className="w-64 shrink-0 relative group">
             {audiobook.coverUrl ? (
               <Image
                 src={audiobook.coverUrl}
@@ -397,11 +503,81 @@ function AudiobookDetailPage() {
                 <IconBook size={64} className="text-default-400" />
               </div>
             )}
+            {playableChapters.length > 0 && (
+              <button
+                onClick={() => {
+                  if (isThisAudiobookPlaying) {
+                    updatePlayback({ isPlaying: false })
+                    return
+                  }
+                  if (!audiobookData) return
+                  startAudiobookPlayback(audiobookData.audiobook, playableChapters[0], playableChapters)
+                }}
+                className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 rounded-lg cursor-pointer"
+                aria-label={isThisAudiobookPlaying ? 'Pause Audiobook' : 'Play Audiobook'}
+              >
+                <div className={`w-16 h-16 rounded-full ${isThisAudiobookPlaying ? 'bg-warning' : 'bg-primary'} flex items-center justify-center shadow-lg hover:scale-110 transition-transform`}>
+                  {isThisAudiobookPlaying ? (
+                    <IconPlayerPause size={32} className="text-white" />
+                  ) : (
+                    <IconPlayerPlay size={32} className="text-white ml-1" />
+                  )}
+                </div>
+              </button>
+            )}
           </div>
 
           {/* Audiobook Info */}
           <div className="flex-1">
-            <h1 className="text-3xl font-bold mb-1">{audiobook.title}</h1>
+            <div className="flex items-start justify-between gap-4 mb-1">
+              <h1 className="text-3xl font-bold">{audiobook.title}</h1>
+              <Dropdown>
+                <DropdownTrigger>
+                  <Button
+                    isIconOnly
+                    size="sm"
+                    variant="light"
+                    aria-label="Audiobook actions"
+                  >
+                    <IconDotsVertical size={18} />
+                  </Button>
+                </DropdownTrigger>
+                <DropdownMenu
+                  aria-label="Audiobook actions menu"
+                  onAction={(key) => {
+                    if (key === 'search') {
+                      handleManualHunt()
+                    } else if (key === 'refresh') {
+                      void fetchAudiobook()
+                    } else if (key === 'properties') {
+                      handleOpenProperties()
+                    } else if (key === 'delete') {
+                      onDeleteOpen()
+                    }
+                  }}
+                >
+                  <DropdownItem key="search" startContent={<IconSearch size={16} />}>
+                    Search for Audiobook
+                  </DropdownItem>
+                  <DropdownItem key="refresh" startContent={<IconRefresh size={16} />}>
+                    Refresh
+                  </DropdownItem>
+                  {playableChapters.length > 0 ? (
+                    <DropdownItem key="properties" startContent={<IconInfoCircle size={16} />}>
+                      Properties
+                    </DropdownItem>
+                  ) : null}
+                  <DropdownItem
+                    key="delete"
+                    startContent={<IconTrash size={16} className="text-red-400" />}
+                    className="text-danger"
+                    color="danger"
+                  >
+                    Delete
+                  </DropdownItem>
+                </DropdownMenu>
+              </Dropdown>
+            </div>
             {audiobook.subtitle && (
               <p className="text-lg text-default-500 mb-2">{audiobook.subtitle}</p>
             )}
@@ -496,65 +672,16 @@ function AudiobookDetailPage() {
               </div>
             </div>
 
-            {/* Actions */}
-            <div className="flex flex-wrap gap-2">
-              <Button
-                color="primary"
-                startContent={<IconSearch size={16} />}
-                onPress={handleManualHunt}
-              >
-                Hunt for Audiobook
-              </Button>
-              <Button
-                variant="flat"
-                startContent={<IconRefresh size={16} />}
-                onPress={fetchAudiobook}
-              >
-                Refresh
-              </Button>
-              <Button
-                variant="flat"
-                color="danger"
-                startContent={<IconTrash size={16} />}
-                onPress={onDeleteOpen}
-              >
-                Delete
-              </Button>
-            </div>
           </div>
         </div>
 
-        {/* Chapter List */}
-        <Card>
-          <CardBody className="p-0">
-            <div className="p-4 border-b border-default-200">
-              <h2 className="text-lg font-semibold flex items-center gap-2">
-                <IconHeadphones size={20} className="text-orange-400" />
-                Chapters
-              </h2>
-            </div>
-
-            {chapters.length === 0 ? (
-              <div className="p-8 text-center">
-                <IconHeadphones size={48} className="mx-auto mb-4 text-default-400" />
-                <h3 className="text-lg font-semibold mb-2">No Chapters</h3>
-                <p className="text-default-500 mb-4">
-                  Chapter information hasn't been fetched yet.
-                </p>
-                <Button variant="flat" onPress={fetchAudiobook}>
-                  Refresh Audiobook
-                </Button>
-              </div>
-            ) : (
-              <ChapterTable
-                chapters={chapters}
-                audiobookId={audiobookData.audiobook.id}
-                onPlay={handlePlayChapter}
-                onSearch={handleSearchChapter}
-              />
-            )}
-          </CardBody>
-        </Card>
+        <ChapterTable
+          chapters={chapters}
+          audiobookId={audiobookData.audiobook.id}
+          onPlay={handlePlayChapter}
+          onSearch={handleSearchChapter}
+          fetchAudiobook={fetchAudiobook}
+        />
 
         {/* Delete Confirmation Modal */}
         {audiobookData && (
@@ -584,6 +711,15 @@ function AudiobookDetailPage() {
             </ModalContent>
           </Modal>
         )}
+        <FilePropertiesModal
+          isOpen={isPropertiesOpen}
+          onClose={() => {
+            onPropertiesClose()
+            setPropertiesMediaFileId(null)
+          }}
+          mediaFileId={propertiesMediaFileId}
+          title={audiobook ? audiobook.title : undefined}
+        />
       </div>
   )
 }

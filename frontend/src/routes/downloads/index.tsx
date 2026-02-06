@@ -6,7 +6,6 @@ import { addToast } from "@heroui/toast";
 import { Button } from "@heroui/button";
 import { IconRefresh } from "@tabler/icons-react";
 import {
-  graphqlClient,
   DOWNLOADS_TORRENTS_QUERY,
   ADD_TORRENT_MUTATION,
   PAUSE_TORRENT_BY_INFO_HASH_MUTATION,
@@ -21,7 +20,7 @@ import {
   type ProcessSourceResult,
   type RematchSourceResult,
 } from "../../lib/graphql";
-import { useSubscription, gql } from "../../lib/graphql/client";
+import { useSubscription, gql, queryPromise, mutationPromise } from "../../lib/graphql/client";
 import type {
   Torrent,
   TorrentConnection,
@@ -76,11 +75,10 @@ function DownloadsPage() {
 
   const fetchTorrents = useCallback(async () => {
     try {
-      const result = await graphqlClient
-        .query<{ Torrents: TorrentConnection }>(DOWNLOADS_TORRENTS_QUERY, {
+      const result = await queryPromise<{ Torrents: TorrentConnection }>(DOWNLOADS_TORRENTS_QUERY, {
           Page: { Limit: 500, Offset: 0 },
         })
-        .toPromise();
+        ;
       if (result.data?.Torrents?.Edges) {
         const torrentNodes = result.data.Torrents.Edges.map(({ Node }) => Node);
         setTorrents(torrentNodes);
@@ -200,8 +198,7 @@ function DownloadsPage() {
   const handleAddMagnet = async (magnet: string) => {
     setIsAdding(true);
     try {
-      const result = await graphqlClient
-        .mutation<{
+      const result = await mutationPromise<{
           AddTorrent?: {
             Success: boolean;
             Torrent: { Name: string } | null;
@@ -210,7 +207,7 @@ function DownloadsPage() {
         }>(ADD_TORRENT_MUTATION, {
           Input: { Magnet: magnet },
         })
-        .toPromise();
+        ;
       const data = result.data?.AddTorrent;
       const success = data?.Success;
       const torrent = data?.Torrent;
@@ -244,8 +241,7 @@ function DownloadsPage() {
   const handleAddUrl = async (url: string) => {
     setIsAdding(true);
     try {
-      const result = await graphqlClient
-        .mutation<{
+      const result = await mutationPromise<{
           AddTorrent?: {
             Success: boolean;
             Torrent: { Name: string } | null;
@@ -254,7 +250,7 @@ function DownloadsPage() {
         }>(ADD_TORRENT_MUTATION, {
           Input: { Url: url },
         })
-        .toPromise();
+        ;
       const data = result.data?.AddTorrent;
       const success = data?.Success;
       const torrent = data?.Torrent;
@@ -333,13 +329,12 @@ function DownloadsPage() {
 
   // Single torrent actions (by infoHash – entity Torrents list)
   const handlePause = async (infoHash: string) => {
-    const result = await graphqlClient
-      .mutation<{
+    const result = await mutationPromise<{
         PauseTorrentByInfoHash?: { Success: boolean; Error?: string };
       }>(PAUSE_TORRENT_BY_INFO_HASH_MUTATION, {
         InfoHash: infoHash,
       })
-      .toPromise();
+      ;
     const data = result.data?.PauseTorrentByInfoHash;
     if (data?.Success) {
       setTorrents((prev) =>
@@ -351,13 +346,12 @@ function DownloadsPage() {
   };
 
   const handleResume = async (infoHash: string) => {
-    const result = await graphqlClient
-      .mutation<{
+    const result = await mutationPromise<{
         ResumeTorrentByInfoHash?: { Success: boolean; Error?: string };
       }>(RESUME_TORRENT_BY_INFO_HASH_MUTATION, {
         InfoHash: infoHash,
       })
-      .toPromise();
+      ;
     const data = result.data?.ResumeTorrentByInfoHash;
     if (data?.Success) {
       setTorrents((prev) =>
@@ -369,14 +363,13 @@ function DownloadsPage() {
   };
 
   const handleRemove = async (infoHash: string) => {
-    const result = await graphqlClient
-      .mutation<{
+    const result = await mutationPromise<{
         RemoveTorrentByInfoHash?: { Success: boolean; Error?: string };
       }>(REMOVE_TORRENT_BY_INFO_HASH_MUTATION, {
         InfoHash: infoHash,
         DeleteFiles: false,
       })
-      .toPromise();
+      ;
     const data = result.data?.RemoveTorrentByInfoHash;
     if (data?.Success) {
       setTorrents((prev) => prev.filter((t) => t.InfoHash !== infoHash));
@@ -403,15 +396,14 @@ function DownloadsPage() {
 
   // Process pending file matches (copy files to library)
   const handleProcess = async (torrent: Torrent) => {
-    const result = await graphqlClient
-      .mutation<{ processSource: ProcessSourceResult }>(
+    const result = await mutationPromise<{ processSource: ProcessSourceResult }>(
         PROCESS_SOURCE_MUTATION,
         {
           sourceType: "torrent",
           sourceId: torrent.InfoHash,
         }
       )
-      .toPromise();
+      ;
 
     if (result.data?.processSource) {
       const proc = result.data.processSource;
@@ -440,8 +432,7 @@ function DownloadsPage() {
 
   // Re-match files against library items
   const handleRematch = async (torrent: Torrent) => {
-    const result = await graphqlClient
-      .mutation<{ rematchSource: RematchSourceResult }>(
+    const result = await mutationPromise<{ rematchSource: RematchSourceResult }>(
         REMATCH_SOURCE_MUTATION,
         {
           sourceType: "torrent",
@@ -449,7 +440,7 @@ function DownloadsPage() {
           libraryId: null, // Match against all libraries
         }
       )
-      .toPromise();
+      ;
 
     if (result.data?.rematchSource) {
       const match = result.data.rematchSource;
@@ -479,14 +470,13 @@ function DownloadsPage() {
   const handleBulkPause = async (infoHashes: string[]) => {
     let successCount = 0;
     for (const infoHash of infoHashes) {
-      const result = await graphqlClient
-        .mutation<{ PauseTorrentByInfoHash?: { Success: boolean } }>(
+      const result = await mutationPromise<{ PauseTorrentByInfoHash?: { Success: boolean } }>(
           PAUSE_TORRENT_BY_INFO_HASH_MUTATION,
           {
             InfoHash: infoHash,
           }
         )
-        .toPromise();
+        ;
       if (result.data?.PauseTorrentByInfoHash?.Success) {
         successCount++;
         setTorrents((prev) =>
@@ -506,14 +496,13 @@ function DownloadsPage() {
   const handleBulkResume = async (infoHashes: string[]) => {
     let successCount = 0;
     for (const infoHash of infoHashes) {
-      const result = await graphqlClient
-        .mutation<{ ResumeTorrentByInfoHash?: { Success: boolean } }>(
+      const result = await mutationPromise<{ ResumeTorrentByInfoHash?: { Success: boolean } }>(
           RESUME_TORRENT_BY_INFO_HASH_MUTATION,
           {
             InfoHash: infoHash,
           }
         )
-        .toPromise();
+        ;
       if (result.data?.ResumeTorrentByInfoHash?.Success) {
         successCount++;
         setTorrents((prev) =>
@@ -533,15 +522,14 @@ function DownloadsPage() {
   const handleBulkRemove = async (infoHashes: string[]) => {
     let successCount = 0;
     for (const infoHash of infoHashes) {
-      const result = await graphqlClient
-        .mutation<{ RemoveTorrentByInfoHash?: { Success: boolean } }>(
+      const result = await mutationPromise<{ RemoveTorrentByInfoHash?: { Success: boolean } }>(
           REMOVE_TORRENT_BY_INFO_HASH_MUTATION,
           {
             InfoHash: infoHash,
             DeleteFiles: false,
           }
         )
-        .toPromise();
+        ;
       if (result.data?.RemoveTorrentByInfoHash?.Success) {
         successCount++;
         setTorrents((prev) => prev.filter((t) => t.InfoHash !== infoHash));

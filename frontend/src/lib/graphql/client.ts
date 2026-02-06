@@ -181,6 +181,60 @@ export function resetApolloCache(): void {
   });
 }
 
+// Promise helpers for route/components being migrated off urql-style chaining
+export async function queryPromise<
+  TData = unknown,
+  TVariables = OperationVariables,
+>(
+  query: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
+  variables?: TVariables,
+): Promise<{ data?: TData; error?: Error }> {
+  try {
+    const doc = typeof query === "string" ? gql(query) : query;
+    const result = await apolloClient.query<TData>({
+      query: doc as TypedDocumentNode<TData, TVariables>,
+      variables: variables as OperationVariables,
+      fetchPolicy: "network-only",
+    });
+    return { data: result.data };
+  } catch (error) {
+    return { error: error as Error };
+  }
+}
+
+export async function mutationPromise<
+  TData = unknown,
+  TVariables = OperationVariables,
+>(
+  mutation: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
+  variables?: TVariables,
+): Promise<{ data?: TData; error?: Error }> {
+  try {
+    const doc = typeof mutation === "string" ? gql(mutation) : mutation;
+    const result = await apolloClient.mutate<TData>({
+      mutation: doc as TypedDocumentNode<TData, TVariables>,
+      variables: variables as OperationVariables,
+    });
+    return { data: result.data ?? undefined };
+  } catch (error) {
+    return { error: error as Error };
+  }
+}
+
+export function subscriptionStream<
+  TData = unknown,
+  TVariables = OperationVariables,
+>(
+  subscription: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
+  variables?: TVariables,
+) {
+  const doc = typeof subscription === "string" ? gql(subscription) : subscription;
+  return apolloClient.subscribe<TData>({
+    query: doc as TypedDocumentNode<TData, TVariables>,
+    variables: variables as OperationVariables,
+  });
+}
+
 // Legacy wrapper for compatibility with existing code that uses urql-style API
 export const graphqlClient = {
   query: <TData = unknown, TVariables = OperationVariables>(
@@ -232,3 +286,12 @@ export const graphqlClient = {
     });
   },
 };
+
+// Transitional global exposure for files being migrated off `graphqlClient...toPromise()`.
+// This keeps runtime stable while imports are standardized incrementally.
+if (typeof globalThis !== "undefined") {
+  (globalThis as any).graphqlClient = graphqlClient;
+  (globalThis as any).queryPromise = queryPromise;
+  (globalThis as any).mutationPromise = mutationPromise;
+  (globalThis as any).subscriptionStream = subscriptionStream;
+}

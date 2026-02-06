@@ -5,7 +5,6 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useRouterState } from '@tanstack/react-router'
-import { graphqlClient } from '../lib/graphql'
 import {
   LibrariesDocument,
   LibraryChangedDocument,
@@ -108,45 +107,43 @@ export function useDashboardCache(userId: string | null): UseDashboardCacheResul
       const fromStr = formatDateForFilter(today)
       const toStr = formatDateForFilter(endDate)
 
-      const librariesResult = await graphqlClient
-        .query(LibrariesDocument, {})
-        .toPromise()
+      const librariesResult = await queryPromise(LibrariesDocument, {})
+        
       const libraries: LibraryNode[] =
-        librariesResult.data?.Libraries.Edges.map((e) => e.Node) ?? []
+        librariesResult.data?.Libraries.Edges.map((e: any) => e.Node) ?? []
 
       const [libraryUpcomingResult, globalUpcomingResult] = await Promise.all([
-        graphqlClient.query(DashboardScheduleCachesDocument, {
+        queryPromise(DashboardScheduleCachesDocument, {
           Where: { AirDate: { Gte: fromStr, Lte: toStr } },
           OrderBy: [{ AirDate: 'Asc' }],
           Page: { Limit: 50, Offset: 0 },
-        }).toPromise(),
-        graphqlClient.query(DashboardScheduleCachesDocument, {
+        }),
+        queryPromise(DashboardScheduleCachesDocument, {
           Where: {
             AirDate: { Gte: fromStr, Lte: toStr },
             CountryCode: { Eq: 'US' },
           },
           OrderBy: [{ AirDate: 'Asc' }],
           Page: { Limit: 50, Offset: 0 },
-        }).toPromise(),
+        }),
       ])
 
       const libraryUpcoming: ScheduleCacheNode[] =
-        libraryUpcomingResult.data?.ScheduleCaches.Edges.map((e) => e.Node) ?? []
+        libraryUpcomingResult.data?.ScheduleCaches.Edges.map((e: any) => e.Node) ?? []
       const globalUpcomingRaw: ScheduleCacheNode[] =
-        globalUpcomingResult.data?.ScheduleCaches.Edges.map((e) => e.Node) ?? []
+        globalUpcomingResult.data?.ScheduleCaches.Edges.map((e: any) => e.Node) ?? []
 
       const tvLibraries = libraries.filter((lib) => lib.LibraryType === 'TV')
       const allShows: ShowNode[] = []
       for (const library of tvLibraries.slice(0, 2)) {
-        const showsResult = await graphqlClient
-          .query(DashboardShowsDocument, {
+        const showsResult = await queryPromise(DashboardShowsDocument, {
             Where: { LibraryId: { Eq: library.Id } },
             OrderBy: [{ CreatedAt: 'Desc' }],
             Page: { Limit: 6, Offset: 0 },
           })
-          .toPromise()
+          
         const nodes = showsResult.data?.Shows.Edges ?? []
-        allShows.push(...nodes.map((e) => e.Node))
+        allShows.push(...nodes.map((e: any) => e.Node))
       }
 
       const seenShows = new Set<number>()
@@ -215,13 +212,12 @@ export function useDashboardCache(userId: string | null): UseDashboardCacheResul
       if (document.visibilityState === 'visible') refetch()
       else setIsStale(true)
     }
-    const librarySub = graphqlClient.subscription(LibraryChangedDocument, {}).subscribe({
-      next: (result) => {
+    const librarySub = subscriptionStream(LibraryChangedDocument, {}).subscribe({
+      next: (result: any) => {
         if (result.data?.LibraryChanged) handleEvent()
       },
     })
-    const torrentSub = graphqlClient
-      .subscription<{ TorrentCompleted: { Id: number } }>(TORRENT_COMPLETED_SUBSCRIPTION, {})
+    const torrentSub = subscriptionStream<{ TorrentCompleted: { Id: number } }>(TORRENT_COMPLETED_SUBSCRIPTION, {})
       .subscribe({ next: handleEvent })
     return () => {
       librarySub.unsubscribe()

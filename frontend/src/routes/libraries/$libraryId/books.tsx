@@ -6,20 +6,31 @@ import { Button } from '@heroui/button'
 import { addToast } from '@heroui/toast'
 import { useLibraryContext } from '../$libraryId'
 import { LibraryAudiobooksTab, AddAudiobookModal } from '../../../components/library'
-import { graphqlClient, DELETE_AUDIOBOOK_MUTATION } from '../../../lib/graphql'
+import { useMutation, gql } from '../../../lib/graphql/client'
 
 export const Route = createFileRoute('/libraries/$libraryId/books')({
   component: AudiobooksPage,
 })
+
+const DELETE_AUDIOBOOK = gql`
+  mutation DeleteAudiobook($Id: String!) {
+    DeleteAudiobook(Id: $Id) {
+      Success
+      Error
+    }
+  }
+`
 
 function AudiobooksPage() {
   const { library, loading } = useLibraryContext()
   const { isOpen, onOpen, onClose } = useDisclosure()
   const [refreshKey, setRefreshKey] = useState(0)
 
-  // Delete confirmation state
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null)
-  const [isDeleting, setIsDeleting] = useState(false)
+
+  const [deleteAudiobook, { loading: isDeleting }] = useMutation<{
+    DeleteAudiobook: { Success: boolean; Error?: string }
+  }>(DELETE_AUDIOBOOK)
 
   const handleAudiobookAdded = useCallback(() => {
     onClose()
@@ -33,16 +44,10 @@ function AudiobooksPage() {
   const confirmDelete = useCallback(async () => {
     if (!deleteTarget) return
 
-    setIsDeleting(true)
     try {
-      const result = await graphqlClient
-        .mutation<{ deleteAudiobook: { success: boolean; error?: string } }>(
-          DELETE_AUDIOBOOK_MUTATION,
-          { id: deleteTarget.id }
-        )
-        .toPromise()
+      const { data } = await deleteAudiobook({ variables: { Id: deleteTarget.id } })
 
-      if (result.data?.deleteAudiobook.success) {
+      if (data?.DeleteAudiobook.Success) {
         addToast({
           title: 'Audiobook deleted',
           description: `${deleteTarget.title} has been removed from the library.`,
@@ -52,7 +57,7 @@ function AudiobooksPage() {
       } else {
         addToast({
           title: 'Delete failed',
-          description: result.data?.deleteAudiobook.error || 'Failed to delete audiobook',
+          description: data?.DeleteAudiobook.Error || 'Failed to delete audiobook',
           color: 'danger',
         })
       }
@@ -64,10 +69,9 @@ function AudiobooksPage() {
         color: 'danger',
       })
     } finally {
-      setIsDeleting(false)
       setDeleteTarget(null)
     }
-  }, [deleteTarget])
+  }, [deleteAudiobook, deleteTarget])
 
   return (
     <>
@@ -85,7 +89,6 @@ function AudiobooksPage() {
         onAudiobookAdded={handleAudiobookAdded}
       />
 
-      {/* Delete confirmation modal */}
       <Modal isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)}>
         <ModalContent>
           <ModalHeader>Delete Audiobook</ModalHeader>
