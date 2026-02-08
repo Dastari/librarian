@@ -1,43 +1,62 @@
-import { Button } from '@heroui/button'
-import { Card, CardBody } from '@heroui/card'
-import { Progress } from '@heroui/progress'
-import { Chip } from '@heroui/chip'
-import { Tooltip } from '@heroui/tooltip'
-import { useDisclosure } from '@heroui/modal'
-import type { Torrent } from '../../lib/graphql/generated/graphql'
-import { formatBytes } from '../../lib/format'
-import { IconPlayerPlay, IconPlayerPause, IconTrash } from '@tabler/icons-react'
-import { ConfirmModal } from '../ConfirmModal'
+import { Button } from "@heroui/button";
+import { Card, CardBody } from "@heroui/card";
+import { Progress } from "@heroui/progress";
+import { Chip } from "@heroui/chip";
+import { Tooltip } from "@heroui/tooltip";
+import { useDisclosure } from "@heroui/modal";
+import type { DownloadTorrent } from "./types";
+import { formatBytes } from "../../lib/format";
+import {
+  IconPlayerPlay,
+  IconPlayerPause,
+  IconTrash,
+} from "@tabler/icons-react";
+import { ConfirmModal } from "../ConfirmModal";
 
 // ============================================================================
 // State Configuration
 // ============================================================================
 
-type TorrentStateKey = 'QUEUED' | 'CHECKING' | 'DOWNLOADING' | 'SEEDING' | 'PAUSED' | 'ERROR'
+type TorrentStateKey =
+  | "QUEUED"
+  | "CHECKING"
+  | "DOWNLOADING"
+  | "SEEDING"
+  | "PAUSED"
+  | "ERROR";
 
 export const TORRENT_STATE_INFO: Record<
   TorrentStateKey,
-  { label: string; color: 'default' | 'primary' | 'success' | 'warning' | 'danger' | 'secondary' }
+  {
+    label: string;
+    color:
+      | "default"
+      | "primary"
+      | "success"
+      | "warning"
+      | "danger"
+      | "secondary";
+  }
 > = {
-  QUEUED: { label: 'Queued', color: 'default' },
-  CHECKING: { label: 'Checking', color: 'secondary' },
-  DOWNLOADING: { label: 'Downloading', color: 'primary' },
-  SEEDING: { label: 'Seeding', color: 'success' },
-  PAUSED: { label: 'Paused', color: 'warning' },
-  ERROR: { label: 'Error', color: 'danger' },
-}
+  QUEUED: { label: "Queued", color: "default" },
+  CHECKING: { label: "Checking", color: "secondary" },
+  DOWNLOADING: { label: "Downloading", color: "primary" },
+  SEEDING: { label: "Seeding", color: "success" },
+  PAUSED: { label: "Paused", color: "warning" },
+  ERROR: { label: "Error", color: "danger" },
+};
 
 // ============================================================================
 // Component Props
 // ============================================================================
 
 export interface TorrentCardProps {
-  torrent: Torrent
-  onPause: (infoHash: string) => void
-  onResume: (infoHash: string) => void
-  onRemove: (infoHash: string) => void
+  torrent: DownloadTorrent;
+  onPause: (infoHash: string) => void;
+  onResume: (infoHash: string) => void;
+  onRemove: (infoHash: string) => void;
   /** Whether to show checkbox space on the left (for alignment with DataTable) */
-  showCheckboxSpace?: boolean
+  showCheckboxSpace?: boolean;
 }
 
 // ============================================================================
@@ -51,116 +70,122 @@ export function TorrentCard({
   onRemove,
   showCheckboxSpace = false,
 }: TorrentCardProps) {
-  const state = torrent.State.toUpperCase() as TorrentStateKey
-  const isPaused = state === 'PAUSED'
-  const isSeeding = state === 'SEEDING'
-  const isError = state === 'ERROR'
-  const isDownloading = state === 'DOWNLOADING'
+  const state = torrent.State.toUpperCase() as TorrentStateKey;
+  const isPaused = state === "PAUSED";
+  const isSeeding = state === "SEEDING";
+  const isError = state === "ERROR";
+  const isDownloading = state === "DOWNLOADING";
 
   const progressColor = isSeeding
-    ? 'success'
+    ? "success"
     : isError
-      ? 'danger'
+      ? "danger"
       : isPaused
-        ? 'warning'
-        : 'primary'
+        ? "warning"
+        : "primary";
 
-  const stateInfo = TORRENT_STATE_INFO[state] || TORRENT_STATE_INFO.QUEUED
+  const stateInfo = TORRENT_STATE_INFO[state] || TORRENT_STATE_INFO.QUEUED;
 
   // Confirm modal state
-  const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
+  const {
+    isOpen: isConfirmOpen,
+    onOpen: onConfirmOpen,
+    onClose: onConfirmClose,
+  } = useDisclosure();
 
   const handleRemove = () => {
-    onConfirmOpen()
-  }
+    onConfirmOpen();
+  };
 
   return (
     <>
-    <ConfirmModal
-      isOpen={isConfirmOpen}
-      onClose={onConfirmClose}
-      onConfirm={() => {
-        onRemove(torrent.InfoHash)
-        onConfirmClose()
-      }}
-      title="Remove Torrent"
-      message={`Are you sure you want to remove "${torrent.Name}"?`}
-      description="This will stop the download but will not delete any downloaded files."
-      confirmLabel="Remove"
-      confirmColor="danger"
-    />
-    <Card>
-      <CardBody>
-        <div className="flex items-start justify-between mb-3">
-          <div className={`flex-1 min-w-0 mr-4 ${showCheckboxSpace ? 'ml-8' : ''}`}>
-            <h3 className="font-semibold truncate" title={torrent.Name}>
-              {torrent.Name}
-            </h3>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-sm text-default-500">
-                {formatBytes(torrent.TotalBytes)}
-              </span>
-              <Chip size="sm" color={stateInfo.color} variant="flat">
-                {stateInfo.label}
-              </Chip>
+      <ConfirmModal
+        isOpen={isConfirmOpen}
+        onClose={onConfirmClose}
+        onConfirm={() => {
+          onRemove(torrent.InfoHash);
+          onConfirmClose();
+        }}
+        title="Remove Torrent"
+        message={`Are you sure you want to remove "${torrent.Name}"?`}
+        description="This will stop the download but will not delete any downloaded files."
+        confirmLabel="Remove"
+        confirmColor="danger"
+      />
+      <Card>
+        <CardBody>
+          <div className="flex items-start justify-between mb-3">
+            <div
+              className={`flex-1 min-w-0 mr-4 ${showCheckboxSpace ? "ml-8" : ""}`}
+            >
+              <h3 className="font-semibold truncate" title={torrent.Name}>
+                {torrent.Name}
+              </h3>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-sm text-default-500">
+                  {formatBytes(torrent.TotalBytes)}
+                </span>
+                <Chip size="sm" color={stateInfo.color} variant="flat">
+                  {stateInfo.label}
+                </Chip>
+              </div>
+            </div>
+            <div className="flex gap-1">
+              {isPaused ? (
+                <Tooltip content="Resume">
+                  <Button
+                    isIconOnly
+                    size="sm"
+                    variant="light"
+                    color="success"
+                    onPress={() => onResume(torrent.InfoHash)}
+                    aria-label="Resume torrent"
+                  >
+                    <IconPlayerPlay size={16} />
+                  </Button>
+                </Tooltip>
+              ) : isDownloading ? (
+                <Tooltip content="Pause">
+                  <Button
+                    isIconOnly
+                    size="sm"
+                    variant="light"
+                    color="warning"
+                    onPress={() => onPause(torrent.InfoHash)}
+                    aria-label="Pause torrent"
+                  >
+                    <IconPlayerPause size={16} />
+                  </Button>
+                </Tooltip>
+              ) : null}
+              <Tooltip content="Remove">
+                <Button
+                  isIconOnly
+                  size="sm"
+                  variant="light"
+                  color="danger"
+                  onPress={handleRemove}
+                  aria-label="Remove torrent"
+                >
+                  <IconTrash size={16} />
+                </Button>
+              </Tooltip>
             </div>
           </div>
-          <div className="flex gap-1">
-            {isPaused ? (
-              <Tooltip content="Resume">
-                <Button
-                  isIconOnly
-                  size="sm"
-                  variant="light"
-                  color="success"
-                  onPress={() => onResume(torrent.InfoHash)}
-                  aria-label="Resume torrent"
-                >
-                  <IconPlayerPlay size={16} />
-                </Button>
-              </Tooltip>
-            ) : isDownloading ? (
-              <Tooltip content="Pause">
-                <Button
-                  isIconOnly
-                  size="sm"
-                  variant="light"
-                  color="warning"
-                  onPress={() => onPause(torrent.InfoHash)}
-                  aria-label="Pause torrent"
-                >
-                  <IconPlayerPause size={16} />
-                </Button>
-              </Tooltip>
-            ) : null}
-            <Tooltip content="Remove">
-              <Button
-                isIconOnly
-                size="sm"
-                variant="light"
-                color="danger"
-                onPress={handleRemove}
-                aria-label="Remove torrent"
-              >
-                <IconTrash size={16} />
-              </Button>
-            </Tooltip>
+
+          <Progress
+            value={torrent.Progress * 100}
+            color={progressColor}
+            size="md"
+            className="mb-2"
+            aria-label="Download progress"
+          />
+
+          <div className="flex justify-between text-sm text-default-500">
+            <span>{(torrent.Progress * 100).toFixed(1)}%</span>
           </div>
-        </div>
-
-        <Progress
-          value={torrent.Progress * 100}
-          color={progressColor}
-          size="md"
-          className="mb-2"
-          aria-label="Download progress"
-        />
-
-        <div className="flex justify-between text-sm text-default-500">
-          <span>{(torrent.Progress * 100).toFixed(1)}%</span>
-        </div>
-      </CardBody>
-    </Card>
+        </CardBody>
+      </Card>
     </>
-  )
+  );
 }

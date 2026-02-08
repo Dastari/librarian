@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, Controller, type Resolver } from "react-hook-form";
@@ -6,11 +6,25 @@ import { Input } from "@heroui/input";
 import { Select, SelectItem } from "@heroui/select";
 import { Switch } from "@heroui/switch";
 import { Divider } from "@heroui/divider";
+import { Button } from "@heroui/button";
 import { Accordion, AccordionItem } from "@heroui/accordion";
+import {
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+  useDisclosure,
+} from "@heroui/modal";
 import { FolderBrowserInput } from "../FolderBrowserInput";
 import { NamingPatternSelector } from "./NamingPatternSelector";
+import { addToast } from "@heroui/toast";
 
-import { LIBRARY_TYPES, type LibraryType } from "../../lib/graphql";
+import {
+  LIBRARY_TYPES,
+  configureNetworkPath,
+  type LibraryType,
+} from "../../lib/graphql";
 import { IconFolder, IconRefresh, IconSettings } from "@tabler/icons-react";
 
 // =============================================================================
@@ -34,6 +48,11 @@ const librarySettingsSchema = z.object({
   WatchForChanges: z.boolean(),
   AutoOrganize: z.boolean(),
   NamingPattern: z.string().nullable(),
+  NetworkAuthEnabled: z.boolean(),
+  NetworkUsername: z.string(),
+  NetworkPassword: z.string(),
+  NetworkMountPoint: z.string(),
+  PersistNetworkCredentials: z.boolean(),
 });
 
 export type LibrarySettingsFormValues = z.infer<typeof librarySettingsSchema>;
@@ -47,6 +66,11 @@ export const DEFAULT_LIBRARY_SETTINGS: LibrarySettingsFormValues = {
   WatchForChanges: false,
   AutoOrganize: true,
   NamingPattern: null,
+  NetworkAuthEnabled: false,
+  NetworkUsername: "",
+  NetworkPassword: "",
+  NetworkMountPoint: "/mnt",
+  PersistNetworkCredentials: true,
 };
 
 // =============================================================================
@@ -59,6 +83,10 @@ export interface LibrarySettingsFormProps {
   mode: "create" | "edit";
   useCards?: boolean;
   closeSignal?: number;
+  runtimePlatform?: string;
+  supportsUncCredentials?: boolean;
+  supportsSambaMount?: boolean;
+  defaultLinuxMountBase?: string | null;
 }
 
 // =============================================================================
@@ -93,18 +121,27 @@ export function LibrarySettingsForm({
   mode,
   useCards = false,
   closeSignal,
+  runtimePlatform,
+  supportsUncCredentials = false,
+  supportsSambaMount = false,
+  defaultLinuxMountBase,
 }: LibrarySettingsFormProps) {
   const {
     control,
     watch,
+    setValue,
     formState: { errors, isValid },
   } = useForm<LibrarySettingsFormValues>({
     resolver: zodResolver(
-      librarySettingsSchema as unknown as Parameters<typeof zodResolver>[0]
+      librarySettingsSchema as unknown as Parameters<typeof zodResolver>[0],
     ) as unknown as Resolver<LibrarySettingsFormValues>,
     defaultValues: { ...DEFAULT_LIBRARY_SETTINGS, ...initialValues },
     mode: "onChange",
   });
+  const sambaModal = useDisclosure();
+  const [isMountingSamba, setIsMountingSamba] = useState(false);
+  const [navigateFolderBrowserSignal, setNavigateFolderBrowserSignal] =
+    useState<number | undefined>(undefined);
 
   // Watch all values and notify parent on change
   const formValues = watch();
@@ -121,6 +158,11 @@ export function LibrarySettingsForm({
     formValues.WatchForChanges,
     formValues.AutoOrganize,
     formValues.NamingPattern,
+    formValues.NetworkAuthEnabled,
+    formValues.NetworkUsername,
+    formValues.NetworkPassword,
+    formValues.NetworkMountPoint,
+    formValues.PersistNetworkCredentials,
     isValid,
     onChange,
   ]);
@@ -160,7 +202,11 @@ export function LibrarySettingsForm({
         control={control}
         render={({ field }) => (
           <FolderBrowserInput
-            label="Path"
+            label={
+              mode === "create" && runtimePlatform === "windows"
+                ? "Path or UNC Path"
+                : "Path"
+            }
             value={field.value}
             onChange={field.onChange}
             placeholder="/data/media/TV"
@@ -170,9 +216,73 @@ export function LibrarySettingsForm({
                 : "Full path to the media folder"
             }
             modalTitle="Select Library Folder"
+            modalInlineAction={
+              mode === "create" &&
+              runtimePlatform === "linux" &&
+              supportsSambaMount ? (
+                <Button size="sm" variant="flat" onPress={sambaModal.onOpen}>
+                  Mount Samba Path
+                </Button>
+              ) : undefined
+            }
+            navigateToValueSignal={navigateFolderBrowserSignal}
           />
         )}
       />
+
+      {mode === "create" && runtimePlatform === "windows" && (
+        <>
+          <Controller
+            name="NetworkAuthEnabled"
+            control={control}
+            render={({ field }) => (
+              <SettingRow
+                label="Supply username/password"
+                description="Optional for UNC paths"
+              >
+                <Switch
+                  aria-label="Supply username/password"
+                  isSelected={field.value}
+                  onValueChange={field.onChange}
+                />
+              </SettingRow>
+            )}
+          />
+          {formValues.NetworkAuthEnabled && supportsUncCredentials && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <Controller
+                name="NetworkUsername"
+                control={control}
+                render={({ field }) => (
+                  <Input
+                    label="UNC Username"
+                    labelPlacement="inside"
+                    variant="flat"
+                    value={field.value}
+                    onChange={field.onChange}
+                    classNames={{ label: "text-sm font-medium text-primary!" }}
+                  />
+                )}
+              />
+              <Controller
+                name="NetworkPassword"
+                control={control}
+                render={({ field }) => (
+                  <Input
+                    type="password"
+                    label="UNC Password"
+                    labelPlacement="inside"
+                    variant="flat"
+                    value={field.value}
+                    onChange={field.onChange}
+                    classNames={{ label: "text-sm font-medium text-primary!" }}
+                  />
+                )}
+              />
+            </div>
+          )}
+        </>
+      )}
 
       <Controller
         name="LibraryType"
@@ -201,6 +311,136 @@ export function LibrarySettingsForm({
           </Select>
         )}
       />
+
+      <Modal isOpen={sambaModal.isOpen} onClose={sambaModal.onClose}>
+        <ModalContent>
+          <ModalHeader>Mount Samba Path</ModalHeader>
+          <ModalBody className="space-y-3">
+            <Controller
+              name="Path"
+              control={control}
+              render={({ field }) => (
+                <Input
+                  label="UNC Path"
+                  labelPlacement="inside"
+                  variant="flat"
+                  value={field.value}
+                  onChange={field.onChange}
+                  placeholder="//server/share"
+                />
+              )}
+            />
+            <Controller
+              name="NetworkMountPoint"
+              control={control}
+              render={({ field }) => (
+                <Input
+                  label="Mount Point"
+                  labelPlacement="inside"
+                  variant="flat"
+                  value={field.value}
+                  onChange={field.onChange}
+                  placeholder={defaultLinuxMountBase || "/mnt"}
+                />
+              )}
+            />
+            <Controller
+              name="NetworkUsername"
+              control={control}
+              render={({ field }) => (
+                <Input
+                  label="Username"
+                  labelPlacement="inside"
+                  variant="flat"
+                  value={field.value}
+                  onChange={field.onChange}
+                />
+              )}
+            />
+            <Controller
+              name="NetworkPassword"
+              control={control}
+              render={({ field }) => (
+                <Input
+                  type="password"
+                  label="Password"
+                  labelPlacement="inside"
+                  variant="flat"
+                  value={field.value}
+                  onChange={field.onChange}
+                />
+              )}
+            />
+            <Controller
+              name="PersistNetworkCredentials"
+              control={control}
+              render={({ field }) => (
+                <SettingRow
+                  label="Reconnect on startup"
+                  description="Save credentials and reconnect when backend starts"
+                >
+                  <Switch
+                    aria-label="Reconnect on startup"
+                    isSelected={field.value}
+                    onValueChange={field.onChange}
+                  />
+                </SettingRow>
+              )}
+            />
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={sambaModal.onClose}>
+              Close
+            </Button>
+            <Button
+              color="primary"
+              onPress={async () => {
+                setIsMountingSamba(true);
+                try {
+                  const configured = await configureNetworkPath({
+                    path: formValues.Path,
+                    username: formValues.NetworkUsername || undefined,
+                    password: formValues.NetworkPassword || undefined,
+                    mountPoint: formValues.NetworkMountPoint || undefined,
+                    persist: formValues.PersistNetworkCredentials,
+                    attemptConnect: true,
+                  });
+
+                  if (!configured.success) {
+                    addToast({
+                      title: "Mount Failed",
+                      description:
+                        configured.error ??
+                        "Failed to create samba mount point",
+                      color: "danger",
+                    });
+                    return;
+                  }
+
+                  setValue("Path", configured.resolvedPath, {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  });
+                  setNavigateFolderBrowserSignal((v) => (v ?? 0) + 1);
+                  addToast({
+                    title: "Mount Created",
+                    description:
+                      configured.message ??
+                      `Using mount path: ${configured.resolvedPath}`,
+                    color: "success",
+                  });
+                  sambaModal.onClose();
+                } finally {
+                  setIsMountingSamba(false);
+                }
+              }}
+              isLoading={isMountingSamba}
+            >
+              Create Mount Point
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </>
   );
 
@@ -312,6 +552,7 @@ export function LibrarySettingsForm({
                 onChange={field.onChange}
                 libraryType={libraryType.toLowerCase()}
                 closeSignal={closeSignal}
+                autoSelectDefaultForLibraryType={mode === "create"}
               />
             )}
           />

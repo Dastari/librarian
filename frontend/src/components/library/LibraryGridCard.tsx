@@ -10,23 +10,29 @@ import {
 import { Button } from "@heroui/button";
 import {
   IconDotsVertical,
-  IconRefresh,
   IconSettings,
   IconTrash,
   IconEye,
+  IconRefresh,
+  IconPlugConnected,
 } from "@tabler/icons-react";
-import type { LibraryType } from "../../lib/graphql";
 import { getLibraryTypeInfo } from "../../lib/graphql";
-import type { Library } from "@/lib/graphql/generated/types";
+import type { LibrariesQuery } from "@/lib/graphql/generated/graphql";
+import type { LibraryPathAvailabilityStatus } from "../../lib/graphql";
+type LibraryType = "MOVIES" | "TV" | "MUSIC" | "AUDIOBOOKS" | "OTHER";
+
+type LibraryGridNode = LibrariesQuery["Libraries"]["Edges"][number]["Node"];
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export interface LibraryGridCardProps {
-  library: Library;
+  library: LibraryGridNode;
   onScan: () => void;
   onDelete: () => void;
+  pathStatus?: LibraryPathAvailabilityStatus;
+  onReconnect: () => void;
 }
 
 // ============================================================================
@@ -45,32 +51,38 @@ const LIBRARY_GRADIENTS: Record<string, string> = {
 // Component
 // ============================================================================
 
-export function LibraryGridCard({ library, onScan, onDelete }: LibraryGridCardProps) {
+export function LibraryGridCard({
+  library,
+  onScan,
+  onDelete,
+  pathStatus,
+  onReconnect,
+}: LibraryGridCardProps) {
   const navigate = useNavigate();
   const typeInfo = getLibraryTypeInfo(library.LibraryType as LibraryType);
   const gradient =
     LIBRARY_GRADIENTS[library.LibraryType] || LIBRARY_GRADIENTS.OTHER;
   const recentArtworkUrls = useMemo(() => {
     if (library.LibraryType === "MOVIES") {
-      return (library.Movies?.Edges ?? [])
+      return (library.MovieArtwork?.Edges ?? [])
         .map((edge) => edge.Node.PosterUrl)
         .filter((url): url is string => Boolean(url));
     }
 
     if (library.LibraryType === "TV") {
-      return (library.Shows?.Edges ?? [])
+      return (library.ShowArtwork?.Edges ?? [])
         .map((edge) => edge.Node.PosterUrl)
         .filter((url): url is string => Boolean(url));
     }
 
     if (library.LibraryType === "MUSIC") {
-      return (library.Albums?.Edges ?? [])
+      return (library.AlbumArtwork?.Edges ?? [])
         .map((edge) => edge.Node.CoverUrl)
         .filter((url): url is string => Boolean(url));
     }
 
     if (library.LibraryType === "AUDIOBOOKS") {
-      return (library.Audiobooks?.Edges ?? [])
+      return (library.AudiobookArtwork?.Edges ?? [])
         .map((edge) => edge.Node.CoverUrl)
         .filter((url): url is string => Boolean(url));
     }
@@ -78,10 +90,10 @@ export function LibraryGridCard({ library, onScan, onDelete }: LibraryGridCardPr
     return [];
   }, [
     library.LibraryType,
-    library.Movies?.Edges,
-    library.Shows?.Edges,
-    library.Albums?.Edges,
-    library.Audiobooks?.Edges,
+    library.MovieArtwork?.Edges,
+    library.ShowArtwork?.Edges,
+    library.AlbumArtwork?.Edges,
+    library.AudiobookArtwork?.Edges,
   ]);
   const coverSignature = useMemo(
     () => recentArtworkUrls.join("|"),
@@ -129,7 +141,8 @@ export function LibraryGridCard({ library, onScan, onDelete }: LibraryGridCardPr
       } else {
         const currentBackIndex =
           backCoverIndexRef.current ?? frontCoverIndexRef.current;
-        const nextFrontIndex = (currentBackIndex + 1) % recentArtworkUrls.length;
+        const nextFrontIndex =
+          (currentBackIndex + 1) % recentArtworkUrls.length;
         setFrontCoverIndex(nextFrontIndex);
         frontCoverIndexRef.current = nextFrontIndex;
         frameRef.current = window.requestAnimationFrame(() => {
@@ -225,6 +238,11 @@ export function LibraryGridCard({ library, onScan, onDelete }: LibraryGridCardPr
           <typeInfo.Icon size={16} className="inline mr-1" />
           {typeInfo.label}
         </div>
+        {pathStatus && !pathStatus.Reachable && (
+          <div className="mt-1 px-2 py-1 rounded-md bg-danger/85 text-xs font-semibold text-white">
+            Offline
+          </div>
+        )}
       </div>
 
       {/* Bottom content */}
@@ -277,13 +295,15 @@ export function LibraryGridCard({ library, onScan, onDelete }: LibraryGridCardPr
                   to: "/libraries/$libraryId",
                   params: { libraryId: library.Id },
                 });
-              } else if (key === "scan") {
-                onScan();
               } else if (key === "settings") {
                 navigate({
                   to: "/libraries/$libraryId/settings",
                   params: { libraryId: library.Id },
                 });
+              } else if (key === "scan") {
+                onScan();
+              } else if (key === "reconnect") {
+                onReconnect();
               } else if (key === "delete") {
                 onDelete();
               }
@@ -292,14 +312,21 @@ export function LibraryGridCard({ library, onScan, onDelete }: LibraryGridCardPr
             <DropdownItem key="view" startContent={<IconEye size={16} />}>
               Open
             </DropdownItem>
-            <DropdownItem key="scan" startContent={<IconRefresh size={16} />}>
-              Scan
-            </DropdownItem>
             <DropdownItem
               key="settings"
               startContent={<IconSettings size={16} />}
             >
               Settings
+            </DropdownItem>
+            <DropdownItem key="scan" startContent={<IconRefresh size={16} />}>
+              Scan Library
+            </DropdownItem>
+            <DropdownItem
+              key="reconnect"
+              startContent={<IconPlugConnected size={16} />}
+              isDisabled={!pathStatus || pathStatus.Reachable}
+            >
+              Reconnect Path
             </DropdownItem>
             <DropdownItem
               key="delete"

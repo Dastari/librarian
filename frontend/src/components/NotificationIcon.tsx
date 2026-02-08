@@ -7,6 +7,7 @@ import {
   NotificationsDocument,
   NotificationChangedDocument,
 } from "../lib/graphql/generated/graphql";
+import { apolloClient } from "../lib/graphql/client";
 import { NotificationPopover } from "./NotificationPopover";
 import { ErrorBoundary } from "./ErrorBoundary";
 
@@ -17,11 +18,14 @@ function useUnreadNotificationCount() {
 
   const fetchCount = useCallback(async () => {
     try {
-      const { data } = await queryPromise(NotificationsDocument, {
+      const { data } = await apolloClient.query({
+        query: NotificationsDocument,
+        variables: {
           Where: UNREAD_WHERE,
           Page: { Limit: 1, Offset: 0 },
-        })
-        ;
+        },
+        fetchPolicy: "network-only",
+      });
       const total = data?.Notifications?.PageInfo?.TotalCount;
       setCount(total ?? 0);
     } catch {
@@ -36,11 +40,10 @@ function useUnreadNotificationCount() {
   useEffect(() => {
     let sub: { unsubscribe: () => void } | null = null;
     try {
-      sub = subscriptionStream(NotificationChangedDocument, {})
-        .subscribe({
-          next: () => fetchCount(),
-          error: () => {},
-        });
+      sub = subscriptionStream(NotificationChangedDocument, {}).subscribe({
+        next: () => fetchCount(),
+        error: () => {},
+      });
     } catch {
       // subscription setup failed (e.g. client not ready)
     }

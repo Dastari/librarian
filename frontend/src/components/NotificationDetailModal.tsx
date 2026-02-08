@@ -24,15 +24,40 @@ import {
   IconMusic,
   IconLink,
 } from "@tabler/icons-react";
-import type {
-  Notification,
-  NotificationType,
-  NotificationCategory,
-  NotificationResolution,
-} from "../lib/graphql";
+type NotificationType = "INFO" | "WARNING" | "ERROR" | "ACTION_REQUIRED";
+type NotificationCategory =
+  | "MATCHING"
+  | "PROCESSING"
+  | "QUALITY"
+  | "STORAGE"
+  | "EXTRACTION"
+  | "CONFIGURATION";
+type NotificationResolution =
+  | "ACCEPTED"
+  | "REJECTED"
+  | "DISMISSED"
+  | "AUTO_RESOLVED";
+
+interface NotificationItem {
+  id: string;
+  title: string;
+  message: string;
+  notificationType: NotificationType;
+  category: NotificationCategory;
+  libraryId: string | null;
+  torrentId: string | null;
+  mediaFileId: string | null;
+  pendingMatchId: string | null;
+  actionType: string | null;
+  actionData: Record<string, unknown> | null;
+  readAt: string | null;
+  resolvedAt: string | null;
+  resolution: NotificationResolution | null;
+  createdAt: string;
+}
 
 interface NotificationDetailModalProps {
-  notification: Notification | null;
+  notification: NotificationItem | null;
   isOpen: boolean;
   onClose: () => void;
   onResolve: (id: string, resolution: NotificationResolution) => Promise<void>;
@@ -103,7 +128,7 @@ const CATEGORY_INFO: Record<
 };
 
 // Get specific resolve actions based on notification content
-function getResolveActions(notification: Notification): Array<{
+function getResolveActions(notification: NotificationItem): Array<{
   key: string;
   label: string;
   description: string;

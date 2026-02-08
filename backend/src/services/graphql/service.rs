@@ -189,7 +189,12 @@ impl Service for GraphqlService {
     }
 
     async fn start(&self) -> Result<()> {
-        info!(service = "graphql", "GraphQL service starting");
+        info!(
+            service = "graphql",
+            server_port = self.server_port,
+            "GraphQL service starting: building schema and routes on port {}",
+            self.server_port
+        );
         let db = self
             .manager
             .get_database()
@@ -203,7 +208,12 @@ impl Service for GraphqlService {
             .ok_or_else(|| anyhow::anyhow!("auth service not available"))?;
         let schema = build_schema(db, auth, self.manager.clone());
         *self.schema.write().await = Some(schema);
-        info!(service = "graphql", "GraphQL service started");
+        info!(
+            service = "graphql",
+            server_port = self.server_port,
+            "GraphQL service started: schema initialized and router ready on port {}",
+            self.server_port
+        );
         info!(
             service = "graphql",
             "GraphQL playground: http://localhost:{}/graphql", self.server_port
@@ -213,7 +223,10 @@ impl Service for GraphqlService {
 
     async fn stop(&self) -> Result<()> {
         *self.schema.write().await = None;
-        info!(service = "graphql", "Stopped");
+        info!(
+            service = "graphql",
+            "GraphQL service stopped: in-memory schema cleared"
+        );
         Ok(())
     }
 

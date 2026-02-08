@@ -5,11 +5,14 @@
 //! after each successful mutation so FilesystemChanged subscription receives events.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use async_graphql::{Context, InputObject, Object, Result};
 use tokio::fs;
 
 use crate::services::graphql::auth::AuthUser;
+use crate::services::graphql::filesystem_network;
+use crate::{db::Database, services::manager::ServicesManager};
 
 // ---------------------------------------------------------------------------
 // Shared result type (no DB – used only for GraphQL payloads)
@@ -129,6 +132,66 @@ pub struct RenameFileInput {
     pub new_name: String,
 }
 
+#[derive(InputObject)]
+#[graphql(name = "ConfigureNetworkPathInput")]
+pub struct ConfigureNetworkPathInput {
+    #[graphql(name = "Path")]
+    pub path: String,
+    #[graphql(name = "Username")]
+    pub username: Option<String>,
+    #[graphql(name = "Password")]
+    pub password: Option<String>,
+    #[graphql(name = "MountPoint")]
+    pub mount_point: Option<String>,
+    #[graphql(name = "Persist")]
+    pub persist: Option<bool>,
+    #[graphql(name = "AttemptConnect")]
+    pub attempt_connect: Option<bool>,
+}
+
+#[derive(Clone)]
+pub struct NetworkPathConfigPayload {
+    pub success: bool,
+    pub error: Option<String>,
+    pub resolved_path: String,
+    pub connected: bool,
+    pub stored: bool,
+    pub message: Option<String>,
+}
+
+#[Object]
+impl NetworkPathConfigPayload {
+    #[graphql(name = "Success")]
+    async fn success(&self) -> bool {
+        self.success
+    }
+
+    #[graphql(name = "Error")]
+    async fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    #[graphql(name = "ResolvedPath")]
+    async fn resolved_path(&self) -> &str {
+        &self.resolved_path
+    }
+
+    #[graphql(name = "Connected")]
+    async fn connected(&self) -> bool {
+        self.connected
+    }
+
+    #[graphql(name = "Stored")]
+    async fn stored(&self) -> bool {
+        self.stored
+    }
+
+    #[graphql(name = "Message")]
+    async fn message(&self) -> Option<&str> {
+        self.message.as_deref()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Mutation root extension
 // ---------------------------------------------------------------------------
@@ -196,6 +259,87 @@ impl FilesystemMutations {
             .data_opt::<AuthUser>()
             .ok_or_else(|| async_graphql::Error::new("Authentication required"))?;
         run_rename_file(ctx, &input).await
+    }
+
+    #[graphql(name = "ConfigureNetworkPath")]
+    async fn configure_network_path(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "Input")] input: ConfigureNetworkPathInput,
+    ) -> Result<NetworkPathConfigPayload> {
+        let _user = ctx
+            .data_opt::<AuthUser>()
+            .ok_or_else(|| async_graphql::Error::new("Authentication required"))?;
+
+        let db = ctx.data::<Database>()?;
+        let services = ctx.data::<Arc<ServicesManager>>()?;
+
+        let result = filesystem_network::configure_network_path(
+            db,
+            services,
+            filesystem_network::ConfigureNetworkPathInput {
+                path: input.path,
+                username: input.username,
+                password: input.password,
+                mount_point: input.mount_point,
+                persist: input.persist.unwrap_or(true),
+                attempt_connect: input.attempt_connect.unwrap_or(true),
+            },
+        )
+        .await;
+
+        Ok(NetworkPathConfigPayload {
+            success: result.success,
+            error: result.error,
+            resolved_path: result.resolved_path,
+            connected: result.connected,
+            stored: result.stored,
+            message: result.message,
+        })
+    }
+
+    #[graphql(name = "ReconnectLibraryPath")]
+    async fn reconnect_library_path(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "Path")] path: String,
+    ) -> Result<NetworkPathConfigPayload> {
+        let _user = ctx
+            .data_opt::<AuthUser>()
+            .ok_or_else(|| async_graphql::Error::new("Authentication required"))?;
+
+        let db = ctx.data::<Database>()?;
+        let services = ctx.data::<Arc<ServicesManager>>()?;
+
+        let reconnected = filesystem_network::reconnect_target_path(db, services, &path).await;
+        let payload = match reconnected {
+            Ok(true) => NetworkPathConfigPayload {
+                success: true,
+                error: None,
+                resolved_path: path,
+                connected: true,
+                stored: true,
+                message: Some("Reconnect attempted successfully".to_string()),
+            },
+            Ok(false) => NetworkPathConfigPayload {
+                success: false,
+                error: Some("No saved network config for this path".to_string()),
+                resolved_path: path,
+                connected: false,
+                stored: false,
+                message: None,
+            },
+            Err(e) => NetworkPathConfigPayload {
+                success: false,
+                error: Some(format!("Reconnect failed: {}", e)),
+                resolved_path: path,
+                connected: false,
+                stored: false,
+                message: None,
+            },
+        };
+
+        Ok(payload)
     }
 }
 

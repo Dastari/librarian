@@ -1,22 +1,36 @@
 /**
  * Cast settings page
- * 
+ *
  * Manage cast devices and global casting settings.
  */
 
-import { useState, useEffect } from 'react';
-import { createFileRoute } from '@tanstack/react-router';
-import { Card, CardBody, CardHeader } from '@heroui/card';
-import { Button } from '@heroui/button';
-import { Input } from '@heroui/input';
-import { Switch } from '@heroui/switch';
-import { Slider } from '@heroui/slider';
-import { Chip } from '@heroui/chip';
-import { Spinner } from '@heroui/spinner';
-import { Divider } from '@heroui/divider';
-import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell } from '@heroui/table';
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from '@heroui/modal';
-import { Tooltip } from '@heroui/tooltip';
+import { useState, useEffect } from "react";
+import { createFileRoute } from "@tanstack/react-router";
+import { Card, CardBody, CardHeader } from "@heroui/card";
+import { Button } from "@heroui/button";
+import { Input } from "@heroui/input";
+import { Switch } from "@heroui/switch";
+import { Slider } from "@heroui/slider";
+import { Chip } from "@heroui/chip";
+import { Spinner } from "@heroui/spinner";
+import { Divider } from "@heroui/divider";
+import {
+  Table,
+  TableHeader,
+  TableColumn,
+  TableBody,
+  TableRow,
+  TableCell,
+} from "@heroui/table";
+import {
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+  useDisclosure,
+} from "@heroui/modal";
+import { Tooltip } from "@heroui/tooltip";
 import {
   IconCast,
   IconRefresh,
@@ -24,40 +38,111 @@ import {
   IconTrash,
   IconStar,
   IconStarFilled,
-} from '@tabler/icons-react';
+} from "@tabler/icons-react";
 import {
-  CAST_DEVICES_QUERY,
-  CAST_SETTINGS_QUERY,
-  DISCOVER_CAST_DEVICES_MUTATION,
-  ADD_CAST_DEVICE_MUTATION,
-  UPDATE_CAST_DEVICE_MUTATION,
-  REMOVE_CAST_DEVICE_MUTATION,
-  UPDATE_CAST_SETTINGS_MUTATION,
-  type CastDevice,
-  type CastSettings,
-  type CastDeviceResult,
-  type CastSettingsResult,
-} from '../../lib/graphql';
-import { queryPromise, mutationPromise } from '../../lib/graphql/client';
+  CastDevicesDocument,
+  CastSettingsDocument,
+  DiscoverCastDevicesOpDocument,
+  CreateCastDeviceDocument,
+  UpdateCastDeviceDocument,
+  DeleteCastDeviceDocument,
+  CreateCastSettingDocument,
+  UpdateCastSettingDocument,
+  type CreateCastDeviceMutation,
+  type CreateCastDeviceMutationVariables,
+  type UpdateCastDeviceMutation,
+  type UpdateCastDeviceMutationVariables,
+  type DeleteCastDeviceMutation,
+  type DeleteCastDeviceMutationVariables,
+  type CreateCastSettingMutation,
+  type CreateCastSettingMutationVariables,
+  type UpdateCastSettingMutation,
+  type UpdateCastSettingMutationVariables,
+  type DiscoverCastDevicesOpMutationVariables,
+  type DiscoverCastDevicesOpMutation,
+  type CastDevicesQuery,
+  type CastSettingsQuery,
+} from "../../lib/graphql/generated/graphql";
+import { apolloClient, useMutation } from "../../lib/graphql/client";
 
-export const Route = createFileRoute('/settings/casting')({
+export const Route = createFileRoute("/settings/casting")({
   component: CastingSettingsPage,
 });
 
 function CastingSettingsPage() {
+  type CastDevice =
+    DiscoverCastDevicesOpMutation["DiscoverCastDevices"][number];
+  type CastSettings = {
+    autoDiscoveryEnabled: boolean;
+    discoveryIntervalSeconds: number;
+    defaultVolume: number;
+    transcodeIncompatible: boolean;
+    preferredQuality: string | null;
+  };
+
   const [devices, setDevices] = useState<CastDevice[]>([]);
   const [settings, setSettings] = useState<CastSettings | null>(null);
+  const [settingsId, setSettingsId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
 
   // Add device modal
   const { isOpen, onOpen, onClose } = useDisclosure();
-  const [newDeviceAddress, setNewDeviceAddress] = useState('');
-  const [newDevicePort, setNewDevicePort] = useState('8009');
-  const [newDeviceName, setNewDeviceName] = useState('');
+  const [newDeviceAddress, setNewDeviceAddress] = useState("");
+  const [newDevicePort, setNewDevicePort] = useState("8009");
+  const [newDeviceName, setNewDeviceName] = useState("");
   const [isAddingDevice, setIsAddingDevice] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [discoverCastDevices] = useMutation<
+    DiscoverCastDevicesOpMutation,
+    DiscoverCastDevicesOpMutationVariables
+  >(DiscoverCastDevicesOpDocument);
+  const [createCastDevice] = useMutation<
+    CreateCastDeviceMutation,
+    CreateCastDeviceMutationVariables
+  >(CreateCastDeviceDocument);
+  const [updateCastDevice] = useMutation<
+    UpdateCastDeviceMutation,
+    UpdateCastDeviceMutationVariables
+  >(UpdateCastDeviceDocument);
+  const [deleteCastDevice] = useMutation<
+    DeleteCastDeviceMutation,
+    DeleteCastDeviceMutationVariables
+  >(DeleteCastDeviceDocument);
+  const [createCastSetting] = useMutation<
+    CreateCastSettingMutation,
+    CreateCastSettingMutationVariables
+  >(CreateCastSettingDocument);
+  const [updateCastSetting] = useMutation<
+    UpdateCastSettingMutation,
+    UpdateCastSettingMutationVariables
+  >(UpdateCastSettingDocument);
+
+  const mapDeviceNode = (
+    node: CastDevicesQuery["CastDevices"]["Edges"][0]["Node"],
+  ): CastDevice => ({
+    id: node.Id,
+    name: node.Name,
+    address: node.Address,
+    port: node.Port,
+    model: node.Model ?? null,
+    deviceType: node.DeviceType as CastDevice["deviceType"],
+    isFavorite: node.IsFavorite,
+    isManual: node.IsManual,
+    isConnected: false,
+    lastSeenAt: node.LastSeenAt ?? null,
+  });
+
+  const mapSettingNode = (
+    node: CastSettingsQuery["CastSettings"]["Edges"][0]["Node"],
+  ): CastSettings => ({
+    autoDiscoveryEnabled: node.AutoDiscoveryEnabled,
+    discoveryIntervalSeconds: node.DiscoveryIntervalSeconds,
+    defaultVolume: node.DefaultVolume,
+    transcodeIncompatible: node.TranscodeIncompatible,
+    preferredQuality: node.PreferredQuality ?? null,
+  });
 
   // Load data
   useEffect(() => {
@@ -68,15 +153,31 @@ function CastingSettingsPage() {
     setIsLoading(true);
     try {
       const [devicesRes, settingsRes] = await Promise.all([
-        queryPromise<{ CastDevices: CastDevice[] }>(CAST_DEVICES_QUERY, {}),
-        queryPromise<{ CastSettings: CastSettings }>(CAST_SETTINGS_QUERY, {}),
+        apolloClient.query({
+          query: CastDevicesDocument,
+          fetchPolicy: "network-only",
+        }),
+        apolloClient.query({
+          query: CastSettingsDocument,
+          variables: {
+            Page: { Limit: 1, Offset: 0 },
+            OrderBy: [{ UpdatedAt: "Desc" }],
+          },
+          fetchPolicy: "network-only",
+        }),
       ]);
 
-      if (devicesRes.data?.CastDevices) {
-        setDevices(devicesRes.data.CastDevices);
+      if (devicesRes.data?.CastDevices?.Edges) {
+        setDevices(
+          devicesRes.data.CastDevices.Edges.map((edge) =>
+            mapDeviceNode(edge.Node),
+          ),
+        );
       }
-      if (settingsRes.data?.CastSettings) {
-        setSettings(settingsRes.data.CastSettings);
+      if (settingsRes.data?.CastSettings?.Edges?.length) {
+        const node = settingsRes.data.CastSettings.Edges[0].Node;
+        setSettings(mapSettingNode(node));
+        setSettingsId(node.Id);
       }
     } finally {
       setIsLoading(false);
@@ -86,10 +187,22 @@ function CastingSettingsPage() {
   const handleDiscover = async () => {
     setIsDiscovering(true);
     try {
-      const result = await mutationPromise<{ discoverCastDevices: CastDevice[] }>(DISCOVER_CAST_DEVICES_MUTATION, {})
-        ;
-      if (result.data?.discoverCastDevices) {
-        setDevices(result.data.discoverCastDevices);
+      const result = await discoverCastDevices();
+      if (result.data?.DiscoverCastDevices) {
+        setDevices(
+          result.data.DiscoverCastDevices.map((device) => ({
+            id: device.id,
+            name: device.name,
+            address: device.address,
+            port: device.port,
+            model: device.model ?? null,
+            deviceType: device.deviceType as CastDevice["deviceType"],
+            isFavorite: device.isFavorite,
+            isManual: device.isManual,
+            isConnected: device.isConnected ?? false,
+            lastSeenAt: device.lastSeenAt ?? null,
+          })),
+        );
       }
     } finally {
       setIsDiscovering(false);
@@ -98,7 +211,7 @@ function CastingSettingsPage() {
 
   const handleAddDevice = async () => {
     if (!newDeviceAddress.trim()) {
-      setAddError('IP address is required');
+      setAddError("IP address is required");
       return;
     }
 
@@ -106,26 +219,40 @@ function CastingSettingsPage() {
     setAddError(null);
 
     try {
-      const result = await mutationPromise<{ addCastDevice: CastDeviceResult }>(ADD_CAST_DEVICE_MUTATION, {
-          input: {
-            address: newDeviceAddress.trim(),
-            port: newDevicePort ? parseInt(newDevicePort) : undefined,
-            name: newDeviceName.trim() || undefined,
+      const result = await createCastDevice({
+        variables: {
+          Input: {
+            Name:
+              newDeviceName.trim() ||
+              `Cast Device (${newDeviceAddress.trim()})`,
+            Address: newDeviceAddress.trim(),
+            Port: newDevicePort ? parseInt(newDevicePort, 10) : 8009,
+            Model: null,
+            DeviceType: "CHROMECAST",
+            IsFavorite: false,
+            IsManual: true,
+            LastSeenAt: null,
           },
-        })
-        ;
+        },
+      });
 
-      if (result.data?.addCastDevice.success && result.data.addCastDevice.device) {
-        setDevices((prev) => [...prev, result.data!.addCastDevice.device!]);
+      const payload = result.data?.CreateCastDevice;
+      if (payload?.Success && payload.CastDevice) {
+        setDevices((prev) => [
+          ...prev,
+          mapDeviceNode(
+            payload.CastDevice as CastDevicesQuery["CastDevices"]["Edges"][0]["Node"],
+          ),
+        ]);
         onClose();
-        setNewDeviceAddress('');
-        setNewDevicePort('8009');
-        setNewDeviceName('');
+        setNewDeviceAddress("");
+        setNewDevicePort("8009");
+        setNewDeviceName("");
       } else {
-        setAddError(result.data?.addCastDevice.error || 'Failed to add device');
+        setAddError(payload?.Error || "Failed to add device");
       }
     } catch (e) {
-      setAddError(e instanceof Error ? e.message : 'Failed to add device');
+      setAddError(e instanceof Error ? e.message : "Failed to add device");
     } finally {
       setIsAddingDevice(false);
     }
@@ -133,35 +260,42 @@ function CastingSettingsPage() {
 
   const handleToggleFavorite = async (device: CastDevice) => {
     try {
-      const result = await mutationPromise<{ updateCastDevice: CastDeviceResult }>(UPDATE_CAST_DEVICE_MUTATION, {
-          id: device.id,
-          input: { isFavorite: !device.isFavorite },
-        })
-        ;
-
-      if (result.data?.updateCastDevice.success && result.data.updateCastDevice.device) {
+      const result = await updateCastDevice({
+        variables: {
+          Id: device.id,
+          Input: {
+            IsFavorite: !device.isFavorite,
+          },
+        },
+      });
+      if (
+        result.data?.UpdateCastDevice.Success &&
+        result.data.UpdateCastDevice.CastDevice
+      ) {
         setDevices((prev) =>
-          prev.map((d) => (d.id === device.id ? result.data!.updateCastDevice.device! : d))
+          prev.map((d) =>
+            d.id === device.id
+              ? mapDeviceNode(
+                  result.data!.UpdateCastDevice
+                    .CastDevice as CastDevicesQuery["CastDevices"]["Edges"][0]["Node"],
+                )
+              : d,
+          ),
         );
       }
     } catch (e) {
-      console.error('Failed to toggle favorite:', e);
+      console.error("Failed to toggle favorite:", e);
     }
   };
 
   const handleRemoveDevice = async (deviceId: string) => {
     try {
-      const result = await mutationPromise<{ removeCastDevice: { success: boolean; error?: string } }>(
-          REMOVE_CAST_DEVICE_MUTATION,
-          { id: deviceId }
-        )
-        ;
-
-      if (result.data?.removeCastDevice.success) {
+      const result = await deleteCastDevice({ variables: { Id: deviceId } });
+      if (result.data?.DeleteCastDevice.Success) {
         setDevices((prev) => prev.filter((d) => d.id !== deviceId));
       }
     } catch (e) {
-      console.error('Failed to remove device:', e);
+      console.error("Failed to remove device:", e);
     }
   };
 
@@ -170,14 +304,57 @@ function CastingSettingsPage() {
 
     setIsSavingSettings(true);
     try {
-      const result = await mutationPromise<{ updateCastSettings: CastSettingsResult }>(UPDATE_CAST_SETTINGS_MUTATION, {
-          input: updates,
-        })
-        ;
-
-      if (result.data?.updateCastSettings.success && result.data.updateCastSettings.settings) {
-        setSettings(result.data.updateCastSettings.settings);
+      if (settingsId) {
+        const result = await updateCastSetting({
+          variables: {
+            Id: settingsId,
+            Input: {
+              AutoDiscoveryEnabled: updates.autoDiscoveryEnabled,
+              DiscoveryIntervalSeconds: updates.discoveryIntervalSeconds,
+              DefaultVolume: updates.defaultVolume,
+              TranscodeIncompatible: updates.transcodeIncompatible,
+              PreferredQuality: updates.preferredQuality ?? undefined,
+            },
+          },
+        });
+        if (
+          result.data?.UpdateCastSetting.Success &&
+          result.data.UpdateCastSetting.CastSetting
+        ) {
+          setSettings(
+            mapSettingNode(
+              result.data.UpdateCastSetting
+                .CastSetting as CastSettingsQuery["CastSettings"]["Edges"][0]["Node"],
+            ),
+          );
+        }
+      } else {
+        const result = await createCastSetting({
+          variables: {
+            Input: {
+              AutoDiscoveryEnabled: updates.autoDiscoveryEnabled ?? true,
+              DiscoveryIntervalSeconds: updates.discoveryIntervalSeconds ?? 30,
+              DefaultVolume: updates.defaultVolume ?? 1,
+              TranscodeIncompatible: updates.transcodeIncompatible ?? false,
+              PreferredQuality: updates.preferredQuality ?? undefined,
+            },
+          },
+        });
+        if (
+          result.data?.CreateCastSetting.Success &&
+          result.data.CreateCastSetting.CastSetting
+        ) {
+          setSettings(
+            mapSettingNode(
+              result.data.CreateCastSetting
+                .CastSetting as CastSettingsQuery["CastSettings"]["Edges"][0]["Node"],
+            ),
+          );
+          setSettingsId(result.data.CreateCastSetting.CastSetting.Id);
+        }
       }
+    } catch (e) {
+      console.error("Failed to update cast settings:", e);
     } finally {
       setIsSavingSettings(false);
     }
@@ -185,18 +362,18 @@ function CastingSettingsPage() {
 
   const getDeviceTypeLabel = (deviceType: string) => {
     switch (deviceType) {
-      case 'CHROMECAST':
-        return 'Chromecast';
-      case 'CHROMECAST_AUDIO':
-        return 'Chromecast Audio';
-      case 'GOOGLE_HOME':
-        return 'Google Home';
-      case 'GOOGLE_NEST_HUB':
-        return 'Nest Hub';
-      case 'ANDROID_TV':
-        return 'Android TV';
+      case "CHROMECAST":
+        return "Chromecast";
+      case "CHROMECAST_AUDIO":
+        return "Chromecast Audio";
+      case "GOOGLE_HOME":
+        return "Google Home";
+      case "GOOGLE_NEST_HUB":
+        return "Nest Hub";
+      case "ANDROID_TV":
+        return "Android TV";
       default:
-        return 'Unknown';
+        return "Unknown";
     }
   };
 
@@ -221,13 +398,19 @@ function CastingSettingsPage() {
         <div className="flex gap-2">
           <Button
             variant="flat"
-            startContent={isDiscovering ? <Spinner size="sm" /> : <IconRefresh size={16} />}
+            startContent={
+              isDiscovering ? <Spinner size="sm" /> : <IconRefresh size={16} />
+            }
             onPress={handleDiscover}
             isDisabled={isDiscovering}
           >
-            {isDiscovering ? 'Discovering...' : 'Discover'}
+            {isDiscovering ? "Discovering..." : "Discover"}
           </Button>
-          <Button color="primary" startContent={<IconPlus size={16} />} onPress={onOpen}>
+          <Button
+            color="primary"
+            startContent={<IconPlus size={16} />}
+            onPress={onOpen}
+          >
             Add Device
           </Button>
         </div>
@@ -245,9 +428,14 @@ function CastingSettingsPage() {
               <IconCast size={48} className="text-default-300 mb-4" />
               <p className="text-default-500 mb-2">No cast devices found</p>
               <p className="text-small text-default-400 mb-4">
-                Click &quot;Discover&quot; to scan for devices on your network, or add one manually.
+                Click &quot;Discover&quot; to scan for devices on your network,
+                or add one manually.
               </p>
-              <Button variant="flat" startContent={<IconRefresh size={16} />} onPress={handleDiscover}>
+              <Button
+                variant="flat"
+                startContent={<IconRefresh size={16} />}
+                onPress={handleDiscover}
+              >
                 Discover Devices
               </Button>
             </div>
@@ -291,15 +479,24 @@ function CastingSettingsPage() {
                         </Chip>
                       ) : device.lastSeenAt ? (
                         <span className="text-small text-default-400">
-                          Last seen: {new Date(device.lastSeenAt).toLocaleString()}
+                          Last seen:{" "}
+                          {new Date(device.lastSeenAt).toLocaleString()}
                         </span>
                       ) : (
-                        <span className="text-small text-default-400">Never seen</span>
+                        <span className="text-small text-default-400">
+                          Never seen
+                        </span>
                       )}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        <Tooltip content={device.isFavorite ? 'Remove from favorites' : 'Add to favorites'}>
+                        <Tooltip
+                          content={
+                            device.isFavorite
+                              ? "Remove from favorites"
+                              : "Add to favorites"
+                          }
+                        >
                           <Button
                             isIconOnly
                             size="sm"
@@ -307,7 +504,10 @@ function CastingSettingsPage() {
                             onPress={() => handleToggleFavorite(device)}
                           >
                             {device.isFavorite ? (
-                              <IconStarFilled size={16} className="text-warning" />
+                              <IconStarFilled
+                                size={16}
+                                className="text-warning"
+                              />
                             ) : (
                               <IconStar size={16} />
                             )}
@@ -351,7 +551,9 @@ function CastingSettingsPage() {
               </div>
               <Switch
                 isSelected={settings.autoDiscoveryEnabled}
-                onValueChange={(value) => handleUpdateSettings({ autoDiscoveryEnabled: value })}
+                onValueChange={(value) =>
+                  handleUpdateSettings({ autoDiscoveryEnabled: value })
+                }
                 isDisabled={isSavingSettings}
               />
             </div>
@@ -369,7 +571,9 @@ function CastingSettingsPage() {
                 className="w-24"
                 value={settings.discoveryIntervalSeconds.toString()}
                 onValueChange={(value) =>
-                  handleUpdateSettings({ discoveryIntervalSeconds: parseInt(value) || 30 })
+                  handleUpdateSettings({
+                    discoveryIntervalSeconds: parseInt(value) || 30,
+                  })
                 }
                 isDisabled={isSavingSettings || !settings.autoDiscoveryEnabled}
                 min={10}
@@ -385,7 +589,9 @@ function CastingSettingsPage() {
                     Volume level when starting a new cast session
                   </p>
                 </div>
-                <span className="text-default-500">{Math.round(settings.defaultVolume * 100)}%</span>
+                <span className="text-default-500">
+                  {Math.round(settings.defaultVolume * 100)}%
+                </span>
               </div>
               <Slider
                 aria-label="Default volume"
@@ -405,12 +611,15 @@ function CastingSettingsPage() {
               <div>
                 <p className="font-medium">Transcode Incompatible Files</p>
                 <p className="text-small text-default-400">
-                  Automatically transcode files that aren&apos;t compatible with Chromecast
+                  Automatically transcode files that aren&apos;t compatible with
+                  Chromecast
                 </p>
               </div>
               <Switch
                 isSelected={settings.transcodeIncompatible}
-                onValueChange={(value) => handleUpdateSettings({ transcodeIncompatible: value })}
+                onValueChange={(value) =>
+                  handleUpdateSettings({ transcodeIncompatible: value })
+                }
                 isDisabled={isSavingSettings}
               />
             </div>
@@ -435,7 +644,7 @@ function CastingSettingsPage() {
                 isInvalid={!!addError}
                 errorMessage={addError}
                 classNames={{
-                  label: 'text-sm font-medium text-primary!',
+                  label: "text-sm font-medium text-primary!",
                 }}
               />
               <Input
@@ -448,7 +657,7 @@ function CastingSettingsPage() {
                 type="number"
                 description="Default Chromecast port is 8009"
                 classNames={{
-                  label: 'text-sm font-medium text-primary!',
+                  label: "text-sm font-medium text-primary!",
                 }}
               />
               <Input
@@ -460,7 +669,7 @@ function CastingSettingsPage() {
                 onValueChange={setNewDeviceName}
                 description="A friendly name for this device"
                 classNames={{
-                  label: 'text-sm font-medium text-primary!',
+                  label: "text-sm font-medium text-primary!",
                 }}
               />
             </div>

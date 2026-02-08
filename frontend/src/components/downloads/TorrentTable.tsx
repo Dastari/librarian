@@ -1,19 +1,19 @@
-import { useMemo, useState, type ReactNode } from 'react'
-import { useQueryState, parseAsString } from 'nuqs'
-import { Progress } from '@heroui/progress'
-import { Chip } from '@heroui/chip'
-import { Button, ButtonGroup } from '@heroui/button'
-import { Tooltip } from '@heroui/tooltip'
-import { Skeleton } from '@heroui/skeleton'
-import { useDisclosure } from '@heroui/modal'
-import { ConfirmModal } from '../ConfirmModal'
+import { useMemo, useState, type ReactNode } from "react";
+import { useQueryState, parseAsString } from "nuqs";
+import { Progress } from "@heroui/progress";
+import { Chip } from "@heroui/chip";
+import { Button, ButtonGroup } from "@heroui/button";
+import { Tooltip } from "@heroui/tooltip";
+import { Skeleton } from "@heroui/skeleton";
+import { useDisclosure } from "@heroui/modal";
+import { ConfirmModal } from "../ConfirmModal";
 import {
   DataTable,
   type DataTableColumn,
   type BulkAction,
   type RowAction,
-} from '../data-table'
-import type { Torrent } from "../../lib/graphql/generated/graphql";
+} from "../data-table";
+import type { DownloadTorrent } from "./types";
 import { formatBytes, formatRelativeTime } from "../../lib/format";
 import {
   IconPlayerPlay,
@@ -33,16 +33,16 @@ import { TorrentCard, TORRENT_STATE_INFO } from "./TorrentCard";
 // ============================================================================
 
 export interface TorrentTableProps {
-  torrents: Torrent[];
+  torrents: DownloadTorrent[];
   isLoading?: boolean;
   onPause: (infoHash: string) => void;
   onResume: (infoHash: string) => void;
   onRemove: (infoHash: string) => void;
   onInfo: (infoHash: string) => void;
   onOrganize: (infoHash: string) => void;
-  onProcess: (torrent: Torrent) => void;
-  onRematch: (torrent: Torrent) => void;
-  onLinkToLibrary: (torrent: Torrent) => void;
+  onProcess: (torrent: DownloadTorrent) => void;
+  onRematch: (torrent: DownloadTorrent) => void;
+  onLinkToLibrary: (torrent: DownloadTorrent) => void;
   onBulkPause: (infoHashes: string[]) => void;
   onBulkResume: (infoHashes: string[]) => void;
   onBulkRemove: (infoHashes: string[]) => void;
@@ -96,12 +96,13 @@ export function TorrentTable({
     onOpen: onConfirmOpen,
     onClose: onConfirmClose,
   } = useDisclosure();
-  const [torrentToRemove, setTorrentToRemove] = useState<Torrent | null>(null);
+  const [torrentToRemove, setTorrentToRemove] =
+    useState<DownloadTorrent | null>(null);
 
   // State filter - persisted in URL via nuqs
   const [stateFilter, setStateFilter] = useQueryState(
     "state",
-    parseAsString.withDefault("")
+    parseAsString.withDefault(""),
   );
   const normalizedStateFilter = stateFilter === "" ? null : stateFilter;
 
@@ -119,12 +120,12 @@ export function TorrentTable({
   const filteredTorrents = useMemo(() => {
     if (!normalizedStateFilter) return torrents;
     return torrents.filter(
-      (t) => t.State.toUpperCase() === normalizedStateFilter
+      (t) => t.State.toUpperCase() === normalizedStateFilter,
     );
   }, [torrents, normalizedStateFilter]);
 
   // Column definitions with skeleton support
-  const columns: DataTableColumn<Torrent>[] = useMemo(
+  const columns: DataTableColumn<DownloadTorrent>[] = useMemo(
     () => [
       {
         key: "Name",
@@ -275,7 +276,7 @@ export function TorrentTable({
         },
       },
     ],
-    [onInfo]
+    [onInfo],
   );
 
   // Filter row content with state filter chips
@@ -301,7 +302,7 @@ export function TorrentTable({
               }
               onPress={() =>
                 setStateFilter(
-                  normalizedStateFilter === option.key ? "" : option.key
+                  normalizedStateFilter === option.key ? "" : option.key,
                 )
               }
               className="gap-1"
@@ -315,11 +316,11 @@ export function TorrentTable({
         })}
       </ButtonGroup>
     ),
-    [normalizedStateFilter, stateCounts, torrents.length, setStateFilter]
+    [normalizedStateFilter, stateCounts, torrents.length, setStateFilter],
   );
 
   // Bulk actions
-  const bulkActions: BulkAction<Torrent>[] = useMemo(
+  const bulkActions: BulkAction<DownloadTorrent>[] = useMemo(
     () => [
       {
         key: "resume",
@@ -346,11 +347,11 @@ export function TorrentTable({
         onAction: (items) => onBulkRemove(items.map((t) => t.InfoHash)),
       },
     ],
-    [onBulkPause, onBulkResume, onBulkRemove]
+    [onBulkPause, onBulkResume, onBulkRemove],
   );
 
   // Row actions
-  const rowActions: RowAction<Torrent>[] = useMemo(
+  const rowActions: RowAction<DownloadTorrent>[] = useMemo(
     () => [
       {
         key: "resume",
@@ -445,11 +446,11 @@ export function TorrentTable({
       onRematch,
       onLinkToLibrary,
       onConfirmOpen,
-    ]
+    ],
   );
 
   // Custom search function
-  const searchFn = (torrent: Torrent, term: string) => {
+  const searchFn = (torrent: DownloadTorrent, term: string) => {
     const lowerTerm = term.toLowerCase();
     return (
       torrent.Name.toLowerCase().includes(lowerTerm) ||

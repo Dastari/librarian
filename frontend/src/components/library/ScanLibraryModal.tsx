@@ -9,7 +9,12 @@ import {
 import { Button } from "@heroui/button";
 import { addToast } from "@heroui/toast";
 import { IconRefresh } from "@tabler/icons-react";
-import { SCAN_LIBRARY_MUTATION } from "../../lib/graphql";
+import {
+  ScanLibraryDocument,
+  type ScanLibraryMutation,
+  type ScanLibraryMutationVariables,
+} from "../../lib/graphql/generated/graphql";
+import { useMutation } from "../../lib/graphql/client";
 
 export interface ScanLibraryModalProps {
   isOpen: boolean;
@@ -49,16 +54,19 @@ export function ScanLibraryModal({
   onScanStarted,
 }: ScanLibraryModalProps) {
   const [isScanning, setIsScanning] = useState(false);
+  const [scanLibrary] = useMutation<
+    ScanLibraryMutation,
+    ScanLibraryMutationVariables
+  >(ScanLibraryDocument);
 
   const handleScan = async () => {
     if (!libraryId) return;
 
     try {
       setIsScanning(true);
-      const { data, error } = await mutationPromise<{
-          ScanLibrary: { Status: string; Message: string | null };
-        }>(SCAN_LIBRARY_MUTATION, { Id: libraryId })
-        ;
+      const { data, error } = await scanLibrary({
+        variables: { Id: libraryId },
+      });
 
       if (error) {
         addToast({

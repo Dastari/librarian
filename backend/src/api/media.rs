@@ -1,7 +1,6 @@
 //! Media streaming API endpoints
 //!
-//! Provides HTTP endpoints for streaming media files to cast devices
-//! and browser-based playback with Range header support.
+//! Provides HTTP endpoints for browser playback with Range header support.
 
 use std::io::SeekFrom;
 use std::path::Path;
@@ -20,18 +19,11 @@ use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 use tracing::{debug, error, warn};
-use uuid::Uuid;
 
-use crate::db::Database;
-
-/// App state for media routes
-#[derive(Clone)]
-pub struct MediaState {
-    pub db: Database,
-}
+use crate::AppState;
 
 /// Create media routes
-pub fn media_routes() -> Router<MediaState> {
+pub fn router() -> Router<AppState> {
     Router::new()
         .route("/media/{file_id}/stream", get(stream_media))
         .route("/media/{file_id}/info", get(media_info))
@@ -40,59 +32,92 @@ pub fn media_routes() -> Router<MediaState> {
 /// Query params for stream endpoint
 #[derive(Debug, Deserialize)]
 pub struct StreamParams {
-    /// Transcode to this format if needed
+    /// Transcode to this format if needed (placeholder for future support)
     pub transcode: Option<String>,
-    /// Target quality (e.g., "1080p", "720p")
+    /// Target quality (e.g., "1080p", "720p") (placeholder for future support)
     pub quality: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct MediaFileRecord {
+    id: String,
+    path: String,
+    size: i64,
+    container: Option<String>,
+    video_codec: Option<String>,
+    audio_codec: Option<String>,
+    resolution: Option<String>,
+    width: Option<i32>,
+    height: Option<i32>,
+    duration: Option<i32>,
+    is_hdr: bool,
+    hdr_type: Option<String>,
 }
 
 /// Stream a media file with Range header support
 async fn stream_media(
-    State(state): State<MediaState>,
-    AxumPath(file_id): AxumPath<Uuid>,
+    State(state): State<AppState>,
+    AxumPath(file_id): AxumPath<String>,
     headers: HeaderMap,
-    Query(_params): Query<StreamParams>,
+    Query(params): Query<StreamParams>,
 ) -> Result<Response, StatusCode> {
-    // Get file info from database
-    let media_file = state
-        .db
-        .media_files()
-        .get_by_id(file_id)
-        .await
-        .map_err(|e| {
-            error!("Database error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or_else(|| {
-            warn!("Media file not found: {}", file_id);
-            StatusCode::NOT_FOUND
-        })?;
-
+    let media_file = fetch_media_file(&state, &file_id).await?;
     let path = Path::new(&media_file.path);
 
-    // Check if file exists
+    if let Some(ref transcode) = params.transcode {
+        debug!(
+            file_id = %file_id,
+            transcode = %transcode,
+            "Stream request included transcode hint (not yet implemented)"
+        );
+    }
+    if let Some(ref quality) = params.quality {
+        debug!(
+            file_id = %file_id,
+            quality = %quality,
+            "Stream request included quality hint (not yet implemented)"
+        );
+    }
+
     if !path.exists() {
-        warn!("Media file path does not exist: {}", media_file.path);
+        warn!(
+            media_file_id = %file_id,
+            media_file_path = %media_file.path,
+            "Media stream path does not exist: media_file_id={}, path={}",
+            file_id,
+            media_file.path
+        );
         return Err(StatusCode::NOT_FOUND);
     }
 
-    // Open the file
     let mut file = File::open(path).await.map_err(|e| {
-        error!("Failed to open media file: {}", e);
+        error!(
+            media_file_id = %file_id,
+            media_file_path = %media_file.path,
+            error = %e,
+            "Failed opening media file for stream: media_file_id={}, path={}, error={}",
+            file_id,
+            media_file.path,
+            e
+        );
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    // Get file metadata
     let metadata = file.metadata().await.map_err(|e| {
-        error!("Failed to get file metadata: {}", e);
+        error!(
+            media_file_id = %file_id,
+            media_file_path = %media_file.path,
+            error = %e,
+            "Failed reading media metadata for stream: media_file_id={}, path={}, error={}",
+            file_id,
+            media_file.path,
+            e
+        );
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     let file_size = metadata.len();
-
-    // Determine content type
     let content_type = get_content_type(&media_file.path);
 
-    // Parse Range header
     let range = headers
         .get(RANGE)
         .and_then(|v| v.to_str().ok())
@@ -100,25 +125,34 @@ async fn stream_media(
 
     match range {
         Some((start, end)) => {
-            // Partial content response
             let length = end - start + 1;
-
             debug!(
-                "Serving partial content: bytes {}-{}/{} for {}",
-                start, end, file_size, file_id
+                media_file_id = %file_id,
+                start = start,
+                end = end,
+                length = length,
+                file_size = file_size,
+                "Serving partial media content: media_file_id={}, bytes={}-{}, total_size={}",
+                file_id,
+                start,
+                end,
+                file_size
             );
 
-            // Seek to start position
             file.seek(SeekFrom::Start(start)).await.map_err(|e| {
-                error!("Failed to seek: {}", e);
+                error!(
+                    media_file_id = %file_id,
+                    error = %e,
+                    "Failed seeking media stream: media_file_id={}, error={}",
+                    file_id,
+                    e
+                );
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
 
-            // Create a limited reader
             let limited_file = file.take(length);
             let stream = ReaderStream::new(limited_file);
             let body = Body::from_stream(stream);
-
             let content_range = format!("bytes {}-{}/{}", start, end, file_size);
 
             Ok(Response::builder()
@@ -129,11 +163,16 @@ async fn stream_media(
                 .header(ACCEPT_RANGES, "bytes")
                 .header(CACHE_CONTROL, "public, max-age=3600")
                 .body(body)
-                .unwrap())
+                .expect("valid partial content response"))
         }
         None => {
-            // Full file response
-            debug!("Serving full file: {} bytes for {}", file_size, file_id);
+            debug!(
+                media_file_id = %file_id,
+                file_size = file_size,
+                "Serving full media content: media_file_id={}, total_size={}",
+                file_id,
+                file_size
+            );
 
             let stream = ReaderStream::new(file);
             let body = Body::from_stream(stream);
@@ -145,32 +184,21 @@ async fn stream_media(
                 .header(ACCEPT_RANGES, "bytes")
                 .header(CACHE_CONTROL, "public, max-age=3600")
                 .body(body)
-                .unwrap())
+                .expect("valid full content response"))
         }
     }
 }
 
 /// Get media file information
 async fn media_info(
-    State(state): State<MediaState>,
-    AxumPath(file_id): AxumPath<Uuid>,
+    State(state): State<AppState>,
+    AxumPath(file_id): AxumPath<String>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let media_file = state
-        .db
-        .media_files()
-        .get_by_id(file_id)
-        .await
-        .map_err(|e| {
-            error!("Database error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
+    let media_file = fetch_media_file(&state, &file_id).await?;
     let path = Path::new(&media_file.path);
     let exists = path.exists();
     let content_type = get_content_type(&media_file.path);
 
-    // Check Chromecast compatibility
     let chromecast_compatible = is_chromecast_compatible(
         media_file.container.as_deref(),
         media_file.video_codec.as_deref(),
@@ -178,10 +206,10 @@ async fn media_info(
     );
 
     let info = serde_json::json!({
-        "id": media_file.id.to_string(),
+        "id": media_file.id,
         "path": media_file.path,
         "exists": exists,
-        "size_bytes": media_file.size_bytes,
+        "size_bytes": media_file.size,
         "content_type": content_type,
         "container": media_file.container,
         "video_codec": media_file.video_codec,
@@ -198,38 +226,110 @@ async fn media_info(
     Ok(axum::Json(info))
 }
 
-/// Parse HTTP Range header
+async fn fetch_media_file(state: &AppState, file_id: &str) -> Result<MediaFileRecord, StatusCode> {
+    let row = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            i64,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<i32>,
+            Option<i32>,
+            Option<i32>,
+            bool,
+            Option<String>,
+        ),
+    >(
+        r#"SELECT id, path, size, container, video_codec, audio_codec, resolution, width, height, duration, is_hdr, hdr_type
+           FROM media_files
+           WHERE id = ?1
+           LIMIT 1"#,
+    )
+    .bind(file_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| {
+        error!(
+            media_file_id = %file_id,
+            error = %e,
+            "Failed querying media file for stream/info: media_file_id={}, error={}",
+            file_id,
+            e
+        );
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let Some((
+        id,
+        path,
+        size,
+        container,
+        video_codec,
+        audio_codec,
+        resolution,
+        width,
+        height,
+        duration,
+        is_hdr,
+        hdr_type,
+    )) = row
+    else {
+        warn!(
+            media_file_id = %file_id,
+            "Media file not found for stream/info: media_file_id={}",
+            file_id
+        );
+        return Err(StatusCode::NOT_FOUND);
+    };
+
+    Ok(MediaFileRecord {
+        id,
+        path,
+        size,
+        container,
+        video_codec,
+        audio_codec,
+        resolution,
+        width,
+        height,
+        duration,
+        is_hdr,
+        hdr_type,
+    })
+}
+
+/// Parse HTTP Range header.
 fn parse_range_header(header: &str, file_size: u64) -> Option<(u64, u64)> {
-    // Format: "bytes=start-end" or "bytes=start-"
     let header = header.strip_prefix("bytes=")?;
     let parts: Vec<&str> = header.split('-').collect();
-
     if parts.len() != 2 {
         return None;
     }
 
     let start: u64 = parts[0].parse().ok()?;
     let end: u64 = if parts[1].is_empty() {
-        file_size - 1
+        file_size.saturating_sub(1)
     } else {
         parts[1].parse().ok()?
     };
 
-    // Validate range
     if start >= file_size || end >= file_size || start > end {
         return None;
     }
-
     Some((start, end))
 }
 
-/// Get content type from file path
+/// Determine content type from file extension.
 fn get_content_type(path: &str) -> &'static str {
     let ext = Path::new(path)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
-        .to_lowercase();
+        .to_ascii_lowercase();
 
     match ext.as_str() {
         "mp4" | "m4v" => "video/mp4",
@@ -238,59 +338,46 @@ fn get_content_type(path: &str) -> &'static str {
         "avi" => "video/x-msvideo",
         "mov" => "video/quicktime",
         "wmv" => "video/x-ms-wmv",
+        "mpg" | "mpeg" => "video/mpeg",
         "ts" => "video/mp2t",
-        "m3u8" => "application/vnd.apple.mpegurl",
+        "m2ts" => "video/mp2t",
         "mp3" => "audio/mpeg",
         "flac" => "audio/flac",
         "aac" => "audio/aac",
         "m4a" => "audio/mp4",
         "ogg" => "audio/ogg",
+        "opus" => "audio/opus",
         "wav" => "audio/wav",
-        "jpg" | "jpeg" => "image/jpeg",
-        "png" => "image/png",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
         _ => "application/octet-stream",
     }
 }
 
-/// Check if media file is Chromecast compatible
-/// Chromecast supports:
-/// - Containers: MP4, WebM
-/// - Video: H.264 (up to level 4.2), VP8, VP9
-/// - Audio: AAC, MP3, Opus, Vorbis, FLAC
+/// Check if media is Chromecast compatible without transcoding.
 fn is_chromecast_compatible(
     container: Option<&str>,
     video_codec: Option<&str>,
     audio_codec: Option<&str>,
 ) -> bool {
-    let container_ok = match container {
-        Some(c) => {
-            let c = c.to_lowercase();
-            c.contains("mp4") || c.contains("m4v") || c.contains("webm")
-        }
-        None => false,
-    };
+    let container_ok = container
+        .map(|c| {
+            let c = c.to_ascii_lowercase();
+            c.contains("mp4") || c.contains("webm") || c.contains("mp3")
+        })
+        .unwrap_or(false);
 
-    let video_ok = match video_codec {
-        Some(v) => {
-            let v = v.to_lowercase();
+    let video_ok = video_codec
+        .map(|v| {
+            let v = v.to_ascii_lowercase();
             v.contains("h264") || v.contains("avc") || v.contains("vp8") || v.contains("vp9")
-        }
-        None => true, // No video is OK (audio only)
-    };
+        })
+        .unwrap_or(true);
 
-    let audio_ok = match audio_codec {
-        Some(a) => {
-            let a = a.to_lowercase();
-            a.contains("aac")
-                || a.contains("mp3")
-                || a.contains("opus")
-                || a.contains("vorbis")
-                || a.contains("flac")
-        }
-        None => true, // No audio is OK (video only, though uncommon)
-    };
+    let audio_ok = audio_codec
+        .map(|a| {
+            let a = a.to_ascii_lowercase();
+            a.contains("aac") || a.contains("mp3") || a.contains("opus") || a.contains("vorbis")
+        })
+        .unwrap_or(true);
 
     container_ok && video_ok && audio_ok
 }

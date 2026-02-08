@@ -4,7 +4,7 @@ import { Spinner } from '@heroui/spinner'
 import { ScrollShadow } from '@heroui/scroll-shadow'
 import type { ReactNode } from 'react'
 import type { TablerIcon } from '@tabler/icons-react'
-import { IconDownload, IconRss, IconMovie, IconClipboard, IconSearch, IconCast, IconServer, IconArrowsSort } from '@tabler/icons-react'
+import { IconDownload, IconMovie, IconClipboard, IconCast, IconServer, IconRadar } from '@tabler/icons-react'
 
 interface SettingsTab {
   key: string
@@ -25,12 +25,12 @@ const settingsTabs: SettingsTab[] = [
     description: 'Download settings',
   },
   {
-    key: 'indexers',
-    path: '/settings/indexers',
-    label: 'Indexers',
-    Icon: IconSearch,
+    key: 'sources',
+    path: '/settings/sources',
+    label: 'Sources',
+    Icon: IconRadar,
     iconColor: 'text-green-400',
-    description: 'Torrent search sources',
+    description: 'Torrent indexers, RSS feeds & source ordering',
   },
   {
     key: 'usenet',
@@ -39,22 +39,6 @@ const settingsTabs: SettingsTab[] = [
     Icon: IconServer,
     iconColor: 'text-cyan-400',
     description: 'NNTP providers',
-  },
-  {
-    key: 'priorities',
-    path: '/settings/source-priorities',
-    label: 'Source Priorities',
-    Icon: IconArrowsSort,
-    iconColor: 'text-amber-400',
-    description: 'Search order preferences',
-  },
-  {
-    key: 'rss',
-    path: '/settings/rss',
-    label: 'RSS Feeds',
-    Icon: IconRss,
-    iconColor: 'text-orange-400',
-    description: 'Torrent feed sources',
   },
   {
     key: 'metadata',

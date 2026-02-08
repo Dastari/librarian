@@ -1,57 +1,77 @@
-import { useState, useEffect } from 'react'
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
-import { Button } from '@heroui/button'
-import { Input } from '@heroui/input'
-import { Card, CardBody } from '@heroui/card'
-import { Chip } from '@heroui/chip'
-import { Divider } from '@heroui/divider'
-import { Spinner } from '@heroui/spinner'
-import type { RssFeedTestResult } from '../../lib/graphql'
-import { sanitizeError } from '../../lib/format'
-import { IconCheck } from '@tabler/icons-react'
+import { useState, useEffect } from "react";
+import {
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+} from "@heroui/modal";
+import { Button } from "@heroui/button";
+import { Input } from "@heroui/input";
+import { Card, CardBody } from "@heroui/card";
+import { Chip } from "@heroui/chip";
+import { Divider } from "@heroui/divider";
+import { Spinner } from "@heroui/spinner";
+import { sanitizeError } from "../../lib/format";
+import { IconCheck } from "@tabler/icons-react";
+
+interface RssFeedSampleItem {
+  title: string;
+  parsedShowName?: string | null;
+  parsedSeason?: number | null;
+  parsedEpisode?: number | null;
+  parsedResolution?: string | null;
+}
+
+interface RssFeedTestResult {
+  success: boolean;
+  itemCount: number;
+  sampleItems: RssFeedSampleItem[];
+  error?: string | null;
+}
 
 export interface TestRssFeedModalProps {
-  isOpen: boolean
-  onClose: () => void
-  initialUrl?: string
-  onTest: (url: string) => Promise<RssFeedTestResult>
+  isOpen: boolean;
+  onClose: () => void;
+  initialUrl?: string;
+  onTest: (url: string) => Promise<RssFeedTestResult>;
 }
 
 export function TestRssFeedModal({
   isOpen,
   onClose,
-  initialUrl = '',
+  initialUrl = "",
   onTest,
 }: TestRssFeedModalProps) {
-  const [url, setUrl] = useState(initialUrl)
-  const [isTesting, setIsTesting] = useState(false)
-  const [testResult, setTestResult] = useState<RssFeedTestResult | null>(null)
+  const [url, setUrl] = useState(initialUrl);
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<RssFeedTestResult | null>(null);
 
   // Reset/initialize when modal opens
   useEffect(() => {
     if (isOpen) {
-      setUrl(initialUrl)
-      setTestResult(null)
+      setUrl(initialUrl);
+      setTestResult(null);
     }
-  }, [isOpen, initialUrl])
+  }, [isOpen, initialUrl]);
 
   const handleTest = async () => {
-    setIsTesting(true)
-    setTestResult(null)
+    setIsTesting(true);
+    setTestResult(null);
     try {
-      const result = await onTest(url)
-      setTestResult(result)
+      const result = await onTest(url);
+      setTestResult(result);
     } catch (e) {
       setTestResult({
         success: false,
         itemCount: 0,
         sampleItems: [],
         error: sanitizeError(e),
-      })
+      });
     } finally {
-      setIsTesting(false)
+      setIsTesting(false);
     }
-  }
+  };
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="2xl">
@@ -67,7 +87,7 @@ export function TestRssFeedModal({
             onChange={(e) => setUrl(e.target.value)}
             className="flex-1"
             classNames={{
-              label: 'text-sm font-medium text-primary!',
+              label: "text-sm font-medium text-primary!",
             }}
             endContent={
               <Button
@@ -91,15 +111,22 @@ export function TestRssFeedModal({
           )}
 
           {testResult && (
-            <Card className={testResult.success ? 'bg-success-50/20' : 'bg-danger-50/20'}>
+            <Card
+              className={
+                testResult.success ? "bg-success-50/20" : "bg-danger-50/20"
+              }
+            >
               <CardBody>
                 {testResult.success ? (
                   <div>
                     <p className="font-medium text-success mb-2 flex items-center gap-1">
-                      <IconCheck size={16} className="text-green-400" /> Feed parsed successfully - {testResult.itemCount} items found
+                      <IconCheck size={16} className="text-green-400" /> Feed
+                      parsed successfully - {testResult.itemCount} items found
                     </p>
                     <Divider className="my-3" />
-                    <p className="text-sm text-default-500 mb-2">Sample items:</p>
+                    <p className="text-sm text-default-500 mb-2">
+                      Sample items:
+                    </p>
                     <div className="space-y-2 max-h-80 overflow-y-auto">
                       {testResult.sampleItems.map((item, idx) => (
                         <div key={idx} className="bg-content2 rounded-lg p-3">
@@ -111,12 +138,22 @@ export function TestRssFeedModal({
                               </Chip>
                               {item.parsedSeason && item.parsedEpisode && (
                                 <Chip size="sm" variant="flat" color="primary">
-                                  S{item.parsedSeason.toString().padStart(2, '0')}E
-                                  {item.parsedEpisode.toString().padStart(2, '0')}
+                                  S
+                                  {item.parsedSeason
+                                    .toString()
+                                    .padStart(2, "0")}
+                                  E
+                                  {item.parsedEpisode
+                                    .toString()
+                                    .padStart(2, "0")}
                                 </Chip>
                               )}
                               {item.parsedResolution && (
-                                <Chip size="sm" variant="flat" color="secondary">
+                                <Chip
+                                  size="sm"
+                                  variant="flat"
+                                  color="secondary"
+                                >
                                   {item.parsedResolution}
                                 </Chip>
                               )}
@@ -140,5 +177,5 @@ export function TestRssFeedModal({
         </ModalFooter>
       </ModalContent>
     </Modal>
-  )
+  );
 }

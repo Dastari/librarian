@@ -9,7 +9,12 @@ import {
 import { Button } from "@heroui/button";
 import { addToast } from "@heroui/toast";
 import { IconTrash } from "@tabler/icons-react";
-import { DeleteLibraryDocument } from "../../lib/graphql/generated/graphql";
+import {
+  DeleteLibraryDocument,
+  type DeleteLibraryMutation,
+  type DeleteLibraryMutationVariables,
+} from "../../lib/graphql/generated/graphql";
+import { useMutation } from "../../lib/graphql/client";
 
 export interface DeleteLibraryModalProps {
   isOpen: boolean;
@@ -50,14 +55,19 @@ export function DeleteLibraryModal({
   onDeleted,
 }: DeleteLibraryModalProps) {
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteLibrary] = useMutation<
+    DeleteLibraryMutation,
+    DeleteLibraryMutationVariables
+  >(DeleteLibraryDocument);
 
   const handleDelete = async () => {
     if (!libraryId) return;
 
     try {
       setIsDeleting(true);
-      const { data, error } = await mutationPromise(DeleteLibraryDocument, { Id: libraryId })
-        ;
+      const { data, error } = await deleteLibrary({
+        variables: { Id: libraryId },
+      });
 
       if (error || !data?.DeleteLibrary.Success) {
         addToast({

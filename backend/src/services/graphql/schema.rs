@@ -11,7 +11,9 @@ use macros::schema_roots;
 use crate::db::Database;
 use crate::services::graphql::entities::*;
 use crate::services::graphql::loaders::RelationLoader;
-use crate::services::graphql::mutations::{ArtworkMutations, AuthMutations, FilesystemMutations};
+use crate::services::graphql::mutations::{
+    ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations,
+};
 use crate::services::graphql::queries::FilesystemQueries;
 use crate::services::graphql::subscriptions::filesystem::FilesystemChangeBroker;
 use crate::services::graphql::subscriptions::{FilesystemSubscriptions, TorrentSubscriptions};
@@ -36,9 +38,7 @@ schema_roots! {
         RssFeed,
         RssFeedItem,
         PendingFileMatch,
-        IndexerConfig,
-        IndexerSetting,
-        IndexerSearchCache,
+        Source,
         User,
         InviteToken,
         RefreshToken,
@@ -63,8 +63,8 @@ schema_roots! {
         ArtworkCache,
         TorznabCategory,
     ],
-    extra_query_types: [FilesystemQueries],
-    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations],
+    extra_query_types: [FilesystemQueries, SourceCustomQueries],
+    extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations],
     extra_subscription_types: [FilesystemSubscriptions, TorrentSubscriptions],
 }
 
@@ -81,6 +81,21 @@ pub fn build_schema<E>(
 where
     E: Send + Sync + Clone + 'static,
 {
+    // Entity change channels used by generated GraphQL subscriptions.
+    let (library_changed_tx, _) = tokio::sync::broadcast::channel::<LibraryChangedEvent>(256);
+    let (movie_changed_tx, _) = tokio::sync::broadcast::channel::<MovieChangedEvent>(256);
+    let (show_changed_tx, _) = tokio::sync::broadcast::channel::<ShowChangedEvent>(256);
+    let (episode_changed_tx, _) = tokio::sync::broadcast::channel::<EpisodeChangedEvent>(256);
+    let (media_file_changed_tx, _) = tokio::sync::broadcast::channel::<MediaFileChangedEvent>(256);
+    let (artist_changed_tx, _) = tokio::sync::broadcast::channel::<ArtistChangedEvent>(256);
+    let (album_changed_tx, _) = tokio::sync::broadcast::channel::<AlbumChangedEvent>(256);
+    let (track_changed_tx, _) = tokio::sync::broadcast::channel::<TrackChangedEvent>(256);
+    let (audiobook_changed_tx, _) = tokio::sync::broadcast::channel::<AudiobookChangedEvent>(256);
+    let (chapter_changed_tx, _) = tokio::sync::broadcast::channel::<ChapterChangedEvent>(256);
+    let (notification_changed_tx, _) =
+        tokio::sync::broadcast::channel::<NotificationChangedEvent>(256);
+    let (app_log_changed_tx, _) = tokio::sync::broadcast::channel::<AppLogChangedEvent>(256);
+
     // Create DataLoaders for batching relation queries.
     // Each loader batches queries for a specific (entity_type, fk_column) pair.
     // When multiple parents request their children in the same GraphQL request,
@@ -158,6 +173,19 @@ where
     .data(services)
     .data(metadata_service)
     .data(FilesystemChangeBroker::new(64))
+    // Entity subscription channels
+    .data(library_changed_tx)
+    .data(movie_changed_tx)
+    .data(show_changed_tx)
+    .data(episode_changed_tx)
+    .data(media_file_changed_tx)
+    .data(artist_changed_tx)
+    .data(album_changed_tx)
+    .data(track_changed_tx)
+    .data(audiobook_changed_tx)
+    .data(chapter_changed_tx)
+    .data(notification_changed_tx)
+    .data(app_log_changed_tx)
     // Register all relation DataLoaders
     .data(shows_loader)
     .data(movies_loader)

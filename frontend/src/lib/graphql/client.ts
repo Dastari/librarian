@@ -53,16 +53,8 @@ const httpLink = new HttpLink({
 });
 
 // Auth context link - adds Authorization header to every request
-const authLink = setContext(async (operation, { headers }) => {
+const authLink = setContext(async (_, { headers }) => {
   const token = await getAuthTokenAsync();
-
-  // Only log when token is found - no token is normal for unauthenticated users
-  if (import.meta.env.DEV && token) {
-    const opName = operation.operationName || "unknown";
-    console.debug(
-      `[GraphQL] Sending auth token for ${opName}: ${token.substring(0, 20)}...`,
-    );
-  }
 
   return {
     headers: {
@@ -112,14 +104,9 @@ const errorLink = onError(({ error, operation }) => {
       // Only log non-auth errors as errors, auth errors are expected when not logged in
       if (isAuthError) {
         // Silently ignore auth errors - they're expected when not logged in
-        if (import.meta.env.DEV) {
-          console.debug(
-            `[GraphQL] Auth required for ${operationName} (user not logged in)`,
-          );
-        }
       } else {
         console.error(
-          `[GraphQL error]: Message: ${message}, Operation: ${operationName}`,
+          `[GraphQL error]: Message: ${message}, Operation: ${operationName}`
         );
         // Notify subscribers about the error
         notifyError(message, false);
@@ -128,7 +115,7 @@ const errorLink = onError(({ error, operation }) => {
   } else if (error) {
     // Network or other error
     console.error(
-      `[Network error]: ${error.message}, Operation: ${operationName}`,
+      `[Network error]: ${error.message}, Operation: ${operationName}`
     );
 
     // Notify subscribers about network error
@@ -153,7 +140,7 @@ const splitLink = split(
     );
   },
   wsLink,
-  authedHttpLink,
+  authedHttpLink
 );
 
 // Create Apollo Client
@@ -171,7 +158,12 @@ export const apolloClient = new ApolloClient({
 });
 
 // Re-export Apollo hooks for convenience
-export { useQuery, useMutation, useSubscription, useLazyQuery } from '@apollo/client/react';
+export {
+  useQuery,
+  useMutation,
+  useSubscription,
+  useLazyQuery,
+} from "@apollo/client/react";
 export { gql };
 
 // Reset Apollo cache after login/logout to clear any stale auth state
@@ -187,7 +179,7 @@ export async function queryPromise<
   TVariables = OperationVariables,
 >(
   query: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
-  variables?: TVariables,
+  variables?: TVariables
 ): Promise<{ data?: TData; error?: Error }> {
   try {
     const doc = typeof query === "string" ? gql(query) : query;
@@ -207,7 +199,7 @@ export async function mutationPromise<
   TVariables = OperationVariables,
 >(
   mutation: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
-  variables?: TVariables,
+  variables?: TVariables
 ): Promise<{ data?: TData; error?: Error }> {
   try {
     const doc = typeof mutation === "string" ? gql(mutation) : mutation;
@@ -226,9 +218,10 @@ export function subscriptionStream<
   TVariables = OperationVariables,
 >(
   subscription: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
-  variables?: TVariables,
+  variables?: TVariables
 ) {
-  const doc = typeof subscription === "string" ? gql(subscription) : subscription;
+  const doc =
+    typeof subscription === "string" ? gql(subscription) : subscription;
   return apolloClient.subscribe<TData>({
     query: doc as TypedDocumentNode<TData, TVariables>,
     variables: variables as OperationVariables,
@@ -239,7 +232,7 @@ export function subscriptionStream<
 export const graphqlClient = {
   query: <TData = unknown, TVariables = OperationVariables>(
     query: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
-    variables?: TVariables,
+    variables?: TVariables
   ) => ({
     toPromise: async (): Promise<{ data?: TData; error?: Error }> => {
       try {
@@ -258,7 +251,7 @@ export const graphqlClient = {
 
   mutation: <TData = unknown, TVariables = OperationVariables>(
     mutation: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
-    variables?: TVariables,
+    variables?: TVariables
   ) => ({
     toPromise: async (): Promise<{ data?: TData; error?: Error }> => {
       try {
@@ -276,7 +269,7 @@ export const graphqlClient = {
 
   subscription: <TData = unknown, TVariables = OperationVariables>(
     subscription: TypedDocumentNode<TData, TVariables> | string | DocumentNode,
-    variables?: TVariables,
+    variables?: TVariables
   ) => {
     const doc =
       typeof subscription === "string" ? gql(subscription) : subscription;

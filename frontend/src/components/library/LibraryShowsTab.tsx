@@ -14,10 +14,10 @@ import {
 } from '../data-table'
 import type { Show } from '../../lib/graphql/generated/graphql'
 import { TV_SHOWS_CONNECTION_QUERY } from '../../lib/graphql'
+import { useQuery, gql } from '../../lib/graphql/client'
 import { IconPlus, IconTrash, IconEye, IconDeviceTv } from '@tabler/icons-react'
 import { TvShowCard } from './TvShowCard'
 import { MediaCardSkeleton } from './MediaCardSkeleton'
-import { useInfiniteConnection } from '../../hooks/useInfiniteConnection'
 
 // ============================================================================
 // Component Props
@@ -60,10 +60,13 @@ const SORT_FIELD_MAP: Record<string, string> = {
   year: "Year",
   createdAt: "CreatedAt",
 };
+const SHOWS_QUERY = gql`
+  ${TV_SHOWS_CONNECTION_QUERY}
+`
 
 export function LibraryShowsTab({
   libraryId,
-  loading: parentLoading,
+  loading: _parentLoading,
   onDeleteShow,
   onAddShow,
   onRefreshReady,
@@ -81,7 +84,7 @@ export function LibraryShowsTab({
   const normalizedLetter = selectedLetter === '' ? null : selectedLetter
 
   // Check if we should skip queries (loading or template ID)
-  const shouldSkipQueries = parentLoading || libraryId.startsWith('template')
+  const shouldSkipQueries = libraryId.startsWith('template')
 
   // Handle sort change from DataTable
   const handleSortChange = useCallback((column: string, direction: 'asc' | 'desc') => {
@@ -98,39 +101,39 @@ export function LibraryShowsTab({
     return { Where: where, Page: { Limit: 500 }, OrderBy: orderBy }
   }, [libraryId, searchTerm, sortColumn, sortDirection])
 
-  // Use infinite connection hook; map schema response to Connection shape
   const {
-    items: shows,
-    isLoading,
-    isLoadingMore,
-    hasMore,
-    totalCount,
-    loadMore,
-    refresh,
-  } = useInfiniteConnection<TvShowsConnectionResponse, Show>({
-    query: TV_SHOWS_CONNECTION_QUERY,
+    data,
+    previousData,
+    loading: queryLoading,
+    refetch,
+  } = useQuery<TvShowsConnectionResponse>(SHOWS_QUERY, {
     variables: queryVariables,
-    getConnection: (data) => ({
-      edges: data.Shows.Edges.map((e) => ({ node: e.Node, cursor: e.Cursor })),
-      pageInfo: {
-        hasNextPage: data.Shows.PageInfo.HasNextPage,
-        hasPreviousPage: data.Shows.PageInfo.HasPreviousPage,
-        startCursor: data.Shows.PageInfo.StartCursor ?? null,
-        endCursor: data.Shows.PageInfo.EndCursor ?? null,
-        totalCount: data.Shows.PageInfo.TotalCount ?? null,
-      },
-    }),
-    batchSize: 50,
-    enabled: !shouldSkipQueries,
-    deps: [libraryId, searchTerm],
+    skip: shouldSkipQueries,
+    fetchPolicy: 'cache-and-network',
+    notifyOnNetworkStatusChange: false,
   })
+
+  const shows = useMemo(
+    () =>
+      (data?.Shows?.Edges ?? previousData?.Shows?.Edges ?? []).map(
+        (edge) => edge.Node,
+      ),
+    [data?.Shows?.Edges, previousData?.Shows?.Edges],
+  )
+
+  const totalCount =
+    data?.Shows?.PageInfo?.TotalCount ??
+    previousData?.Shows?.PageInfo?.TotalCount ??
+    null
 
   // Provide refresh function to parent for subscription updates
   useEffect(() => {
     if (onRefreshReady) {
-      onRefreshReady(refresh)
+      onRefreshReady(() => {
+        void refetch()
+      })
     }
-  }, [refresh, onRefreshReady])
+  }, [refetch, onRefreshReady])
 
   // Get letters that have shows (from loaded data)
   const availableLetters = useMemo(() => {
@@ -263,11 +266,7 @@ export function LibraryShowsTab({
           serverSide
           serverTotalCount={totalCount ?? undefined}
           onSearchChange={handleSearchChange}
-          paginationMode="infinite"
-          hasMore={hasMore}
-          onLoadMore={loadMore}
-          isLoading={parentLoading || isLoading}
-          isLoadingMore={isLoadingMore}
+          isLoading={queryLoading && shows.length === 0}
           headerContent={
             <AlphabetFilter
               selectedLetter={normalizedLetter}

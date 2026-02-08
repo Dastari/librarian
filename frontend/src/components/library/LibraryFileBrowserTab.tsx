@@ -1,41 +1,53 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Button } from '@heroui/button'
-import { Input } from '@heroui/input'
-import { Divider } from '@heroui/divider'
-import { Chip } from '@heroui/chip'
-import { Skeleton } from '@heroui/skeleton'
-import { addToast } from '@heroui/toast'
-import { useDisclosure } from '@heroui/modal'
-import { ConfirmModal } from '../ConfirmModal'
-import { FilePropertiesModal } from '../FilePropertiesModal'
-import { DestinationPickerModal } from '../DestinationPickerModal'
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { Button } from "@heroui/button";
+import { Input } from "@heroui/input";
+import { Divider } from "@heroui/divider";
+import { Chip } from "@heroui/chip";
+import { Skeleton } from "@heroui/skeleton";
+import { addToast } from "@heroui/toast";
+import { useDisclosure } from "@heroui/modal";
+import { ConfirmModal } from "../ConfirmModal";
+import { FilePropertiesModal } from "../FilePropertiesModal";
+import { DestinationPickerModal } from "../DestinationPickerModal";
 import {
   DataTable,
   type DataTableColumn,
   type BulkAction,
   type RowAction,
-} from '../data-table'
+} from "../data-table";
 import {
   browseDirectory,
   deleteFiles,
   copyFiles,
   moveFiles,
-  MEDIA_FILE_BY_PATH_QUERY,
   type BrowseDirectoryEntry,
   type BrowseQuickPath,
-  type MediaFile,
-} from '../../lib/graphql'
-import { sanitizeError } from '../../lib/format'
-import { formatBytes } from '../../lib/format'
-import { IconCopy, IconArrowRight, IconTrash, IconSearch, IconInfoCircle, IconRefresh, IconFolderOpen } from '@tabler/icons-react'
-import { getFileIcon } from '../../lib/fileIcons'
+} from "../../lib/graphql";
+import {
+  MediaFileByPathLookupDocument,
+  type MediaFileByPathLookupQuery,
+  type MediaFileByPathLookupQueryVariables,
+} from "../../lib/graphql/generated/graphql";
+import { apolloClient } from "../../lib/graphql/client";
+import { sanitizeError } from "../../lib/format";
+import { formatBytes } from "../../lib/format";
+import {
+  IconCopy,
+  IconArrowRight,
+  IconTrash,
+  IconSearch,
+  IconInfoCircle,
+  IconRefresh,
+  IconFolderOpen,
+} from "@tabler/icons-react";
+import { getFileIcon } from "../../lib/fileIcons";
 
 // ============================================================================
 // Utility Functions
 // ============================================================================
 
 function renderFileIcon(filename: string, isDir: boolean): React.ReactNode {
-  return getFileIcon(filename, isDir, { size: 20 })
+  return getFileIcon(filename, isDir, { size: 20 });
 }
 
 // ============================================================================
@@ -43,206 +55,235 @@ function renderFileIcon(filename: string, isDir: boolean): React.ReactNode {
 // ============================================================================
 
 interface LibraryFileBrowserTabProps {
-  libraryPath: string
+  libraryPath: string;
   /** Parent loading state (e.g., library context still loading) */
-  loading?: boolean
+  loading?: boolean;
 }
 
 // ============================================================================
 // Main Component
 // ============================================================================
 
-export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: LibraryFileBrowserTabProps) {
-  const [currentPath, setCurrentPath] = useState(libraryPath)
-  const [inputPath, setInputPath] = useState(libraryPath)
-  const [entries, setEntries] = useState<BrowseDirectoryEntry[]>([])
-  const [quickPaths, setQuickPaths] = useState<BrowseQuickPath[]>([])
-  const [parentPath, setParentPath] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+export function LibraryFileBrowserTab({
+  libraryPath,
+  loading: parentLoading,
+}: LibraryFileBrowserTabProps) {
+  const [currentPath, setCurrentPath] = useState(libraryPath);
+  const [inputPath, setInputPath] = useState(libraryPath);
+  const [entries, setEntries] = useState<BrowseDirectoryEntry[]>([]);
+  const [quickPaths, setQuickPaths] = useState<BrowseQuickPath[]>([]);
+  const [parentPath, setParentPath] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   // Confirm delete modal state
-  const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
-  const [pathsToDelete, setPathsToDelete] = useState<string[]>([])
-  const [isDeleting, setIsDeleting] = useState(false)
+  const {
+    isOpen: isConfirmOpen,
+    onOpen: onConfirmOpen,
+    onClose: onConfirmClose,
+  } = useDisclosure();
+  const [pathsToDelete, setPathsToDelete] = useState<string[]>([]);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // File properties modal state
-  const { isOpen: isPropertiesOpen, onOpen: onPropertiesOpen, onClose: onPropertiesClose } = useDisclosure()
-  const [propertiesMediaFileId, setPropertiesMediaFileId] = useState<string | null>(null)
-  const [propertiesFileName, setPropertiesFileName] = useState<string | null>(null)
+  const {
+    isOpen: isPropertiesOpen,
+    onOpen: onPropertiesOpen,
+    onClose: onPropertiesClose,
+  } = useDisclosure();
+  const [propertiesMediaFileId, setPropertiesMediaFileId] = useState<
+    string | null
+  >(null);
+  const [propertiesFileName, setPropertiesFileName] = useState<string | null>(
+    null,
+  );
 
   // Destination picker modal state (for copy/move)
-  const { isOpen: isDestinationOpen, onOpen: onDestinationOpen, onClose: onDestinationClose } = useDisclosure()
-  const [destinationOperation, setDestinationOperation] = useState<'copy' | 'move'>('copy')
-  const [pathsToOperate, setPathsToOperate] = useState<string[]>([])
-  const [isOperating, setIsOperating] = useState(false)
+  const {
+    isOpen: isDestinationOpen,
+    onOpen: onDestinationOpen,
+    onClose: onDestinationClose,
+  } = useDisclosure();
+  const [destinationOperation, setDestinationOperation] = useState<
+    "copy" | "move"
+  >("copy");
+  const [pathsToOperate, setPathsToOperate] = useState<string[]>([]);
+  const [isOperating, setIsOperating] = useState(false);
 
   const fetchDirectory = useCallback(async (path: string) => {
     try {
-      setLoading(true)
-      const data = await browseDirectory(path, false)
-      setCurrentPath(data.CurrentPath)
-      setInputPath(data.CurrentPath)
-      setParentPath(data.ParentPath ?? null)
-      setEntries(data.Entries ?? [])
-      setQuickPaths(data.QuickPaths ?? [])
+      setLoading(true);
+      const data = await browseDirectory(path, false);
+      setCurrentPath(data.CurrentPath);
+      setInputPath(data.CurrentPath);
+      setParentPath(data.ParentPath ?? null);
+      setEntries(data.Entries ?? []);
+      setQuickPaths(data.QuickPaths ?? []);
     } catch (err) {
-      console.error('Failed to browse directory:', err)
+      console.error("Failed to browse directory:", err);
       addToast({
-        title: 'Error',
+        title: "Error",
         description: sanitizeError(err),
-        color: 'danger',
-      })
+        color: "danger",
+      });
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [])
+  }, []);
 
   useEffect(() => {
-    fetchDirectory(libraryPath)
-  }, [libraryPath, fetchDirectory])
+    fetchDirectory(libraryPath);
+  }, [libraryPath, fetchDirectory]);
 
   const navigateTo = (path: string) => {
-    fetchDirectory(path)
-  }
+    fetchDirectory(path);
+  };
 
   const handlePathInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      navigateTo(inputPath)
+    if (e.key === "Enter") {
+      navigateTo(inputPath);
     }
-  }
+  };
 
   // Sort entries: directories first, then files, both alphabetically
   // Prepend parent directory as a synthetic entry if it exists
   const sortedEntries = useMemo(() => {
     const sorted = [...entries].sort((a, b) => {
-      if (a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1
-      return a.Name.localeCompare(b.Name)
-    })
-    
+      if (a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1;
+      return a.Name.localeCompare(b.Name);
+    });
+
     // Add parent directory as the first entry
     if (parentPath) {
       const parentEntry: BrowseDirectoryEntry = {
-        Name: '..',
+        Name: "..",
         Path: parentPath,
         IsDir: true,
         Readable: true,
         Writable: false,
         Size: 0,
-        SizeFormatted: '-',
+        SizeFormatted: "-",
         MimeType: null,
         ModifiedAt: null,
-      }
-      return [parentEntry, ...sorted]
+      };
+      return [parentEntry, ...sorted];
     }
-    
-    return sorted
-  }, [entries, parentPath])
+
+    return sorted;
+  }, [entries, parentPath]);
 
   // Action handlers
   const handleCopy = (paths: string[]) => {
-    setPathsToOperate(paths)
-    setDestinationOperation('copy')
-    onDestinationOpen()
-  }
+    setPathsToOperate(paths);
+    setDestinationOperation("copy");
+    onDestinationOpen();
+  };
 
   const handleMove = (paths: string[]) => {
-    setPathsToOperate(paths)
-    setDestinationOperation('move')
-    onDestinationOpen()
-  }
+    setPathsToOperate(paths);
+    setDestinationOperation("move");
+    onDestinationOpen();
+  };
 
   const handleDeleteClick = (paths: string[]) => {
-    setPathsToDelete(paths)
-    onConfirmOpen()
-  }
+    setPathsToDelete(paths);
+    onConfirmOpen();
+  };
 
   const handleDelete = async () => {
-    setIsDeleting(true)
+    setIsDeleting(true);
     try {
-      const result = await deleteFiles(pathsToDelete, true)
+      const result = await deleteFiles(pathsToDelete, true);
       if (result.success) {
         addToast({
-          title: 'Deleted',
+          title: "Deleted",
           description: `Successfully deleted ${result.affectedCount} item(s)`,
-          color: 'success',
-        })
+          color: "success",
+        });
         // Refresh the directory
-        fetchDirectory(currentPath)
+        fetchDirectory(currentPath);
       } else {
         addToast({
-          title: 'Delete Failed',
-          description: sanitizeError(result.error || 'Unknown error'),
-          color: 'danger',
-        })
+          title: "Delete Failed",
+          description: sanitizeError(result.error || "Unknown error"),
+          color: "danger",
+        });
       }
     } catch (err) {
       addToast({
-        title: 'Delete Failed',
+        title: "Delete Failed",
         description: sanitizeError(err),
-        color: 'danger',
-      })
+        color: "danger",
+      });
     } finally {
-      setIsDeleting(false)
-      onConfirmClose()
-      setPathsToDelete([])
+      setIsDeleting(false);
+      onConfirmClose();
+      setPathsToDelete([]);
     }
-  }
+  };
 
   const handleDestinationSelect = async (destinationPath: string) => {
-    setIsOperating(true)
+    setIsOperating(true);
     try {
-      const operationFn = destinationOperation === 'copy' ? copyFiles : moveFiles
-      const result = await operationFn(pathsToOperate, destinationPath, false)
+      const operationFn =
+        destinationOperation === "copy" ? copyFiles : moveFiles;
+      const result = await operationFn(pathsToOperate, destinationPath, false);
 
       if (result.success) {
         addToast({
-          title: destinationOperation === 'copy' ? 'Copied' : 'Moved',
-          description: `Successfully ${destinationOperation === 'copy' ? 'copied' : 'moved'} ${result.affectedCount} item(s) to ${destinationPath}`,
-          color: 'success',
-        })
+          title: destinationOperation === "copy" ? "Copied" : "Moved",
+          description: `Successfully ${destinationOperation === "copy" ? "copied" : "moved"} ${result.affectedCount} item(s) to ${destinationPath}`,
+          color: "success",
+        });
         // Refresh the directory (especially important for move)
-        fetchDirectory(currentPath)
+        fetchDirectory(currentPath);
       } else {
         addToast({
-          title: `${destinationOperation === 'copy' ? 'Copy' : 'Move'} Failed`,
-          description: sanitizeError(result.error || 'Unknown error'),
-          color: 'danger',
-        })
+          title: `${destinationOperation === "copy" ? "Copy" : "Move"} Failed`,
+          description: sanitizeError(result.error || "Unknown error"),
+          color: "danger",
+        });
       }
     } catch (err) {
       addToast({
-        title: `${destinationOperation === 'copy' ? 'Copy' : 'Move'} Failed`,
+        title: `${destinationOperation === "copy" ? "Copy" : "Move"} Failed`,
         description: sanitizeError(err),
-        color: 'danger',
-      })
+        color: "danger",
+      });
     } finally {
-      setIsOperating(false)
-      onDestinationClose()
-      setPathsToOperate([])
+      setIsOperating(false);
+      onDestinationClose();
+      setPathsToOperate([]);
     }
-  }
+  };
 
   const handleMatch = (paths: string[]) => {
     addToast({
-      title: 'Match',
+      title: "Match",
       description: `Matching ${paths.length} item(s)... (not implemented)`,
-      color: 'primary',
-    })
-  }
+      color: "primary",
+    });
+  };
 
   // Check if file is a video file
   const handleProperties = async (entry: BrowseDirectoryEntry) => {
     // For any file (not directory), try to look up in the database
     if (!entry.IsDir) {
-      const result = await queryPromise<{ mediaFileByPath: MediaFile | null }>(MEDIA_FILE_BY_PATH_QUERY, { path: entry.Path })
-        
+      const result = await apolloClient.query<
+        MediaFileByPathLookupQuery,
+        MediaFileByPathLookupQueryVariables
+      >({
+        query: MediaFileByPathLookupDocument,
+        variables: { Path: entry.Path },
+        fetchPolicy: "network-only",
+      });
 
-      if (result.data?.mediaFileByPath) {
+      const mediaFileId = result.data?.MediaFiles?.Edges?.[0]?.Node?.Id;
+      if (mediaFileId) {
         // File is in the database, show detailed properties modal
-        setPropertiesMediaFileId(result.data.mediaFileByPath.id)
-        setPropertiesFileName(entry.Name)
-        onPropertiesOpen()
-        return
+        setPropertiesMediaFileId(mediaFileId);
+        setPropertiesFileName(entry.Name);
+        onPropertiesOpen();
+        return;
       }
       // If not in database, fall through to basic toast
     }
@@ -250,37 +291,39 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
     // For directories or files not in database, show basic info toast
     addToast({
       title: entry.Name,
-      description: `Path: ${entry.Path}\nSize: ${formatBytes(entry.Size)}\nType: ${entry.IsDir ? 'Directory' : 'File'}`,
-      color: 'default',
-    })
-  }
+      description: `Path: ${entry.Path}\nSize: ${formatBytes(entry.Size)}\nType: ${entry.IsDir ? "Directory" : "File"}`,
+      color: "default",
+    });
+  };
 
   // Column definitions
   const columns: DataTableColumn<BrowseDirectoryEntry>[] = useMemo(
     () => [
       {
-        key: 'name',
-        label: 'NAME',
+        key: "name",
+        label: "NAME",
         sortable: true,
         render: (entry) => {
-          const isParent = entry.Name === '..'
-          const icon = renderFileIcon(entry.Name, entry.IsDir)
-          
+          const isParent = entry.Name === "..";
+          const icon = renderFileIcon(entry.Name, entry.IsDir);
+
           return (
             <Button
               variant="light"
-              onPress={() => entry.IsDir && entry.Readable && navigateTo(entry.Path)}
+              onPress={() =>
+                entry.IsDir && entry.Readable && navigateTo(entry.Path)
+              }
               className={`
                 flex items-center gap-3 text-left min-w-0 w-full justify-start px-2
-                ${!entry.Readable ? 'opacity-50' : ''}
-                ${isParent ? 'text-default-500' : ''}
+                ${!entry.Readable ? "opacity-50" : ""}
+                ${isParent ? "text-default-500" : ""}
               `}
               isDisabled={!entry.IsDir || !entry.Readable}
             >
               <span className="flex-shrink-0">{icon}</span>
               <span className="flex-1 truncate">{entry.Name}</span>
             </Button>
-          )
+          );
         },
         skeleton: () => (
           <div className="flex items-center gap-3 px-2">
@@ -290,138 +333,144 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
         ),
         sortFn: (a, b) => {
           // Parent directory always first
-          if (a.Name === '..') return -1
-          if (b.Name === '..') return 1
+          if (a.Name === "..") return -1;
+          if (b.Name === "..") return 1;
           // Directories first
-          if (a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1
-          return a.Name.localeCompare(b.Name)
+          if (a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1;
+          return a.Name.localeCompare(b.Name);
         },
       },
       {
-        key: 'size',
-        label: 'SIZE',
+        key: "size",
+        label: "SIZE",
         width: 100,
         sortable: true,
         render: (entry) => (
           <span className="text-xs text-default-400 tabular-nums">
-            {!entry.IsDir ? formatBytes(entry.Size) : '—'}
+            {!entry.IsDir ? formatBytes(entry.Size) : "—"}
           </span>
         ),
         skeleton: () => <Skeleton className="w-12 h-3 rounded" />,
         sortFn: (a, b) => (a.Size || 0) - (b.Size || 0),
       },
       {
-        key: 'type',
-        label: 'TYPE',
+        key: "type",
+        label: "TYPE",
         width: 100,
         sortable: true,
         render: (entry) => (
           <span className="text-xs text-default-400">
-            {entry.IsDir ? 'Folder' : entry.Name.split('.').pop()?.toUpperCase() || 'File'}
+            {entry.IsDir
+              ? "Folder"
+              : entry.Name.split(".").pop()?.toUpperCase() || "File"}
           </span>
         ),
         skeleton: () => <Skeleton className="w-10 h-3 rounded" />,
         sortFn: (a, b) => {
-          if (a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1
-          const extA = a.Name.split('.').pop() || ''
-          const extB = b.Name.split('.').pop() || ''
-          return extA.localeCompare(extB)
+          if (a.IsDir !== b.IsDir) return a.IsDir ? -1 : 1;
+          const extA = a.Name.split(".").pop() || "";
+          const extB = b.Name.split(".").pop() || "";
+          return extA.localeCompare(extB);
         },
       },
       {
-        key: 'permissions',
-        label: 'ACCESS',
+        key: "permissions",
+        label: "ACCESS",
         width: 100,
         render: (entry) => (
           <>
             {entry.IsDir && entry.Writable && (
-              <Chip size="sm" color="success" variant="flat">writable</Chip>
+              <Chip size="sm" color="success" variant="flat">
+                writable
+              </Chip>
             )}
             {entry.IsDir && !entry.Writable && entry.Readable && (
-              <Chip size="sm" color="warning" variant="flat">read-only</Chip>
+              <Chip size="sm" color="warning" variant="flat">
+                read-only
+              </Chip>
             )}
           </>
         ),
         skeleton: () => <Skeleton className="w-16 h-5 rounded-full" />,
       },
     ],
-    []
-  )
+    [],
+  );
 
   // Bulk actions
   const bulkActions: BulkAction<BrowseDirectoryEntry>[] = useMemo(
     () => [
       {
-        key: 'copy',
-        label: 'Copy',
+        key: "copy",
+        label: "Copy",
         icon: <IconCopy size={16} />,
         onAction: (items) => handleCopy(items.map((e) => e.Path)),
       },
       {
-        key: 'move',
-        label: 'Move',
+        key: "move",
+        label: "Move",
         icon: <IconArrowRight size={16} />,
         onAction: (items) => handleMove(items.map((e) => e.Path)),
       },
       {
-        key: 'match',
-        label: 'Match',
+        key: "match",
+        label: "Match",
         icon: <IconSearch size={16} />,
         onAction: (items) => handleMatch(items.map((e) => e.Path)),
       },
       {
-        key: 'delete',
-        label: 'Delete',
+        key: "delete",
+        label: "Delete",
         icon: <IconTrash size={16} className="text-red-400" />,
-        color: 'danger',
+        color: "danger",
         isDestructive: true,
         onAction: (items) => handleDeleteClick(items.map((e) => e.Path)),
       },
     ],
-    []
-  )
+    [],
+  );
 
   // Helper to check if entry is parent directory
-  const isParentEntry = (entry: BrowseDirectoryEntry) => entry.Name === '..'
+  const isParentEntry = (entry: BrowseDirectoryEntry) => entry.Name === "..";
 
   // Row actions - hidden for parent directory
   const rowActions: RowAction<BrowseDirectoryEntry>[] = useMemo(
     () => [
       {
-        key: 'copy',
-        label: 'Copy',
+        key: "copy",
+        label: "Copy",
         icon: <IconCopy size={16} />,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
         onAction: (entry) => handleCopy([entry.Path]),
       },
       {
-        key: 'move',
-        label: 'Move',
+        key: "move",
+        label: "Move",
         icon: <IconArrowRight size={16} />,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
         onAction: (entry) => handleMove([entry.Path]),
       },
       {
-        key: 'match',
-        label: 'Match to Show',
+        key: "match",
+        label: "Match to Show",
         icon: <IconSearch size={16} />,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
         onAction: (entry) => handleMatch([entry.Path]),
       },
       {
-        key: 'properties',
-        label: 'Properties',
+        key: "properties",
+        label: "Properties",
         icon: <IconInfoCircle size={16} />,
         inDropdown: true,
         isVisible: (entry) => !isParentEntry(entry),
         onAction: handleProperties,
       },
       {
-        key: 'delete',
-        label: 'Delete',
+        key: "delete",
+        label: "Delete",
         icon: <IconTrash size={16} className="text-red-400" />,
         isDestructive: true,
         inDropdown: true,
@@ -429,14 +478,14 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
         onAction: (entry) => handleDeleteClick([entry.Path]),
       },
     ],
-    []
-  )
+    [],
+  );
 
   // Search function - exclude parent directory from search
   const searchFn = (entry: BrowseDirectoryEntry, term: string) => {
-    if (entry.Name === '..') return true // Always show parent directory
-    return entry.Name.toLowerCase().includes(term.toLowerCase())
-  }
+    if (entry.Name === "..") return true; // Always show parent directory
+    return entry.Name.toLowerCase().includes(term.toLowerCase());
+  };
 
   // Only show loading spinner if we don't have skeleton support (legacy fallback)
   // Now the DataTable handles showing skeletons during initial load
@@ -448,7 +497,9 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-xl font-semibold">File Browser</h2>
-            <p className="text-sm text-default-500">Browse files in this library</p>
+            <p className="text-sm text-default-500">
+              Browse files in this library
+            </p>
           </div>
         </div>
 
@@ -462,14 +513,20 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
           onKeyDown={handlePathInputKeyDown}
           className="flex-1"
           classNames={{
-            input: 'font-mono text-sm',
-            label: 'text-sm font-medium text-primary!',
+            input: "font-mono text-sm",
+            label: "text-sm font-medium text-primary!",
           }}
           size="sm"
           placeholder="/path/to/folder"
           endContent={
             <div className="flex items-center gap-1">
-              <Button size="sm" variant="light" color="primary" className="font-semibold" onPress={() => navigateTo(inputPath)}>
+              <Button
+                size="sm"
+                variant="light"
+                color="primary"
+                className="font-semibold"
+                onPress={() => navigateTo(inputPath)}
+              >
                 Go
               </Button>
               <Button
@@ -522,9 +579,9 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
           getRowKey={(entry) => entry.Path}
           isLoading={parentLoading || loading}
           selectionMode="multiple"
-          isRowSelectable={(entry) => entry.Name !== '..'}
+          isRowSelectable={(entry) => entry.Name !== ".."}
           checkboxSelectionOnly
-          isPinned={(entry) => entry.Name === '..'}
+          isPinned={(entry) => entry.Name === ".."}
           searchFn={searchFn}
           searchPlaceholder="Search files..."
           bulkActions={bulkActions}
@@ -534,7 +591,10 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
           emptyContent={
             entries.length === 0 && !parentPath ? (
               <div className="px-4 py-8 text-center">
-                <IconFolderOpen size={40} className="mb-3 mx-auto text-amber-400" />
+                <IconFolderOpen
+                  size={40}
+                  className="mb-3 mx-auto text-amber-400"
+                />
                 <p className="text-default-400">This directory is empty</p>
               </div>
             ) : entries.length === 0 ? (
@@ -545,7 +605,7 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
           }
           ariaLabel="File browser"
           classNames={{
-            wrapper: 'flex flex-col h-full',
+            wrapper: "flex flex-col h-full",
           }}
         />
       </div>
@@ -567,14 +627,16 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
       <DestinationPickerModal
         isOpen={isDestinationOpen}
         onClose={() => {
-          onDestinationClose()
-          setPathsToOperate([])
+          onDestinationClose();
+          setPathsToOperate([]);
         }}
         onSelect={handleDestinationSelect}
-        title={destinationOperation === 'copy' ? 'Copy to...' : 'Move to...'}
+        title={destinationOperation === "copy" ? "Copy to..." : "Move to..."}
         description={`Select destination for ${pathsToOperate.length} item(s)`}
         initialPath={currentPath}
-        confirmLabel={destinationOperation === 'copy' ? 'Copy Here' : 'Move Here'}
+        confirmLabel={
+          destinationOperation === "copy" ? "Copy Here" : "Move Here"
+        }
         isLoading={isOperating}
       />
 
@@ -582,13 +644,13 @@ export function LibraryFileBrowserTab({ libraryPath, loading: parentLoading }: L
       <FilePropertiesModal
         isOpen={isPropertiesOpen}
         onClose={() => {
-          onPropertiesClose()
-          setPropertiesMediaFileId(null)
-          setPropertiesFileName(null)
+          onPropertiesClose();
+          setPropertiesMediaFileId(null);
+          setPropertiesFileName(null);
         }}
         mediaFileId={propertiesMediaFileId}
         title={propertiesFileName ?? undefined}
       />
     </div>
-  )
+  );
 }

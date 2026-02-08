@@ -70,7 +70,7 @@ function HomePage() {
         refetch()
       }
     },
-    { onTorrentComplete: false, periodicInterval: false, onFocus: true }
+    { onTorrentComplete: false, periodicInterval: false, onFocus: false }
   )
 
   // Open sign-in modal if signin search param is true

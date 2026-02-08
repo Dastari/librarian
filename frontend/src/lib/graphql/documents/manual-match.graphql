@@ -1,0 +1,96 @@
+query ManualMatchShowsByLibrary($LibraryId: String!) {
+  Shows(Where: { LibraryId: { Eq: $LibraryId } }) {
+    Edges {
+      Node {
+        Id
+        Name
+        Year
+        Episodes {
+          Edges {
+            Node {
+              Id
+              Season
+              Episode
+              Title
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+query ManualMatchMoviesByLibrary($LibraryId: String!) {
+  Movies(Where: { LibraryId: { Eq: $LibraryId } }) {
+    Edges {
+      Node {
+        Id
+        Title
+        Year
+      }
+    }
+  }
+}
+
+query ManualMatchAlbumsByLibrary($LibraryId: String!) {
+  Albums(
+    Where: { LibraryId: { Eq: $LibraryId } }
+    Page: { Limit: 500, Offset: 0 }
+  ) {
+    Edges {
+      Node {
+        Id
+        Name
+        Year
+      }
+    }
+  }
+  Tracks(
+    Where: { LibraryId: { Eq: $LibraryId } }
+    Page: { Limit: 5000, Offset: 0 }
+  ) {
+    Edges {
+      Node {
+        Id
+        AlbumId
+        ArtistName
+        TrackNumber
+        Title
+      }
+    }
+  }
+}
+
+query ManualMatchAudiobooksByLibrary($LibraryId: String!) {
+  Audiobooks(
+    Where: { LibraryId: { Eq: $LibraryId } }
+    Page: { Limit: 500, Offset: 0 }
+  ) {
+    Edges {
+      Node {
+        Id
+        Title
+        AuthorName
+        Chapters {
+          Edges {
+            Node {
+              Id
+              ChapterNumber
+              Title
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+mutation ManualMatchFile($Input: MatchMediaFileInput!) {
+  MatchMediaFile(Input: $Input) {
+    Success
+    Confidence
+    MatchedId
+    MatchedType
+    Reason
+  }
+}

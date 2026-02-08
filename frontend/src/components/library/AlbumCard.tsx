@@ -1,19 +1,38 @@
-import { Link, useNavigate } from '@tanstack/react-router'
-import { Card } from '@heroui/card'
-import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
-import { Button } from '@heroui/button'
-import { Image } from '@heroui/image'
-import type { Album } from '../../lib/graphql'
-import { IconEye, IconTrash, IconDisc, IconCheck, IconDotsVertical } from '@tabler/icons-react'
+import { Link, useNavigate } from "@tanstack/react-router";
+import { Card } from "@heroui/card";
+import {
+  Dropdown,
+  DropdownTrigger,
+  DropdownMenu,
+  DropdownItem,
+} from "@heroui/dropdown";
+import { Button } from "@heroui/button";
+import { Image } from "@heroui/image";
+import {
+  IconEye,
+  IconTrash,
+  IconDisc,
+  IconCheck,
+  IconDotsVertical,
+  IconPlayerPlay,
+} from "@tabler/icons-react";
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export interface AlbumCardProps {
-  album: Album
-  artistName?: string
-  onDelete?: () => void
+  album: {
+    id: string;
+    name: string;
+    year: number | null;
+    coverUrl: string | null;
+    downloadedTrackCount: number | null;
+    trackCount: number | null;
+    genres: string[] | null;
+  };
+  artistName?: string;
+  onDelete?: () => void;
 }
 
 // ============================================================================
@@ -21,13 +40,11 @@ export interface AlbumCardProps {
 // ============================================================================
 
 export function AlbumCard({ album, artistName, onDelete }: AlbumCardProps) {
-  const navigate = useNavigate()
+  const navigate = useNavigate();
 
   return (
     <div className="aspect-square">
-      <Card
-        className="relative overflow-hidden h-full w-full group border-none bg-content2"
-      >
+      <Card className="relative overflow-hidden h-full w-full group border-none bg-content2">
         {/* Clickable overlay for navigation - covers the entire card */}
         <Link
           to="/albums/$albumId"
@@ -45,7 +62,7 @@ export function AlbumCard({ album, artistName, onDelete }: AlbumCardProps) {
                 alt={album.name}
                 classNames={{
                   wrapper: "absolute inset-0 w-full h-full !max-w-full",
-                  img: "w-full h-full object-cover"
+                  img: "w-full h-full object-cover",
                 }}
                 radius="none"
                 removeWrapper={false}
@@ -66,34 +83,46 @@ export function AlbumCard({ album, artistName, onDelete }: AlbumCardProps) {
         {/* Progress badge - top left */}
         <div className="absolute top-2 left-2 z-10 pointer-events-none">
           {(() => {
-            const downloaded = album.downloadedTrackCount ?? 0
-            const total = album.trackCount ?? 0
-            const isComplete = total > 0 && downloaded >= total
+            const downloaded = album.downloadedTrackCount ?? 0;
+            const total = album.trackCount ?? 0;
+            const isComplete = total > 0 && downloaded >= total;
             return (
               <div
                 className={`px-2 py-1 rounded-md backdrop-blur-sm text-xs font-medium ${
                   isComplete
-                    ? 'bg-success/80 text-success-foreground'
-                    : 'bg-warning/80 text-warning-foreground'
+                    ? "bg-success/80 text-success-foreground"
+                    : "bg-warning/80 text-warning-foreground"
                 }`}
               >
                 {isComplete && <IconCheck size={12} className="inline mr-1" />}
                 {downloaded}/{total}
               </div>
-            )
+            );
           })()}
+        </div>
+
+        {/* Play overlay button (open detail for playback controls) */}
+        <div className="absolute inset-0 z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
+          <Link
+            to="/albums/$albumId"
+            params={{ albumId: album.id }}
+            className="pointer-events-auto w-14 h-14 rounded-full bg-primary/90 text-white flex items-center justify-center shadow-lg hover:scale-110 transition-transform"
+            aria-label={`Open ${album.name} to play`}
+          >
+            <IconPlayerPlay size={28} className="ml-1" />
+          </Link>
         </div>
 
         {/* Bottom content */}
         <div className="absolute bottom-0 left-0 right-0 z-10 p-3 pointer-events-none bg-black/50 backdrop-blur-sm h-20 flex flex-col">
           <h3 className="text-sm font-bold text-white mb-0.5 line-clamp-2 drop-shadow-lg grow">
             {album.name}
-            {album.year && <span className="font-normal opacity-70"> ({album.year})</span>}
+            {album.year && (
+              <span className="font-normal opacity-70"> ({album.year})</span>
+            )}
           </h3>
           <div className="flex items-center gap-1.5 text-xs text-white/70">
-            {artistName && (
-              <span className="truncate">{artistName}</span>
-            )}
+            {artistName && <span className="truncate">{artistName}</span>}
             {album.genres && album.genres.length > 0 && (
               <>
                 <span>•</span>
@@ -121,10 +150,13 @@ export function AlbumCard({ album, artistName, onDelete }: AlbumCardProps) {
               <DropdownMenu
                 aria-label="Album actions menu"
                 onAction={(key) => {
-                  if (key === 'view') {
-                    navigate({ to: '/albums/$albumId', params: { albumId: album.id } })
-                  } else if (key === 'delete') {
-                    onDelete()
+                  if (key === "view") {
+                    navigate({
+                      to: "/albums/$albumId",
+                      params: { albumId: album.id },
+                    });
+                  } else if (key === "delete") {
+                    onDelete();
                   }
                 }}
               >
@@ -133,7 +165,9 @@ export function AlbumCard({ album, artistName, onDelete }: AlbumCardProps) {
                 </DropdownItem>
                 <DropdownItem
                   key="delete"
-                  startContent={<IconTrash size={16} className="text-red-400" />}
+                  startContent={
+                    <IconTrash size={16} className="text-red-400" />
+                  }
                   className="text-danger"
                   color="danger"
                 >
@@ -145,5 +179,5 @@ export function AlbumCard({ album, artistName, onDelete }: AlbumCardProps) {
         )}
       </Card>
     </div>
-  )
+  );
 }

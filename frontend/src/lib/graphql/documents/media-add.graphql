@@ -1,0 +1,66 @@
+# Media add/search operations used by add-library dialogs
+
+query SearchAlbums(
+  $Query: String!
+  $IncludeEps: Boolean
+  $IncludeSingles: Boolean
+  $IncludeCompilations: Boolean
+  $IncludeLive: Boolean
+  $IncludeSoundtracks: Boolean
+) {
+  SearchAlbums(
+    Query: $Query
+    IncludeEps: $IncludeEps
+    IncludeSingles: $IncludeSingles
+    IncludeCompilations: $IncludeCompilations
+    IncludeLive: $IncludeLive
+    IncludeSoundtracks: $IncludeSoundtracks
+  ) {
+    Provider
+    ProviderId
+    Title
+    ArtistName
+    Year
+    AlbumType
+    CoverUrl
+    Score
+  }
+}
+
+query SearchAudiobooks($Query: String!) {
+  SearchAudiobooks(Query: $Query) {
+    Provider
+    ProviderId
+    Title
+    AuthorName
+    Year
+    CoverUrl
+    Isbn
+    Description
+  }
+}
+
+mutation AddAlbum($Input: AddAlbumInput!) {
+  AddAlbum(Input: $Input) {
+    Success
+    Error
+  }
+}
+
+mutation AddAudiobook($Input: AddAudiobookInput!) {
+  AddAudiobook(Input: $Input) {
+    Success
+    Error
+  }
+}
+
+mutation AddTorrent($Input: AddTorrentInput!) {
+  AddTorrent(Input: $Input) {
+    Success
+    Error
+    Torrent {
+      Id
+      Name
+    }
+  }
+}

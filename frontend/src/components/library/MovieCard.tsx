@@ -4,7 +4,7 @@ import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/d
 import { Button } from '@heroui/button'
 import { Image } from '@heroui/image'
 import type { Movie } from '../../lib/graphql/generated/graphql'
-import { IconEye, IconTrash, IconMovie, IconCheck, IconDotsVertical, IconClock } from '@tabler/icons-react'
+import { IconEye, IconTrash, IconMovie, IconCheck, IconDotsVertical, IconClock, IconPlayerPlay, IconPlayerPause } from '@tabler/icons-react'
 
 // ============================================================================
 // Types
@@ -13,13 +13,16 @@ import { IconEye, IconTrash, IconMovie, IconCheck, IconDotsVertical, IconClock }
 export interface MovieCardProps {
   movie: Movie
   onDelete: () => void
+  onPlay?: (movie: Movie) => void
+  isCurrentMovie?: boolean
+  isPlaying?: boolean
 }
 
 // ============================================================================
 // Component
 // ============================================================================
 
-export function MovieCard({ movie, onDelete }: MovieCardProps) {
+export function MovieCard({ movie, onDelete, onPlay, isCurrentMovie = false, isPlaying = false }: MovieCardProps) {
   const navigate = useNavigate()
 
   return (
@@ -92,6 +95,28 @@ export function MovieCard({ movie, onDelete }: MovieCardProps) {
         </div>
       )}
 
+      {/* Play/Pause overlay button */}
+      {movie.MediaFileId && onPlay && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 rounded-lg pointer-events-none">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              onPlay(movie)
+            }}
+            className={`pointer-events-auto w-14 h-14 rounded-full ${isCurrentMovie && isPlaying ? "bg-warning" : "bg-primary"} flex items-center justify-center shadow-lg hover:scale-110 transition-transform`}
+            aria-label={isCurrentMovie && isPlaying ? "Pause Movie" : "Play Movie"}
+          >
+            {isCurrentMovie && isPlaying ? (
+              <IconPlayerPause size={28} className="text-white" />
+            ) : (
+              <IconPlayerPlay size={28} className="text-white ml-1" />
+            )}
+          </button>
+        </div>
+      )}
+
       {/* Bottom content */}
       <div className="absolute bottom-0 left-0 right-0 z-10 p-3 pointer-events-none bg-black/50 backdrop-blur-sm h-20 flex flex-col">
         <h3 className="text-sm font-bold text-white mb-0.5 line-clamp-2 drop-shadow-lg grow">
@@ -121,7 +146,7 @@ export function MovieCard({ movie, onDelete }: MovieCardProps) {
       </div>
 
       {/* Action menu - bottom right, visible on hover, above the clickable overlay */}
-      <div className="absolute bottom-2 right-2 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+      <div className="absolute bottom-2 right-2 z-40 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
         <Dropdown>
           <DropdownTrigger>
             <Button
@@ -139,11 +164,18 @@ export function MovieCard({ movie, onDelete }: MovieCardProps) {
             onAction={(key) => {
               if (key === 'view') {
                 navigate({ to: '/movies/$movieId', params: { movieId: movie.Id } })
+              } else if (key === 'play' && movie.MediaFileId && onPlay) {
+                onPlay(movie)
               } else if (key === 'delete') {
                 onDelete()
               }
             }}
           >
+            {movie.MediaFileId && onPlay ? (
+              <DropdownItem key="play" startContent={<IconPlayerPlay size={16} />}>
+                Play
+              </DropdownItem>
+            ) : null}
             <DropdownItem key="view" startContent={<IconEye size={16} />}>
               View Details
             </DropdownItem>

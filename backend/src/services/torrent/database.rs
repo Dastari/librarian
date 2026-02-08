@@ -85,7 +85,10 @@ pub async fn get_setting_string(
     pool: &Database,
     key: &str,
 ) -> Result<Option<String>, anyhow::Error> {
-    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM app_settings WHERE key = ?")
+    // Prefer most recently updated row to handle legacy duplicate keys.
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM app_settings WHERE key = ? ORDER BY updated_at DESC, created_at DESC, rowid DESC LIMIT 1",
+    )
         .bind(key)
         .fetch_optional(pool)
         .await?;
@@ -100,7 +103,10 @@ pub async fn get_setting<T: serde::de::DeserializeOwned>(
     pool: &Database,
     key: &str,
 ) -> Result<Option<T>, anyhow::Error> {
-    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM app_settings WHERE key = ?")
+    // Prefer most recently updated row to handle legacy duplicate keys.
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT value FROM app_settings WHERE key = ? ORDER BY updated_at DESC, created_at DESC, rowid DESC LIMIT 1",
+    )
         .bind(key)
         .fetch_optional(pool)
         .await?;
@@ -526,12 +532,26 @@ pub async fn sync_session_to_database(
         )
         .await
         {
-            tracing::warn!(error = %e, "Failed to sync torrent to database");
+            tracing::warn!(
+                error = %e,
+                info_hash = %info_hash,
+                torrent_name = %name,
+                "Failed to sync torrent to database: info_hash={}, name='{}', error={}",
+                info_hash,
+                name,
+                e
+            );
         }
 
         if progress >= 1.0 {
             if let Err(e) = mark_completed(pool, schema, auth_user, &info_hash).await {
-                tracing::warn!(error = %e, "Failed to mark torrent as completed");
+                tracing::warn!(
+                    error = %e,
+                    info_hash = %info_hash,
+                    "Failed to mark torrent as completed: info_hash={}, error={}",
+                    info_hash,
+                    e
+                );
             }
         }
 
@@ -576,7 +596,15 @@ pub async fn sync_session_to_database(
                     });
                 }
                 if let Err(e) = upsert_torrent_files(schema, auth_user, &torrent_id, &rows).await {
-                    tracing::warn!(error = %e, info_hash = %info_hash, "Failed to sync torrent files to database");
+                    tracing::warn!(
+                        error = %e,
+                        info_hash = %info_hash,
+                        row_count = rows.len(),
+                        "Failed to sync torrent files to database: info_hash={}, row_count={}, error={}",
+                        info_hash,
+                        rows.len(),
+                        e
+                    );
                 }
             }
         }
@@ -593,7 +621,11 @@ pub async fn restore_from_database(
     auth_user: Option<&AuthUser>,
 ) -> Result<(), anyhow::Error> {
     let records = list_resumable(pool).await?;
-    tracing::info!(count = records.len(), "Restoring torrents from database");
+    tracing::info!(
+        count = records.len(),
+        "Restoring torrents from database: resumable_torrent_count={}",
+        records.len()
+    );
 
     for record in records {
         if let Some(magnet) = &record.magnet_uri {
@@ -602,10 +634,22 @@ pub async fn restore_from_database(
                 .await
             {
                 Ok(_) => {
-                    tracing::info!(name = %record.name, "Restored torrent");
+                    tracing::info!(
+                        name = %record.name,
+                        info_hash = %record.info_hash,
+                        "Restored torrent from database: name='{}', info_hash={}",
+                        record.name,
+                        record.info_hash
+                    );
                 }
                 Err(e) => {
-                    tracing::warn!(info_hash = %record.info_hash, error = %e, "Failed to restore torrent");
+                    tracing::warn!(
+                        info_hash = %record.info_hash,
+                        error = %e,
+                        "Failed to restore torrent from database: info_hash={}, error={}",
+                        record.info_hash,
+                        e
+                    );
                     if let Some(user) = auth_user {
                         let _ = update_state(pool, schema, user, &record.info_hash, "error").await;
                     }

@@ -1,15 +1,15 @@
 /**
  * Persistent Audio Player
- * 
+ *
  * Spotify-style bottom bar for music tracks and audiobooks.
  * Shows album art, track info, playback controls, and progress.
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { Button } from '@heroui/button';
-import { Image } from '@heroui/image';
-import { Slider } from '@heroui/slider';
-import { Tooltip } from '@heroui/tooltip';
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Button } from "@heroui/button";
+import { Image } from "@heroui/image";
+import { Slider } from "@heroui/slider";
+import { Tooltip } from "@heroui/tooltip";
 import {
   IconPlayerPlay,
   IconPlayerPause,
@@ -20,20 +20,24 @@ import {
   IconArrowsShuffle,
   IconX,
   IconMusic,
-} from '@tabler/icons-react';
-import { usePlaybackContext, type RepeatMode } from '../contexts/PlaybackContext';
-import { VolumeControl } from './VolumeControl';
-import { getMediaStreamUrl } from './VideoPlayer';
-import { PlaybackSyncIntervalDocument } from '../lib/graphql';
+} from "@tabler/icons-react";
+import {
+  usePlaybackContext,
+  type RepeatMode,
+} from "../contexts/PlaybackContext";
+import { VolumeControl } from "./VolumeControl";
+import { getMediaStreamUrl } from "./VideoPlayer";
+import { PlaybackSyncIntervalDocument } from "../lib/graphql/generated/graphql";
+import { apolloClient } from "../lib/graphql/client";
 
 // Default sync interval (will be overridden by settings)
 const DEFAULT_SYNC_INTERVAL = 15000;
 
 function formatTime(seconds: number): string {
-  if (!isFinite(seconds) || isNaN(seconds)) return '0:00';
+  if (!isFinite(seconds) || isNaN(seconds)) return "0:00";
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 export function PersistentAudioPlayer() {
@@ -70,12 +74,17 @@ export function PersistentAudioPlayer() {
   const shouldAutoPlayRef = useRef<boolean>(false);
 
   // Determine if this is an audio session
-  const isAudioSession = session?.contentType === 'TRACK' || session?.contentType === 'AUDIOBOOK';
+  const isAudioSession =
+    session?.contentType === "TRACK" || session?.contentType === "AUDIOBOOK";
 
   // Fetch playback sync interval from app settings
   useEffect(() => {
-    queryPromise(PlaybackSyncIntervalDocument, { Key: 'playback_sync_interval' })
-      
+    apolloClient
+      .query({
+        query: PlaybackSyncIntervalDocument,
+        variables: { Key: "playback_sync_interval" },
+        fetchPolicy: "network-only",
+      })
       .then((result) => {
         const value = result.data?.AppSettings?.Edges?.[0]?.Node?.Value;
         if (value != null) {
@@ -90,7 +99,12 @@ export function PersistentAudioPlayer() {
 
   // Resume from session position when session changes
   useEffect(() => {
-    if (session && audioRef.current && session.currentPosition > 0 && isAudioSession) {
+    if (
+      session &&
+      audioRef.current &&
+      session.currentPosition > 0 &&
+      isAudioSession
+    ) {
       audioRef.current.currentTime = session.currentPosition;
       setCurrentTime(session.currentPosition);
       if (session.duration) setDuration(session.duration);
@@ -102,7 +116,7 @@ export function PersistentAudioPlayer() {
   // This handles external play/pause commands (from datatable, artwork overlay, etc.)
   useEffect(() => {
     if (!isAudioSession || !isReady || !audioRef.current) return;
-    
+
     if (session?.isPlaying && audioRef.current.paused) {
       // Session says play, but audio is paused - start playing
       audioRef.current.play().catch(() => {});
@@ -136,8 +150,12 @@ export function PersistentAudioPlayer() {
   useEffect(() => {
     const currentMediaFileId = session?.mediaFileId ?? null;
     const previousMediaFileId = prevMediaFileIdRef.current;
-    
-    if (previousMediaFileId && currentMediaFileId && previousMediaFileId !== currentMediaFileId) {
+
+    if (
+      previousMediaFileId &&
+      currentMediaFileId &&
+      previousMediaFileId !== currentMediaFileId
+    ) {
       // Track changed - reset ready state so sync effect waits for new track
       setIsReady(false);
       // If we were playing (audio was not paused), continue playing the new track
@@ -145,7 +163,7 @@ export function PersistentAudioPlayer() {
         shouldAutoPlayRef.current = true;
       }
     }
-    
+
     prevMediaFileIdRef.current = currentMediaFileId;
   }, [session?.mediaFileId]);
 
@@ -155,7 +173,7 @@ export function PersistentAudioPlayer() {
     return () => {
       if (audio) {
         audio.pause();
-        audio.src = '';
+        audio.src = "";
         audio.load();
       }
     };
@@ -167,11 +185,15 @@ export function PersistentAudioPlayer() {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't handle if typing in an input
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      )
+        return;
 
       switch (e.key) {
-        case ' ':
-        case 'k':
+        case " ":
+        case "k":
           e.preventDefault();
           if (audioRef.current) {
             if (audioRef.current.paused) {
@@ -181,17 +203,17 @@ export function PersistentAudioPlayer() {
             }
           }
           break;
-        case 'n':
-        case 'N':
+        case "n":
+        case "N":
           e.preventDefault();
           playNext();
           break;
-        case 'p':
-        case 'P':
+        case "p":
+        case "P":
           e.preventDefault();
           playPrevious();
           break;
-        case 'm':
+        case "m":
           e.preventDefault();
           if (audioRef.current) {
             audioRef.current.muted = !audioRef.current.muted;
@@ -199,19 +221,25 @@ export function PersistentAudioPlayer() {
             updatePlayback({ isMuted: audioRef.current.muted });
           }
           break;
-        case 'ArrowLeft':
+        case "ArrowLeft":
           e.preventDefault();
           if (audioRef.current) {
-            audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - 10);
+            audioRef.current.currentTime = Math.max(
+              0,
+              audioRef.current.currentTime - 10,
+            );
           }
           break;
-        case 'ArrowRight':
+        case "ArrowRight":
           e.preventDefault();
           if (audioRef.current) {
-            audioRef.current.currentTime = Math.min(duration, audioRef.current.currentTime + 10);
+            audioRef.current.currentTime = Math.min(
+              duration,
+              audioRef.current.currentTime + 10,
+            );
           }
           break;
-        case 'ArrowUp':
+        case "ArrowUp":
           e.preventDefault();
           if (audioRef.current) {
             const newVol = Math.min(1, audioRef.current.volume + 0.1);
@@ -219,7 +247,7 @@ export function PersistentAudioPlayer() {
             setVolume(newVol);
           }
           break;
-        case 'ArrowDown':
+        case "ArrowDown":
           e.preventDefault();
           if (audioRef.current) {
             const newVol = Math.max(0, audioRef.current.volume - 0.1);
@@ -227,15 +255,15 @@ export function PersistentAudioPlayer() {
             setVolume(newVol);
           }
           break;
-        case 's':
-        case 'S':
+        case "s":
+        case "S":
           e.preventDefault();
           toggleShuffle();
           break;
-        case 'r':
-        case 'R':
+        case "r":
+        case "R":
           e.preventDefault();
-          const modes: RepeatMode[] = ['off', 'all', 'one'];
+          const modes: RepeatMode[] = ["off", "all", "one"];
           const currentIdx = modes.indexOf(repeatMode);
           const nextIdx = (currentIdx + 1) % modes.length;
           setRepeatMode(modes[nextIdx]);
@@ -243,9 +271,18 @@ export function PersistentAudioPlayer() {
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isAudioSession, duration, playNext, playPrevious, toggleShuffle, repeatMode, setRepeatMode, updatePlayback]);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    isAudioSession,
+    duration,
+    playNext,
+    playPrevious,
+    toggleShuffle,
+    repeatMode,
+    setRepeatMode,
+    updatePlayback,
+  ]);
 
   const handleTimeUpdate = useCallback(() => {
     if (audioRef.current) {
@@ -265,7 +302,7 @@ export function PersistentAudioPlayer() {
   const handleCanPlay = useCallback(() => {
     setIsReady(true);
     setIsPaused(audioRef.current?.paused ?? true);
-    
+
     // Auto-play if we're transitioning tracks (e.g., after previous track ended)
     if (shouldAutoPlayRef.current && audioRef.current) {
       shouldAutoPlayRef.current = false;
@@ -281,13 +318,16 @@ export function PersistentAudioPlayer() {
   const handlePause = useCallback(() => {
     setIsPaused(true);
     if (audioRef.current) {
-      updatePlayback({ isPlaying: false, currentPosition: audioRef.current.currentTime });
+      updatePlayback({
+        isPlaying: false,
+        currentPosition: audioRef.current.currentTime,
+      });
     }
   }, [updatePlayback]);
 
   const handleEnded = useCallback(async () => {
     // Handle repeat one
-    if (repeatMode === 'one' && audioRef.current) {
+    if (repeatMode === "one" && audioRef.current) {
       audioRef.current.currentTime = 0;
       audioRef.current.play().catch(() => {});
       return;
@@ -298,7 +338,7 @@ export function PersistentAudioPlayer() {
 
     // Try to play next
     const success = await playNext();
-    if (!success && repeatMode !== 'all') {
+    if (!success && repeatMode !== "all") {
       // End of queue, stop playback
       shouldAutoPlayRef.current = false;
       await stopPlayback();
@@ -315,17 +355,19 @@ export function PersistentAudioPlayer() {
   }, []);
 
   const handleStop = useCallback(async () => {
+    const finalPosition = audioRef.current?.currentTime ?? currentTime;
+    const finalDuration = audioRef.current?.duration || duration || undefined;
     if (audioRef.current) {
       audioRef.current.pause();
-      audioRef.current.src = '';
+      audioRef.current.src = "";
       audioRef.current.load();
     }
     setIsReady(false);
     setIsPaused(true);
     setCurrentTime(0);
     setDuration(0);
-    await stopPlayback();
-  }, [stopPlayback]);
+    await stopPlayback(finalPosition, finalDuration);
+  }, [currentTime, duration, stopPlayback]);
 
   const toggleMute = useCallback(() => {
     if (!audioRef.current) return;
@@ -334,27 +376,33 @@ export function PersistentAudioPlayer() {
     updatePlayback({ isMuted: audioRef.current.muted });
   }, [updatePlayback]);
 
-  const handleVolumeChange = useCallback((newVolume: number) => {
-    if (!audioRef.current) return;
-    audioRef.current.volume = newVolume;
-    setVolume(newVolume);
-    if (newVolume > 0 && isMuted) {
-      audioRef.current.muted = false;
-      setIsMuted(false);
-      updatePlayback({ isMuted: false });
-    }
-  }, [isMuted, updatePlayback]);
+  const handleVolumeChange = useCallback(
+    (newVolume: number) => {
+      if (!audioRef.current) return;
+      audioRef.current.volume = newVolume;
+      setVolume(newVolume);
+      if (newVolume > 0 && isMuted) {
+        audioRef.current.muted = false;
+        setIsMuted(false);
+        updatePlayback({ isMuted: false });
+      }
+    },
+    [isMuted, updatePlayback],
+  );
 
-  const handleSeek = useCallback((value: number | number[]) => {
-    if (!audioRef.current || duration <= 0) return;
-    const newTime = Array.isArray(value) ? value[0] : value;
-    audioRef.current.currentTime = newTime;
-    setCurrentTime(newTime);
-    updatePlayback({ currentPosition: newTime });
-  }, [duration, updatePlayback]);
+  const handleSeek = useCallback(
+    (value: number | number[]) => {
+      if (!audioRef.current || duration <= 0) return;
+      const newTime = Array.isArray(value) ? value[0] : value;
+      audioRef.current.currentTime = newTime;
+      setCurrentTime(newTime);
+      updatePlayback({ currentPosition: newTime });
+    },
+    [duration, updatePlayback],
+  );
 
   const cycleRepeatMode = useCallback(() => {
-    const modes: RepeatMode[] = ['off', 'all', 'one'];
+    const modes: RepeatMode[] = ["off", "all", "one"];
     const currentIdx = modes.indexOf(repeatMode);
     const nextIdx = (currentIdx + 1) % modes.length;
     setRepeatMode(modes[nextIdx]);
@@ -368,12 +416,22 @@ export function PersistentAudioPlayer() {
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   // Get display info
-  const title = currentContent?.title || currentTrack?.title || currentChapter?.title || 'Unknown';
-  const subtitle = currentContent?.subtitle || 
-    (currentTrack?.artistName ? `${currentTrack.artistName} - ${currentAlbum?.name || ''}` : null) ||
+  const title =
+    currentContent?.title ||
+    currentTrack?.title ||
+    currentChapter?.title ||
+    "Unknown";
+  const subtitle =
+    currentContent?.subtitle ||
+    (currentTrack?.artistName
+      ? `${currentTrack.artistName} - ${currentAlbum?.name || ""}`
+      : null) ||
     (currentAudiobook?.title ? `${currentAudiobook.title}` : null) ||
-    '';
-  const coverUrl = currentContent?.posterUrl || currentAlbum?.coverUrl || currentAudiobook?.coverUrl;
+    "";
+  const coverUrl =
+    currentContent?.posterUrl ||
+    currentAlbum?.coverUrl ||
+    currentAudiobook?.coverUrl;
   const hasQueue = queue.length > 1;
   const isFirst = queueIndex === 0;
   const isLast = queueIndex >= queue.length - 1;
@@ -382,7 +440,7 @@ export function PersistentAudioPlayer() {
     <div className="fixed bottom-0 inset-x-0 z-40 bg-content1 border-t border-default-200 shadow-2xs">
       {/* Progress bar - thin line at top */}
       <div className="absolute top-0 inset-x-0 h-1 bg-default-200">
-        <div 
+        <div
           className="h-full bg-primary transition-all duration-150"
           style={{ width: `${progress}%` }}
         />
@@ -399,8 +457,8 @@ export function PersistentAudioPlayer() {
                 src={coverUrl}
                 alt={title}
                 classNames={{
-                  wrapper: 'w-full h-full',
-                  img: 'w-full h-full object-cover',
+                  wrapper: "w-full h-full",
+                  img: "w-full h-full object-cover",
                 }}
               />
             ) : (
@@ -422,15 +480,15 @@ export function PersistentAudioPlayer() {
           {/* Control buttons */}
           <div className="flex items-center gap-1">
             {/* Shuffle */}
-            <Tooltip content={shuffleEnabled ? 'Shuffle on' : 'Shuffle off'}>
+            <Tooltip content={shuffleEnabled ? "Shuffle on" : "Shuffle off"}>
               <Button
                 isIconOnly
                 size="sm"
                 variant="light"
-                className={shuffleEnabled ? 'text-primary' : 'text-default-500'}
+                className={shuffleEnabled ? "text-primary" : "text-default-500"}
                 onPress={toggleShuffle}
                 isDisabled={!hasQueue}
-                aria-label={shuffleEnabled ? 'Shuffle on' : 'Shuffle off'}
+                aria-label={shuffleEnabled ? "Shuffle on" : "Shuffle off"}
               >
                 <IconArrowsShuffle size={18} />
               </Button>
@@ -458,9 +516,13 @@ export function PersistentAudioPlayer() {
               variant="solid"
               className="rounded-full"
               onPress={togglePlay}
-              aria-label={isPaused ? 'Play' : 'Pause'}
+              aria-label={isPaused ? "Play" : "Pause"}
             >
-              {isPaused ? <IconPlayerPlay size={24} /> : <IconPlayerPause size={24} />}
+              {isPaused ? (
+                <IconPlayerPlay size={24} />
+              ) : (
+                <IconPlayerPause size={24} />
+              )}
             </Button>
 
             {/* Next */}
@@ -470,7 +532,7 @@ export function PersistentAudioPlayer() {
                 size="sm"
                 variant="light"
                 onPress={() => playNext()}
-                isDisabled={!hasQueue && isLast && repeatMode !== 'all'}
+                isDisabled={!hasQueue && isLast && repeatMode !== "all"}
                 aria-label="Next track"
               >
                 <IconPlayerTrackNext size={20} />
@@ -478,19 +540,36 @@ export function PersistentAudioPlayer() {
             </Tooltip>
 
             {/* Repeat */}
-            <Tooltip content={
-              repeatMode === 'off' ? 'Repeat off' :
-              repeatMode === 'all' ? 'Repeat all' : 'Repeat one'
-            }>
+            <Tooltip
+              content={
+                repeatMode === "off"
+                  ? "Repeat off"
+                  : repeatMode === "all"
+                    ? "Repeat all"
+                    : "Repeat one"
+              }
+            >
               <Button
                 isIconOnly
                 size="sm"
                 variant="light"
-                className={repeatMode !== 'off' ? 'text-primary' : 'text-default-500'}
+                className={
+                  repeatMode !== "off" ? "text-primary" : "text-default-500"
+                }
                 onPress={cycleRepeatMode}
-                aria-label={repeatMode === 'off' ? 'Repeat off' : repeatMode === 'all' ? 'Repeat all' : 'Repeat one'}
+                aria-label={
+                  repeatMode === "off"
+                    ? "Repeat off"
+                    : repeatMode === "all"
+                      ? "Repeat all"
+                      : "Repeat one"
+                }
               >
-                {repeatMode === 'one' ? <IconRepeatOnce size={18} /> : <IconRepeat size={18} />}
+                {repeatMode === "one" ? (
+                  <IconRepeatOnce size={18} />
+                ) : (
+                  <IconRepeat size={18} />
+                )}
               </Button>
             </Tooltip>
           </div>

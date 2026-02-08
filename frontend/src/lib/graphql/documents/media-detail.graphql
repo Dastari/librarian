@@ -1,0 +1,95 @@
+query AlbumDetailRoute($Id: String!) {
+  Album(Id: $Id) {
+    Id
+    ArtistId
+    LibraryId
+    Name
+    SortName
+    Year
+    MusicbrainzId
+    AlbumType
+    Genres
+    Label
+    Country
+    ReleaseDate
+    CoverUrl
+    TrackCount
+    DiscCount
+    TotalDurationSecs
+    HasFiles
+    SizeBytes
+    Path
+  }
+  Tracks(
+    Where: { AlbumId: { Eq: $Id } }
+    Page: { Limit: 5000, Offset: 0 }
+    OrderBy: [{ DiscNumber: Asc }, { TrackNumber: Asc }]
+  ) {
+    Edges {
+      Node {
+        Id
+        AlbumId
+        LibraryId
+        Title
+        TrackNumber
+        DiscNumber
+        MusicbrainzId
+        Isrc
+        DurationSecs
+        Explicit
+        ArtistName
+        ArtistId
+        MediaFileId
+        Status
+      }
+    }
+  }
+}
+
+mutation DeleteAlbumRoute($Id: String!) {
+  DeleteAlbum(Id: $Id) {
+    Success
+    Error
+  }
+}
+
+query AudiobookDetailRoute($Id: String!) {
+  Audiobook(Id: $Id) {
+    Id
+    LibraryId
+    Title
+    SortTitle
+    Isbn
+    Description
+    Publisher
+    Language
+    Narrators
+    TotalDurationSecs
+    CoverUrl
+    HasFiles
+    SizeBytes
+    Path
+    Chapters(Page: { Limit: 5000, Offset: 0 }) {
+      Edges {
+        Node {
+          Id
+          AudiobookId
+          ChapterNumber
+          Title
+          StartTimeSecs
+          EndTimeSecs
+          DurationSecs
+          MediaFileId
+          Status
+        }
+      }
+    }
+  }
+}
+
+mutation DeleteAudiobookRoute($Id: String!) {
+  DeleteAudiobook(Id: $Id) {
+    Success
+    Error
+  }
+}

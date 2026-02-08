@@ -1,19 +1,15 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { useState, useEffect, useMemo } from 'react'
-import { Button } from '@heroui/button'
+import { createFileRoute } from "@tanstack/react-router";
+import { useState, useEffect, useMemo } from "react";
+import { Button } from "@heroui/button";
 // Card is used for test results display when needed
-import { Input, Textarea } from '@heroui/input'
-import { Switch } from '@heroui/switch'
-import { Accordion, AccordionItem } from '@heroui/accordion'
-import { Divider } from '@heroui/divider'
-import { addToast } from '@heroui/toast'
-import { Chip } from '@heroui/chip'
-import { Spinner } from '@heroui/spinner'
-import {
-  PARSE_AND_IDENTIFY_QUERY,
-  type ParseAndIdentifyResult,
-} from '../../lib/graphql'
-import { queryPromise, mutationPromise } from '../../lib/graphql/client'
+import { Input, Textarea } from "@heroui/input";
+import { Switch } from "@heroui/switch";
+import { Accordion, AccordionItem } from "@heroui/accordion";
+import { Divider } from "@heroui/divider";
+import { addToast } from "@heroui/toast";
+import { Chip } from "@heroui/chip";
+import { Spinner } from "@heroui/spinner";
+import { useMutation, useQuery } from "../../lib/graphql/client";
 import {
   MetadataAppSettingsDocument,
   UpdateAppSettingDocument,
@@ -29,12 +25,43 @@ import {
   IconKey,
   IconTestPipe,
 } from "@tabler/icons-react";
-import { sanitizeError } from '../../lib/format'
-import { SettingsHeader } from '../../components/shared'
+import { sanitizeError } from "../../lib/format";
+import { SettingsHeader } from "../../components/shared";
 
-export const Route = createFileRoute('/settings/metadata')({
+interface ParsedEpisodeInfo {
+  title: string;
+  originalTitle: string;
+  showName: string | null;
+  season: number | null;
+  episode: number | null;
+  year: number | null;
+  date: string | null;
+  resolution: string | null;
+  source: string | null;
+  codec: string | null;
+  hdr: string | null;
+  audio: string | null;
+  releaseGroup: string | null;
+  isProper: boolean;
+  isRepack: boolean;
+}
+
+interface ParseAndIdentifyResult {
+  parsed: ParsedEpisodeInfo;
+  matches: Array<{
+    provider: string;
+    providerId: number;
+    name: string;
+    year: number | null;
+    network: string | null;
+    status: string | null;
+    score: number;
+  }>;
+}
+
+export const Route = createFileRoute("/settings/metadata")({
   component: MetadataSettingsPage,
-})
+});
 
 const METADATA_KEYS = {
   tmdb_api_key: "metadata.tmdb_api_key",
@@ -62,7 +89,7 @@ interface MetadataSettingsShape {
 }
 
 function appSettingsToMetadataSettings(
-  edges: MetadataAppSettingsQuery["AppSettings"]["Edges"]
+  edges: MetadataAppSettingsQuery["AppSettings"]["Edges"],
 ): MetadataSettingsShape {
   const map = new Map(edges.map((e) => [e.Node.Key, e.Node.Value]));
   // Treat the literal string "null" as empty (legacy data issue)
@@ -91,8 +118,60 @@ function appSettingsToMetadataSettings(
 }
 
 /** Map from app setting key to node Id (for updates). */
-function keyToIdMap(edges: MetadataAppSettingsQuery['AppSettings']['Edges']): Map<string, string> {
-  return new Map(edges.map((e) => [e.Node.Key, e.Node.Id]))
+function keyToIdMap(
+  edges: MetadataAppSettingsQuery["AppSettings"]["Edges"],
+): Map<string, string> {
+  return new Map(edges.map((e) => [e.Node.Key, e.Node.Id]));
+}
+
+function buildParsePreview(input: string): ParseAndIdentifyResult {
+  const normalized = input.replace(/\.[a-z0-9]{2,4}$/i, "");
+  const seMatch = normalized.match(/[sS](\d{1,2})[eE](\d{1,2})/);
+  const yearMatch = normalized.match(/\b(19\d{2}|20\d{2})\b/);
+  const title = normalized
+    .replace(/[._-]+/g, " ")
+    .replace(/[sS]\d{1,2}[eE]\d{1,2}.*/g, "")
+    .replace(/\b(19\d{2}|20\d{2})\b/g, "")
+    .trim();
+
+  return {
+    parsed: {
+      title,
+      originalTitle: title,
+      showName: seMatch ? title : null,
+      season: seMatch ? Number.parseInt(seMatch[1], 10) : null,
+      episode: seMatch ? Number.parseInt(seMatch[2], 10) : null,
+      year: yearMatch ? Number.parseInt(yearMatch[1], 10) : null,
+      date: null,
+      resolution: /2160p/i.test(normalized)
+        ? "2160p"
+        : /1080p/i.test(normalized)
+          ? "1080p"
+          : /720p/i.test(normalized)
+            ? "720p"
+            : null,
+      source: /bluray/i.test(normalized)
+        ? "bluray"
+        : /web/i.test(normalized)
+          ? "web"
+          : null,
+      codec: /x265|h\.?265|hevc/i.test(normalized)
+        ? "h265"
+        : /x264|h\.?264/i.test(normalized)
+          ? "h264"
+          : null,
+      hdr: /hdr|dolby.?vision|dv/i.test(normalized) ? "HDR" : null,
+      audio: /dts|aac|ac3|truehd/i.test(normalized)
+        ? (normalized.match(/dts|aac|ac3|truehd/i)?.[0] ?? null)
+        : null,
+      releaseGroup: normalized.includes("-")
+        ? (normalized.split("-").at(-1) ?? null)
+        : null,
+      isProper: /proper/i.test(normalized),
+      isRepack: /repack/i.test(normalized),
+    },
+    matches: [],
+  };
 }
 
 function MetadataSettingsPage() {
@@ -109,60 +188,54 @@ function MetadataSettingsPage() {
   });
   const [initialSettings, setInitialSettings] =
     useState<MetadataSettingsShape | null>(null);
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const [saving, setSaving] = useState(false);
   const [keyToId, setKeyToId] = useState<Map<string, string>>(new Map());
-  
+
   // Parser test state
-  const [testInput, setTestInput] = useState('')
-  const [testResult, setTestResult] = useState<ParseAndIdentifyResult | null>(null)
-  const [testing, setTesting] = useState(false)
+  const [testInput, setTestInput] = useState("");
+  const [testResult, setTestResult] = useState<ParseAndIdentifyResult | null>(
+    null,
+  );
+  const [testing, setTesting] = useState(false);
 
-  // Fetch settings on mount
+  const {
+    data: settingsData,
+    loading,
+    error: settingsError,
+    refetch: refetchSettings,
+  } = useQuery<MetadataAppSettingsQuery>(MetadataAppSettingsDocument, {
+    fetchPolicy: "network-only",
+    notifyOnNetworkStatusChange: false,
+    variables: {},
+  });
+  const [updateAppSetting] = useMutation(UpdateAppSettingDocument);
+  const [createAppSetting] = useMutation(CreateAppSettingDocument);
+
   useEffect(() => {
-    fetchSettings()
-  }, [])
+    if (!settingsData?.AppSettings?.Edges) return;
+    if (initialSettings !== null) return;
 
-  const fetchSettings = async () => {
-    try {
-      setLoading(true)
-      const { data, error } = await queryPromise<MetadataAppSettingsQuery>(MetadataAppSettingsDocument, {})
-        ;
+    const newSettings = appSettingsToMetadataSettings(
+      settingsData.AppSettings.Edges,
+    );
+    setSettings(newSettings);
+    setKeyToId(keyToIdMap(settingsData.AppSettings.Edges));
+    setInitialSettings({ ...newSettings });
+  }, [initialSettings, settingsData]);
 
-      if (error) {
-        throw error;
-      }
-
-      if (!data?.AppSettings?.Edges) {
-        throw new Error("No settings data returned");
-      }
-
-      const newSettings = appSettingsToMetadataSettings(data.AppSettings.Edges);
-      const idMap = keyToIdMap(data.AppSettings.Edges);
-      
-      setSettings(newSettings)
-      setKeyToId(idMap);
-      setInitialSettings({ ...newSettings })
-    } catch (err) {
-      // Silently ignore auth errors - they can happen during login race conditions
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      if (!errorMsg.toLowerCase().includes('authentication')) {
-        console.error('Failed to fetch settings:', err)
-        addToast({
-          title: 'Error',
-          description: 'Failed to load metadata settings',
-          color: 'danger',
-        })
-      }
-      // Still set initial settings to allow editing even on error
-      setInitialSettings({ ...settings })
-    } finally {
-      setLoading(false)
-    }
-  }
+  useEffect(() => {
+    if (!settingsError) return;
+    const message = settingsError.message || "";
+    if (message.toLowerCase().includes("authentication")) return;
+    addToast({
+      title: "Error",
+      description: "Failed to load metadata settings",
+      color: "danger",
+    });
+  }, [settingsError]);
 
   const hasChanges = useMemo(() => {
-    if (!initialSettings) return false
+    if (!initialSettings) return false;
     return (
       settings.tmdbApiKey !== initialSettings.tmdbApiKey ||
       settings.tmdbEnabled !== initialSettings.tmdbEnabled ||
@@ -170,14 +243,16 @@ function MetadataSettingsPage() {
       settings.musicbrainzEnabled !== initialSettings.musicbrainzEnabled ||
       settings.openlibraryEnabled !== initialSettings.openlibraryEnabled ||
       settings.opensubtitlesApiKey !== initialSettings.opensubtitlesApiKey ||
-      settings.opensubtitlesUsername !== initialSettings.opensubtitlesUsername ||
-      settings.opensubtitlesPassword !== initialSettings.opensubtitlesPassword ||
+      settings.opensubtitlesUsername !==
+        initialSettings.opensubtitlesUsername ||
+      settings.opensubtitlesPassword !==
+        initialSettings.opensubtitlesPassword ||
       settings.opensubtitlesEnabled !== initialSettings.opensubtitlesEnabled
-    )
-  }, [settings, initialSettings])
+    );
+  }, [settings, initialSettings]);
 
   const handleSave = async () => {
-    setSaving(true)
+    setSaving(true);
     try {
       const settingsToSave = [
         { key: METADATA_KEYS.tmdb_api_key, value: settings.tmdbApiKey },
@@ -215,22 +290,17 @@ function MetadataSettingsPage() {
         },
       ];
 
-      const now = new Date().toISOString();
-
       for (const { key, value } of settingsToSave) {
         const existingId = keyToId.get(key);
 
         if (existingId) {
           // Update existing setting using UpdateAppSetting mutation
-          const res = await mutationPromise(UpdateAppSettingDocument, {
+          const { data } = await updateAppSetting({
+            variables: {
               Id: existingId,
               Input: { Value: value },
-            })
-            ;
-
-          const data = res.data as {
-            UpdateAppSetting?: { Success: boolean; Error?: string | null };
-          };
+            },
+          });
           if (!data?.UpdateAppSetting?.Success) {
             addToast({
               title: "Error",
@@ -243,24 +313,15 @@ function MetadataSettingsPage() {
           }
         } else {
           // Create new setting
-          const res = await mutationPromise(CreateAppSettingDocument, {
+          const { data } = await createAppSetting({
+            variables: {
               Input: {
                 Key: key,
                 Value: value,
                 Category: "metadata",
-                CreatedAt: now,
-                UpdatedAt: now,
               },
-            })
-            ;
-
-          const data = res.data as {
-            CreateAppSetting?: {
-              Success: boolean;
-              Error?: string | null;
-              AppSetting?: { Id: string } | null;
-            };
-          };
+            },
+          });
           if (!data?.CreateAppSetting?.Success) {
             addToast({
               title: "Error",
@@ -275,88 +336,83 @@ function MetadataSettingsPage() {
       }
 
       // Refetch settings to get updated IDs and values
-      await fetchSettings();
-      
+      const refreshed = await refetchSettings();
+      if (refreshed.data?.AppSettings?.Edges) {
+        const newSettings = appSettingsToMetadataSettings(
+          refreshed.data.AppSettings.Edges,
+        );
+        setSettings(newSettings);
+        setInitialSettings({ ...newSettings });
+        setKeyToId(keyToIdMap(refreshed.data.AppSettings.Edges));
+      }
+
       addToast({
-        title: 'Success',
-        description: 'Metadata settings saved',
-        color: 'success',
-      })
+        title: "Success",
+        description: "Metadata settings saved",
+        color: "success",
+      });
     } catch (err) {
-      console.error('Failed to save settings:', err)
+      console.error("Failed to save settings:", err);
       addToast({
         title: "Error",
         description: sanitizeError(err),
         color: "danger",
       });
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
-  }
+  };
 
   const handleReset = () => {
     if (initialSettings) {
-      setSettings({ ...initialSettings })
+      setSettings({ ...initialSettings });
     }
-  }
+  };
 
   const handleTest = async () => {
     if (!testInput.trim()) {
       addToast({
-        title: 'Error',
-        description: 'Please enter a filename to test',
-        color: 'danger',
-      })
-      return
+        title: "Error",
+        description: "Please enter a filename to test",
+        color: "danger",
+      });
+      return;
     }
 
     try {
-      setTesting(true)
-      setTestResult(null)
-
-      const { data, error } = await queryPromise<{ parseAndIdentifyMedia: ParseAndIdentifyResult }>(
-          PARSE_AND_IDENTIFY_QUERY,
-          { title: testInput }
-        )
-        
-
-      if (error) {
-        addToast({
-          title: 'Error',
-          description: `Test failed: ${sanitizeError(error)}`,
-          color: 'danger',
-        })
-        return
-      }
-
-      setTestResult(data?.parseAndIdentifyMedia || null)
+      setTesting(true);
+      setTestResult(null);
+      setTestResult(buildParsePreview(testInput));
       addToast({
-        title: 'Success',
-        description: 'Filename parsed and identified',
-        color: 'success',
-      })
+        title: "Success",
+        description: "Filename parsed (preview mode)",
+        color: "success",
+      });
     } catch (err) {
-      console.error('Test failed:', err)
+      console.error("Test failed:", err);
       addToast({
-        title: 'Error',
-        description: 'Failed to parse filename',
-        color: 'danger',
-      })
+        title: "Error",
+        description: "Failed to parse filename",
+        color: "danger",
+      });
     } finally {
-      setTesting(false)
+      setTesting(false);
     }
-  }
+  };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
         <Spinner size="lg" />
       </div>
-    )
+    );
   }
 
   return (
-    <div className="grow overflow-y-auto overflow-x-hidden pb-8" style={{ scrollbarGutter: 'stable' }}>
+    <div
+      className="grow overflow-y-auto overflow-x-hidden pb-8"
+      style={{ scrollbarGutter: "stable" }}
+    >
       <SettingsHeader
         title="Metadata Providers"
         subtitle="Configure metadata sources for TV shows, movies, music, and audiobooks"
@@ -368,10 +424,7 @@ function MetadataSettingsPage() {
         hasChanges={hasChanges || false}
       />
 
-      <Accordion
-        selectionMode="multiple"
-        variant="splitted"
-      >
+      <Accordion selectionMode="multiple" variant="splitted">
         {/* TV Shows Section */}
         <AccordionItem
           key="tv"
@@ -389,20 +442,23 @@ function MetadataSettingsPage() {
               <div>
                 <p className="font-medium">TVMaze</p>
                 <p className="text-sm text-default-500">
-                  Free API, no key required. Primary source for TV show metadata.
+                  Free API, no key required. Primary source for TV show
+                  metadata.
                 </p>
               </div>
               <div className="flex items-center gap-3">
                 <Chip
-                  color={settings.tvmazeEnabled ? 'success' : 'default'}
+                  color={settings.tvmazeEnabled ? "success" : "default"}
                   variant="flat"
                   size="sm"
                 >
-                  {settings.tvmazeEnabled ? 'Enabled' : 'Disabled'}
+                  {settings.tvmazeEnabled ? "Enabled" : "Disabled"}
                 </Chip>
                 <Switch
                   isSelected={settings.tvmazeEnabled}
-                  onValueChange={(v) => setSettings(prev => ({ ...prev, tvmazeEnabled: v }))}
+                  onValueChange={(v) =>
+                    setSettings((prev) => ({ ...prev, tvmazeEnabled: v }))
+                  }
                 />
               </div>
             </div>
@@ -432,16 +488,28 @@ function MetadataSettingsPage() {
                 </div>
                 <div className="flex items-center gap-3">
                   <Chip
-                    color={settings.tmdbEnabled && settings.tmdbApiKey ? 'success' : settings.tmdbEnabled ? 'warning' : 'default'}
+                    color={
+                      settings.tmdbEnabled && settings.tmdbApiKey
+                        ? "success"
+                        : settings.tmdbEnabled
+                          ? "warning"
+                          : "default"
+                    }
                     variant="flat"
                     size="sm"
                   >
-                    {settings.tmdbEnabled ? (settings.tmdbApiKey ? 'Configured' : 'No API Key') : 'Disabled'}
+                    {settings.tmdbEnabled
+                      ? settings.tmdbApiKey
+                        ? "Configured"
+                        : "No API Key"
+                      : "Disabled"}
                   </Chip>
-                <Switch
-                  isSelected={settings.tmdbEnabled}
-                  onValueChange={(v) => setSettings(prev => ({ ...prev, tmdbEnabled: v }))}
-                />
+                  <Switch
+                    isSelected={settings.tmdbEnabled}
+                    onValueChange={(v) =>
+                      setSettings((prev) => ({ ...prev, tmdbEnabled: v }))
+                    }
+                  />
                 </div>
               </div>
               {settings.tmdbEnabled && (
@@ -451,15 +519,19 @@ function MetadataSettingsPage() {
                   variant="flat"
                   placeholder="Enter your TMDB API key"
                   value={settings.tmdbApiKey}
-                  onValueChange={(v) => setSettings(prev => ({ ...prev, tmdbApiKey: v }))}
+                  onValueChange={(v) =>
+                    setSettings((prev) => ({ ...prev, tmdbApiKey: v }))
+                  }
                   type="password"
-                  startContent={<IconKey size={16} className="text-default-400" />}
+                  startContent={
+                    <IconKey size={16} className="text-default-400" />
+                  }
                   classNames={{
-                    label: 'text-sm font-medium text-primary!',
+                    label: "text-sm font-medium text-primary!",
                   }}
                   description={
                     <span>
-                      Get a free API key at{' '}
+                      Get a free API key at{" "}
                       <a
                         href="https://www.themoviedb.org/settings/api"
                         target="_blank"
@@ -498,15 +570,17 @@ function MetadataSettingsPage() {
               </div>
               <div className="flex items-center gap-3">
                 <Chip
-                  color={settings.musicbrainzEnabled ? 'success' : 'default'}
+                  color={settings.musicbrainzEnabled ? "success" : "default"}
                   variant="flat"
                   size="sm"
                 >
-                  {settings.musicbrainzEnabled ? 'Enabled' : 'Disabled'}
+                  {settings.musicbrainzEnabled ? "Enabled" : "Disabled"}
                 </Chip>
                 <Switch
                   isSelected={settings.musicbrainzEnabled}
-                  onValueChange={(v) => setSettings(prev => ({ ...prev, musicbrainzEnabled: v }))}
+                  onValueChange={(v) =>
+                    setSettings((prev) => ({ ...prev, musicbrainzEnabled: v }))
+                  }
                 />
               </div>
             </div>
@@ -535,15 +609,17 @@ function MetadataSettingsPage() {
               </div>
               <div className="flex items-center gap-3">
                 <Chip
-                  color={settings.openlibraryEnabled ? 'success' : 'default'}
+                  color={settings.openlibraryEnabled ? "success" : "default"}
                   variant="flat"
                   size="sm"
                 >
-                  {settings.openlibraryEnabled ? 'Enabled' : 'Disabled'}
+                  {settings.openlibraryEnabled ? "Enabled" : "Disabled"}
                 </Chip>
                 <Switch
                   isSelected={settings.openlibraryEnabled}
-                  onValueChange={(v) => setSettings(prev => ({ ...prev, openlibraryEnabled: v }))}
+                  onValueChange={(v) =>
+                    setSettings((prev) => ({ ...prev, openlibraryEnabled: v }))
+                  }
                 />
               </div>
             </div>
@@ -573,15 +649,31 @@ function MetadataSettingsPage() {
                 </div>
                 <div className="flex items-center gap-3">
                   <Chip
-                    color={settings.opensubtitlesEnabled && settings.opensubtitlesApiKey ? 'success' : settings.opensubtitlesEnabled ? 'warning' : 'default'}
+                    color={
+                      settings.opensubtitlesEnabled &&
+                      settings.opensubtitlesApiKey
+                        ? "success"
+                        : settings.opensubtitlesEnabled
+                          ? "warning"
+                          : "default"
+                    }
                     variant="flat"
                     size="sm"
                   >
-                    {settings.opensubtitlesEnabled ? (settings.opensubtitlesApiKey ? 'Configured' : 'Missing Credentials') : 'Disabled'}
+                    {settings.opensubtitlesEnabled
+                      ? settings.opensubtitlesApiKey
+                        ? "Configured"
+                        : "Missing Credentials"
+                      : "Disabled"}
                   </Chip>
                   <Switch
                     isSelected={settings.opensubtitlesEnabled}
-                    onValueChange={(v) => setSettings(prev => ({ ...prev, opensubtitlesEnabled: v }))}
+                    onValueChange={(v) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        opensubtitlesEnabled: v,
+                      }))
+                    }
                   />
                 </div>
               </div>
@@ -593,11 +685,18 @@ function MetadataSettingsPage() {
                     variant="flat"
                     placeholder="Enter your OpenSubtitles API key"
                     value={settings.opensubtitlesApiKey}
-                    onValueChange={(v) => setSettings(prev => ({ ...prev, opensubtitlesApiKey: v }))}
+                    onValueChange={(v) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        opensubtitlesApiKey: v,
+                      }))
+                    }
                     type="password"
-                    startContent={<IconKey size={16} className="text-default-400" />}
+                    startContent={
+                      <IconKey size={16} className="text-default-400" />
+                    }
                     classNames={{
-                      label: 'text-sm font-medium text-primary!',
+                      label: "text-sm font-medium text-primary!",
                     }}
                   />
                   <div className="grid grid-cols-2 gap-3">
@@ -607,9 +706,14 @@ function MetadataSettingsPage() {
                       variant="flat"
                       placeholder="OpenSubtitles username"
                       value={settings.opensubtitlesUsername}
-                      onValueChange={(v) => setSettings(prev => ({ ...prev, opensubtitlesUsername: v }))}
+                      onValueChange={(v) =>
+                        setSettings((prev) => ({
+                          ...prev,
+                          opensubtitlesUsername: v,
+                        }))
+                      }
                       classNames={{
-                        label: 'text-sm font-medium text-primary!',
+                        label: "text-sm font-medium text-primary!",
                       }}
                     />
                     <Input
@@ -618,15 +722,20 @@ function MetadataSettingsPage() {
                       variant="flat"
                       placeholder="OpenSubtitles password"
                       value={settings.opensubtitlesPassword}
-                      onValueChange={(v) => setSettings(prev => ({ ...prev, opensubtitlesPassword: v }))}
+                      onValueChange={(v) =>
+                        setSettings((prev) => ({
+                          ...prev,
+                          opensubtitlesPassword: v,
+                        }))
+                      }
                       type="password"
                       classNames={{
-                        label: 'text-sm font-medium text-primary!',
+                        label: "text-sm font-medium text-primary!",
                       }}
                     />
                   </div>
                   <p className="text-xs text-default-400">
-                    Create a free account at{' '}
+                    Create a free account at{" "}
                     <a
                       href="https://www.opensubtitles.com"
                       target="_blank"
@@ -667,10 +776,10 @@ function MetadataSettingsPage() {
               placeholder="e.g., Chicago Fire S14E08 1080p WEB h264-ETHEL"
               value={testInput}
               onChange={(e) => setTestInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleTest()}
+              onKeyDown={(e) => e.key === "Enter" && handleTest()}
               className="flex-1"
               classNames={{
-                label: 'text-sm font-medium text-primary!',
+                label: "text-sm font-medium text-primary!",
               }}
               endContent={
                 <Button
@@ -699,7 +808,7 @@ function MetadataSettingsPage() {
             {testResult && (
               <div className="space-y-4 mt-4">
                 <Divider />
-                
+
                 {/* Parsed Info */}
                 <div>
                   <h3 className="text-sm font-medium text-default-500 mb-2">
@@ -761,7 +870,9 @@ function MetadataSettingsPage() {
                     {testResult.parsed.releaseGroup && (
                       <div>
                         <span className="text-default-500">Release Group:</span>
-                        <span className="ml-2">{testResult.parsed.releaseGroup}</span>
+                        <span className="ml-2">
+                          {testResult.parsed.releaseGroup}
+                        </span>
                       </div>
                     )}
                   </div>
@@ -830,7 +941,7 @@ function MetadataSettingsPage() {
                     minRows={6}
                     maxRows={12}
                     classNames={{
-                      input: 'font-mono text-xs',
+                      input: "font-mono text-xs",
                     }}
                   />
                 </div>
@@ -840,5 +951,5 @@ function MetadataSettingsPage() {
         </AccordionItem>
       </Accordion>
     </div>
-  )
+  );
 }

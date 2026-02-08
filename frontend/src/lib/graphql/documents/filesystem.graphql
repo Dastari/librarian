@@ -24,3 +24,47 @@ query BrowseDirectory($Input: BrowseDirectoryInput) {
     LibraryId
   }
 }
+
+query FilesystemRuntimeInfo {
+  FilesystemRuntimeInfo {
+    Platform
+    SupportsUncCredentials
+    SupportsSambaMount
+    DefaultLinuxMountBase
+  }
+}
+
+query LibraryPathAvailability($Input: LibraryPathAvailabilityInput!) {
+  LibraryPathAvailability(Input: $Input) {
+    Path
+    Reachable
+    Exists
+    IsDirectory
+    NeedsReconnect
+    ReconnectAttempted
+    ReconnectSucceeded
+    Message
+  }
+}
+
+mutation ConfigureNetworkPath($Input: ConfigureNetworkPathInput!) {
+  ConfigureNetworkPath(Input: $Input) {
+    Success
+    Error
+    ResolvedPath
+    Connected
+    Stored
+    Message
+  }
+}
+
+mutation ReconnectLibraryPath($Path: String!) {
+  ReconnectLibraryPath(Path: $Path) {
+    Success
+    Error
+    ResolvedPath
+    Connected
+    Stored
+    Message
+  }
+}

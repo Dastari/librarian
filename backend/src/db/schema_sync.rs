@@ -4,7 +4,6 @@
 //! - Compares entity definitions to current database schema
 //! - Creates missing tables automatically
 //! - Adds missing columns automatically
-//! - Runs static migrations for non-entity tables (e.g. auth_secrets)
 //! - Does NOT handle column renames or type changes (requires DB wipe)
 //! - Pre-seeds default data (app_settings, cast_settings, naming_patterns,
 //!   torznab_categories) after sync via `run_seeds`.
@@ -12,7 +11,7 @@
 use sqlx::SqlitePool;
 use tracing::{debug, info, warn};
 
-use crate::services::graphql::orm::{ColumnDef, DatabaseSchema};
+use crate::services::graphql::orm::{ColumnDef, DatabaseEntity, DatabaseSchema};
 
 pub use crate::db::seed::run_seeds;
 
@@ -150,36 +149,42 @@ fn generate_add_column_sql(table_name: &str, col: &ColumnDef) -> String {
     sql
 }
 
-/// Static migrations: non-entity tables (e.g. auth_secrets).
-/// Equivalent to migrations_sqlite/003_auth_secrets.sql.
-async fn run_static_migrations(pool: &SqlitePool) -> SchemaSyncResult {
-    let mut result = SchemaSyncResult::default();
-    let existed = table_exists(pool, "auth_secrets").await.unwrap_or(false);
-    const AUTH_SECRETS_SQL: &str = r#"
-        CREATE TABLE IF NOT EXISTS auth_secrets (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        )
-    "#;
-    if let Err(e) = sqlx::query(AUTH_SECRETS_SQL.trim()).execute(pool).await {
-        let msg = format!("Failed to run static migration (auth_secrets): {}", e);
-        warn!("{}", msg);
-        result.errors.push(msg);
-    } else if !existed {
-        result.tables_created.push("auth_secrets".to_string());
-    }
+/// Internal schema entity for non-GraphQL table: auth_secrets.
+struct AuthSecretSchema;
 
-    // Ensure app_settings.key has a unique index to prevent duplicate rows.
-    // This is critical for INSERT OR IGNORE to work correctly in seeding.
-    const APP_SETTINGS_KEY_INDEX_SQL: &str =
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_app_settings_key ON app_settings(key)";
-    if let Err(e) = sqlx::query(APP_SETTINGS_KEY_INDEX_SQL).execute(pool).await {
-        let msg = format!("Failed to create unique index on app_settings.key: {}", e);
-        warn!("{}", msg);
-        result.errors.push(msg);
-    }
+impl DatabaseEntity for AuthSecretSchema {
+    const TABLE_NAME: &'static str = "auth_secrets";
+    const PLURAL_NAME: &'static str = "AuthSecrets";
+    const PRIMARY_KEY: &'static str = "key";
+    const DEFAULT_SORT: &'static str = "key";
 
-    result
+    fn column_names() -> &'static [&'static str] {
+        &["key", "value"]
+    }
+}
+
+impl DatabaseSchema for AuthSecretSchema {
+    fn columns() -> &'static [ColumnDef] {
+        static COLUMNS: &[ColumnDef] = &[
+            ColumnDef {
+                name: "key",
+                sql_type: "TEXT",
+                nullable: false,
+                is_primary_key: true,
+                is_unique: false,
+                default: None,
+            },
+            ColumnDef {
+                name: "value",
+                sql_type: "TEXT",
+                nullable: false,
+                is_primary_key: false,
+                is_unique: false,
+                default: None,
+            },
+        ];
+        COLUMNS
+    }
 }
 
 /// If cast_settings.default_volume is INTEGER (legacy), recreate table with REAL.
@@ -233,10 +238,42 @@ async fn fix_cast_settings_default_volume_type(pool: &SqlitePool) -> SchemaSyncR
     result
 }
 
+/// Ensure unique indexes exist for columns marked `is_unique`.
+async fn ensure_unique_indexes_for_entity<E: DatabaseSchema>(
+    pool: &SqlitePool,
+) -> SchemaSyncResult {
+    let mut result = SchemaSyncResult::default();
+    let table = E::TABLE_NAME;
+    if !table_exists(pool, table).await.unwrap_or(false) {
+        return result;
+    }
+
+    for col in E::columns().iter().filter(|c| c.is_unique) {
+        let index_name = format!("idx_{}_{}_unique", table, col.name);
+        let sql = format!(
+            "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {}({})",
+            index_name, table, col.name
+        );
+        if let Err(e) = sqlx::query(&sql).execute(pool).await {
+            let msg = format!(
+                "Failed to create unique index {} on {}.{}: {}",
+                index_name, table, col.name, e
+            );
+            warn!("{}", msg);
+            result.errors.push(msg);
+            continue;
+        }
+        result
+            .columns_added
+            .push((table.to_string(), format!("{} (unique index)", col.name)));
+    }
+    result
+}
+
 /// Sync all entity tables to the database.
 ///
 /// This should be called at startup to ensure all entity tables exist
-/// and have the correct columns. Also runs static migrations (e.g. auth_secrets).
+/// and have the correct columns.
 pub async fn sync_all_entity_schemas(pool: &SqlitePool) -> SchemaSyncResult {
     use crate::services::graphql::entities::*;
 
@@ -262,82 +299,93 @@ pub async fn sync_all_entity_schemas(pool: &SqlitePool) -> SchemaSyncResult {
         };
     }
 
+    // Ensure unique indexes exist for entity fields marked with #[unique].
+    macro_rules! ensure_unique_for {
+        ($entity:ty) => {
+            let unique_result = ensure_unique_indexes_for_entity::<$entity>(pool).await;
+            total_result
+                .columns_added
+                .extend(unique_result.columns_added);
+            total_result.errors.extend(unique_result.errors);
+        };
+    }
+
+    // Sync table + ensure unique indexes for an entity.
+    macro_rules! sync_and_unique {
+        ($entity:ty) => {
+            sync_one!($entity);
+            ensure_unique_for!($entity);
+        };
+    }
+
     // Sync all entity tables
 
     // Core content entities
-    sync_one!(Library);
-    sync_one!(Movie);
-    sync_one!(Show);
-    sync_one!(Episode);
-    sync_one!(MediaFile);
+    sync_and_unique!(Library);
+    sync_and_unique!(Movie);
+    sync_and_unique!(Show);
+    sync_and_unique!(Episode);
+    sync_and_unique!(MediaFile);
 
     // Music entities
-    sync_one!(Artist);
-    sync_one!(Album);
-    sync_one!(Track);
+    sync_and_unique!(Artist);
+    sync_and_unique!(Album);
+    sync_and_unique!(Track);
 
     // Audiobook entities
-    sync_one!(Audiobook);
-    sync_one!(Chapter);
+    sync_and_unique!(Audiobook);
+    sync_and_unique!(Chapter);
 
     // Download entities
-    sync_one!(Torrent);
-    sync_one!(TorrentFile);
-    sync_one!(RssFeed);
-    sync_one!(RssFeedItem);
-    sync_one!(PendingFileMatch);
+    sync_and_unique!(Torrent);
+    sync_and_unique!(TorrentFile);
+    sync_and_unique!(RssFeed);
+    sync_and_unique!(RssFeedItem);
+    sync_and_unique!(PendingFileMatch);
 
-    // Indexer entities
-    sync_one!(IndexerConfig);
-    sync_one!(IndexerSetting);
-    sync_one!(IndexerSearchCache);
+    // Source entities
+    sync_and_unique!(Source);
 
     // User and auth entities
-    sync_one!(User);
-    sync_one!(InviteToken);
-    sync_one!(RefreshToken);
+    sync_and_unique!(User);
+    sync_and_unique!(InviteToken);
+    sync_and_unique!(RefreshToken);
 
     // Settings and logs
-    sync_one!(AppSetting);
-    sync_one!(AppLog);
+    sync_and_unique!(AppSetting);
+    sync_and_unique!(AppLog);
 
     // Media stream entities
-    sync_one!(VideoStream);
-    sync_one!(AudioStream);
-    sync_one!(Subtitle);
-    sync_one!(MediaChapter);
+    sync_and_unique!(VideoStream);
+    sync_and_unique!(AudioStream);
+    sync_and_unique!(Subtitle);
+    sync_and_unique!(MediaChapter);
 
     // Playback and cast entities
-    sync_one!(PlaybackSession);
-    sync_one!(PlaybackProgress);
-    sync_one!(CastDevice);
-    sync_one!(CastSession);
-    sync_one!(CastSetting);
+    sync_and_unique!(PlaybackSession);
+    sync_and_unique!(PlaybackProgress);
+    sync_and_unique!(CastDevice);
+    sync_and_unique!(CastSession);
+    sync_and_unique!(CastSetting);
 
     // Usenet entities
-    sync_one!(UsenetServer);
-    sync_one!(UsenetDownload);
+    sync_and_unique!(UsenetServer);
+    sync_and_unique!(UsenetDownload);
 
     // Schedule and automation
-    sync_one!(ScheduleCache);
-    sync_one!(ScheduleSyncState);
-    sync_one!(NamingPattern);
-    sync_one!(SourcePriorityRule);
+    sync_and_unique!(ScheduleCache);
+    sync_and_unique!(ScheduleSyncState);
+    sync_and_unique!(NamingPattern);
+    sync_and_unique!(SourcePriorityRule);
 
     // Other entities
-    sync_one!(Notification);
-    sync_one!(ArtworkCache);
-    sync_one!(TorznabCategory);
+    sync_and_unique!(Notification);
+    sync_and_unique!(ArtworkCache);
+    sync_and_unique!(TorznabCategory);
+    sync_one!(AuthSecretSchema);
 
-    // Static migrations (non-entity tables, e.g. auth_secrets)
-    let static_result = run_static_migrations(pool).await;
-    total_result
-        .tables_created
-        .extend(static_result.tables_created);
-    total_result
-        .columns_added
-        .extend(static_result.columns_added);
-    total_result.errors.extend(static_result.errors);
+    // Future one-off/manual migrations can be added here when they cannot be
+    // represented by entity schema sync alone.
 
     // Fix cast_settings.default_volume if it was created as INTEGER (Rust expects REAL/f64)
     let fix_cast = fix_cast_settings_default_volume_type(pool).await;

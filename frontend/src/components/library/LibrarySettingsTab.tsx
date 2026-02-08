@@ -1,16 +1,31 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { addToast } from '@heroui/toast'
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { addToast } from "@heroui/toast";
 import {
   LibrarySettingsForm,
   type LibrarySettingsFormValues,
 } from "./LibrarySettingsForm";
-import { SettingsHeader } from '../shared'
-import type { Library, UpdateLibraryInput } from '../../lib/graphql'
+import { SettingsHeader } from "../shared";
+import type {
+  UpdateLibraryInput,
+  Library as LibraryEntity,
+} from "../../lib/graphql/generated/graphql";
+
+type LibrarySettingsData = Pick<
+  LibraryEntity,
+  | "Name"
+  | "Path"
+  | "LibraryType"
+  | "AutoScan"
+  | "ScanIntervalMinutes"
+  | "WatchForChanges"
+  | "AutoOrganize"
+  | "NamingPattern"
+>;
 
 interface LibrarySettingsTabProps {
-  library: Library
-  onSave: (input: UpdateLibraryInput) => Promise<void>
-  isLoading: boolean
+  library: LibrarySettingsData;
+  onSave: (input: UpdateLibraryInput) => Promise<void>;
+  isLoading: boolean;
 }
 
 export function LibrarySettingsTab({
@@ -20,7 +35,7 @@ export function LibrarySettingsTab({
 }: LibrarySettingsTabProps) {
   // Convert Library entity to form values
   const libraryToFormValues = useCallback(
-    (lib: Library): LibrarySettingsFormValues => ({
+    (lib: LibrarySettingsData): LibrarySettingsFormValues => ({
       Name: lib.Name,
       Path: lib.Path,
       LibraryType: lib.LibraryType as LibrarySettingsFormValues["LibraryType"],
@@ -29,6 +44,11 @@ export function LibrarySettingsTab({
       WatchForChanges: lib.WatchForChanges,
       AutoOrganize: lib.AutoOrganize,
       NamingPattern: lib.NamingPattern || null,
+      NetworkAuthEnabled: false,
+      NetworkUsername: "",
+      NetworkPassword: "",
+      NetworkMountPoint: "/mnt",
+      PersistNetworkCredentials: true,
     }),
     [],
   );

@@ -29,7 +29,9 @@ use crate::db::Database;
 use crate::services::logging::{DbLayerState, OptionalDbLayer};
 use crate::services::{
     AuthConfig, DatabaseServiceConfig, GraphqlServiceConfig, HttpServerConfig,
-    LoggingServiceConfig, ServicesManager, torrent::TorrentServiceConfig,
+    LoggingServiceConfig, ServicesManager, cast::service::CastServiceConfig,
+    library_scan::LibraryScanServiceConfig, sources::service::SourcesServiceConfig,
+    torrent::TorrentServiceConfig,
 };
 use crate::tui::{TuiApp, TuiConfig, create_tui_layer, should_use_tui};
 use std::path::PathBuf;
@@ -85,6 +87,13 @@ async fn main() -> anyhow::Result<()> {
         db_layer_state: Some(db_layer_state),
         ..LoggingServiceConfig::default()
     };
+    let cast_base_host = config
+        .host
+        .clone()
+        .filter(|h| !h.trim().is_empty() && h != "0.0.0.0")
+        .or_else(|| local_ip_address::local_ip().ok().map(|ip| ip.to_string()))
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let cast_media_base_url = format!("http://{}:{}", cast_base_host, config.port);
 
     let services = ServicesManager::builder()
         .add_service(DatabaseServiceConfig {
@@ -103,12 +112,30 @@ async fn main() -> anyhow::Result<()> {
             listen_port: config.torrent_listen_port,
             max_concurrent: config.torrent_max_concurrent,
         })
+        .add_service(CastServiceConfig {
+            media_base_url: cast_media_base_url,
+            auto_discovery: true,
+            discovery_interval_secs: 30,
+            discovery_timeout_ms: 1500,
+        })
+        .add_service(SourcesServiceConfig::default())
+        .add_service(LibraryScanServiceConfig::default())
         .add_service(HttpServerConfig {
             config: config.clone(),
         })
         .add_api_routes("artwork", |_| crate::api::artwork::router())
+        .add_api_routes("health", |_| crate::api::health::router())
+        .add_api_routes("media", |_| crate::api::media::router())
         .start()
         .await?;
+
+    if let Some(db_service) = services.get_database().await {
+        crate::services::graphql::filesystem_network::reconnect_saved_network_paths(
+            db_service.pool(),
+            &services,
+        )
+        .await;
+    }
 
     if use_tui {
         let tui = TuiApp::new(

@@ -118,53 +118,84 @@ impl Service for DatabaseService {
     }
 
     async fn start(&self) -> Result<()> {
-        info!(service = "database", "Database service starting");
+        info!(
+            service = "database",
+            "Database service starting: validating connection, syncing schema, and seeding defaults"
+        );
         // Pool is already connected by caller; just verify
         query("SELECT 1").execute(self.pool()).await?;
 
-        info!(service = "database", "Syncing entity schemas");
+        info!(
+            service = "database",
+            "Syncing entity schemas from GraphQL entities"
+        );
         let sync_result = sync_all_entity_schemas(self.pool()).await;
         if !sync_result.tables_created.is_empty() {
             info!(
                 service = "database",
                 tables = ?sync_result.tables_created,
-                "Created tables"
+                "Schema sync created tables: tables={:?}",
+                sync_result.tables_created
             );
         }
         if !sync_result.columns_added.is_empty() {
             info!(
                 service = "database",
                 columns = ?sync_result.columns_added,
-                "Added columns"
+                "Schema sync added columns: columns={:?}",
+                sync_result.columns_added
             );
         }
         for err in &sync_result.errors {
-            warn!(service = "database", error = %err, "Schema sync error");
+            warn!(
+                service = "database",
+                error = %err,
+                "Schema sync reported an error: error={}",
+                err
+            );
         }
-        info!(service = "database", "Entity schema sync complete");
+        info!(
+            service = "database",
+            "Entity schema sync complete: schema synchronization pass finished"
+        );
 
-        info!(service = "database", "Running pre-seed data");
+        info!(
+            service = "database",
+            "Running pre-seed data for baseline app settings and defaults"
+        );
         let seed_result = run_seeds(self.pool()).await;
         for err in &seed_result.errors {
-            warn!(service = "database", error = %err, "Seed error");
+            warn!(
+                service = "database",
+                error = %err,
+                "Seed stage reported an error: error={}",
+                err
+            );
         }
         if !seed_result.tables_seeded.is_empty() {
             info!(
                 service = "database",
                 tables = ?seed_result.tables_seeded,
-                "Pre-seed complete"
+                "Pre-seed completed for tables: tables={:?}",
+                seed_result.tables_seeded
             );
         }
 
         initialize_jwt_secret(self.pool()).await?;
 
-        info!(service = "database", "Database service started");
+        info!(
+            service = "database",
+            "Database service started: schema sync, seeding, and JWT secret initialization complete"
+        );
         Ok(())
     }
 
     async fn stop(&self) -> Result<()> {
         self.pool.close().await;
-        info!(service = "database", "Database service stopped");
+        info!(
+            service = "database",
+            "Database service stopped: connection pool closed"
+        );
         Ok(())
     }
 
@@ -172,7 +203,12 @@ impl Service for DatabaseService {
         match query("SELECT 1").execute(self.pool()).await {
             Ok(_) => Ok(ServiceHealth::healthy()),
             Err(e) => {
-                warn!(service = "database", error = %e, "Health check failed");
+                warn!(
+                    service = "database",
+                    error = %e,
+                    "Database health check failed: error={}",
+                    e
+                );
                 Ok(ServiceHealth::unhealthy(e.to_string()))
             }
         }

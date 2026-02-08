@@ -1,16 +1,16 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect } from "react";
 import {
   Modal,
   ModalContent,
   ModalHeader,
   ModalBody,
   ModalFooter,
-} from '@heroui/modal'
-import { Button } from '@heroui/button'
-import { Chip } from '@heroui/chip'
-import { Spinner } from '@heroui/spinner'
-import { Tabs, Tab } from '@heroui/tabs'
-import { Tooltip } from '@heroui/tooltip'
+} from "@heroui/modal";
+import { Button } from "@heroui/button";
+import { Chip } from "@heroui/chip";
+import { Spinner } from "@heroui/spinner";
+import { Tabs, Tab } from "@heroui/tabs";
+import { Tooltip } from "@heroui/tooltip";
 import {
   IconFile,
   IconVideo,
@@ -22,124 +22,163 @@ import {
   IconAlertCircle,
   IconInfoCircle,
   IconTags,
-} from '@tabler/icons-react'
+} from "@tabler/icons-react";
 import {
-  MEDIA_FILE_DETAILS_QUERY,
   type MediaFileDetails,
   type VideoStreamInfo,
   type AudioStreamInfo,
   type SubtitleInfo,
   type ChapterInfo,
   type EmbeddedMetadata,
-} from '../lib/graphql'
+} from "../lib/graphql";
+import { formatBytes } from "../lib/format";
+import {
+  MediaFileMetadataDocument,
+  MediaFilePropertiesDocument,
+  type MediaFileMetadataQuery,
+  type MediaFileMetadataQueryVariables,
+  type MediaFilePropertiesQuery,
+  type MediaFilePropertiesQueryVariables,
+} from "../lib/graphql/generated/graphql";
+import { apolloClient } from "../lib/graphql/client";
+import {
+  JsonView,
+  allExpanded,
+  darkStyles,
+  defaultStyles,
+} from "react-json-view-lite";
+import "react-json-view-lite/dist/index.css";
+import { useTheme } from "../hooks/useTheme";
 
 interface FilePropertiesModalProps {
-  isOpen: boolean
-  onClose: () => void
+  isOpen: boolean;
+  onClose: () => void;
   /** Media file ID to fetch details for */
-  mediaFileId: string | null
+  mediaFileId: string | null;
   /** Optional title override (e.g., episode name) */
-  title?: string
+  title?: string;
 }
 
 /** Format duration from seconds to HH:MM:SS */
 function formatDuration(seconds: number | null): string {
-  if (seconds === null || seconds === undefined) return '-'
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = Math.floor(seconds % 60)
+  if (seconds === null || seconds === undefined) return "-";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
   if (h > 0) {
-    return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+    return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   }
-  return `${m}:${s.toString().padStart(2, '0')}`
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 /** Format bitrate to human readable */
 function formatBitrate(bps: number | null): string {
-  if (bps === null || bps === undefined) return '-'
+  if (bps === null || bps === undefined) return "-";
   if (bps >= 1000000) {
-    return `${(bps / 1000000).toFixed(1)} Mbps`
+    return `${(bps / 1000000).toFixed(1)} Mbps`;
   }
   if (bps >= 1000) {
-    return `${(bps / 1000).toFixed(0)} Kbps`
+    return `${(bps / 1000).toFixed(0)} Kbps`;
   }
-  return `${bps} bps`
+  return `${bps} bps`;
 }
 
 /** Format sample rate */
 function formatSampleRate(hz: number | null): string {
-  if (hz === null || hz === undefined) return '-'
+  if (hz === null || hz === undefined) return "-";
   if (hz >= 1000) {
-    return `${(hz / 1000).toFixed(1)} kHz`
+    return `${(hz / 1000).toFixed(1)} kHz`;
   }
-  return `${hz} Hz`
+  return `${hz} Hz`;
+}
+
+function parseJsonMetadata(value: string | null): unknown | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }
 
 /** Get language display name */
 function getLanguageName(code: string | null): string {
-  if (!code) return 'Unknown'
+  if (!code) return "Unknown";
   try {
-    const displayName = new Intl.DisplayNames(['en'], { type: 'language' })
-    return displayName.of(code) || code
+    const displayName = new Intl.DisplayNames(["en"], { type: "language" });
+    return displayName.of(code) || code;
   } catch {
-    return code
+    return code;
   }
 }
 
 /** Format video codec for display */
 function formatVideoCodec(codec: string): string {
-  const normalized = codec.toLowerCase()
-  if (normalized.includes('hevc') || normalized === 'h265') return 'HEVC (H.265)'
-  if (normalized.includes('h264') || normalized === 'avc') return 'H.264 (AVC)'
-  if (normalized.includes('av1')) return 'AV1'
-  if (normalized.includes('vp9')) return 'VP9'
-  if (normalized.includes('mpeg4')) return 'MPEG-4'
-  if (normalized.includes('mpeg2')) return 'MPEG-2'
-  return codec.toUpperCase()
+  const normalized = codec.toLowerCase();
+  if (normalized.includes("hevc") || normalized === "h265")
+    return "HEVC (H.265)";
+  if (normalized.includes("h264") || normalized === "avc") return "H.264 (AVC)";
+  if (normalized.includes("av1")) return "AV1";
+  if (normalized.includes("vp9")) return "VP9";
+  if (normalized.includes("mpeg4")) return "MPEG-4";
+  if (normalized.includes("mpeg2")) return "MPEG-2";
+  return codec.toUpperCase();
 }
 
 /** Format audio codec for display */
 function formatAudioCodec(codec: string): string {
-  const normalized = codec.toLowerCase()
-  if (normalized.includes('truehd')) return 'Dolby TrueHD'
-  if (normalized.includes('atmos')) return 'Dolby Atmos'
-  if (normalized.includes('dts-hd')) return 'DTS-HD MA'
-  if (normalized.includes('dts')) return 'DTS'
-  if (normalized.includes('ac3') || normalized.includes('ac-3')) return 'Dolby Digital (AC3)'
-  if (normalized.includes('eac3') || normalized.includes('e-ac-3')) return 'Dolby Digital Plus (EAC3)'
-  if (normalized.includes('aac')) return 'AAC'
-  if (normalized.includes('flac')) return 'FLAC'
-  if (normalized.includes('opus')) return 'Opus'
-  if (normalized.includes('pcm')) return 'PCM (Lossless)'
-  if (normalized.includes('mp3')) return 'MP3'
-  return codec.toUpperCase()
+  const normalized = codec.toLowerCase();
+  if (normalized.includes("truehd")) return "Dolby TrueHD";
+  if (normalized.includes("atmos")) return "Dolby Atmos";
+  if (normalized.includes("dts-hd")) return "DTS-HD MA";
+  if (normalized.includes("dts")) return "DTS";
+  if (normalized.includes("ac3") || normalized.includes("ac-3"))
+    return "Dolby Digital (AC3)";
+  if (normalized.includes("eac3") || normalized.includes("e-ac-3"))
+    return "Dolby Digital Plus (EAC3)";
+  if (normalized.includes("aac")) return "AAC";
+  if (normalized.includes("flac")) return "FLAC";
+  if (normalized.includes("opus")) return "Opus";
+  if (normalized.includes("pcm")) return "PCM (Lossless)";
+  if (normalized.includes("mp3")) return "MP3";
+  return codec.toUpperCase();
 }
 
 /** Property row component */
-function PropertyRow({ label, value, mono = false }: { label: string; value: React.ReactNode; mono?: boolean }) {
+function PropertyRow({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: React.ReactNode;
+  mono?: boolean;
+}) {
   return (
     <div className="flex justify-between items-center py-2 border-b border-default-100/50 last:border-0">
       <span className="text-default-400 text-sm">{label}</span>
-      <span className={`text-sm text-right max-w-[60%] truncate text-default-foreground ${mono ? 'font-mono text-xs' : ''}`}>
+      <span
+        className={`text-sm text-right max-w-[60%] truncate text-default-foreground ${mono ? "font-mono text-xs" : ""}`}
+      >
         {value || <span className="text-default-300 italic">—</span>}
       </span>
     </div>
-  )
+  );
 }
 
 /** Stream card for video/audio streams */
-function StreamCard({ 
-  icon, 
-  title, 
-  subtitle, 
-  badges, 
-  children 
-}: { 
-  icon: React.ReactNode
-  title: string
-  subtitle?: string
-  badges?: React.ReactNode
-  children: React.ReactNode 
+function StreamCard({
+  icon,
+  title,
+  subtitle,
+  badges,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  subtitle?: string;
+  badges?: React.ReactNode;
+  children: React.ReactNode;
 }) {
   return (
     <div className="bg-default-100/50 rounded-xl p-4 mb-3 last:mb-0 border border-default-200/30">
@@ -147,78 +186,203 @@ function StreamCard({
         <div className="text-primary-400 mt-0.5">{icon}</div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-semibold text-sm text-default-foreground">{title}</span>
+            <span className="font-semibold text-sm text-default-foreground">
+              {title}
+            </span>
             {badges}
           </div>
-          {subtitle && <span className="text-xs text-default-400 block mt-0.5">{subtitle}</span>}
+          {subtitle && (
+            <span className="text-xs text-default-400 block mt-0.5">
+              {subtitle}
+            </span>
+          )}
         </div>
       </div>
       <div className="pl-7">{children}</div>
     </div>
-  )
+  );
 }
 
-export function FilePropertiesModal({ 
-  isOpen, 
-  onClose, 
+export function FilePropertiesModal({
+  isOpen,
+  onClose,
   mediaFileId,
   title: overrideTitle,
 }: FilePropertiesModalProps) {
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [details, setDetails] = useState<MediaFileDetails | null>(null)
-  const [copied, setCopied] = useState(false)
-  const [selectedTab, setSelectedTab] = useState('overview')
+  const { isDark } = useTheme();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [details, setDetails] = useState<MediaFileDetails | null>(null);
+  const [rawMetadata, setRawMetadata] = useState<unknown | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [selectedTab, setSelectedTab] = useState("overview");
 
   useEffect(() => {
     if (!isOpen || !mediaFileId) {
-      setDetails(null)
-      setError(null)
-      return
+      setDetails(null);
+      setRawMetadata(null);
+      setError(null);
+      return;
     }
 
     const fetchDetails = async () => {
-      setLoading(true)
-      setError(null)
+      setLoading(true);
+      setError(null);
 
-      const result = await queryPromise<{ mediaFileDetails: MediaFileDetails | null }>(MEDIA_FILE_DETAILS_QUERY, { mediaFileId })
-        
+      const [result, metadataResult] = await Promise.all([
+        apolloClient.query<
+          MediaFilePropertiesQuery,
+          MediaFilePropertiesQueryVariables
+        >({
+          query: MediaFilePropertiesDocument,
+          variables: { Id: mediaFileId },
+          fetchPolicy: "network-only",
+        }),
+        apolloClient.query<
+          MediaFileMetadataQuery,
+          MediaFileMetadataQueryVariables
+        >({
+          query: MediaFileMetadataDocument,
+          variables: { Id: mediaFileId },
+          fetchPolicy: "network-only",
+        }),
+      ]);
 
       if (result.error) {
-        setError(result.error.message)
-      } else if (result.data?.mediaFileDetails) {
-        setDetails(result.data.mediaFileDetails)
+        setError(result.error.message);
+        setRawMetadata(null);
+      } else if (result.data?.MediaFile) {
+        const file = result.data.MediaFile;
+        const parsedRawMetadata = parseJsonMetadata(
+          metadataResult.data?.MediaFile?.Metadata ?? null,
+        );
+        const detailsMapped: MediaFileDetails = {
+          id: file.Id,
+          file: {
+            id: file.Id,
+            libraryId: file.LibraryId,
+            path: file.Path,
+            relativePath: file.RelativePath ?? null,
+            originalName: file.OriginalName ?? null,
+            sizeBytes: file.Size,
+            sizeFormatted: formatBytes(file.Size),
+            container: file.Container ?? null,
+            videoCodec: file.VideoCodec ?? null,
+            audioCodec: file.AudioCodec ?? null,
+            resolution: file.Resolution ?? null,
+            isHdr: file.IsHdr,
+            hdrType: file.HdrType ?? null,
+            width: file.Width ?? null,
+            height: file.Height ?? null,
+            duration: file.Duration ?? null,
+            bitrate: file.Bitrate ?? null,
+            episodeId: file.EpisodeId ?? null,
+            movieId: file.MovieId ?? null,
+            trackId: file.TrackId ?? null,
+            albumId: null,
+            audiobookId: null,
+            chapterId: null,
+            contentType: file.ContentType ?? null,
+            organized: false,
+            organizeStatus: null,
+            organizeError: null,
+            qualityStatus: "UNKNOWN",
+            matchType: null,
+            isManualMatch: false,
+            addedAt: file.AddedAt,
+            matchedAt: null,
+          },
+          videoStreams: (result.data.VideoStreams?.Edges ?? []).map((edge) => ({
+            id: edge.Node.Id,
+            streamIndex: edge.Node.StreamIndex,
+            codec: edge.Node.Codec,
+            codecLongName: edge.Node.CodecLongName ?? null,
+            width: edge.Node.Width,
+            height: edge.Node.Height,
+            aspectRatio: edge.Node.AspectRatio ?? null,
+            frameRate: edge.Node.FrameRate ?? null,
+            bitrate: edge.Node.Bitrate ?? null,
+            pixelFormat: edge.Node.PixelFormat ?? null,
+            hdrType: edge.Node.HdrType ?? null,
+            bitDepth: edge.Node.BitDepth ?? null,
+            language: edge.Node.Language ?? null,
+            title: edge.Node.Title ?? null,
+            isDefault: edge.Node.IsDefault,
+          })),
+          audioStreams: (result.data.AudioStreams?.Edges ?? []).map((edge) => ({
+            id: edge.Node.Id,
+            streamIndex: edge.Node.StreamIndex,
+            codec: edge.Node.Codec,
+            codecLongName: edge.Node.CodecLongName ?? null,
+            channels: edge.Node.Channels,
+            channelLayout: edge.Node.ChannelLayout ?? null,
+            sampleRate: edge.Node.SampleRate ?? null,
+            bitrate: edge.Node.Bitrate ?? null,
+            bitDepth: edge.Node.BitDepth ?? null,
+            language: edge.Node.Language ?? null,
+            title: edge.Node.Title ?? null,
+            isDefault: edge.Node.IsDefault,
+            isCommentary: edge.Node.IsCommentary,
+          })),
+          subtitles: (result.data.Subtitles?.Edges ?? []).map((edge) => ({
+            id: edge.Node.Id,
+            streamIndex: edge.Node.StreamIndex ?? null,
+            sourceType:
+              (edge.Node.SourceType as SubtitleInfo["sourceType"]) ??
+              "EMBEDDED",
+            codec: edge.Node.Codec ?? null,
+            codecLongName: edge.Node.CodecLongName ?? null,
+            language: edge.Node.Language ?? null,
+            title: edge.Node.Title ?? null,
+            isDefault: edge.Node.IsDefault,
+            isForced: edge.Node.IsForced,
+            isHearingImpaired: edge.Node.IsHearingImpaired,
+            filePath: edge.Node.FilePath ?? null,
+          })),
+          chapters: (result.data.MediaChapters?.Edges ?? []).map((edge) => ({
+            id: edge.Node.Id,
+            chapterIndex: edge.Node.ChapterIndex,
+            startSecs: edge.Node.StartSecs,
+            endSecs: edge.Node.EndSecs,
+            title: edge.Node.Title ?? null,
+          })),
+          embeddedMetadata: null as EmbeddedMetadata | null,
+        };
+        setDetails(detailsMapped);
+        setRawMetadata(parsedRawMetadata);
       } else {
-        setError('Media file not found or not yet analyzed')
+        setError("Media file not found or not yet analyzed");
+        setRawMetadata(null);
       }
-      setLoading(false)
-    }
+      setLoading(false);
+    };
 
-    fetchDetails()
-  }, [isOpen, mediaFileId])
+    fetchDetails();
+  }, [isOpen, mediaFileId]);
 
   const handleCopyPath = async () => {
     if (details?.file.path) {
-      await navigator.clipboard.writeText(details.file.path)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      await navigator.clipboard.writeText(details.file.path);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
-  }
+  };
 
-  const file = details?.file
-  const filename = file?.path.split('/').pop() || file?.originalName || 'Unknown'
+  const file = details?.file;
+  const filename =
+    file?.path.split("/").pop() || file?.originalName || "Unknown";
 
   return (
-    <Modal 
-      isOpen={isOpen} 
-      onClose={onClose} 
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
       size="2xl"
       scrollBehavior="inside"
       classNames={{
-        base: 'bg-content1',
-        header: 'border-b border-default-200/50',
-        body: 'py-4',
-        footer: 'border-t border-default-200/50',
+        base: "bg-content1",
+        header: "border-b border-default-200/50",
+        body: "py-4",
+        footer: "border-t border-default-200/50",
       }}
     >
       <ModalContent>
@@ -228,7 +392,9 @@ export function FilePropertiesModal({
               <IconFile size={20} className="text-primary-400" />
             </div>
             <div className="flex-1 min-w-0">
-              <span className="truncate block font-semibold">{overrideTitle || filename}</span>
+              <span className="truncate block font-semibold">
+                {overrideTitle || filename}
+              </span>
               {overrideTitle && file && (
                 <span className="text-xs text-default-400 font-normal truncate block mt-0.5">
                   {filename}
@@ -248,20 +414,22 @@ export function FilePropertiesModal({
               <IconAlertCircle size={48} className="text-warning-400" />
               <p className="text-default-500 text-center">{error}</p>
               <p className="text-default-400 text-sm text-center">
-                The file may not have been analyzed yet. Try rescanning the library.
+                The file may not have been analyzed yet. Try rescanning the
+                library.
               </p>
             </div>
           ) : details ? (
-            <Tabs 
-              selectedKey={selectedTab} 
+            <Tabs
+              selectedKey={selectedTab}
               onSelectionChange={(key) => setSelectedTab(key as string)}
               variant="underlined"
               color="primary"
               classNames={{
-                tabList: 'gap-6 w-full relative rounded-none p-0 border-b border-default-200/50',
-                cursor: 'w-full bg-primary-500',
-                tab: 'max-w-fit px-0 h-10',
-                tabContent: 'group-data-[selected=true]:text-primary-500',
+                tabList:
+                  "gap-6 w-full relative rounded-none p-0 border-b border-default-200/50",
+                cursor: "w-full bg-primary-500",
+                tab: "max-w-fit px-0 h-10",
+                tabContent: "group-data-[selected=true]:text-primary-500",
               }}
             >
               <Tab
@@ -277,22 +445,42 @@ export function FilePropertiesModal({
                   {/* Media Summary Badges - show first as visual highlight */}
                   <div className="flex flex-wrap gap-2">
                     {file?.resolution && (
-                      <Chip size="md" variant="flat" color="primary" classNames={{ content: 'font-semibold' }}>
+                      <Chip
+                        size="md"
+                        variant="flat"
+                        color="primary"
+                        classNames={{ content: "font-semibold" }}
+                      >
                         {file.resolution}
                       </Chip>
                     )}
                     {file?.videoCodec && (
-                      <Chip size="md" variant="flat" color="secondary" classNames={{ content: 'font-semibold' }}>
+                      <Chip
+                        size="md"
+                        variant="flat"
+                        color="secondary"
+                        classNames={{ content: "font-semibold" }}
+                      >
                         {formatVideoCodec(file.videoCodec)}
                       </Chip>
                     )}
                     {file?.hdrType && (
-                      <Chip size="md" variant="flat" color="warning" classNames={{ content: 'font-semibold' }}>
+                      <Chip
+                        size="md"
+                        variant="flat"
+                        color="warning"
+                        classNames={{ content: "font-semibold" }}
+                      >
                         {file.hdrType}
                       </Chip>
                     )}
                     {file?.audioCodec && (
-                      <Chip size="md" variant="flat" color="default" classNames={{ content: 'font-medium' }}>
+                      <Chip
+                        size="md"
+                        variant="flat"
+                        color="default"
+                        classNames={{ content: "font-medium" }}
+                      >
                         {formatAudioCodec(file.audioCodec)}
                       </Chip>
                     )}
@@ -300,31 +488,58 @@ export function FilePropertiesModal({
 
                   {/* File Info Section */}
                   <div className="bg-default-100/30 rounded-xl p-4 border border-default-200/30">
-                    <h4 className="text-sm font-semibold text-primary-400 mb-3 uppercase tracking-wide">File Information</h4>
+                    <h4 className="text-sm font-semibold text-primary-400 mb-3 uppercase tracking-wide">
+                      File Information
+                    </h4>
                     <PropertyRow label="File Name" value={filename} />
                     {file?.originalName && file.originalName !== filename && (
-                      <PropertyRow label="Original Name" value={file.originalName} />
+                      <PropertyRow
+                        label="Original Name"
+                        value={file.originalName}
+                      />
                     )}
                     <PropertyRow label="Size" value={file?.sizeFormatted} />
-                    <PropertyRow label="Container" value={file?.container?.toUpperCase()} />
-                    <PropertyRow label="Duration" value={formatDuration(file?.duration ?? null)} />
-                    <PropertyRow label="Overall Bitrate" value={formatBitrate(file?.bitrate ?? null)} />
-                    <PropertyRow label="Added" value={file?.addedAt ? new Date(file.addedAt).toLocaleString() : null} />
+                    <PropertyRow
+                      label="Container"
+                      value={file?.container?.toUpperCase()}
+                    />
+                    <PropertyRow
+                      label="Duration"
+                      value={formatDuration(file?.duration ?? null)}
+                    />
+                    <PropertyRow
+                      label="Overall Bitrate"
+                      value={formatBitrate(file?.bitrate ?? null)}
+                    />
+                    <PropertyRow
+                      label="Added"
+                      value={
+                        file?.addedAt
+                          ? new Date(file.addedAt).toLocaleString()
+                          : null
+                      }
+                    />
                   </div>
-                  
+
                   {/* Path Section */}
                   <div className="bg-default-100/30 rounded-xl p-4 border border-default-200/30">
                     <div className="flex items-center justify-between mb-2">
-                      <h4 className="text-sm font-semibold text-primary-400 uppercase tracking-wide">File Path</h4>
-                      <Tooltip content={copied ? 'Copied!' : 'Copy path'}>
+                      <h4 className="text-sm font-semibold text-primary-400 uppercase tracking-wide">
+                        File Path
+                      </h4>
+                      <Tooltip content={copied ? "Copied!" : "Copy path"}>
                         <Button
                           size="sm"
                           variant="flat"
-                          color={copied ? 'success' : 'default'}
+                          color={copied ? "success" : "default"}
                           isIconOnly
                           onPress={handleCopyPath}
                         >
-                          {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                          {copied ? (
+                            <IconCheck size={14} />
+                          ) : (
+                            <IconCopy size={14} />
+                          )}
                         </Button>
                       </Tooltip>
                     </div>
@@ -336,20 +551,32 @@ export function FilePropertiesModal({
                   {/* Stream Counts */}
                   <div className="grid grid-cols-4 gap-3">
                     <div className="bg-default-100/30 rounded-lg p-3 text-center border border-default-200/30">
-                      <div className="text-2xl font-bold text-default-foreground">{details.videoStreams.length}</div>
+                      <div className="text-2xl font-bold text-default-foreground">
+                        {details.videoStreams.length}
+                      </div>
                       <div className="text-xs text-default-400 mt-1">Video</div>
                     </div>
                     <div className="bg-default-100/30 rounded-lg p-3 text-center border border-default-200/30">
-                      <div className="text-2xl font-bold text-default-foreground">{details.audioStreams.length}</div>
+                      <div className="text-2xl font-bold text-default-foreground">
+                        {details.audioStreams.length}
+                      </div>
                       <div className="text-xs text-default-400 mt-1">Audio</div>
                     </div>
                     <div className="bg-default-100/30 rounded-lg p-3 text-center border border-default-200/30">
-                      <div className="text-2xl font-bold text-default-foreground">{details.subtitles.length}</div>
-                      <div className="text-xs text-default-400 mt-1">Subtitles</div>
+                      <div className="text-2xl font-bold text-default-foreground">
+                        {details.subtitles.length}
+                      </div>
+                      <div className="text-xs text-default-400 mt-1">
+                        Subtitles
+                      </div>
                     </div>
                     <div className="bg-default-100/30 rounded-lg p-3 text-center border border-default-200/30">
-                      <div className="text-2xl font-bold text-default-foreground">{details.chapters.length}</div>
-                      <div className="text-xs text-default-400 mt-1">Chapters</div>
+                      <div className="text-2xl font-bold text-default-foreground">
+                        {details.chapters.length}
+                      </div>
+                      <div className="text-xs text-default-400 mt-1">
+                        Chapters
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -465,7 +692,11 @@ export function FilePropertiesModal({
                 }
               >
                 <div className="pt-4">
-                  <MetadataTab metadata={details.embeddedMetadata} />
+                  <MetadataTab
+                    metadata={details.embeddedMetadata}
+                    rawMetadata={rawMetadata}
+                    isDark={isDark}
+                  />
                 </div>
               </Tab>
             </Tabs>
@@ -479,7 +710,7 @@ export function FilePropertiesModal({
         </ModalFooter>
       </ModalContent>
     </Modal>
-  )
+  );
 }
 
 /** Video stream details card */
@@ -491,23 +722,42 @@ function VideoStreamCard({ stream }: { stream: VideoStreamInfo }) {
       subtitle={stream.codecLongName || undefined}
       badges={
         <>
-          {stream.isDefault && <Chip size="sm" variant="flat" color="primary">Default</Chip>}
-          {stream.hdrType && <Chip size="sm" variant="flat" color="warning">{stream.hdrType}</Chip>}
+          {stream.isDefault && (
+            <Chip size="sm" variant="flat" color="primary">
+              Default
+            </Chip>
+          )}
+          {stream.hdrType && (
+            <Chip size="sm" variant="flat" color="warning">
+              {stream.hdrType}
+            </Chip>
+          )}
         </>
       }
     >
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-        <PropertyRow label="Resolution" value={`${stream.width}×${stream.height}`} />
+        <PropertyRow
+          label="Resolution"
+          value={`${stream.width}×${stream.height}`}
+        />
         <PropertyRow label="Aspect Ratio" value={stream.aspectRatio} />
         <PropertyRow label="Frame Rate" value={stream.frameRate} />
         <PropertyRow label="Bitrate" value={formatBitrate(stream.bitrate)} />
         <PropertyRow label="Pixel Format" value={stream.pixelFormat} />
-        <PropertyRow label="Bit Depth" value={stream.bitDepth ? `${stream.bitDepth}-bit` : null} />
-        {stream.language && <PropertyRow label="Language" value={getLanguageName(stream.language)} />}
+        <PropertyRow
+          label="Bit Depth"
+          value={stream.bitDepth ? `${stream.bitDepth}-bit` : null}
+        />
+        {stream.language && (
+          <PropertyRow
+            label="Language"
+            value={getLanguageName(stream.language)}
+          />
+        )}
         {stream.title && <PropertyRow label="Title" value={stream.title} />}
       </div>
     </StreamCard>
-  )
+  );
 }
 
 /** Audio stream details card */
@@ -519,63 +769,106 @@ function AudioStreamCard({ stream }: { stream: AudioStreamInfo }) {
       subtitle={stream.codecLongName || undefined}
       badges={
         <>
-          {stream.isDefault && <Chip size="sm" variant="flat" color="primary">Default</Chip>}
-          {stream.isCommentary && <Chip size="sm" variant="flat" color="secondary">Commentary</Chip>}
+          {stream.isDefault && (
+            <Chip size="sm" variant="flat" color="primary">
+              Default
+            </Chip>
+          )}
+          {stream.isCommentary && (
+            <Chip size="sm" variant="flat" color="secondary">
+              Commentary
+            </Chip>
+          )}
           {stream.language && (
-            <Chip size="sm" variant="flat" color="default">{getLanguageName(stream.language)}</Chip>
+            <Chip size="sm" variant="flat" color="default">
+              {getLanguageName(stream.language)}
+            </Chip>
           )}
         </>
       }
     >
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-        <PropertyRow label="Channels" value={stream.channelLayout || `${stream.channels} ch`} />
-        <PropertyRow label="Sample Rate" value={formatSampleRate(stream.sampleRate)} />
+        <PropertyRow
+          label="Channels"
+          value={stream.channelLayout || `${stream.channels} ch`}
+        />
+        <PropertyRow
+          label="Sample Rate"
+          value={formatSampleRate(stream.sampleRate)}
+        />
         <PropertyRow label="Bitrate" value={formatBitrate(stream.bitrate)} />
-        <PropertyRow label="Bit Depth" value={stream.bitDepth ? `${stream.bitDepth}-bit` : null} />
+        <PropertyRow
+          label="Bit Depth"
+          value={stream.bitDepth ? `${stream.bitDepth}-bit` : null}
+        />
         {stream.title && <PropertyRow label="Title" value={stream.title} />}
       </div>
     </StreamCard>
-  )
+  );
 }
 
 /** Subtitle track card */
 function SubtitleCard({ subtitle }: { subtitle: SubtitleInfo }) {
-  const sourceLabel = {
-    EMBEDDED: 'Embedded',
-    EXTERNAL: 'External File',
-    DOWNLOADED: 'Downloaded',
-  }[subtitle.sourceType] || subtitle.sourceType
+  const sourceLabel =
+    {
+      EMBEDDED: "Embedded",
+      EXTERNAL: "External File",
+      DOWNLOADED: "Downloaded",
+    }[subtitle.sourceType] || subtitle.sourceType;
 
   return (
     <StreamCard
       icon={<IconFileText size={16} />}
-      title={subtitle.language ? getLanguageName(subtitle.language) : 'Unknown Language'}
+      title={
+        subtitle.language
+          ? getLanguageName(subtitle.language)
+          : "Unknown Language"
+      }
       subtitle={subtitle.codec || undefined}
       badges={
         <>
-          <Chip size="sm" variant="flat" color="default">{sourceLabel}</Chip>
-          {subtitle.isDefault && <Chip size="sm" variant="flat" color="primary">Default</Chip>}
-          {subtitle.isForced && <Chip size="sm" variant="flat" color="warning">Forced</Chip>}
-          {subtitle.isHearingImpaired && <Chip size="sm" variant="flat" color="secondary">SDH</Chip>}
+          <Chip size="sm" variant="flat" color="default">
+            {sourceLabel}
+          </Chip>
+          {subtitle.isDefault && (
+            <Chip size="sm" variant="flat" color="primary">
+              Default
+            </Chip>
+          )}
+          {subtitle.isForced && (
+            <Chip size="sm" variant="flat" color="warning">
+              Forced
+            </Chip>
+          )}
+          {subtitle.isHearingImpaired && (
+            <Chip size="sm" variant="flat" color="secondary">
+              SDH
+            </Chip>
+          )}
         </>
       }
     >
       <div className="text-xs">
         {subtitle.title && <PropertyRow label="Title" value={subtitle.title} />}
         {subtitle.filePath && (
-          <PropertyRow label="File" value={subtitle.filePath.split('/').pop()} />
+          <PropertyRow
+            label="File"
+            value={subtitle.filePath.split("/").pop()}
+          />
         )}
       </div>
     </StreamCard>
-  )
+  );
 }
 
 /** Chapter row */
 function ChapterRow({ chapter }: { chapter: ChapterInfo }) {
-  const duration = chapter.endSecs - chapter.startSecs
+  const duration = chapter.endSecs - chapter.startSecs;
   return (
     <div className="flex items-center gap-3 py-2.5 px-4 bg-default-100/30 rounded-lg hover:bg-default-100/50 transition-colors border border-default-200/20">
-      <span className="text-default-400 text-xs w-6 font-medium">{chapter.chapterIndex + 1}</span>
+      <span className="text-default-400 text-xs w-6 font-medium">
+        {chapter.chapterIndex + 1}
+      </span>
       <span className="flex-1 text-sm truncate text-default-foreground">
         {chapter.title || `Chapter ${chapter.chapterIndex + 1}`}
       </span>
@@ -590,49 +883,59 @@ function ChapterRow({ chapter }: { chapter: ChapterInfo }) {
         ({formatDuration(duration)})
       </span>
     </div>
-  )
+  );
 }
 
-/** Metadata tab showing embedded tags */
-function MetadataTab({ metadata }: { metadata: EmbeddedMetadata | null }) {
-  if (!metadata) {
+/** Metadata tab showing raw ffprobe metadata and legacy embedded tags */
+function MetadataTab({
+  metadata,
+  rawMetadata,
+  isDark,
+}: {
+  metadata: EmbeddedMetadata | null;
+  rawMetadata: unknown | null;
+  isDark: boolean;
+}) {
+  const hasRawMetadata = rawMetadata !== null && rawMetadata !== undefined;
+  const hasLegacyMetadata = Boolean(metadata?.extracted);
+
+  if (!hasRawMetadata && !hasLegacyMetadata) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-default-400">
         <IconTags size={48} className="mb-2 opacity-50" />
         <p>No metadata available</p>
       </div>
-    )
-  }
-
-  if (!metadata.extracted) {
-    return (
-      <div className="flex flex-col items-center justify-center py-12 text-default-400">
-        <IconTags size={48} className="mb-2 opacity-50" />
-        <p>Metadata not yet extracted</p>
-        <p className="text-xs mt-2 text-default-300">Run a library scan to extract embedded tags</p>
-      </div>
-    )
-  }
-
-  // Check if there's any actual metadata
-  const hasAudioMeta = metadata.artist || metadata.album || metadata.title || metadata.trackNumber
-  const hasVideoMeta = metadata.showName || metadata.season || metadata.episode
-
-  if (!hasAudioMeta && !hasVideoMeta) {
-    return (
-      <div className="flex flex-col items-center justify-center py-12 text-default-400">
-        <IconTags size={48} className="mb-2 opacity-50" />
-        <p>No embedded tags found in file</p>
-      </div>
-    )
+    );
   }
 
   return (
     <div className="space-y-4">
-      {/* Audio metadata */}
-      {hasAudioMeta && (
+      {hasRawMetadata && (
+        <div className="p-4">
+          <h4 className="text-sm font-semibold text-primary-400 mb-3 uppercase tracking-wide">
+            Raw FFprobe JSON
+          </h4>
+          <div className="max-h-[28rem] overflow-auto rounded-lg border border-default-200/40 bg-content2 p-3">
+            {typeof rawMetadata === "string" ? (
+              <pre className="text-xs whitespace-pre-wrap text-default-700">
+                {rawMetadata}
+              </pre>
+            ) : (
+              <JsonView
+                data={rawMetadata as object}
+                shouldExpandNode={allExpanded}
+                style={isDark ? darkStyles : defaultStyles}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {hasLegacyMetadata && metadata && (
         <div className="bg-default-100/30 rounded-xl p-4 border border-default-200/30">
-          <h4 className="text-sm font-semibold text-primary-400 mb-3 uppercase tracking-wide">Audio Tags</h4>
+          <h4 className="text-sm font-semibold text-default-500 mb-3 uppercase tracking-wide">
+            Legacy Embedded Tags
+          </h4>
           <PropertyRow label="Artist" value={metadata.artist} />
           <PropertyRow label="Album" value={metadata.album} />
           <PropertyRow label="Title" value={metadata.title} />
@@ -640,44 +943,13 @@ function MetadataTab({ metadata }: { metadata: EmbeddedMetadata | null }) {
           <PropertyRow label="Disc" value={metadata.discNumber?.toString()} />
           <PropertyRow label="Year" value={metadata.year?.toString()} />
           <PropertyRow label="Genre" value={metadata.genre} />
-        </div>
-      )}
-
-      {/* Video metadata */}
-      {hasVideoMeta && (
-        <div className="bg-default-100/30 rounded-xl p-4 border border-default-200/30">
-          <h4 className="text-sm font-semibold text-primary-400 mb-3 uppercase tracking-wide">Video Tags</h4>
           <PropertyRow label="Show" value={metadata.showName} />
           <PropertyRow label="Season" value={metadata.season?.toString()} />
           <PropertyRow label="Episode" value={metadata.episode?.toString()} />
         </div>
       )}
-
-      {/* Album Art */}
-      {metadata.coverArtBase64 && metadata.coverArtMime && (
-        <div className="bg-default-100/30 rounded-xl p-4 border border-default-200/30">
-          <h4 className="text-sm font-semibold text-primary-400 mb-3 uppercase tracking-wide">Album Art</h4>
-          <div className="flex justify-center">
-            <img
-              src={`data:${metadata.coverArtMime};base64,${metadata.coverArtBase64}`}
-              alt="Album Art"
-              className="max-w-xs max-h-64 rounded-lg shadow-lg object-contain"
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Lyrics */}
-      {metadata.lyrics && (
-        <div className="bg-default-100/30 rounded-xl p-4 border border-default-200/30">
-          <h4 className="text-sm font-semibold text-primary-400 mb-3 uppercase tracking-wide">Lyrics</h4>
-          <pre className="text-sm text-default-600 whitespace-pre-wrap font-sans leading-relaxed max-h-96 overflow-y-auto">
-            {metadata.lyrics}
-          </pre>
-        </div>
-      )}
     </div>
-  )
+  );
 }
 
-export default FilePropertiesModal
+export default FilePropertiesModal;

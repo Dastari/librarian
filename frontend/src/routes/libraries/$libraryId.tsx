@@ -10,7 +10,6 @@ import {
   useEffect,
   useCallback,
   useRef,
-  useMemo,
   createContext,
   useContext,
 } from "react";
@@ -30,155 +29,66 @@ import { RouteError } from "../../components/RouteError";
 import {
   AddShowModal,
   LibraryLayout,
+  ScanLibraryModal,
   type LibraryTab,
 } from "../../components/library";
 import { sanitizeError } from "../../lib/format";
 import type {
-  Library,
-  Show,
-  LibraryChangedEvent,
-  LibraryResult,
+  DeleteShowRouteMutation,
+  DeleteShowRouteMutationVariables,
+  LibraryChangedSubscription,
+  LibraryChangedSubscriptionVariables,
+  LibraryDetailRouteQuery,
+  LibraryDetailRouteQueryVariables,
+  ShowChangedSubscription,
+  ShowChangedSubscriptionVariables,
+  UpdateLibraryRouteMutation,
+  UpdateLibraryRouteMutationVariables,
 } from "../../lib/graphql/generated/graphql";
+import { IconRefresh } from "@tabler/icons-react";
 import {
   useQuery,
   useMutation,
   useSubscription,
-  gql,
 } from "../../lib/graphql/client";
+import {
+  DeleteShowRouteDocument,
+  LibraryChangedDocument,
+  LibraryDetailRouteDocument,
+  ShowChangedDocument,
+  UpdateLibraryRouteDocument,
+} from "../../lib/graphql/generated/graphql";
 import {
   getLibraryTypeInfo,
   type LibraryType,
   type UpdateLibraryInput,
 } from "../../lib/graphql";
 
-const LIBRARY_DETAIL_QUERY = gql`
-  query LibraryDetail($Id: String!) {
-    Library(Id: $Id) {
-      Id
-      Name
-      Path
-      LibraryType
-      Scanning
-    }
-  }
-`;
-
-const LIBRARY_SHOWS_QUERY = gql`
-  query LibraryShows($libraryId: String!) {
-    Shows(Where: { LibraryId: { Eq: $libraryId } }, Page: { Limit: 5000, Offset: 0 }) {
-      Edges {
-        Node {
-          Id
-          LibraryId
-          Title
-          SortTitle
-          TvmazeId
-          TmdbId
-          ImdbId
-          Status
-          Year
-          PosterUrl
-          BackdropUrl
-          Path
-          Monitored
-          Genres
-          Runtime
-          Network
-          AirDay
-          AirTime
-          FirstAirDate
-          LastAirDate
-          Overview
-          Rating
-          VoteCount
-          Certification
-          EpisodeCount
-          EpisodeFileCount
-          SeasonCount
-          DownloadedEpisodeCount
-          MissingEpisodeCount
-          DownloadingEpisodeCount
-          HasFiles
-          LastInfoSync
-          LastDiskSync
-          NextAiring
-          CreatedAt
-          UpdatedAt
-          Ended
-        }
-      }
-    }
-  }
-`;
-
-const DELETE_SHOW_MUTATION = gql`
-  mutation DeleteShow($Id: String!) {
-    DeleteShow(Id: $Id) {
-      Success
-      Error
-    }
-  }
-`;
-
-const UPDATE_LIBRARY_MUTATION = gql`
-  mutation UpdateLibrary($Id: String!, $Input: UpdateLibraryInput!) {
-    UpdateLibrary(Id: $Id, Input: $Input) {
-      Success
-      Error
-      Library {
-        Id
-      }
-    }
-  }
-`;
-
-const SCAN_LIBRARY_MUTATION = gql`
-  mutation ScanLibrary($Id: String!) {
-    ScanLibrary(Id: $Id) {
-      Status
-      Message
-    }
-  }
-`;
-
-const LIBRARY_CHANGED_SUBSCRIPTION = gql`
-  subscription LibraryChanged {
-    LibraryChanged {
-      Id
-      Library {
-        Id
-        Name
-        Path
-        LibraryType
-        Scanning
-      }
-    }
-  }
-`;
+type LibraryRouteData = NonNullable<LibraryDetailRouteQuery["Library"]>;
 
 // Context for sharing library data with subroutes
 export interface LibraryContextValue {
-  library: Library;
+  library: LibraryRouteData;
   loading: boolean;
-  tvShows: Show[];
   refetch: () => void;
   actionLoading: boolean;
   handleDeleteShowClick: (showId: string, showName: string) => void;
   handleUpdateLibrary: (input: UpdateLibraryInput) => Promise<void>;
   onOpenAddShow: () => void;
   downloadProgress: ContentProgressMap;
+  mediaRefreshToken: number;
 }
 
 const defaultContextValue: LibraryContextValue = {
-  library: {} as Library,
+  library: {} as LibraryRouteData,
   loading: true,
-  tvShows: [],
   refetch: () => {},
   actionLoading: false,
   handleDeleteShowClick: () => {},
   handleUpdateLibrary: async () => {},
   onOpenAddShow: () => {},
   downloadProgress: new Map(),
+  mediaRefreshToken: 0,
 };
 
 export const LibraryContext =
@@ -209,6 +119,11 @@ function LibraryDetailLayout() {
   const location = useLocation();
   const { isOpen, onOpen, onClose } = useDisclosure();
   const {
+    isOpen: isScanOpen,
+    onOpen: onScanOpen,
+    onClose: onScanClose,
+  } = useDisclosure();
+  const {
     isOpen: isConfirmOpen,
     onOpen: onConfirmOpen,
     onClose: onConfirmClose,
@@ -219,53 +134,49 @@ function LibraryDetailLayout() {
     name: string;
   } | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const [mediaRefreshToken, setMediaRefreshToken] = useState(0);
 
   const {
     data: libraryData,
     previousData: previousLibraryData,
     loading: libraryLoading,
     refetch: refetchLibrary,
-  } = useQuery<{ Library: Library | null }>(LIBRARY_DETAIL_QUERY, {
+  } = useQuery<LibraryDetailRouteQuery, LibraryDetailRouteQueryVariables>(
+    LibraryDetailRouteDocument,
+    {
     variables: { Id: libraryId },
     fetchPolicy: "cache-and-network",
-  });
-
-  const {
-    data: showsData,
-    previousData: previousShowsData,
-    loading: showsLoading,
-    refetch: refetchShows,
-  } = useQuery<{ Shows: { Edges: Array<{ Node: Show }> } }>(LIBRARY_SHOWS_QUERY, {
-    variables: { libraryId },
-    fetchPolicy: "cache-and-network",
-  });
-
-  const library = libraryData?.Library ?? previousLibraryData?.Library ?? null;
-  const tvShows = useMemo(
-    () => (showsData?.Shows?.Edges ?? previousShowsData?.Shows?.Edges ?? []).map((edge) => edge.Node),
-    [showsData?.Shows?.Edges, previousShowsData?.Shows?.Edges],
+    },
   );
 
+  const library = libraryData?.Library ?? previousLibraryData?.Library ?? null;
+
   const refetchAll = useCallback(() => {
-    void Promise.all([refetchLibrary(), refetchShows()]);
-  }, [refetchLibrary, refetchShows]);
+    void refetchLibrary();
+  }, [refetchLibrary]);
 
-  const [deleteShow, { loading: deletingShow }] = useMutation<{
-    DeleteShow: { Success: boolean; Error: string | null };
-  }>(DELETE_SHOW_MUTATION);
+  const [deleteShow, { loading: deletingShow }] = useMutation<
+    DeleteShowRouteMutation,
+    DeleteShowRouteMutationVariables
+  >(DeleteShowRouteDocument);
 
-  const [updateLibraryMutation, { loading: updatingLibrary }] = useMutation<{
-    UpdateLibrary: LibraryResult;
-  }>(UPDATE_LIBRARY_MUTATION);
+  const [updateLibraryMutation, { loading: updatingLibrary }] = useMutation<
+    UpdateLibraryRouteMutation,
+    UpdateLibraryRouteMutationVariables
+  >(UpdateLibraryRouteDocument);
 
-  const [scanLibraryMutation, { loading: scanMutationLoading }] = useMutation<{
-    ScanLibrary: { Status: string; Message: string | null };
-  }>(SCAN_LIBRARY_MUTATION);
-
-  const { data: libraryChangedData } = useSubscription<{
-    LibraryChanged: LibraryChangedEvent;
-  }>(LIBRARY_CHANGED_SUBSCRIPTION, {
+  const { data: libraryChangedData } = useSubscription<
+    LibraryChangedSubscription,
+    LibraryChangedSubscriptionVariables
+  >(LibraryChangedDocument, {
     skip: !library,
+  });
+  const { data: showChangedData } = useSubscription<
+    ShowChangedSubscription,
+    ShowChangedSubscriptionVariables
+  >(ShowChangedDocument, {
+    skip: !library,
+    variables: { Filter: { Actions: ["Created", "Updated", "Deleted"] } },
   });
 
   // Determine active tab from URL
@@ -322,8 +233,8 @@ function LibraryDetailLayout() {
   // Subscribe to data changes for live updates
   useDataReactivity(refetchAll, {
     onTorrentComplete: true,
-    periodicInterval: 30000,
-    onFocus: true,
+    periodicInterval: false,
+    onFocus: false,
   });
 
   // Subscribe to content download progress
@@ -359,6 +270,15 @@ function LibraryDetailLayout() {
 
     refetchAll();
   }, [libraryChangedData, library, refetchAll]);
+
+  useEffect(() => {
+    if (!library) return;
+    const event = showChangedData?.ShowChanged;
+    if (!event) return;
+    if (event.Show?.LibraryId && event.Show.LibraryId !== library.Id) return;
+
+    setMediaRefreshToken((v) => v + 1);
+  }, [library, showChangedData]);
 
   const handleDeleteShowClick = useCallback(
     (showId: string, showName: string) => {
@@ -439,29 +359,6 @@ function LibraryDetailLayout() {
     [library, refetchAll, updateLibraryMutation],
   );
 
-  const handleScanLibrary = useCallback(async () => {
-    if (!library) return;
-
-    setIsScanning(true);
-    try {
-      const { data } = await scanLibraryMutation({ variables: { Id: library.Id } });
-
-      addToast({
-        title: "Scan Started",
-        description: data?.ScanLibrary.Message || `Scanning ${library.Name}...`,
-        color: "primary",
-      });
-    } catch (err) {
-      console.error("Failed to scan library:", err);
-      setIsScanning(false);
-      addToast({
-        title: "Error",
-        description: "Failed to start scan",
-        color: "danger",
-      });
-    }
-  }, [library, scanLibraryMutation]);
-
   if (!libraryLoading && !library) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-8">
@@ -490,18 +387,18 @@ function LibraryDetailLayout() {
   if (!library) return null;
 
   const typeInfo = getLibraryTypeInfo(library.LibraryType as LibraryType);
-  const scanningActive = isScanning || library.Scanning || scanMutationLoading;
+  const scanningActive = isScanning || library.Scanning;
 
   const contextValue: LibraryContextValue = {
     library,
-    loading: libraryLoading || showsLoading,
-    tvShows,
+    loading: libraryLoading,
     refetch: refetchAll,
     actionLoading: updatingLibrary || deletingShow,
     handleDeleteShowClick,
     handleUpdateLibrary,
     onOpenAddShow: onOpen,
     downloadProgress,
+    mediaRefreshToken,
   };
 
   return (
@@ -529,11 +426,11 @@ function LibraryDetailLayout() {
                 color="primary"
                 variant="flat"
                 size="sm"
-                onPress={handleScanLibrary}
                 isLoading={scanningActive}
-                isDisabled={scanningActive}
+                startContent={!scanningActive ? <IconRefresh size={16} /> : undefined}
+                onPress={onScanOpen}
               >
-                {scanningActive ? "Scanning..." : "Scan Now"}
+                {scanningActive ? "Scanning..." : "Scan Library"}
               </Button>
             </div>
           </div>
@@ -551,7 +448,21 @@ function LibraryDetailLayout() {
           isOpen={isOpen}
           onClose={onClose}
           libraryId={libraryId}
-          onAdded={refetchAll}
+          onAdded={() => {
+            refetchAll();
+            setMediaRefreshToken((v) => v + 1);
+          }}
+        />
+
+        <ScanLibraryModal
+          isOpen={isScanOpen}
+          onClose={onScanClose}
+          libraryId={libraryId}
+          libraryName={library.Name}
+          onScanStarted={() => {
+            setIsScanning(true);
+            refetchAll();
+          }}
         />
 
         <ConfirmModal

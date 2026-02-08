@@ -168,7 +168,7 @@ impl TvMazeClient {
 
     /// Search for shows by name (with rate limiting and retry)
     pub async fn search_shows(&self, query: &str) -> Result<Vec<TvMazeSearchResult>> {
-        info!("Searching TVMaze for show '{}'", query);
+        info!("Searching TVMaze for show query='{}'", query);
 
         let url = format!("{}/search/shows", self.base_url);
         let client = self.client.clone();
@@ -184,7 +184,10 @@ impl TvMazeClient {
                     let response = client.get_with_query(&url, &[("q", &q)]).await?;
 
                     if response.status().as_u16() == 429 {
-                        warn!("TVMaze rate limit hit, will retry");
+                        warn!(
+                            "TVMaze rate limit hit (HTTP 429) while searching shows for query='{}'; retrying",
+                            q
+                        );
                         anyhow::bail!("Rate limited (429)");
                     }
 
@@ -225,7 +228,10 @@ impl TvMazeClient {
                     let response = client.get(&url).await?;
 
                     if response.status().as_u16() == 429 {
-                        warn!("TVMaze rate limit hit, will retry");
+                        warn!(
+                            "TVMaze rate limit hit (HTTP 429) while fetching show details for tvmaze_id={}; retrying",
+                            tvmaze_id
+                        );
                         anyhow::bail!("Rate limited (429)");
                     }
 
@@ -263,7 +269,10 @@ impl TvMazeClient {
                     let response = client.get(&url).await?;
 
                     if response.status().as_u16() == 429 {
-                        warn!("TVMaze rate limit hit, will retry");
+                        warn!(
+                            "TVMaze rate limit hit (HTTP 429) while fetching episodes for tvmaze_id={}; retrying",
+                            tvmaze_id
+                        );
                         anyhow::bail!("Rate limited (429)");
                     }
 

@@ -158,7 +158,18 @@ impl Service for LoggingService {
     }
 
     async fn start(&self) -> Result<()> {
-        tracing::info!(service = "logging", "Logging service starting");
+        tracing::info!(
+            service = "logging",
+            min_level = ?self.config.min_level,
+            batch_size = self.config.batch_size,
+            flush_interval_ms = self.config.flush_interval_ms,
+            broadcast_capacity = self.config.broadcast_capacity,
+            "Logging service starting: min_level={:?}, batch_size={}, flush_interval_ms={}, broadcast_capacity={}",
+            self.config.min_level,
+            self.config.batch_size,
+            self.config.flush_interval_ms,
+            self.config.broadcast_capacity
+        );
         let db = self
             .services
             .get_database()
@@ -192,7 +203,12 @@ impl Service for LoggingService {
             let _ = state.lock().map(|mut g| *g = Some(Arc::clone(&layer)));
         }
 
-        tracing::info!(service = "logging", "Logging service started");
+        tracing::info!(
+            service = "logging",
+            min_level = ?self.config.min_level,
+            "Logging service started: min_level={:?}",
+            self.config.min_level
+        );
         Ok(())
     }
 
@@ -208,7 +224,10 @@ impl Service for LoggingService {
         if let Some(h) = handle {
             let _ = h.await;
         }
-        tracing::info!(service = "logging", "Stopped");
+        tracing::info!(
+            service = "logging",
+            "Logging service stopped: tracing layer detached and writer task shut down"
+        );
         Ok(())
     }
 
@@ -240,7 +259,13 @@ async fn database_writer_task(
                 batch.push(log);
                 if batch.len() >= batch_size {
                     if let Err(e) = operations::insert_app_logs_batch(&pool, &batch).await {
-                        tracing::error!(error = %e, "Failed to write logs to database");
+                        tracing::error!(
+                            error = %e,
+                            batch_size = batch.len(),
+                            "Failed to write logs to database during size flush: batch_size={}, error={}",
+                            batch.len(),
+                            e
+                        );
                     }
                     batch.clear();
                 }
@@ -248,7 +273,13 @@ async fn database_writer_task(
             _ = interval.tick() => {
                 if !batch.is_empty() {
                     if let Err(e) = operations::insert_app_logs_batch(&pool, &batch).await {
-                        tracing::error!(error = %e, "Failed to write logs to database");
+                        tracing::error!(
+                            error = %e,
+                            batch_size = batch.len(),
+                            "Failed to write logs to database during interval flush: batch_size={}, error={}",
+                            batch.len(),
+                            e
+                        );
                     }
                     batch.clear();
                 }

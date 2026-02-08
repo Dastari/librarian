@@ -27,6 +27,7 @@ pub struct AppSetting {
     #[graphql(name = "Key")]
     #[filterable(type = "string")]
     #[sortable]
+    #[unique]
     pub key: String,
 
     #[graphql(name = "Value")]

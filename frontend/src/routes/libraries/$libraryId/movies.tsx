@@ -1,23 +1,23 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, useRef, useCallback } from "react";
 import { useDisclosure } from '@heroui/modal'
-import { useSubscription, gql } from "../../../lib/graphql/client";
+import { useSubscription } from "../../../lib/graphql/client";
 import {
   LibraryMoviesTab,
   AddMovieModal,
   DeleteMovieModal,
 } from "../../../components/library";
 import { useLibraryContext } from '../$libraryId'
-import { ChangeAction } from "../../../lib/graphql/generated/graphql";
-import { MOVIE_CHANGED_SUBSCRIPTION } from "../../../lib/graphql";
+import {
+  ChangeAction,
+  MovieChangedDocument,
+  type MovieChangedSubscription,
+  type MovieChangedSubscriptionVariables,
+} from "../../../lib/graphql/generated/graphql";
 
 export const Route = createFileRoute('/libraries/$libraryId/movies')({
   component: MoviesPage,
 })
-
-const MOVIE_CHANGED = gql`
-  ${MOVIE_CHANGED_SUBSCRIPTION}
-`;
 
 function MoviesPage() {
   const { library, loading } = useLibraryContext();
@@ -40,17 +40,13 @@ function MoviesPage() {
   const refreshMoviesRef = useRef<(() => void) | null>(null);
 
   // Subscribe to movie changes for this library
-  useSubscription<{
-    MovieChanged: {
-      Id: string;
-      Action: ChangeAction;
-      Movie?: { LibraryId: string } | null;
-    };
-  }>(
-    MOVIE_CHANGED,
+  useSubscription<MovieChangedSubscription, MovieChangedSubscriptionVariables>(
+    MovieChangedDocument,
     {
       variables: {
-        Filter: { Actions: ["Created", "Updated", "Deleted"] },
+        Filter: {
+          Actions: [ChangeAction.Created, ChangeAction.Updated, ChangeAction.Deleted],
+        },
       },
       onData: ({ data }) => {
         const event = data.data?.MovieChanged;

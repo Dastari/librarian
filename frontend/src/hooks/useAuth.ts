@@ -14,6 +14,7 @@ import {
   getRefreshToken,
   hasValidToken,
 } from "../lib/auth";
+import { apolloClient } from "../lib/graphql/client";
 
 // ============================================================================
 // Hook
@@ -39,10 +40,10 @@ export function useAuth() {
     }
 
     try {
-      const result = await mutationPromise(RefreshTokenDocument, {
-          input: { RefreshToken: refreshToken },
-        })
-        ;
+      const result = await apolloClient.mutate({
+        mutation: RefreshTokenDocument,
+        variables: { input: { RefreshToken: refreshToken } },
+      });
 
       const payload = result.data?.RefreshToken;
       if (payload?.Success && payload.Tokens) {
@@ -148,10 +149,10 @@ export function useAuth() {
   const signIn = async (email: string, password: string) => {
     setError(null);
 
-    const result = await mutationPromise(LoginDocument, {
-        input: { UsernameOrEmail: email, Password: password },
-      })
-      ;
+    const result = await apolloClient.mutate({
+      mutation: LoginDocument,
+      variables: { input: { UsernameOrEmail: email, Password: password } },
+    });
 
     if (result.error) {
       throw new Error(result.error.message || "Login failed");
@@ -195,14 +196,16 @@ export function useAuth() {
   const signUp = async (email: string, name: string, password: string) => {
     setError(null);
 
-    const result = await mutationPromise(RegisterDocument, {
+    const result = await apolloClient.mutate({
+      mutation: RegisterDocument,
+      variables: {
         input: {
           Email: email,
           Name: name,
           Password: password,
         },
-      })
-      ;
+      },
+    });
 
     if (result.error) {
       throw new Error(result.error.message || "Registration failed");
@@ -242,10 +245,10 @@ export function useAuth() {
 
     try {
       if (refreshToken) {
-        await mutationPromise(LogoutDocument, {
-            input: { RefreshToken: refreshToken },
-          })
-          ;
+        await apolloClient.mutate({
+          mutation: LogoutDocument,
+          variables: { input: { RefreshToken: refreshToken } },
+        });
       }
     } catch (err) {
       // Log but don't throw - we still want to clear local state

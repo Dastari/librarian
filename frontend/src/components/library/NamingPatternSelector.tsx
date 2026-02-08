@@ -1,41 +1,48 @@
-import { useState, useEffect } from 'react'
-import { Select, SelectItem } from '@heroui/select'
-import { Input } from '@heroui/input'
-import { Switch } from '@heroui/switch'
-import { Spinner } from '@heroui/spinner'
-import { IconTemplate, IconPencil } from '@tabler/icons-react'
-import type { NamingPattern } from '../../lib/graphql/generated/graphql'
-import { NAMING_PATTERNS_QUERY } from '../../lib/graphql'
-import { previewNamingPattern } from '../../lib/format'
+import { useState, useEffect } from "react";
+import { Select, SelectItem } from "@heroui/select";
+import { Input } from "@heroui/input";
+import { Switch } from "@heroui/switch";
+import { Spinner } from "@heroui/spinner";
+import { IconTemplate, IconPencil } from "@tabler/icons-react";
+import {
+  OrganizationNamingPatternsDocument,
+  type OrganizationNamingPatternsQuery,
+} from "../../lib/graphql/generated/graphql";
+import { apolloClient } from "../../lib/graphql/client";
+import { previewNamingPattern } from "../../lib/format";
 
 interface NamingPatternSelectorProps {
-  value: string | null
-  onChange: (pattern: string | null) => void
+  value: string | null;
+  onChange: (pattern: string | null) => void;
   /** Label for the input group */
-  label?: string
+  label?: string;
   /** Whether the parent is disabled */
-  isDisabled?: boolean
+  isDisabled?: boolean;
   /** Library type to filter patterns by (tv, movies, music, audiobooks) */
-  libraryType?: string
+  libraryType?: string;
   /** Signal to close popovers when parent dialogs close */
-  closeSignal?: number
+  closeSignal?: number;
+  /** Auto-select the default preset when library type changes and current value is unset/invalid */
+  autoSelectDefaultForLibraryType?: boolean;
 }
 
 // Variable descriptions by library type
 const VARIABLE_DESCRIPTIONS: Record<string, string> = {
-  tv: '{show}, {season}, {season:02}, {episode}, {episode:02}, {title}, {ext}, {year}',
-  movies: '{title}, {year}, {quality}, {ext}, {original}',
-  music: '{artist}, {album}, {year}, {track}, {track:02}, {title}, {ext}, {original}',
-  audiobooks: '{author}, {title}, {series}, {chapter}, {chapter:02}, {narrator}, {ext}, {original}',
-}
+  tv: "{show}, {season}, {season:02}, {episode}, {episode:02}, {title}, {ext}, {year}",
+  movies: "{title}, {year}, {quality}, {ext}, {original}",
+  music:
+    "{artist}, {album}, {year}, {track}, {track:02}, {title}, {ext}, {original}",
+  audiobooks:
+    "{author}, {title}, {series}, {chapter}, {chapter:02}, {narrator}, {ext}, {original}",
+};
 
 // Placeholder patterns by library type
 const PLACEHOLDER_PATTERNS: Record<string, string> = {
-  tv: '{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}',
-  movies: '{title} ({year})/{title} ({year}).{ext}',
-  music: '{artist}/{album} ({year})/{track:02} - {title}.{ext}',
-  audiobooks: '{author}/{title}/{chapter:02} - {chapter_title}.{ext}',
-}
+  tv: "{show}/Season {season:02}/{show} - S{season:02}E{episode:02} - {title}.{ext}",
+  movies: "{title} ({year})/{title} ({year}).{ext}",
+  music: "{artist}/{album} ({year})/{track:02} - {title}.{ext}",
+  audiobooks: "{author}/{title}/{chapter:02} - {chapter_title}.{ext}",
+};
 
 /**
  * A selector for naming patterns.
@@ -45,95 +52,131 @@ const PLACEHOLDER_PATTERNS: Record<string, string> = {
 export function NamingPatternSelector({
   value,
   onChange,
-  label = 'File Naming Pattern',
+  label = "File Naming Pattern",
   isDisabled = false,
   libraryType,
   closeSignal,
+  autoSelectDefaultForLibraryType = false,
 }: NamingPatternSelectorProps) {
-  const [allPatterns, setAllPatterns] = useState<NamingPattern[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [useCustom, setUseCustom] = useState(false)
-  const [customPattern, setCustomPattern] = useState('')
-  const [isSelectOpen, setIsSelectOpen] = useState(false)
+  type NamingPatternRow =
+    OrganizationNamingPatternsQuery["NamingPatterns"]["Edges"][number]["Node"];
+  const [allPatterns, setAllPatterns] = useState<NamingPatternRow[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [useCustom, setUseCustom] = useState(false);
+  const [customPattern, setCustomPattern] = useState("");
+  const [isSelectOpen, setIsSelectOpen] = useState(false);
 
   // Filter patterns by library type
   const patterns = libraryType
-    ? allPatterns.filter(p => p.LibraryType === libraryType)
-    : allPatterns
+    ? allPatterns.filter((p) => p.LibraryType === libraryType)
+    : allPatterns;
 
   // Fetch available patterns
   useEffect(() => {
     const fetchPatterns = async () => {
       try {
-        const result = await queryPromise<{ NamingPatterns: { Edges: Array<{ Node: NamingPattern }> } }>(NAMING_PATTERNS_QUERY, {})
-          
-        
-        if (result.data?.NamingPatterns?.Edges) {
-          const nodes = result.data.NamingPatterns.Edges.map(e => e.Node)
-          setAllPatterns(nodes)
-          
-          // Check if current value matches a preset or is custom
+        const { data } =
+          await apolloClient.query<OrganizationNamingPatternsQuery>({
+            query: OrganizationNamingPatternsDocument,
+            fetchPolicy: "network-only",
+            variables: {
+              OrderBy: [{ Name: "Asc" }],
+              Page: { Limit: 200, Offset: 0 },
+            },
+          });
+
+        if (data?.NamingPatterns?.Edges) {
+          const nodes = data.NamingPatterns.Edges.map((e) => e.Node);
+          setAllPatterns(nodes);
+
+          // Check if current value matches a preset for this library type.
+          // In create flow with auto-select enabled, do not force custom mode.
           if (value) {
             const filteredPatterns = libraryType
-              ? nodes.filter(p => p.LibraryType === libraryType)
-              : nodes
+              ? nodes.filter((p) => p.LibraryType === libraryType)
+              : nodes;
             const matchingPreset = filteredPatterns.find(
-              (p) => p.Pattern === value
-            )
-            if (!matchingPreset) {
-              setUseCustom(true)
-              setCustomPattern(value)
+              (p) => p.Pattern === value,
+            );
+            if (!matchingPreset && !autoSelectDefaultForLibraryType) {
+              setUseCustom(true);
+              setCustomPattern(value);
             }
           }
         }
       } catch (error) {
-        console.error('Failed to fetch naming patterns:', error)
+        console.error("Failed to fetch naming patterns:", error);
       } finally {
-        setIsLoading(false)
+        setIsLoading(false);
       }
-    }
+    };
 
-    fetchPatterns()
-  }, [value, libraryType])
+    fetchPatterns();
+  }, [value, libraryType, autoSelectDefaultForLibraryType]);
 
   useEffect(() => {
     if (closeSignal !== undefined) {
-      setIsSelectOpen(false)
+      setIsSelectOpen(false);
     }
-  }, [closeSignal])
+  }, [closeSignal]);
+
+  // In create flows, keep pattern aligned with the selected library type:
+  // when no value is set (or current value doesn't exist for this type), pick the default.
+  useEffect(() => {
+    if (!autoSelectDefaultForLibraryType || isLoading || useCustom) return;
+    if (!patterns.length) return;
+
+    const hasMatchingPreset =
+      !!value && patterns.some((p) => p.Pattern === value);
+    if (hasMatchingPreset) return;
+
+    const defaultPattern = patterns.find((p) => p.IsDefault) || patterns[0];
+    if (defaultPattern && defaultPattern.Pattern !== value) {
+      onChange(defaultPattern.Pattern);
+    }
+  }, [
+    autoSelectDefaultForLibraryType,
+    isLoading,
+    useCustom,
+    patterns,
+    value,
+    onChange,
+  ]);
 
   // Find the currently selected pattern ID based on the pattern string
-  const selectedPatternId = patterns.find(p => p.Pattern === value)?.Id || ''
-  
+  const selectedPatternId = patterns.find((p) => p.Pattern === value)?.Id || "";
+
   // Get appropriate description and placeholder for this library type
-  const variableDescription = VARIABLE_DESCRIPTIONS[libraryType || 'tv'] || VARIABLE_DESCRIPTIONS.tv
-  const placeholderPattern = PLACEHOLDER_PATTERNS[libraryType || 'tv'] || PLACEHOLDER_PATTERNS.tv
+  const variableDescription =
+    VARIABLE_DESCRIPTIONS[libraryType || "tv"] || VARIABLE_DESCRIPTIONS.tv;
+  const placeholderPattern =
+    PLACEHOLDER_PATTERNS[libraryType || "tv"] || PLACEHOLDER_PATTERNS.tv;
 
   const handlePatternSelect = (patternId: string) => {
-    const pattern = patterns.find(p => p.Id === patternId)
+    const pattern = patterns.find((p) => p.Id === patternId);
     if (pattern) {
-      onChange(pattern.Pattern)
+      onChange(pattern.Pattern);
     }
-  }
+  };
 
   const handleCustomToggle = (checked: boolean) => {
-    setUseCustom(checked)
+    setUseCustom(checked);
     if (!checked) {
       // Switch back to preset - use default pattern
-      const defaultPattern = patterns.find(p => p.IsDefault) || patterns[0]
+      const defaultPattern = patterns.find((p) => p.IsDefault) || patterns[0];
       if (defaultPattern) {
-        onChange(defaultPattern.Pattern)
+        onChange(defaultPattern.Pattern);
       }
     } else {
       // Switch to custom - keep current value or use current preset value
-      setCustomPattern(value || '')
+      setCustomPattern(value || "");
     }
-  }
+  };
 
   const handleCustomPatternChange = (newPattern: string) => {
-    setCustomPattern(newPattern)
-    onChange(newPattern)
-  }
+    setCustomPattern(newPattern);
+    onChange(newPattern);
+  };
 
   if (isLoading) {
     return (
@@ -141,7 +184,7 @@ export function NamingPatternSelector({
         <Spinner size="sm" />
         <span className="text-sm text-default-500">Loading patterns...</span>
       </div>
-    )
+    );
   }
 
   return (
@@ -171,7 +214,7 @@ export function NamingPatternSelector({
           size="sm"
           description={`Available variables: ${variableDescription}`}
           classNames={{
-            label: 'text-sm font-medium text-primary!',
+            label: "text-sm font-medium text-primary!",
           }}
         />
       ) : (
@@ -181,8 +224,8 @@ export function NamingPatternSelector({
           onOpenChange={setIsSelectOpen}
           selectedKeys={selectedPatternId ? [selectedPatternId] : []}
           onSelectionChange={(keys) => {
-            const selected = Array.from(keys)[0] as string
-            if (selected) handlePatternSelect(selected)
+            const selected = Array.from(keys)[0] as string;
+            if (selected) handlePatternSelect(selected);
           }}
           placeholder="Select a naming pattern"
           startContent={<IconTemplate size={16} className="text-default-400" />}
@@ -222,5 +265,5 @@ export function NamingPatternSelector({
         </div>
       )}
     </div>
-  )
+  );
 }

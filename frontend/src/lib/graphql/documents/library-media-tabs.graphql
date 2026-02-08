@@ -1,0 +1,110 @@
+query LibraryAlbumsTab($LibraryId: String!) {
+  Albums(
+    Where: { LibraryId: { Eq: $LibraryId } }
+    Page: { Limit: 500, Offset: 0 }
+  ) {
+    Edges {
+      Node {
+        Id
+        ArtistId
+        LibraryId
+        Name
+        SortName
+        Year
+        MusicbrainzId
+        AlbumType
+        Genres
+        Label
+        Country
+        ReleaseDate
+        CoverUrl
+        TrackCount
+        DiscCount
+        TotalDurationSecs
+        HasFiles
+        SizeBytes
+        Path
+      }
+    }
+  }
+}
+
+query LibraryArtistsTab($LibraryId: String!) {
+  Artists(
+    Where: { LibraryId: { Eq: $LibraryId } }
+    Page: { Limit: 500, Offset: 0 }
+  ) {
+    Edges {
+      Node {
+        Id
+        LibraryId
+        Name
+        SortName
+        MusicbrainzId
+      }
+    }
+  }
+}
+
+query LibraryAudiobooksTab($LibraryId: String!) {
+  Audiobooks(
+    Where: { LibraryId: { Eq: $LibraryId } }
+    Page: { Limit: 500, Offset: 0 }
+  ) {
+    Edges {
+      Node {
+        Id
+        LibraryId
+        Title
+        SortTitle
+        Isbn
+        Description
+        Publisher
+        Language
+        Narrators
+        CoverUrl
+        HasFiles
+        SizeBytes
+        Path
+        ChapterCount
+        TotalDurationSecs
+        AuthorName
+      }
+    }
+  }
+}
+
+query LibraryUnmatchedMediaFilesTab($LibraryId: String!) {
+  MediaFiles(
+    Where: {
+      LibraryId: { Eq: $LibraryId }
+      EpisodeId: { IsNull: true }
+      MovieId: { IsNull: true }
+      TrackId: { IsNull: true }
+    }
+    OrderBy: [{ AddedAt: Desc }]
+    Page: { Limit: 2000, Offset: 0 }
+  ) {
+    Edges {
+      Node {
+        Id
+        LibraryId
+        Path
+        RelativePath
+        OriginalName
+        Size
+        Container
+        VideoCodec
+        AudioCodec
+        Resolution
+        IsHdr
+        HdrType
+        Width
+        Height
+        Duration
+        EpisodeId
+        AddedAt
+      }
+    }
+  }
+}

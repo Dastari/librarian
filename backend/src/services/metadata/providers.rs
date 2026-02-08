@@ -7,7 +7,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use super::musicbrainz::MusicBrainzClient;
@@ -282,6 +282,90 @@ impl MetadataService {
         self.execute_query(auth_user, mutation, variables).await
     }
 
+    /// Trigger a lightweight Movie update to emit subscription notifications after
+    /// non-GraphQL side effects (e.g., artwork cache writes).
+    async fn notify_movie_changed(&self, auth_user: &AuthUser, movie: &Movie) -> Result<()> {
+        let _ = self
+            .execute_mutation(
+                auth_user,
+                r#"mutation NotifyMovieChanged($Id: String!, $Input: UpdateMovieInput!) {
+                    UpdateMovie(Id: $Id, Input: $Input) { Success Error }
+                }"#,
+                serde_json::json!({
+                    "Id": movie.id,
+                    "Input": {
+                        "Title": movie.title
+                    }
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Trigger a lightweight Show update to emit subscription notifications after
+    /// non-GraphQL side effects (e.g., artwork cache writes).
+    async fn notify_show_changed(&self, auth_user: &AuthUser, show: &Show) -> Result<()> {
+        let _ = self
+            .execute_mutation(
+                auth_user,
+                r#"mutation NotifyShowChanged($Id: String!, $Input: UpdateShowInput!) {
+                    UpdateShow(Id: $Id, Input: $Input) { Success Error }
+                }"#,
+                serde_json::json!({
+                    "Id": show.id,
+                    "Input": {
+                        "Name": show.name
+                    }
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Trigger a lightweight Album update to emit subscription notifications after
+    /// non-GraphQL side effects (e.g., artwork cache writes).
+    async fn notify_album_changed(&self, auth_user: &AuthUser, album: &Album) -> Result<()> {
+        let _ = self
+            .execute_mutation(
+                auth_user,
+                r#"mutation NotifyAlbumChanged($Id: String!, $Input: UpdateAlbumInput!) {
+                    UpdateAlbum(Id: $Id, Input: $Input) { Success Error }
+                }"#,
+                serde_json::json!({
+                    "Id": album.id,
+                    "Input": {
+                        "Name": album.name
+                    }
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Trigger a lightweight Audiobook update to emit subscription notifications after
+    /// non-GraphQL side effects (e.g., artwork cache writes).
+    async fn notify_audiobook_changed(
+        &self,
+        auth_user: &AuthUser,
+        audiobook: &Audiobook,
+    ) -> Result<()> {
+        let _ = self
+            .execute_mutation(
+                auth_user,
+                r#"mutation NotifyAudiobookChanged($Id: String!, $Input: UpdateAudiobookInput!) {
+                    UpdateAudiobook(Id: $Id, Input: $Input) { Success Error }
+                }"#,
+                serde_json::json!({
+                    "Id": audiobook.id,
+                    "Input": {
+                        "Title": audiobook.title
+                    }
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
     fn now_iso_string() -> String {
         chrono::Utc::now()
             .format("%Y-%m-%dT%H:%M:%S%.3fZ")
@@ -300,10 +384,24 @@ impl MetadataService {
             return true;
         }
 
-        // Check database for API key
-        match MetadataSettings::load(&self.db).await {
-            Ok(settings) => settings.tmdb_api_key.is_some(),
-            Err(_) => false,
+        // Query only the TMDB key directly - don't load all settings
+        // (MetadataSettings::load can fail if other settings have JSON parse issues,
+        //  which would silently make this return false)
+        match crate::services::torrent::database::get_setting_string(
+            &self.db,
+            "metadata.tmdb_api_key",
+        )
+        .await
+        {
+            Ok(key) => key.is_some(),
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "Failed to check TMDB API key from database key 'metadata.tmdb_api_key': error={}",
+                    e
+                );
+                false
+            }
         }
     }
 
@@ -330,7 +428,9 @@ impl MetadataService {
         }
 
         // Create new client with current key
-        info!("Creating TMDB client with API key from database");
+        info!(
+            "Creating TMDB client with API key loaded from app_settings key 'metadata.tmdb_api_key'"
+        );
         let client = TmdbClient::new(key);
 
         // Cache the client
@@ -388,7 +488,7 @@ impl MetadataService {
         year: Option<i32>,
     ) -> Result<Vec<MovieSearchResult>> {
         info!(
-            "Searching for movie '{}'{}",
+            "Metadata search requested for movie query='{}'{}",
             query,
             year.map(|y| format!(" ({})", y)).unwrap_or_default()
         );
@@ -427,7 +527,7 @@ impl MetadataService {
 
     /// Search for TV shows on TVMaze
     pub async fn search_tv_shows(&self, query: &str) -> Result<Vec<TvShowSearchResult>> {
-        info!("Searching for TV shows '{}'", query);
+        info!("Metadata search requested for TV shows query='{}'", query);
 
         let tvmaze = self.get_tvmaze_client().await?;
         let results = tvmaze.search_shows(query).await?;
@@ -842,17 +942,18 @@ impl MetadataService {
         // Get movie details from TMDB
         let movie_details = self.get_movie(options.provider_id).await?;
 
-        let movie_id = Uuid::new_v4().to_string();
-        let ts = Self::now_iso_string();
         let data = self
             .execute_mutation(
                 &auth_user,
                 r#"mutation CreateMovie($Input: CreateMovieInput!) {
-                    CreateMovie(Input: $Input) { Success Error }
+                    CreateMovie(Input: $Input) {
+                        Success
+                        Movie { Id }
+                        Error
+                    }
                 }"#,
                 serde_json::json!({
                     "Input": {
-                        "Id": movie_id,
                         "LibraryId": options.library_id.to_string(),
                         "UserId": options.user_id.to_string(),
                         "Title": movie_details.title,
@@ -871,8 +972,6 @@ impl MetadataService {
                         "SpokenLanguages": movie_details.spoken_languages,
                         "TmdbRating": movie_details.vote_average.map(|v| v.to_string()),
                         "TmdbVoteCount": movie_details.vote_count,
-                        "PosterUrl": movie_details.poster_url,
-                        "BackdropUrl": movie_details.backdrop_url,
                         "CollectionId": movie_details.collection_id,
                         "CollectionName": movie_details.collection_name,
                         "CollectionPosterUrl": movie_details.collection_poster_url,
@@ -881,9 +980,7 @@ impl MetadataService {
                         "TmdbStatus": movie_details.tmdb_status,
                         "Monitored": options.monitored,
                         "Wanted": options.monitored,
-                        "HasFile": false,
-                        "CreatedAt": ts,
-                        "UpdatedAt": ts
+                        "HasFile": false
                     }
                 }),
             )
@@ -901,21 +998,31 @@ impl MetadataService {
                 .unwrap_or("Failed to create movie");
             anyhow::bail!(err.to_string());
         }
-        let movie = Movie::get(&self.db, &movie_id)
+        let created_id = data
+            .get("CreateMovie")
+            .and_then(|v| v.get("Movie"))
+            .and_then(|m| m.get("Id"))
+            .and_then(|id| id.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("Movie not found after creation"))?;
+
+        let movie = Movie::get(&self.db, &created_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Movie not found after creation"))?;
 
-        // Cache artwork in background (don't block the response)
+        // Cache artwork, then emit a lightweight entity update so library routes
+        // subscribed to change events refresh when artwork becomes available.
         let artwork_service = crate::services::ArtworkService::new(self.db.clone());
-        let movie_id = movie.id.clone();
-        let poster_url = movie_details.poster_url.clone();
-        let backdrop_url = movie_details.backdrop_url.clone();
-
-        tokio::spawn(async move {
-            artwork_service
-                .cache_movie_artwork(&movie_id, poster_url.as_deref(), backdrop_url.as_deref())
-                .await;
-        });
+        let _ = artwork_service
+            .cache_movie_artwork(
+                &movie.id,
+                movie_details.poster_url.as_deref(),
+                movie_details.backdrop_url.as_deref(),
+            )
+            .await;
+        if let Err(e) = self.notify_movie_changed(&auth_user, &movie).await {
+            warn!(movie_id = %movie.id, error = %e, "Failed to notify movie change after artwork cache");
+        }
 
         Ok(movie)
     }
@@ -983,7 +1090,6 @@ impl MetadataService {
 
         let details = self.get_tv_show(options.provider_id).await?;
 
-        let ts = Self::now_iso_string();
         let auto_download = options.monitor_type != AutoDownloadMode::None;
         let auto_download_mode = match options.monitor_type {
             AutoDownloadMode::None => "NONE",
@@ -1015,9 +1121,7 @@ impl MetadataService {
                         "ContentRating": details.status,
                         "AutoDownload": auto_download,
                         "AutoDownloadMode": auto_download_mode,
-                        "Path": options.path,
-                        "CreatedAt": ts,
-                        "UpdatedAt": ts
+                        "Path": options.path
                     }
                 }),
             )
@@ -1057,15 +1161,19 @@ impl MetadataService {
         )
         .await?;
 
-        // Cache artwork in background
+        // Cache artwork, then emit a lightweight entity update so library routes
+        // subscribed to change events refresh when artwork becomes available.
         let artwork_service = crate::services::ArtworkService::new(self.db.clone());
-        let poster_url = details.poster_url.clone();
-        let backdrop_url = details.backdrop_url.clone();
-        tokio::spawn(async move {
-            artwork_service
-                .cache_show_artwork(&show_id, poster_url.as_deref(), backdrop_url.as_deref())
-                .await;
-        });
+        let _ = artwork_service
+            .cache_show_artwork(
+                &show.id,
+                details.poster_url.as_deref(),
+                details.backdrop_url.as_deref(),
+            )
+            .await;
+        if let Err(e) = self.notify_show_changed(&auth_user, &show).await {
+            warn!(show_id = %show.id, error = %e, "Failed to notify show change after artwork cache");
+        }
 
         Ok(show)
     }
@@ -1080,7 +1188,6 @@ impl MetadataService {
     ) -> Result<()> {
         let tvmaze = self.get_tvmaze_client().await?;
         let episodes = tvmaze.get_episodes(tvmaze_id).await?;
-        let ts = Self::now_iso_string();
 
         for ep in episodes {
             let existing = self
@@ -1178,9 +1285,7 @@ impl MetadataService {
                                 "AirDate": ep.airdate,
                                 "Runtime": runtime,
                                 "TvmazeId": tvmaze_ep_id,
-                                "Wanted": wanted_default,
-                                "CreatedAt": ts,
-                                "UpdatedAt": ts
+                                "Wanted": wanted_default
                             }
                         }),
                     )
@@ -1294,7 +1399,6 @@ impl MetadataService {
         {
             id
         } else {
-            let ts = Self::now_iso_string();
             let created = self
                 .execute_mutation(
                     &auth_user,
@@ -1307,9 +1411,7 @@ impl MetadataService {
                             "UserId": options.user_id.to_string(),
                             "Name": artist_name.clone(),
                             "SortName": artist_name.clone(),
-                            "MusicbrainzId": artist_mbid,
-                            "CreatedAt": ts,
-                            "UpdatedAt": ts
+                            "MusicbrainzId": artist_mbid
                         }
                     }),
                 )
@@ -1338,7 +1440,11 @@ impl MetadataService {
                 .ok_or_else(|| anyhow::anyhow!("Artist not found after creation"))?
         };
 
-        let ts = Self::now_iso_string();
+        let cover_url = musicbrainz
+            .get_cover_art(release_group_id)
+            .await
+            .ok()
+            .flatten();
         let created_album = self
             .execute_mutation(
                 &auth_user,
@@ -1359,9 +1465,7 @@ impl MetadataService {
                         "AutoDownload": false,
                         "AutoDownloadMode": "NONE",
                         "HasFiles": false,
-                        "CoverUrl": musicbrainz.get_cover_art(release_group_id).await.ok().flatten(),
-                        "CreatedAt": ts,
-                        "UpdatedAt": ts
+                        "CoverUrl": cover_url.clone()
                     }
                 }),
             )
@@ -1388,9 +1492,21 @@ impl MetadataService {
             .and_then(|id| id.as_str())
             .ok_or_else(|| anyhow::anyhow!("Album not found after creation"))?;
 
-        Album::get(&self.db, created_album_id)
+        let album = Album::get(&self.db, created_album_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Album not found after creation"))
+            .ok_or_else(|| anyhow::anyhow!("Album not found after creation"))?;
+
+        // Cache artwork, then emit a lightweight entity update so library/media
+        // subscribers refresh once cached artwork is ready.
+        let artwork_service = crate::services::ArtworkService::new(self.db.clone());
+        let _ = artwork_service
+            .cache_album_artwork(&album.id, cover_url.as_deref())
+            .await;
+        if let Err(e) = self.notify_album_changed(&auth_user, &album).await {
+            warn!(album_id = %album.id, error = %e, "Failed to notify album change after artwork cache");
+        }
+
+        Ok(album)
     }
 
     /// Add an audiobook from OpenLibrary to a library.
@@ -1441,17 +1557,14 @@ impl MetadataService {
                 .ok_or_else(|| anyhow::anyhow!("Audiobook not found after lookup"));
         }
 
-        let audiobook_id = Uuid::new_v4().to_string();
-        let ts = Self::now_iso_string();
         let created = self
             .execute_mutation(
                 &auth_user,
                 r#"mutation CreateAudiobook($Input: CreateAudiobookInput!) {
-                    CreateAudiobook(Input: $Input) { Success Error }
+                    CreateAudiobook(Input: $Input) { Success Error Audiobook { Id } }
                 }"#,
                 serde_json::json!({
                     "Input": {
-                        "Id": audiobook_id,
                         "LibraryId": options.library_id.to_string(),
                         "UserId": options.user_id.to_string(),
                         "Title": details.title,
@@ -1467,9 +1580,7 @@ impl MetadataService {
                         "AutoDownload": false,
                         "AutoDownloadMode": "NONE",
                         "HasFiles": false,
-                        "Narrators": Vec::<String>::new(),
-                        "CreatedAt": ts,
-                        "UpdatedAt": ts
+                        "Narrators": Vec::<String>::new()
                     }
                 }),
             )
@@ -1489,9 +1600,28 @@ impl MetadataService {
             anyhow::bail!(err.to_string());
         }
 
-        Audiobook::get(&self.db, &audiobook_id)
+        let created_audiobook_id = created
+            .get("CreateAudiobook")
+            .and_then(|v| v.get("Audiobook"))
+            .and_then(|v| v.get("Id"))
+            .and_then(|id| id.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Audiobook ID missing after creation"))?;
+
+        let audiobook = Audiobook::get(&self.db, created_audiobook_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Audiobook not found after creation"))
+            .ok_or_else(|| anyhow::anyhow!("Audiobook not found after creation"))?;
+
+        // Cache artwork, then emit a lightweight entity update so library/media
+        // subscribers refresh once cached artwork is ready.
+        let artwork_service = crate::services::ArtworkService::new(self.db.clone());
+        let _ = artwork_service
+            .cache_audiobook_artwork(&audiobook.id, details.cover_url.as_deref())
+            .await;
+        if let Err(e) = self.notify_audiobook_changed(&auth_user, &audiobook).await {
+            warn!(audiobook_id = %audiobook.id, error = %e, "Failed to notify audiobook change after artwork cache");
+        }
+
+        Ok(audiobook)
     }
 
     /// Refresh movie metadata from provider and persist via generated GraphQL UpdateMovie mutation.
@@ -1574,20 +1704,19 @@ impl MetadataService {
             .await?
             .ok_or_else(|| anyhow::anyhow!("Movie not found after refresh"))?;
 
-        // Refresh cached artwork in background.
+        // Refresh cached artwork, then emit a lightweight entity update so
+        // subscribers refresh once cached artwork is ready.
         let artwork_service = crate::services::ArtworkService::new(self.db.clone());
-        let refreshed_movie_id = movie.id.clone();
-        let poster_url = details.poster_url.clone();
-        let backdrop_url = details.backdrop_url.clone();
-        tokio::spawn(async move {
-            artwork_service
-                .cache_movie_artwork(
-                    &refreshed_movie_id,
-                    poster_url.as_deref(),
-                    backdrop_url.as_deref(),
-                )
-                .await;
-        });
+        let _ = artwork_service
+            .cache_movie_artwork(
+                &movie.id,
+                details.poster_url.as_deref(),
+                details.backdrop_url.as_deref(),
+            )
+            .await;
+        if let Err(e) = self.notify_movie_changed(&auth_user, &movie).await {
+            warn!(movie_id = %movie.id, error = %e, "Failed to notify movie change after artwork refresh");
+        }
 
         Ok(movie)
     }
@@ -1672,20 +1801,19 @@ impl MetadataService {
         )
         .await?;
 
-        // Refresh cached artwork in background.
+        // Refresh cached artwork, then emit a lightweight entity update so
+        // subscribers refresh once cached artwork is ready.
         let artwork_service = crate::services::ArtworkService::new(self.db.clone());
-        let refreshed_show_id = show.id.clone();
-        let poster_url = details.poster_url.clone();
-        let backdrop_url = details.backdrop_url.clone();
-        tokio::spawn(async move {
-            artwork_service
-                .cache_show_artwork(
-                    &refreshed_show_id,
-                    poster_url.as_deref(),
-                    backdrop_url.as_deref(),
-                )
-                .await;
-        });
+        let _ = artwork_service
+            .cache_show_artwork(
+                &show.id,
+                details.poster_url.as_deref(),
+                details.backdrop_url.as_deref(),
+            )
+            .await;
+        if let Err(e) = self.notify_show_changed(&auth_user, &show).await {
+            warn!(show_id = %show.id, error = %e, "Failed to notify show change after artwork refresh");
+        }
 
         Ok(show)
     }

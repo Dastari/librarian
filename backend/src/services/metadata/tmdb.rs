@@ -225,7 +225,7 @@ impl TmdbClient {
         }
 
         info!(
-            "Searching TMDB for movie '{}'{}",
+            "Searching TMDB for movie query='{}'{}",
             query,
             year.map(|y| format!(" ({})", y)).unwrap_or_default()
         );
@@ -243,6 +243,7 @@ impl TmdbClient {
                 let q = query_owned.clone();
                 let key = api_key.clone();
                 async move {
+                    let q_for_log = q.clone();
                     let mut query_params: Vec<(&str, String)> = vec![
                         ("api_key", key),
                         ("query", q),
@@ -255,7 +256,10 @@ impl TmdbClient {
                     let response = client.get_with_query(&url, &query_params).await?;
 
                     if response.status().as_u16() == 429 {
-                        warn!("TMDB rate limit hit, will retry");
+                        warn!(
+                            "TMDB rate limit hit (HTTP 429) while searching movies for query='{}'; retrying",
+                            q_for_log
+                        );
                         anyhow::bail!("Rate limited (429)");
                     }
 
@@ -306,7 +310,10 @@ impl TmdbClient {
                     let response = client.get_with_query(&url, &[("api_key", &key)]).await?;
 
                     if response.status().as_u16() == 429 {
-                        warn!("TMDB rate limit hit, will retry");
+                        warn!(
+                            "TMDB rate limit hit (HTTP 429) while fetching movie details for tmdb_id={}; retrying",
+                            tmdb_id
+                        );
                         anyhow::bail!("Rate limited (429)");
                     }
 

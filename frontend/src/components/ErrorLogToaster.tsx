@@ -8,9 +8,11 @@
 import { useEffect, useRef } from 'react'
 import { addToast } from '@heroui/toast'
 import {
-  ERROR_LOGS_SUBSCRIPTION,
-  type LogEventSubscription,
-} from '../lib/graphql'
+  AppLogChangedDocument,
+  type AppLogChangedSubscription,
+  type AppLogChangedSubscriptionVariables,
+} from '../lib/graphql/generated/graphql'
+import { subscriptionStream } from '../lib/graphql/client'
 import { useAuth } from '../hooks/useAuth'
 
 // Debounce duplicate errors within this window (ms)
@@ -27,15 +29,16 @@ export function ErrorLogToaster() {
     // Only subscribe if authenticated
     if (!session) return
 
-    const sub = graphqlClient
-      .subscription<{ errorLogs: LogEventSubscription }>(ERROR_LOGS_SUBSCRIPTION, {})
-      .subscribe({
+    const sub = subscriptionStream<
+      AppLogChangedSubscription,
+      AppLogChangedSubscriptionVariables
+    >(AppLogChangedDocument, {}).subscribe({
         next: (result: any) => {
-          if (result.data?.errorLogs) {
-            const log = result.data.errorLogs
+          const log = result.data?.AppLogChanged?.AppLog
+          if (log && log.Level === 'ERROR') {
 
             // Create a key for deduplication
-            const key = `${log.target}:${log.message.substring(0, 50)}`
+            const key = `${log.Target}:${log.Message.substring(0, 50)}`
 
             // Check if we've shown this error recently
             const lastShown = recentErrors.current.get(key)
@@ -57,14 +60,14 @@ export function ErrorLogToaster() {
             }
 
             // Extract the module name from target for a cleaner title
-            const targetParts = log.target.split('::')
-            const moduleName = targetParts.length > 1 ? targetParts[targetParts.length - 1] : log.target
+            const targetParts = log.Target.split('::')
+            const moduleName = targetParts.length > 1 ? targetParts[targetParts.length - 1] : log.Target
 
             // Truncate message if too long
             const message =
-              log.message.length > MAX_MESSAGE_LENGTH
-                ? `${log.message.substring(0, MAX_MESSAGE_LENGTH)}...`
-                : log.message
+              log.Message.length > MAX_MESSAGE_LENGTH
+                ? `${log.Message.substring(0, MAX_MESSAGE_LENGTH)}...`
+                : log.Message
 
             addToast({
               title: `Error in ${moduleName}`,

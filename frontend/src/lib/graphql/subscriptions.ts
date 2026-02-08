@@ -4,7 +4,7 @@
 
 export const TORRENT_PROGRESS_SUBSCRIPTION = `
   subscription TorrentProgress {
-    TorrentProgress {
+    TorrentProgress: torrentProgress {
       Id
       InfoHash
       Progress
@@ -18,7 +18,7 @@ export const TORRENT_PROGRESS_SUBSCRIPTION = `
 
 export const TORRENT_ADDED_SUBSCRIPTION = `
   subscription TorrentAdded {
-    TorrentAdded {
+    TorrentAdded: torrentAdded {
       Id
       Name
       InfoHash
@@ -28,7 +28,7 @@ export const TORRENT_ADDED_SUBSCRIPTION = `
 
 export const TORRENT_COMPLETED_SUBSCRIPTION = `
   subscription TorrentCompleted {
-    TorrentCompleted {
+    TorrentCompleted: torrentCompleted {
       Id
       Name
       InfoHash
@@ -38,7 +38,7 @@ export const TORRENT_COMPLETED_SUBSCRIPTION = `
 
 export const TORRENT_REMOVED_SUBSCRIPTION = `
   subscription TorrentRemoved {
-    TorrentRemoved {
+    TorrentRemoved: torrentRemoved {
       Id
       InfoHash
     }
@@ -94,19 +94,6 @@ export const USENET_DOWNLOAD_CHANGED_SUBSCRIPTION = `
 export const LOG_EVENTS_SUBSCRIPTION = `
   subscription LogEvents($levels: [LogLevel!]) {
     logEvents(levels: $levels) {
-      timestamp
-      level
-      target
-      message
-      fields
-      spanName
-    }
-  }
-`;
-
-export const ERROR_LOGS_SUBSCRIPTION = `
-  subscription ErrorLogs {
-    errorLogs {
       timestamp
       level
       target
@@ -249,28 +236,6 @@ export const NOTIFICATION_COUNTS_SUBSCRIPTION = `
     notificationCounts {
       unreadCount
       actionRequiredCount
-    }
-  }
-`;
-
-// ============================================================================
-// Content Download Progress Subscriptions
-// ============================================================================
-
-/**
- * Subscribe to content download progress updates
- * Use this to show real-time download progress on content detail pages
- */
-export const CONTENT_DOWNLOAD_PROGRESS_SUBSCRIPTION = `
-  subscription ContentDownloadProgress($libraryId: String, $parentId: String) {
-    contentDownloadProgress(libraryId: $libraryId, parentId: $parentId) {
-      contentType
-      contentId
-      libraryId
-      progress
-      downloadSpeed
-      contentName
-      parentId
     }
   }
 `;

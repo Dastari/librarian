@@ -8,6 +8,7 @@ import {
   ActiveDownloadCountDocument,
   TorrentChangedDocument,
 } from "../lib/graphql/generated/graphql";
+import { apolloClient } from "../lib/graphql/client";
 import { ErrorBoundary } from "./ErrorBoundary";
 
 const DOWNLOADING_WHERE = { State: { Eq: "downloading" } } as const;
@@ -18,11 +19,14 @@ function useActiveDownloadCount() {
 
   const fetchCount = useCallback(async () => {
     try {
-      const { data } = await queryPromise(ActiveDownloadCountDocument, {
+      const { data } = await apolloClient.query({
+        query: ActiveDownloadCountDocument,
+        variables: {
           Where: DOWNLOADING_WHERE,
           Page: PAGE_ONE,
-        })
-        ;
+        },
+        fetchPolicy: "network-only",
+      });
       const total = data?.Torrents?.PageInfo?.TotalCount;
       setCount(total ?? 0);
     } catch {
@@ -37,11 +41,10 @@ function useActiveDownloadCount() {
   useEffect(() => {
     let sub: { unsubscribe: () => void } | null = null;
     try {
-      sub = subscriptionStream(TorrentChangedDocument, {})
-        .subscribe({
-          next: () => fetchCount(),
-          error: () => {},
-        });
+      sub = subscriptionStream(TorrentChangedDocument, {}).subscribe({
+        next: () => fetchCount(),
+        error: () => {},
+      });
     } catch {
       // subscription setup failed (e.g. client not ready)
     }

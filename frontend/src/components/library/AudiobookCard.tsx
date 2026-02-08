@@ -1,19 +1,39 @@
-import { Card } from '@heroui/card'
-import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from '@heroui/dropdown'
-import { Button } from '@heroui/button'
-import { Image } from '@heroui/image'
-import { Link } from '@tanstack/react-router'
-import type { Audiobook } from '../../lib/graphql'
-import { IconEye, IconTrash, IconHeadphones, IconCheck, IconDotsVertical, IconClock } from '@tabler/icons-react'
+import { Card } from "@heroui/card";
+import {
+  Dropdown,
+  DropdownTrigger,
+  DropdownMenu,
+  DropdownItem,
+} from "@heroui/dropdown";
+import { Button } from "@heroui/button";
+import { Image } from "@heroui/image";
+import { Link } from "@tanstack/react-router";
+import {
+  IconEye,
+  IconTrash,
+  IconHeadphones,
+  IconCheck,
+  IconDotsVertical,
+  IconClock,
+  IconPlayerPlay,
+} from "@tabler/icons-react";
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export interface AudiobookCardProps {
-  audiobook: Audiobook
-  authorName?: string
-  onDelete?: () => void
+  audiobook: {
+    id: string;
+    title: string;
+    coverUrl: string | null;
+    downloadedChapterCount: number | null;
+    chapterCount: number | null;
+    durationSecs: number | null;
+    seriesName: string | null;
+  };
+  authorName?: string;
+  onDelete?: () => void;
 }
 
 // ============================================================================
@@ -21,26 +41,27 @@ export interface AudiobookCardProps {
 // ============================================================================
 
 function formatDuration(seconds: number | null): string {
-  if (!seconds) return ''
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
+  if (!seconds) return "";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
   if (hours > 0) {
-    return `${hours}h ${minutes}m`
+    return `${hours}h ${minutes}m`;
   }
-  return `${minutes}m`
+  return `${minutes}m`;
 }
 
 // ============================================================================
 // Component
 // ============================================================================
 
-export function AudiobookCard({ audiobook, authorName, onDelete }: AudiobookCardProps) {
-
+export function AudiobookCard({
+  audiobook,
+  authorName,
+  onDelete,
+}: AudiobookCardProps) {
   return (
     <div className="aspect-[2/3]">
-      <Card
-        className="relative overflow-hidden h-full w-full group border-none bg-content2"
-      >
+      <Card className="relative overflow-hidden h-full w-full group border-none bg-content2">
         {/* Clickable overlay for navigation - covers the entire card */}
         <Link
           to="/audiobooks/$audiobookId"
@@ -58,7 +79,7 @@ export function AudiobookCard({ audiobook, authorName, onDelete }: AudiobookCard
                 alt={audiobook.title}
                 classNames={{
                   wrapper: "absolute inset-0 w-full h-full !max-w-full",
-                  img: "w-full h-full object-cover"
+                  img: "w-full h-full object-cover",
                 }}
                 radius="none"
                 removeWrapper={false}
@@ -79,21 +100,21 @@ export function AudiobookCard({ audiobook, authorName, onDelete }: AudiobookCard
         {/* Progress badge - top left */}
         <div className="absolute top-2 left-2 z-10 pointer-events-none">
           {(() => {
-            const downloaded = audiobook.downloadedChapterCount ?? 0
-            const total = audiobook.chapterCount ?? 0
-            const isComplete = total > 0 && downloaded >= total
+            const downloaded = audiobook.downloadedChapterCount ?? 0;
+            const total = audiobook.chapterCount ?? 0;
+            const isComplete = total > 0 && downloaded >= total;
             return (
               <div
                 className={`px-2 py-1 rounded-md backdrop-blur-sm text-xs font-medium ${
                   isComplete
-                    ? 'bg-success/80 text-success-foreground'
-                    : 'bg-warning/80 text-warning-foreground'
+                    ? "bg-success/80 text-success-foreground"
+                    : "bg-warning/80 text-warning-foreground"
                 }`}
               >
                 {isComplete && <IconCheck size={12} className="inline mr-1" />}
                 {downloaded}/{total}
               </div>
-            )
+            );
           })()}
         </div>
 
@@ -113,9 +134,7 @@ export function AudiobookCard({ audiobook, authorName, onDelete }: AudiobookCard
             {audiobook.title}
           </h3>
           <div className="flex items-center gap-1.5 text-xs text-white/70">
-            {authorName && (
-              <span className="truncate">{authorName}</span>
-            )}
+            {authorName && <span className="truncate">{authorName}</span>}
             {audiobook.seriesName && (
               <>
                 <span>•</span>
@@ -123,6 +142,18 @@ export function AudiobookCard({ audiobook, authorName, onDelete }: AudiobookCard
               </>
             )}
           </div>
+        </div>
+
+        {/* Play overlay button (open detail for playback controls) */}
+        <div className="absolute inset-0 z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
+          <Link
+            to="/audiobooks/$audiobookId"
+            params={{ audiobookId: audiobook.id }}
+            className="pointer-events-auto w-14 h-14 rounded-full bg-primary/90 text-white flex items-center justify-center shadow-lg hover:scale-110 transition-transform"
+            aria-label={`Open ${audiobook.title} to play`}
+          >
+            <IconPlayerPlay size={28} className="ml-1" />
+          </Link>
         </div>
 
         {/* Action menu - bottom right, visible on hover, above the clickable overlay */}
@@ -143,10 +174,10 @@ export function AudiobookCard({ audiobook, authorName, onDelete }: AudiobookCard
               <DropdownMenu
                 aria-label="Audiobook actions menu"
                 onAction={(key) => {
-                  if (key === 'view') {
+                  if (key === "view") {
                     // View details when route is available
-                  } else if (key === 'delete') {
-                    onDelete()
+                  } else if (key === "delete") {
+                    onDelete();
                   }
                 }}
               >
@@ -155,7 +186,9 @@ export function AudiobookCard({ audiobook, authorName, onDelete }: AudiobookCard
                 </DropdownItem>
                 <DropdownItem
                   key="delete"
-                  startContent={<IconTrash size={16} className="text-red-400" />}
+                  startContent={
+                    <IconTrash size={16} className="text-red-400" />
+                  }
                   className="text-danger"
                   color="danger"
                 >
@@ -167,5 +200,5 @@ export function AudiobookCard({ audiobook, authorName, onDelete }: AudiobookCard
         )}
       </Card>
     </div>
-  )
+  );
 }

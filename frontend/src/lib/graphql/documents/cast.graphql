@@ -80,3 +80,179 @@ query CastSettings(
     }
   }
 }
+
+mutation CreateCastDevice($Input: CreateCastDeviceInput!) {
+  CreateCastDevice(Input: $Input) {
+    Success
+    Error
+    CastDevice {
+      Id
+      Name
+      Address
+      Port
+      Model
+      DeviceType
+      IsFavorite
+      IsManual
+      LastSeenAt
+    }
+  }
+}
+
+mutation UpdateCastDevice($Id: String!, $Input: UpdateCastDeviceInput!) {
+  UpdateCastDevice(Id: $Id, Input: $Input) {
+    Success
+    Error
+    CastDevice {
+      Id
+      Name
+      Address
+      Port
+      Model
+      DeviceType
+      IsFavorite
+      IsManual
+      LastSeenAt
+    }
+  }
+}
+
+mutation DeleteCastDevice($Id: String!) {
+  DeleteCastDevice(Id: $Id) {
+    Success
+    Error
+  }
+}
+
+mutation CreateCastSetting($Input: CreateCastSettingInput!) {
+  CreateCastSetting(Input: $Input) {
+    Success
+    Error
+    CastSetting {
+      Id
+      AutoDiscoveryEnabled
+      DiscoveryIntervalSeconds
+      DefaultVolume
+      TranscodeIncompatible
+      PreferredQuality
+    }
+  }
+}
+
+mutation UpdateCastSetting($Id: String!, $Input: UpdateCastSettingInput!) {
+  UpdateCastSetting(Id: $Id, Input: $Input) {
+    Success
+    Error
+    CastSetting {
+      Id
+      AutoDiscoveryEnabled
+      DiscoveryIntervalSeconds
+      DefaultVolume
+      TranscodeIncompatible
+      PreferredQuality
+    }
+  }
+}
+
+mutation DiscoverCastDevicesOp {
+  DiscoverCastDevices {
+    id
+    name
+    address
+    port
+    model
+    deviceType
+    isFavorite
+    isManual
+    isConnected
+    lastSeenAt
+  }
+}
+
+mutation CastMediaOp($input: CastMediaInput!) {
+  CastMedia(input: $input) {
+    success
+    session {
+      id
+      deviceId
+      deviceName
+      mediaFileId
+      episodeId
+      streamUrl
+      playerState
+      currentTime
+      duration
+      volume
+      isMuted
+      startedAt
+    }
+    error
+  }
+}
+
+mutation CastPlayOp($sessionId: String!) {
+  CastPlay(sessionId: $sessionId) {
+    success
+    session {
+      id
+      playerState
+      currentTime
+    }
+    error
+  }
+}
+
+mutation CastPauseOp($sessionId: String!) {
+  CastPause(sessionId: $sessionId) {
+    success
+    session {
+      id
+      playerState
+      currentTime
+    }
+    error
+  }
+}
+
+mutation CastStopOp($sessionId: String!) {
+  CastStop(sessionId: $sessionId) {
+    success
+    error
+  }
+}
+
+mutation CastSeekOp($sessionId: String!, $position: Float!) {
+  CastSeek(sessionId: $sessionId, position: $position) {
+    success
+    session {
+      id
+      playerState
+      currentTime
+    }
+    error
+  }
+}
+
+mutation CastSetVolumeOp($sessionId: String!, $volume: Float!) {
+  CastSetVolume(sessionId: $sessionId, volume: $volume) {
+    success
+    session {
+      id
+      volume
+      isMuted
+    }
+    error
+  }
+}
+
+mutation CastSetMutedOp($sessionId: String!, $muted: Boolean!) {
+  CastSetMuted(sessionId: $sessionId, muted: $muted) {
+    success
+    session {
+      id
+      volume
+      isMuted
+    }
+    error
+  }
+}

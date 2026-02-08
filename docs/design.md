@@ -34,6 +34,7 @@ These rules govern all implementation decisions.
   - Database schema and migrations
   - Subscriptions and change events
 - Resolver macros support **Where**, filtering, sorting, pagination, and infinite scroll
+- Entity macros support **field-level transform hooks** and **input-only fields** (see Entity Field Transform Hooks below)
 - **GraphQL resolvers are the primary code path** for reading and writing data.
 - The only non-GraphQL HTTP endpoints are under `/api` (file uploads, artwork, static asset serving, and media streaming).
 - Subscriptions use WebSockets for real-time updates.
@@ -43,6 +44,43 @@ These rules govern all implementation decisions.
 - **Rust**: `snake_case` for functions/modules/variables, `PascalCase` for types/traits.
 - **Database**: `snake_case` for tables/columns; plural table names.
 - **Serde**: Use `#[serde(rename_all = "PascalCase")]` or field-specific renames to map Rust to GraphQL.
+
+### Entity Field Transform Hooks
+
+The derive macros (`GraphQLEntity`, `GraphQLOperations`) support per-field transform hooks for data manipulation during reads and writes. These are used when a field requires processing (encryption, formatting, etc.) that is tightly coupled to the entity lifecycle.
+
+#### `#[transform(write = "path::to::fn", read = "path::to::fn")]`
+
+- **Write transform**: An async, context-aware function called before INSERT or UPDATE. Has access to the full GraphQL `Context`, enabling service lookups (e.g., encryption keys).
+  - Signature: `async fn(&async_graphql::Context<'_>, String) -> async_graphql::Result<String>`
+  - Injected into all relevant `insert_binds` and `update_field_checks` branches in the macro-generated mutations.
+- **Read transform**: A synchronous function applied when reading a row from the database.
+  - Signature: `fn(String) -> String`
+  - Injected into `generate_row_field_assignment()` and `generate_option_row_field_assignment()`.
+- Both are optional and independent; a field can have write-only, read-only, or both.
+
+#### `#[input_only]`
+
+Overrides `#[graphql(skip)]` for mutation inputs. The field remains hidden from GraphQL query output but appears in the macro-generated `CreateXInput` and `UpdateXInput` types. This enables **write-only fields** — data that can be submitted via mutations but is never returned in queries.
+
+#### Example: Encrypted credentials on Source entity
+
+```rust
+#[graphql(skip)]           // Hidden from query output
+#[input_only]              // But included in CreateSourceInput / UpdateSourceInput
+#[transform(write = "crate::services::sources::encryption::encrypt_credentials_ctx")]
+pub credentials: String,
+```
+
+The frontend sends plaintext JSON credentials in a single `CreateSource` mutation. The write transform encrypts them before the INSERT. The field is never exposed in query results.
+
+#### Limitations
+
+- Write transforms only apply to `String`-typed fields (and `Option<String>`). Boolean, JSON, and numeric fields are not transformed.
+- Write transforms are async and require `&Context`, so they can only be used in the GraphQL mutation path (not in direct SQL calls outside of GraphQL).
+- Read transforms are synchronous and do not have access to the GraphQL context or services.
+- There is no built-in rollback if a transform succeeds but the subsequent database write fails.
+- Transform functions must be importable as a fully-qualified Rust path from the macro expansion site.
 
 ### Media Pipeline Rules
 - **Source‑agnostic matching**: The same matching logic handles torrents, usenet, IRC, RSS, or library scans.
@@ -73,6 +111,12 @@ These rules govern all implementation decisions.
 - **Filesystem** for media files
 - Optional external dependency: **ffprobe/ffmpeg** for analysis/transcoding
 
+### Settings Loading
+- Settings are stored in the `app_settings` table as key-value pairs.
+- String settings should be loaded via `get_setting_string()` (raw read) rather than `get_setting::<String>()` (JSON parse) to avoid failures on non-JSON-quoted values.
+- Settings checks for individual features (e.g., "is TMDB configured?") must query only the relevant key, not load all settings at once. A parse failure in an unrelated setting must not block feature availability.
+- Parse errors in optional settings should log a warning and fall back to defaults, not propagate as fatal errors.
+
 ---
 
 ## Acquisition and Sources
@@ -85,9 +129,44 @@ Librarian supports multiple acquisition paths that all converge into the same pi
 - **Manual Download** and direct add
 - **Library Scanning** (existing files on disk)
 
-### Indexers
-- Librarian includes a **native Rust indexer system** (Jackett‑like) with custom adapters (e.g., IPTorrents).
-- External indexer managers such as **Jackett** or **Prowlarr** can be supported via **Torznab/Newznab** endpoints when configured.
+### Sources
+
+Librarian uses a unified **Sources** system to manage all content acquisition endpoints. A Source is any external service that provides content search and/or download capabilities. Sources replace the legacy indexer system.
+
+#### Source Types
+- **Torrent Indexer** — Private/public torrent trackers (e.g., IPTorrents)
+- **Usenet Indexer** — Newznab-compatible usenet indexers (planned)
+- **RSS Feed** — Generic RSS/Atom feed polling (planned)
+
+#### Source Architecture
+- **`SourcesService`** — Lifecycle service registered with `ServicesManager`, depends on the database service. Manages encryption key creation and source loading.
+- **`SourcesManager`** — Holds loaded `Source` trait objects, handles priority-ordered search across all enabled sources, and provides credential encryption.
+- **`Source` trait** — Common interface that all source implementations must implement (`search`, `test_connection`, capabilities).
+- **Source Definitions** — A static registry (`definitions/mod.rs`) describing available source types, their required credentials, and optional settings.
+
+#### Credential Encryption
+- Source credentials (cookies, API keys, passwords) are encrypted at rest using **AES-256-GCM**.
+- The encryption key is auto-generated on first use and stored in `app_settings` under `sources_encryption_key`.
+- Credentials are stored in the `credentials` column as a combined `nonce_b64:ciphertext_b64` string.
+- Encryption happens transparently via the entity macro's `#[transform(write = "...")]` hook during `CreateSource` and `UpdateSource` mutations.
+- Credentials are **never** exposed through GraphQL queries (`#[graphql(skip)]` + `#[input_only]`).
+- The `SourcesService` decrypts credentials internally when loading sources for search operations.
+
+#### Frontend Integration
+- Sources are managed via `/settings/sources` with a table for listing, add/edit modals, and test connection functionality.
+- Adding a source is a single step: the frontend sends credential JSON alongside all other fields in one `CreateSource` mutation.
+- The `SearchSources` custom query searches across all enabled sources ordered by priority.
+
+#### Key Files
+| Purpose | File |
+|---------|------|
+| Source entity + custom ops | `backend/src/services/graphql/entities/source.rs` |
+| Sources service | `backend/src/services/sources/service.rs` |
+| Sources manager | `backend/src/services/sources/manager.rs` |
+| Credential encryption | `backend/src/services/sources/encryption.rs` |
+| Source definitions | `backend/src/services/sources/definitions/` |
+| Frontend types/queries | `frontend/src/lib/graphql/sources.ts` |
+| Frontend settings page | `frontend/src/routes/settings/sources.tsx` |
 
 ---
 
@@ -100,6 +179,30 @@ All content flows through one unified pipeline regardless of source:
 5. **Organize**: Rename into library naming pattern
 6. **Update**: Status transitions and subscriptions
 This pipeline is the single code path for database and library changes.
+
+### Expected User Outcomes (North Star)
+The system must optimize for these real user expectations:
+
+1. Existing library onboarding:
+- User points Librarian at an already-populated folder.
+- Scan discovers files, identifies media from filename/path first, then probed metadata.
+- Missing catalog entries (shows, movies, albums, audiobooks) are created and enriched from metadata providers where available.
+- Files are linked to created/found items so UI reflects actual file presence.
+
+2. Manual library curation:
+- User can add media entries manually even before files exist.
+- The system tracks `wanted` state separately from file presence.
+- When matching files appear later (scan or downloads), they auto-link to those wanted items.
+
+3. Source ingestion (torrent now, usenet/others later):
+- Downloaded files are evaluated file-by-file through the same matcher path as scanner.
+- Matching should prioritize explicit wanted gaps over unrelated candidates.
+- On match, file is linked, analyzed, and organized under library rules.
+
+4. Organization consistency:
+- If auto-organize is enabled, files are moved/renamed into the active library naming pattern.
+- Organization must remain deterministic across scanner/import/download flows.
+- Folder cleanup must not remove protected expected library structure folders.
 
 ---
 
@@ -142,9 +245,11 @@ This pipeline is the single code path for database and library changes.
 ---
 
 ## Library Scanning & Discovery
-- Scheduled scans and file watchers discover existing media
-- Auto-add discovered media when enabled
-- File matches use metadata-first matching (embedded tags → original filename → current filename)
+- Scheduled scans discover existing media
+- Autoscan is driven by library settings (`auto_scan`, `scan_interval_minutes`)
+- New files are inserted as `MediaFile` records, analyzed via queued ffprobe workers, then matched and optionally organized
+- Missing files are reconciled by unlinking related entities and deleting stale `MediaFile` records
+- Scanner/import matching and download matching should converge on the same matching logic and decision model
 
 ---
 
@@ -239,6 +344,39 @@ The following Q&A is authoritative for pipeline behavior.
 
 This guide defines the decision points in the media processing pipeline and the intended behavior for each scenario. Reference this guide when making changes to any media pipeline components.
 
+### Current Backend Contract (Scanner/Matcher/Organizer)
+When this section conflicts with older Q&A answers below, this section wins.
+
+- Service: `backend/src/services/library_scan.rs`
+- GraphQL mutations:
+  - `ScanLibrary(Input: { LibraryId })`
+  - `AnalyzeMediaFile(Input: { MediaFileId })`
+  - `MatchMediaFile(Input: { MediaFileId, LibraryId?, EpisodeId?, MovieId?, TrackId?, ChapterId?, Methods? })`
+  - `OrganizeMediaFile(Input: { MediaFileId })`
+- Matching methods currently supported:
+  - `Filename`
+  - `Metadata`
+  - `Ollama` (optional method slot; pipeline must work without it)
+- Scan flow:
+  - Guard against concurrent scan per library (`scanning` flag + in-process lock)
+  - Walk library path and insert missing media files
+  - Queue ffprobe analysis jobs (worker-limited)
+  - Run `MatchMediaFile` for each discovered file
+  - If no local wanted/entity match is found, attempt provider lookup/create (movies via TMDB, shows via TVMaze), then re-match/link
+  - Matching should prefer explicit `wanted` gaps when multiple candidates are plausible
+  - If `auto_organize=true`, run `OrganizeMediaFile` for matched files
+  - Reconcile deleted files from DB relations
+  - For TV libraries, ensure expected show/season folders exist
+  - If `auto_organize=true`, clean up empty non-protected folders
+- Organization rules:
+  - Uses `library.naming_pattern` as primary naming template
+  - If empty, resolves default from `naming_patterns` by `library_type`
+  - If DB default missing, uses hardcoded safe fallback pattern
+  - Renames/moves file on disk, then updates `MediaFile.Path` via GraphQL mutation
+- TV folder protection and creation:
+  - Derived from active naming pattern, not hardcoded `Season XX` assumptions
+  - Protected folders are preserved during cleanup even when empty
+
 ---
 
 ## Core Principles
@@ -256,11 +394,35 @@ This guide defines the decision points in the media processing pipeline and the 
 
 ## Phase 1: File Matching
 
+### Single Matching Entry Point (Mandatory)
+
+All file matching must go through a single GraphQL mutation-driven code path:
+
+- `MatchMediaFile(Input: MatchMediaFileInput!)`
+- This mutation is the canonical entry point for:
+  - automatic scanner matching
+  - manual matching from UI
+  - rematch/reverification flows
+  - download/import pipeline matching
+
+`MatchMediaFileInput` must support optional matching methods so the pipeline can evolve without forking code paths:
+
+- `Filename` (default, always available)
+- `Metadata` (ffprobe/embedded tags when available)
+- `Ollama` (optional AI-assisted parsing; may be disabled at runtime)
+
+When `Ollama` is disabled or unavailable, matching must still proceed with non-AI methods in the same mutation flow.
+
+Related pipeline mutations that must remain reusable across all library types:
+
+- `AnalyzeMediaFile` for queued ffprobe analysis
+- `OrganizeMediaFile` for final naming/folder placement
+
 ### Q1: What do we do when we find a file match for a media file that is in a download state but hasn't finished downloading yet?
 **Answer:** We use what we have now. If a file exists NOW which is a better match for any potential future match (even one that may be downloading), we should use what we have. The scanner processes files that exist on disk; it doesn't wait for downloads.
 
 ### Q2: What happens when a file matches multiple items across different libraries?
-**Answer:** The FileMatcher returns all matches (can match to items in multiple libraries). Each match is saved as a separate `pending_file_matches` record. When processed, the file is copied to each matching library.
+**Answer:** Current matcher links one concrete target per `MediaFile` (`EpisodeId`, `MovieId`, `TrackId`, or `ChapterId`) through `MatchMediaFile`. Multi-target fanout is not an active path in the current scanner service.
 
 ### Q3: What happens when a file matches an item that's already downloaded?
 **Answer:** For tracks, we skip if a `media_file_id` already exists. For albums/movies/audiobooks with known targets from auto-download, we use 100% confidence and proceed even if `wanted = false`.
@@ -269,7 +431,7 @@ This guide defines the decision points in the media processing pipeline and the 
 **Answer:** If filename contains "sample", "trailer", or "preview" → mark as `Sample` type and don't process further. These are excluded from matching.
 
 ### Q5: How does the weighted fuzzy matching work?
-**Answer:** Uses `match_scorer.rs` with field-specific weights and proportional scoring (not thresholds). Each field contributes proportionally based on fuzzy similarity:
+**Answer:** Matching uses filename/metadata heuristics and fuzzy similarity scoring in the `library_scan` pipeline. Threshold behavior remains:
 
 **Music (100 points max):**
 | Field | Weight | Scoring |
@@ -326,7 +488,7 @@ If metadata exists and produces a match, filename parsing is skipped entirely. T
 This 3-tier approach handles cases where files were incorrectly renamed. The `original_name` is preserved in the database and used as a fallback when current filename matching fails.
 
 ### Q8: What happens when no library matches are found?
-**Answer:** Return an `Unmatched` result with a reason string. The file is saved in `pending_file_matches` with no target IDs, `unmatched_reason`, and `match_attempts` incremented so it can be manually matched later via the UI.
+**Answer:** Return a non-success `MatchMediaFile` result with reason text. The `media_files` row remains unmatched and can be manually matched later.
 
 ### Q9: How do we determine if a file is video vs audio?
 **Answer:** File extension check:
@@ -378,24 +540,22 @@ This 3-tier approach handles cases where files were incorrectly renamed. The `or
 ## Phase 3: Library Scanning
 
 ### Q17: What happens if we try to scan a library that's already being scanned?
-**Answer:** Return early without starting a new scan. The `library.scanning` flag is checked first.
+**Answer:** Return early without starting a duplicate scan. The service checks persisted `library.scanning` and an in-memory in-progress set before processing.
 
 ### Q18: What happens if the library path doesn't exist on disk?
 **Answer:** Log a warning and return. No error is thrown; the scan just doesn't happen.
 
 ### Q19: How do we handle auto_add_discovered when scanning?
-**Answer:** 
-- If enabled and file matches no existing item → create new item from file metadata (search TVMaze/TMDB/MusicBrainz)
-- If disabled → just add files without creating new library entries
+**Answer:** Scanner adds discovered files to `media_files`, queues analysis, then attempts `MatchMediaFile`. If no local match is found, scanner can provider-enrich by searching metadata providers and creating the missing entity (currently movie/show), then linking the file.
 
 ### Q20: What happens when metadata lookup fails (TVMaze/TMDB/etc.)?
-**Answer:** For movies, retry search without the year. If still no results, the file remains unmatched. The item is NOT created if we can't find metadata.
+**Answer:** Provider lookup is best-effort. Failures are logged with file/library context, but scan continues and the file remains unmatched for manual/later rematch.
 
 ### Q21: What happens when a file is already in the database during a scan?
 **Answer:** Check if it needs linking to an item. If already linked → skip. If not linked but matches an item → link it. This prevents duplicate processing.
 
 ### Q22: Do we trigger auto-download after scanning?
-**Answer:** Yes, if the library has `auto_download` enabled OR if TV library has shows with `auto_download_override=true`. Runs in background after scan completes.
+**Answer:** Not in the current scanner service. Scanning handles discovery, analysis, matching, organizing, and reconciliation.
 
 ---
 
@@ -430,16 +590,13 @@ The system does NOT automatically trigger an upgrade download.
 ## Phase 5: Organization
 
 ### Q27: When do we organize files automatically?
-**Answer:** After library scan completes, if `organize_files` is enabled on the library. Also after downloads complete if configured.
+**Answer:** During scan, after a successful match, when `library.auto_organize = true`. `OrganizeMediaFile` is also available for explicit/manual invocation.
 
 ### Q28: What if a show has organize_files_override = false?
-**Answer:** Skip organizing that show's episodes even if the library has organization enabled.
+**Answer:** Per-show organize overrides are not part of the current scanner service contract. Organization is controlled at library level via `auto_organize`.
 
 ### Q29: What naming pattern do we use if none is configured?
-**Answer:** Fall back to default patterns:
-- TV: `Show Name - S01E01 - Episode Title.ext`
-- Movies: Keep original filename
-- Music: Uses music naming pattern from library
+**Answer:** Use `library.naming_pattern` first. If empty, resolve the default from `naming_patterns` for the library type. If that is unavailable, use built-in fallback patterns.
 
 ### Q30: How do we handle files that are already organized correctly?
 **Answer:** If `original_path == new_path` → skip organization (no-op). Don't move file to itself.
@@ -451,9 +608,8 @@ The system does NOT automatically trigger an upgrade download.
 ### Q31: What happens when a torrent is added?
 **Answer:** 
 1. Spawn async task to match files immediately
-2. Skip if matches already exist (created by auto-download to avoid duplicates)
-3. Save matches to `pending_file_matches`
-4. Pending matches imply computed `downloading` status (derived from pending matches)
+2. Run matching and processing through GraphQL mutation-driven pipeline entry points
+3. Keep status derived from entity linkage and wanted flags (no dedicated status column)
 
 ### Q32: What happens when a torrent completes?
 **Answer:**
@@ -474,7 +630,7 @@ The system does NOT automatically trigger an upgrade download.
 ## Phase 7: Match Verification
 
 ### Q35: When do we verify matches after download?
-**Answer:** After torrent completes but before processing. Uses `verify_matches_with_metadata()` to check if embedded metadata contradicts the match.
+**Answer:** Verification should happen before final link/organize updates, using the same matching pipeline (`MatchMediaFile`) with metadata-aware methods.
 
 ### Q36: What happens if verification finds a mismatch?
 **Answer:**
@@ -487,7 +643,7 @@ The system does NOT automatically trigger an upgrade download.
 1. Extract embedded metadata (if not already done)
 2. Compare linked item's artist/album/show with metadata
 3. If artist similarity < 50% → flag as `ARTIST MISMATCH`
-4. Re-run matching using `FileMatcher.match_media_file()`
+4. Re-run matching using `MatchMediaFile`
 5. If new match found with score ≥ 70 → auto-correct:
    - Update `media_files.track_id` to new track
    - Update old track's `media_file_id` to NULL and set `wanted = true`
@@ -514,7 +670,7 @@ WHERE id = $correct_track_id;
 **Answer:**
 1. **After download completion** - Queued as background job via `queues.rs`
 2. **During library scan** - For files without `metadata_extracted_at` timestamp
-3. **Manual trigger** - Via `extractMediaFileMetadata` GraphQL mutation
+3. **Manual trigger** - Via `AnalyzeMediaFile` GraphQL mutation
 
 ### Q36e: What metadata is extracted and stored?
 **Answer:** Stored in `media_files` table:
@@ -559,14 +715,14 @@ These scenarios have been explicitly decided and should be implemented according
 
 ### Q40: What happens when matching fails repeatedly for the same file?
 **Answer:** Retain the unmatched file but notify the user. The system should:
-1. Keep unmatched files in `pending_file_matches` indefinitely
+1. Keep unmatched `media_files` records until manually matched, re-scanned, or deleted
 2. After N failed match attempts (configurable, default 3 via `match_attempts`), create a user notification
 3. Notification should link to the file for manual matching
 4. Do NOT auto-delete unmatched files
 
 ### Q41: What do we do with files that fail processing multiple times?
 **Answer:** Alert the user after X failures. The system should:
-1. Track `copy_attempts` count on `pending_file_matches`
+1. Track repeated processing failures in pipeline state/telemetry
 2. Retry on each download monitor run
 3. After X failures (configurable, default 3), create a user notification
 4. Notification should include the error message and options to retry or dismiss
@@ -616,16 +772,12 @@ These scenarios have been explicitly decided and should be implemented according
 ### Q47: What happens when a library is deleted while files are downloading?
 **Answer:** Remove all links that torrents/files have to that library. On library delete:
 1. CASCADE delete all library items (shows, movies, albums, etc.)
-2. This cascades to delete `pending_file_matches` via FK
+2. Related `media_files`/entity links are removed by schema constraints and scanner reconciliation logic
 3. Torrents remain but become "unlinked" (no library association)
 4. Downloaded files in the library folder are NOT deleted (library owns files, user must delete manually)
 
 ### Q48: How do we handle files with non-ASCII characters in names?
-**Answer:** Sanitize to ASCII-safe names when organizing, but only if library has `organize_files` enabled. The system should:
-1. If `organize_files = false` → preserve original filename exactly (we can't modify torrent files anyway)
-2. If `organize_files = true` → sanitize non-ASCII to closest ASCII equivalent or underscore
-3. Use a transliteration library (e.g., `unidecode`) for intelligent conversion
-4. Preserve the original filename in `media_files.original_name` for reference
+**Answer:** During organization, filesystem-invalid characters are sanitized in generated names. If organization is disabled (`auto_organize=false`), files are not renamed by scanner.
 
 ### Q49: What's the behavior when FFprobe analysis fails?
 **Answer:** Log as warning and continue. The system should:
@@ -645,12 +797,12 @@ These scenarios have been explicitly decided and should be implemented according
 
 ### Q51: What happens when a user manually changes a file on disk?
 **Answer:** Require manual re-scan to detect changes. The system should:
-1. No real-time file watching (too resource intensive)
+1. Scanner is the source of truth for detecting out-of-band file changes
 2. User triggers library scan to detect changes
-3. Scanner compares file paths and sizes to database
+3. Scanner compares discovered file paths to database records
 4. Missing files → unlink from items, set `wanted = true`
-5. New files → match and link as usual
-6. Modified files (same path, different size) → re-analyze with FFprobe
+5. New files → queue analyze, then match and optionally organize
+6. Existing files can be re-analyzed through `AnalyzeMediaFile`
 
 ---
 
@@ -658,17 +810,13 @@ These scenarios have been explicitly decided and should be implemented according
 
 | Component | File |
 |-----------|------|
-| File Matching | `backend/src/services/file_matcher.rs` |
-| Weighted Scoring | `backend/src/services/match_scorer.rs` |
-| File Processing | `backend/src/services/file_processor.rs` |
-| Library Scanning | `backend/src/services/scanner.rs` |
-| Quality Evaluation | `backend/src/services/quality_evaluator.rs` |
-| Organization | `backend/src/services/organizer.rs` |
+| Library Scan Service | `backend/src/services/library_scan.rs` |
+| Scan/Match/Organize GraphQL Mutations | `backend/src/services/graphql/mutations/library_scan.rs` |
+| Library Scan Schema Wiring | `backend/src/services/graphql/schema.rs` |
+| Service Registration | `backend/src/services/manager.rs` |
 | Download Monitor | `backend/src/jobs/download_monitor.rs` |
-| Torrent Events | `backend/src/services/torrent_completion_handler.rs` |
-| Filename Parsing | `backend/src/services/filename_parser.rs` |
-| Background Jobs | `backend/src/services/queues.rs` |
-| Media Files DB | `backend/src/db/media_files.rs` |
+| Source Services | `backend/src/services/sources/` |
+| DB Schema Sync | `backend/src/db/schema_sync.rs` |
 
 ---
 

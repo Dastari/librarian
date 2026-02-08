@@ -27,12 +27,11 @@ pub mod rss_feed_item;
 pub mod show;
 pub mod track;
 
-// Indexer entities
-pub mod indexer_config;
-pub mod indexer_search_cache;
-pub mod indexer_setting;
+// Sources
+pub mod source;
 
 // Playback and cast entities
+pub mod cast;
 pub mod cast_device;
 pub mod cast_session;
 pub mod cast_setting;
@@ -70,15 +69,13 @@ pub use artist::*;
 pub use artwork_cache::*;
 pub use audio_stream::*;
 pub use audiobook::*;
+pub use cast::CastMutations;
 pub use cast_device::*;
 pub use cast_session::*;
 pub use cast_setting::*;
 pub use chapter::*;
 pub use common::*;
 pub use episode::*;
-pub use indexer_config::*;
-pub use indexer_search_cache::*;
-pub use indexer_setting::*;
 pub use invite_token::*;
 pub use library::*;
 pub use media_chapter::*;
@@ -95,6 +92,7 @@ pub use rss_feed_item::*;
 pub use schedule_cache::*;
 pub use schedule_sync_state::*;
 pub use show::*;
+pub use source::*;
 pub use source_priority_rule::*;
 pub use subtitle::*;
 pub use torrent::*;

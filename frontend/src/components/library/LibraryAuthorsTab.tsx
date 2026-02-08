@@ -1,62 +1,28 @@
-import { useMemo, useState, useCallback, useEffect } from 'react'
-import { useQueryState, parseAsString, parseAsStringLiteral } from 'nuqs'
-import { Card, CardBody } from '@heroui/card'
+import { useMemo, useState, useCallback, useEffect } from "react";
+import { useQueryState, parseAsString, parseAsStringLiteral } from "nuqs";
+import { Card, CardBody } from "@heroui/card";
 import {
   DataTable,
   AlphabetFilter,
   getFirstLetter,
   type DataTableColumn,
   type CardRendererProps,
-} from '../data-table'
-import {
-  AUDIOBOOK_AUTHORS_QUERY,
-  AUDIOBOOKS_QUERY,
-  type AudiobookAuthor,
-  type Audiobook,
-} from '../../lib/graphql'
-import { IconUser, IconBook, IconHeadphones } from '@tabler/icons-react'
-import { SquareCardSkeleton } from './MediaCardSkeleton'
+} from "../data-table";
+import { type AudiobookAuthor, type Audiobook } from "../../lib/graphql";
+import { apolloClient } from "../../lib/graphql/client";
+import { LibraryAudiobooksTabDocument } from "../../lib/graphql/generated/graphql";
+import { IconUser, IconBook, IconHeadphones } from "@tabler/icons-react";
+import { SquareCardSkeleton } from "./MediaCardSkeleton";
 
 // ============================================================================
 // Component Props
 // ============================================================================
 
 interface LibraryAuthorsTabProps {
-  libraryId: string
+  libraryId: string;
   /** Parent loading state (e.g., library context still loading) */
-  loading?: boolean
-  onSelectAuthor?: (authorId: string) => void
-}
-
-interface AudiobookNode {
-  Id: string
-  AuthorId: string | null
-  LibraryId: string
-  Title: string
-  SortTitle: string | null
-  Subtitle: string | null
-  OpenlibraryId: string | null
-  Isbn: string | null
-  Description: string | null
-  Publisher: string | null
-  Language: string | null
-  Narrators: string[]
-  SeriesName: string | null
-  DurationSecs: number | null
-  CoverUrl: string | null
-  HasFiles: boolean
-  SizeBytes: number | null
-  Path: string | null
-  ChapterCount: number | null
-  DownloadedChapterCount: number | null
-}
-
-interface AudiobookAuthorNode {
-  Id: string
-  LibraryId: string
-  Name: string
-  SortName: string | null
-  OpenlibraryId: string | null
+  loading?: boolean;
+  onSelectAuthor?: (authorId: string) => void;
 }
 
 // ============================================================================
@@ -64,9 +30,9 @@ interface AudiobookAuthorNode {
 // ============================================================================
 
 interface AuthorCardProps {
-  author: AudiobookAuthor
-  bookCount: number
-  onSelect?: () => void
+  author: AudiobookAuthor;
+  bookCount: number;
+  onSelect?: () => void;
 }
 
 function AuthorCard({ author, bookCount, onSelect }: AuthorCardProps) {
@@ -100,12 +66,14 @@ function AuthorCard({ author, bookCount, onSelect }: AuthorCardProps) {
             {author.name}
           </h3>
           <div className="flex items-center gap-1.5 text-xs text-white/70">
-            <span>{bookCount} {bookCount === 1 ? 'audiobook' : 'audiobooks'}</span>
+            <span>
+              {bookCount} {bookCount === 1 ? "audiobook" : "audiobooks"}
+            </span>
           </div>
         </div>
       </Card>
     </div>
-  )
+  );
 }
 
 // ============================================================================
@@ -118,155 +86,177 @@ export function LibraryAuthorsTab({
   onSelectAuthor,
 }: LibraryAuthorsTabProps) {
   // URL-persisted state via nuqs
-  const [selectedLetter, setSelectedLetter] = useQueryState('letter', parseAsString.withDefault(''))
-  const [searchTerm, setSearchTerm] = useQueryState('q', parseAsString.withDefault(''))
-  const [sortColumn, setSortColumn] = useQueryState('sort', parseAsString.withDefault('name'))
+  const [selectedLetter, setSelectedLetter] = useQueryState(
+    "letter",
+    parseAsString.withDefault(""),
+  );
+  const [searchTerm, setSearchTerm] = useQueryState(
+    "q",
+    parseAsString.withDefault(""),
+  );
+  const [sortColumn, setSortColumn] = useQueryState(
+    "sort",
+    parseAsString.withDefault("name"),
+  );
   const [sortDirection, setSortDirection] = useQueryState(
-    'order',
-    parseAsStringLiteral(['asc', 'desc'] as const).withDefault('asc')
-  )
-  const normalizedLetter = selectedLetter === '' ? null : selectedLetter
+    "order",
+    parseAsStringLiteral(["asc", "desc"] as const).withDefault("asc"),
+  );
+  const normalizedLetter = selectedLetter === "" ? null : selectedLetter;
 
   // Handle sort change from DataTable
-  const handleSortChange = useCallback((column: string, direction: 'asc' | 'desc') => {
-    setSortColumn(column)
-    setSortDirection(direction)
-  }, [setSortColumn, setSortDirection])
-  
-  const [audiobooks, setAudiobooks] = useState<Audiobook[]>([])
-  const [audiobooksLoading, setAudiobooksLoading] = useState(true)
-  const [authors, setAuthors] = useState<AudiobookAuthor[]>([])
-  const [authorsLoading, setAuthorsLoading] = useState(true)
+  const handleSortChange = useCallback(
+    (column: string, direction: "asc" | "desc") => {
+      setSortColumn(column);
+      setSortDirection(direction);
+    },
+    [setSortColumn, setSortDirection],
+  );
+
+  const [audiobooks, setAudiobooks] = useState<Audiobook[]>([]);
+  const [audiobooksLoading, setAudiobooksLoading] = useState(true);
+  const [authors, setAuthors] = useState<AudiobookAuthor[]>([]);
+  const [authorsLoading, setAuthorsLoading] = useState(true);
 
   // Check if we should skip queries (loading or template ID)
-  const shouldSkipQueries = parentLoading || libraryId.startsWith('template')
+  const shouldSkipQueries = parentLoading || libraryId.startsWith("template");
 
   useEffect(() => {
-    if (shouldSkipQueries) return
+    if (shouldSkipQueries) return;
 
     const fetchAudiobooks = async () => {
       try {
-        const result = await queryPromise<{ Audiobooks: { Edges: Array<{ Node: AudiobookNode }> } }>(AUDIOBOOKS_QUERY, { libraryId })
-          
-        const edges = result.data?.Audiobooks?.Edges ?? []
-        setAudiobooks(edges.map((e) => ({
+        const result = await apolloClient.query({
+          query: LibraryAudiobooksTabDocument,
+          variables: { LibraryId: libraryId },
+          fetchPolicy: "network-only",
+        });
+
+        const edges = result.data?.Audiobooks?.Edges ?? [];
+        const mappedAudiobooks = edges.map((e) => ({
           id: e.Node.Id,
-          authorId: e.Node.AuthorId,
+          authorId: e.Node.AuthorName ?? null,
           libraryId: e.Node.LibraryId,
           title: e.Node.Title,
-          sortTitle: e.Node.SortTitle,
-          subtitle: e.Node.Subtitle,
-          openlibraryId: e.Node.OpenlibraryId,
-          isbn: e.Node.Isbn,
-          description: e.Node.Description,
-          publisher: e.Node.Publisher,
-          language: e.Node.Language,
+          sortTitle: e.Node.SortTitle ?? null,
+          subtitle: null,
+          openlibraryId: null,
+          isbn: e.Node.Isbn ?? null,
+          description: e.Node.Description ?? null,
+          publisher: e.Node.Publisher ?? null,
+          language: e.Node.Language ?? null,
           narrators: e.Node.Narrators,
-          seriesName: e.Node.SeriesName,
-          durationSecs: e.Node.DurationSecs,
-          coverUrl: e.Node.CoverUrl,
+          seriesName: null,
+          durationSecs: e.Node.TotalDurationSecs ?? null,
+          coverUrl: e.Node.CoverUrl ?? null,
           hasFiles: e.Node.HasFiles,
-          sizeBytes: e.Node.SizeBytes,
-          path: e.Node.Path,
-          chapterCount: e.Node.ChapterCount,
-          downloadedChapterCount: e.Node.DownloadedChapterCount,
-        })))
+          sizeBytes: e.Node.SizeBytes ?? null,
+          path: e.Node.Path ?? null,
+          chapterCount: e.Node.ChapterCount ?? null,
+          downloadedChapterCount: null,
+        }));
+        setAudiobooks(mappedAudiobooks);
+        const derivedAuthors = Array.from(
+          new Map(
+            edges
+              .filter((e) => Boolean(e.Node.AuthorName))
+              .map((e) => [
+                e.Node.AuthorName as string,
+                e.Node.AuthorName as string,
+              ]),
+          ).values(),
+        ).map((authorName) => ({
+          id: authorName,
+          libraryId,
+          name: authorName,
+          sortName: authorName,
+          openlibraryId: null,
+        }));
+        setAuthors(derivedAuthors);
       } catch (err) {
-        console.error('Failed to fetch audiobooks:', err)
+        console.error("Failed to fetch audiobooks:", err);
       } finally {
-        setAudiobooksLoading(false)
+        setAudiobooksLoading(false);
+        setAuthorsLoading(false);
       }
-    }
+    };
+    void fetchAudiobooks();
+  }, [libraryId, shouldSkipQueries]);
 
-    const fetchAuthors = async () => {
-      try {
-        const result = await queryPromise<{ AudiobookAuthors: { Edges: Array<{ Node: AudiobookAuthorNode }> } }>(AUDIOBOOK_AUTHORS_QUERY, { libraryId })
-          
-        const edges = result.data?.AudiobookAuthors?.Edges ?? []
-        setAuthors(edges.map((e) => ({
-          id: e.Node.Id,
-          libraryId: e.Node.LibraryId,
-          name: e.Node.Name,
-          sortName: e.Node.SortName,
-          openlibraryId: e.Node.OpenlibraryId,
-        })))
-      } catch (err) {
-        console.error('Failed to fetch authors:', err)
-      } finally {
-        setAuthorsLoading(false)
-      }
-    }
-
-    void fetchAudiobooks()
-    void fetchAuthors()
-  }, [libraryId, shouldSkipQueries])
-
-  const isLoading = authorsLoading || audiobooksLoading
+  const isLoading = authorsLoading || audiobooksLoading;
 
   // Count audiobooks per author
   const bookCountByAuthor = useMemo(() => {
-    const counts = new Map<string, number>()
+    const counts = new Map<string, number>();
     audiobooks.forEach((audiobook) => {
       if (audiobook.authorId) {
-        const current = counts.get(audiobook.authorId) || 0
-        counts.set(audiobook.authorId, current + 1)
+        const current = counts.get(audiobook.authorId) || 0;
+        counts.set(audiobook.authorId, current + 1);
       }
-    })
-    return counts
-  }, [audiobooks])
+    });
+    return counts;
+  }, [audiobooks]);
 
   // Get letters that have authors
   const availableLetters = useMemo(() => {
-    const letters = new Set<string>()
+    const letters = new Set<string>();
     authors.forEach((author) => {
-      letters.add(getFirstLetter(author.name))
-    })
-    return letters
-  }, [authors])
+      letters.add(getFirstLetter(author.name));
+    });
+    return letters;
+  }, [authors]);
 
   const sortedAuthors = useMemo(() => {
-    const sorted = [...authors]
+    const sorted = [...authors];
     sorted.sort((a, b) => {
-      if (sortColumn === 'audiobooks') {
-        const av = bookCountByAuthor.get(a.id) || 0
-        const bv = bookCountByAuthor.get(b.id) || 0
-        return sortDirection === 'asc' ? av - bv : bv - av
+      if (sortColumn === "audiobooks") {
+        const av = bookCountByAuthor.get(a.id) || 0;
+        const bv = bookCountByAuthor.get(b.id) || 0;
+        return sortDirection === "asc" ? av - bv : bv - av;
       }
-      const cmp = a.name.localeCompare(b.name)
-      return sortDirection === 'asc' ? cmp : -cmp
-    })
-    return sorted
-  }, [authors, sortColumn, sortDirection, bookCountByAuthor])
+      const cmp = a.name.localeCompare(b.name);
+      return sortDirection === "asc" ? cmp : -cmp;
+    });
+    return sorted;
+  }, [authors, sortColumn, sortDirection, bookCountByAuthor]);
 
   const filteredAuthors = useMemo(() => {
-    let list = sortedAuthors
+    let list = sortedAuthors;
     if (searchTerm) {
-      const q = searchTerm.toLowerCase()
-      list = list.filter((author) => author.name.toLowerCase().includes(q))
+      const q = searchTerm.toLowerCase();
+      list = list.filter((author) => author.name.toLowerCase().includes(q));
     }
     if (normalizedLetter) {
-      list = list.filter((author) => getFirstLetter(author.name) === normalizedLetter)
+      list = list.filter(
+        (author) => getFirstLetter(author.name) === normalizedLetter,
+      );
     }
-    return list
-  }, [sortedAuthors, searchTerm, normalizedLetter])
+    return list;
+  }, [sortedAuthors, searchTerm, normalizedLetter]);
 
   // Handle letter change - toggle filter
-  const handleLetterChange = useCallback((letter: string | null) => {
-    setSelectedLetter(normalizedLetter === letter ? '' : (letter ?? ''))
-  }, [normalizedLetter, setSelectedLetter])
+  const handleLetterChange = useCallback(
+    (letter: string | null) => {
+      setSelectedLetter(normalizedLetter === letter ? "" : (letter ?? ""));
+    },
+    [normalizedLetter, setSelectedLetter],
+  );
 
   // Handle search change for server-side filtering
-  const handleSearchChange = useCallback((term: string) => {
-    setSearchTerm(term || '')
-    setSelectedLetter('') // Reset letter filter when searching
-  }, [setSearchTerm, setSelectedLetter])
+  const handleSearchChange = useCallback(
+    (term: string) => {
+      setSearchTerm(term || "");
+      setSelectedLetter(""); // Reset letter filter when searching
+    },
+    [setSearchTerm, setSelectedLetter],
+  );
 
   // Column definitions
   const columns: DataTableColumn<AudiobookAuthor>[] = useMemo(
     () => [
       {
-        key: 'name',
-        label: 'AUTHOR',
+        key: "name",
+        label: "AUTHOR",
         // sortable: true (default) - server handles actual sorting
         render: (author) => (
           <div className="flex items-center gap-3">
@@ -280,8 +270,8 @@ export function LibraryAuthorsTab({
         ),
       },
       {
-        key: 'audiobooks',
-        label: 'AUDIOBOOKS',
+        key: "audiobooks",
+        label: "AUDIOBOOKS",
         width: 120,
         sortable: false,
         render: (author) => (
@@ -292,8 +282,8 @@ export function LibraryAuthorsTab({
         ),
       },
     ],
-    [bookCountByAuthor]
-  )
+    [bookCountByAuthor],
+  );
 
   // Card renderer
   const cardRenderer = useCallback(
@@ -304,8 +294,8 @@ export function LibraryAuthorsTab({
         onSelect={onSelectAuthor ? () => onSelectAuthor(item.id) : undefined}
       />
     ),
-    [bookCountByAuthor, onSelectAuthor]
-  )
+    [bookCountByAuthor, onSelectAuthor],
+  );
 
   return (
     <div className="flex flex-col grow w-full">
@@ -317,7 +307,7 @@ export function LibraryAuthorsTab({
           columns={columns}
           getRowKey={(author) => author.id}
           searchPlaceholder="Search authors..."
-          sortColumn={sortColumn || 'name'}
+          sortColumn={sortColumn || "name"}
           sortDirection={sortDirection}
           onSortChange={handleSortChange}
           showViewModeToggle
@@ -345,7 +335,8 @@ export function LibraryAuthorsTab({
                 <IconUser size={48} className="mx-auto mb-4 text-orange-400" />
                 <h3 className="text-lg font-semibold mb-2">No authors yet</h3>
                 <p className="text-default-500 mb-4">
-                  Authors will appear here as you add audiobooks to your library.
+                  Authors will appear here as you add audiobooks to your
+                  library.
                 </p>
               </CardBody>
             </Card>
@@ -353,5 +344,5 @@ export function LibraryAuthorsTab({
         />
       </div>
     </div>
-  )
+  );
 }

@@ -74,9 +74,10 @@ function RootErrorComponent({ error, reset }: ErrorComponentProps) {
 
 function RootLayoutContent() {
   const { session } = usePlaybackContext()
+  const contentType = (session?.contentType ?? '').toUpperCase()
   
   // Check if audio player is visible (track or audiobook playing)
-  const isAudioPlayerVisible = session?.contentType === 'TRACK' || session?.contentType === 'AUDIOBOOK'
+  const isAudioPlayerVisible = contentType === 'TRACK' || contentType === 'AUDIOBOOK'
   
   return (
     <div className="flex flex-col h-screen">

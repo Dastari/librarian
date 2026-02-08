@@ -81,8 +81,8 @@ export function useDataReactivity(
 ) {
   const {
     onTorrentComplete = true,
-    periodicInterval = 30000,
-    onFocus = true,
+    periodicInterval = false,
+    onFocus = false,
   } = options
 
   // Debounce the refresh to avoid multiple rapid calls

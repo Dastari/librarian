@@ -5,9 +5,14 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import { useEffect, useCallback } from "react";
-import { useQuery, useMutation, gql } from "../../lib/graphql/client";
+import { useQuery, useMutation } from "../../lib/graphql/client";
 import { Button } from "@heroui/button";
-import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/dropdown";
+import {
+  Dropdown,
+  DropdownTrigger,
+  DropdownMenu,
+  DropdownItem,
+} from "@heroui/dropdown";
 import { Card, CardBody } from "@heroui/card";
 import { Chip } from "@heroui/chip";
 import { Image } from "@heroui/image";
@@ -17,7 +22,14 @@ import { useDisclosure } from "@heroui/modal";
 import { addToast } from "@heroui/toast";
 import { RouteError } from "../../components/RouteError";
 import { sanitizeError, formatBytes } from "../../lib/format";
-import type { Movie, Library } from "../../lib/graphql/generated/graphql";
+import {
+  LibraryDetailRouteDocument,
+  MeDocument,
+  MovieDetailRouteDocument,
+  RefreshMovieRouteDocument,
+  ShowPlaybackProgressByMediaDocument,
+  type MovieDetailRouteQuery,
+} from "../../lib/graphql/generated/graphql";
 import {
   IconMovie,
   IconTrash,
@@ -53,81 +65,7 @@ export const Route = createFileRoute("/movies/$movieId")({
   errorComponent: RouteError,
 });
 
-// MediaFile type for the nested query
-interface MediaFile {
-  Id: string;
-  Size: number;
-  Duration: number | null;
-}
-
-// GraphQL queries
-const MOVIE_QUERY = gql`
-  query Movie($Id: String!) {
-    Movie(Id: $Id) {
-      Id
-      LibraryId
-      Title
-      SortTitle
-      OriginalTitle
-      Year
-      TmdbId
-      ImdbId
-      Status
-      Overview
-      Tagline
-      Runtime
-      Genres
-      Director
-      CastNames
-      PosterUrl
-      BackdropUrl
-      Monitored
-      MediaFileId
-      CollectionId
-      CollectionName
-      CollectionPosterUrl
-      TmdbRating
-      TmdbVoteCount
-      Certification
-      ReleaseDate
-      ProductionCountries
-      SpokenLanguages
-      MediaFile {
-        Id
-        Size
-        Duration
-      }
-    }
-  }
-`;
-
-const LIBRARY_NAME_QUERY = gql`
-  query LibraryName($Id: String!) {
-    Library(Id: $Id) {
-      Id
-      Name
-    }
-  }
-`;
-
-const REFRESH_MOVIE = gql`
-  mutation RefreshMovie($Id: String!) {
-    RefreshMovie(Id: $Id) {
-      Success
-      Error
-      Movie {
-        Id
-        Title
-        Overview
-        Tagline
-        PosterUrl
-        BackdropUrl
-        TmdbRating
-        TmdbVoteCount
-      }
-    }
-  }
-`;
+type MovieNode = NonNullable<MovieDetailRouteQuery["Movie"]>;
 
 function MovieDetailPage() {
   const { movieId } = Route.useParams();
@@ -150,29 +88,44 @@ function MovieDetailPage() {
     previousData: previousMovieData,
     loading: movieLoading,
     refetch,
-  } = useQuery<{
-    Movie: (Movie & { MediaFile?: MediaFile }) | null;
-  }>(MOVIE_QUERY, {
+  } = useQuery(MovieDetailRouteDocument, {
     variables: { Id: movieId },
     fetchPolicy: "cache-and-network",
   });
-  const movie = movieData?.Movie ?? previousMovieData?.Movie;
-  const { data: libraryData } = useQuery<{
-    Library: Pick<Library, "Id" | "Name"> | null;
-  }>(LIBRARY_NAME_QUERY, {
+  const movie: MovieNode | null =
+    movieData?.Movie ?? previousMovieData?.Movie ?? null;
+  const { data: libraryData } = useQuery(LibraryDetailRouteDocument, {
     variables: { Id: movie?.LibraryId ?? "" },
     skip: !movie?.LibraryId,
     fetchPolicy: "cache-and-network",
   });
+  const { data: meData } = useQuery(MeDocument, {
+    fetchPolicy: "cache-first",
+  });
+  const userId = meData?.Me?.Id;
+  const { data: movieProgressData, previousData: previousMovieProgressData } =
+    useQuery(ShowPlaybackProgressByMediaDocument, {
+      variables: {
+        Where: {
+          UserId: { Eq: userId },
+          MediaFileId: { Eq: movie?.MediaFileId ?? "" },
+        },
+        Page: { Limit: 1, Offset: 0 },
+        OrderBy: [{ UpdatedAt: "Desc" }],
+      },
+      skip: !userId || !movie?.MediaFileId,
+      fetchPolicy: "cache-and-network",
+    });
+  const movieProgressEdge =
+    movieProgressData?.PlaybackProgresses?.Edges?.[0] ??
+    previousMovieProgressData?.PlaybackProgresses?.Edges?.[0];
+  const movieProgressNode = movieProgressEdge?.Node;
+  const movieWatchPosition = movieProgressNode?.CurrentPosition ?? 0;
+  const hasResumeProgress =
+    !movieProgressNode?.IsWatched && movieWatchPosition > 0;
 
   // Mutations
-  const [refreshMovie] = useMutation<{
-    RefreshMovie: {
-      Success: boolean;
-      Error: string | null;
-      Movie: Partial<Movie> | null;
-    };
-  }>(REFRESH_MOVIE);
+  const [refreshMovie] = useMutation(RefreshMovieRouteDocument);
 
   // Update page title
   useEffect(() => {
@@ -184,33 +137,38 @@ function MovieDetailPage() {
     };
   }, [movie]);
 
-  const handlePlay = useCallback(async () => {
-    if (!movie?.MediaFileId || !movie?.MediaFile) {
-      addToast({
-        title: "No media file",
-        description: "No playable media file found for this movie",
-        color: "warning",
-      });
-      return;
-    }
+  const handlePlay = useCallback(
+    async (startFromBeginning = false) => {
+      if (!movie?.MediaFileId) {
+        addToast({
+          title: "No media file",
+          description: "No playable media file found for this movie",
+          color: "warning",
+        });
+        return;
+      }
 
-    try {
-      await startMoviePlayback(
-        movie.Id,
-        movie.MediaFile.Id,
-        movie,
-        0,
-        movie.MediaFile.Duration || undefined
-      );
-    } catch (err) {
-      console.error("Failed to start playback:", err);
-      addToast({
-        title: "Error",
-        description: "Failed to start playback",
-        color: "danger",
-      });
-    }
-  }, [movie, startMoviePlayback]);
+      try {
+        const startPosition =
+          !startFromBeginning && hasResumeProgress ? movieWatchPosition : 0;
+        await startMoviePlayback(
+          movie.Id,
+          movie.MediaFileId,
+          movie as unknown as Parameters<typeof startMoviePlayback>[2],
+          startPosition,
+          movie.MediaFile?.Duration || movie.Runtime || undefined,
+        );
+      } catch (err) {
+        console.error("Failed to start playback:", err);
+        addToast({
+          title: "Error",
+          description: "Failed to start playback",
+          color: "danger",
+        });
+      }
+    },
+    [hasResumeProgress, movie, movieWatchPosition, startMoviePlayback],
+  );
 
   const handleRefresh = async () => {
     try {
@@ -219,7 +177,7 @@ function MovieDetailPage() {
         addToast({
           title: "Error",
           description: sanitizeError(
-            data?.RefreshMovie?.Error || "Failed to refresh metadata"
+            data?.RefreshMovie?.Error || "Failed to refresh metadata",
           ),
           color: "danger",
         });
@@ -251,10 +209,7 @@ function MovieDetailPage() {
 
   const handleSearchMovie = useCallback(() => {
     if (!movie) return;
-    const searchQuery = movie.Year
-      ? `${movie.Title} ${movie.Year}`
-      : movie.Title;
-    navigate({ to: "/hunt", search: { q: searchQuery, type: "movies" } });
+    navigate({ to: "/settings/sources" });
   }, [movie, navigate]);
 
   const isThisMoviePlaying =
@@ -308,7 +263,7 @@ function MovieDetailPage() {
                 if (isThisMoviePlaying) {
                   updatePlayback({ isPlaying: false });
                 } else {
-                  void handlePlay();
+                  void handlePlay(false);
                 }
               }}
               className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 rounded-lg cursor-pointer"
@@ -344,61 +299,101 @@ function MovieDetailPage() {
                 <span className="text-default-500 ml-2">({movie.Year})</span>
               )}
             </h1>
-            <Dropdown>
-              <DropdownTrigger>
+            <div className="flex items-center gap-2">
+              {movie.MediaFileId ? (
                 <Button
-                  isIconOnly
-                  size="sm"
-                  variant="light"
-                  aria-label="Movie actions"
-                >
-                  <IconDotsVertical size={18} />
-                </Button>
-              </DropdownTrigger>
-              <DropdownMenu
-                aria-label="Movie actions menu"
-                onAction={(key) => {
-                  if (key === "search") {
-                    handleSearchMovie();
-                  } else if (key === "refresh") {
-                    void handleRefresh();
-                  } else if (key === "properties") {
-                    onPropertiesOpen();
-                  } else if (key === "delete") {
-                    onDeleteOpen();
+                  color={isThisMoviePlaying ? "warning" : "primary"}
+                  variant="solid"
+                  startContent={
+                    isThisMoviePlaying ? (
+                      <IconPlayerPause size={16} />
+                    ) : (
+                      <IconPlayerPlay size={16} />
+                    )
                   }
-                }}
-              >
-                <DropdownItem
-                  key="search"
-                  startContent={<IconSearch size={16} />}
+                  onPress={() => {
+                    if (isThisMoviePlaying) {
+                      void updatePlayback({ isPlaying: false });
+                      return;
+                    }
+                    void handlePlay(false);
+                  }}
                 >
-                  Search for Movie
-                </DropdownItem>
-                <DropdownItem
-                  key="refresh"
-                  startContent={<IconRefresh size={16} />}
+                  {isThisMoviePlaying
+                    ? "Pause"
+                    : hasResumeProgress
+                      ? "Resume"
+                      : "Play"}
+                </Button>
+              ) : null}
+              {movie.MediaFileId && hasResumeProgress && !isThisMoviePlaying ? (
+                <Button
+                  color="default"
+                  variant="flat"
+                  startContent={<IconPlayerPlay size={16} />}
+                  onPress={() => void handlePlay(true)}
                 >
-                  Refresh
-                </DropdownItem>
-                {movie.MediaFileId ? (
-                  <DropdownItem
-                    key="properties"
-                    startContent={<IconInfoCircle size={16} />}
+                  Start from beginning
+                </Button>
+              ) : null}
+              <Dropdown>
+                <DropdownTrigger>
+                  <Button
+                    isIconOnly
+                    size="sm"
+                    variant="light"
+                    aria-label="Movie actions"
                   >
-                    Properties
-                  </DropdownItem>
-                ) : null}
-                <DropdownItem
-                  key="delete"
-                  startContent={<IconTrash size={16} className="text-red-400" />}
-                  className="text-danger"
-                  color="danger"
+                    <IconDotsVertical size={18} />
+                  </Button>
+                </DropdownTrigger>
+                <DropdownMenu
+                  aria-label="Movie actions menu"
+                  onAction={(key) => {
+                    if (key === "search") {
+                      handleSearchMovie();
+                    } else if (key === "refresh") {
+                      void handleRefresh();
+                    } else if (key === "properties") {
+                      onPropertiesOpen();
+                    } else if (key === "delete") {
+                      onDeleteOpen();
+                    }
+                  }}
                 >
-                  Delete
-                </DropdownItem>
-              </DropdownMenu>
-            </Dropdown>
+                  <DropdownItem
+                    key="search"
+                    startContent={<IconSearch size={16} />}
+                  >
+                    Search for Movie
+                  </DropdownItem>
+                  <DropdownItem
+                    key="refresh"
+                    startContent={<IconRefresh size={16} />}
+                  >
+                    Refresh
+                  </DropdownItem>
+                  {movie.MediaFileId ? (
+                    <DropdownItem
+                      key="properties"
+                      startContent={<IconInfoCircle size={16} />}
+                    >
+                      Properties
+                    </DropdownItem>
+                  ) : null}
+                  <DropdownItem
+                    key="delete"
+                    startContent={
+                      <IconTrash size={16} className="text-red-400" />
+                    }
+                    className="text-danger"
+                    color="danger"
+                  >
+                    Delete
+                  </DropdownItem>
+                </DropdownMenu>
+              </Dropdown>
+            </div>
           </div>
 
           {/* Tagline */}
@@ -534,7 +529,6 @@ function MovieDetailPage() {
               </div>
             </div>
           )}
-
         </div>
       </div>
 

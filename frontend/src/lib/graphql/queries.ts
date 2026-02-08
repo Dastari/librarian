@@ -1754,65 +1754,6 @@ export const VALIDATE_PATH_QUERY = `
 `;
 
 // ============================================================================
-// Indexer Search
-// ============================================================================
-
-export const SEARCH_INDEXERS_QUERY = `
-  query SearchIndexers($input: IndexerSearchInput!) {
-    searchIndexers(input: $input) {
-      indexers {
-        indexerId
-        indexerName
-        releases {
-          title
-          guid
-          link
-          magnetUri
-          infoHash
-          details
-          publishDate
-          categories
-          size
-          sizeFormatted
-          seeders
-          leechers
-          peers
-          grabs
-          isFreeleech
-          imdbId
-          poster
-          description
-          indexerId
-          indexerName
-        }
-        elapsedMs
-        fromCache
-        error
-      }
-      totalReleases
-      totalElapsedMs
-    }
-  }
-`;
-
-export const INDEXER_CONFIGS_QUERY = `
-  query IndexerConfigs {
-    indexerConfigs {
-      id
-      name
-      indexerType
-      enabled
-      priority
-      supportsSearch
-      supportsRss
-      apiUrl
-      createdAt
-      updatedAt
-    }
-  }
-`;
-
-// ============================================================================
 // Notification Queries
 // ============================================================================
 

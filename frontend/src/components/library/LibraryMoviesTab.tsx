@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useEffect } from "react";
+import { useMemo, useCallback, useEffect, useState } from "react";
 import { useQueryState, parseAsString, parseAsStringLiteral } from "nuqs";
 import { Button } from "@heroui/button";
 import { Chip } from "@heroui/chip";
@@ -15,6 +15,7 @@ import {
 } from "../data-table";
 import type { Movie } from "../../lib/graphql/generated/graphql";
 import { MOVIES_CONNECTION_QUERY } from "../../lib/graphql";
+import { useQuery, gql } from "../../lib/graphql/client";
 import {
   IconPlus,
   IconTrash,
@@ -22,10 +23,12 @@ import {
   IconMovie,
   IconClock,
   IconStar,
+  IconPlayerPlay,
 } from "@tabler/icons-react";
 import { MovieCard } from "./MovieCard";
 import { MediaCardSkeleton } from "./MediaCardSkeleton";
-import { useInfiniteConnection } from "../../hooks/useInfiniteConnection";
+import { usePlaybackContext } from "../../contexts/PlaybackContext";
+import { PlayPauseIndicator } from "../shared";
 
 // ============================================================================
 // Component Props
@@ -70,14 +73,21 @@ const SORT_FIELD_MAP: Record<string, string> = {
   rating: "SortTitle",
   size: "Runtime",
 };
+const MOVIES_QUERY = gql`
+  ${MOVIES_CONNECTION_QUERY}
+`;
 
 export function LibraryMoviesTab({
   libraryId,
-  loading: parentLoading,
+  loading: _parentLoading,
   onDeleteMovie,
   onAddMovie,
   onRefreshReady,
 }: LibraryMoviesTabProps) {
+  const { session, startMoviePlayback, updatePlayback } = usePlaybackContext();
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const pageSize = 100;
+
   // URL-persisted state via nuqs (clean URLs when using defaults)
   const [selectedLetter, setSelectedLetter] = useQueryState(
     "letter",
@@ -100,7 +110,7 @@ export function LibraryMoviesTab({
   const normalizedLetter = selectedLetter === "" ? null : selectedLetter;
 
   // Check if we should skip queries (loading or template ID)
-  const shouldSkipQueries = parentLoading || libraryId.startsWith("template");
+  const shouldSkipQueries = libraryId.startsWith("template");
 
   // Handle sort change from DataTable
   const handleSortChange = useCallback(
@@ -123,44 +133,90 @@ export function LibraryMoviesTab({
     ];
     return {
       Where: where,
-      Page: { Limit: 500 },
+      Page: { Limit: pageSize, Offset: 0 },
       OrderBy: orderBy,
     };
-  }, [libraryId, searchTerm, sortColumn, sortDirection]);
+  }, [libraryId, searchTerm, sortColumn, sortDirection, pageSize]);
 
-  // Use infinite connection hook; map schema response to Connection shape
   const {
-    items: movies,
-    isLoading,
-    isLoadingMore,
-    hasMore,
-    totalCount,
-    loadMore,
-    refresh,
-  } = useInfiniteConnection<MoviesConnectionResponse, Movie>({
-    query: MOVIES_CONNECTION_QUERY,
+    data,
+    previousData,
+    loading: queryLoading,
+    refetch,
+    fetchMore,
+  } = useQuery<MoviesConnectionResponse>(MOVIES_QUERY, {
     variables: queryVariables,
-    getConnection: (data) => ({
-      edges: data.Movies.Edges.map((e) => ({ node: e.Node, cursor: e.Cursor })),
-      pageInfo: {
-        hasNextPage: data.Movies.PageInfo.HasNextPage,
-        hasPreviousPage: data.Movies.PageInfo.HasPreviousPage,
-        startCursor: data.Movies.PageInfo.StartCursor ?? null,
-        endCursor: data.Movies.PageInfo.EndCursor ?? null,
-        totalCount: data.Movies.PageInfo.TotalCount ?? null,
-      },
-    }),
-    batchSize: 50,
-    enabled: !shouldSkipQueries,
-    deps: [libraryId, searchTerm],
+    skip: shouldSkipQueries,
+    fetchPolicy: "cache-and-network",
+    notifyOnNetworkStatusChange: true,
   });
+
+  const movies = useMemo(
+    () =>
+      (data?.Movies?.Edges ?? previousData?.Movies?.Edges ?? []).map(
+        (edge) => edge.Node
+      ),
+    [data?.Movies?.Edges, previousData?.Movies?.Edges]
+  );
+
+  const totalCount =
+    data?.Movies?.PageInfo?.TotalCount ??
+    previousData?.Movies?.PageInfo?.TotalCount ??
+    null;
+  const hasMore =
+    data?.Movies?.PageInfo?.HasNextPage ??
+    previousData?.Movies?.PageInfo?.HasNextPage ??
+    false;
+
+  const loadMore = useCallback(() => {
+    if (isLoadingMore || !hasMore || shouldSkipQueries) return;
+
+    const nextOffset = movies.length;
+    setIsLoadingMore(true);
+
+    void fetchMore({
+      variables: {
+        ...queryVariables,
+        Page: { Limit: pageSize, Offset: nextOffset },
+      },
+      updateQuery: (previousResult, { fetchMoreResult }) => {
+        if (!fetchMoreResult?.Movies) return previousResult;
+
+        const previousEdges = previousResult.Movies?.Edges ?? [];
+        const seenIds = new Set(previousEdges.map((edge) => edge.Node.Id));
+        const nextEdges = (fetchMoreResult.Movies.Edges ?? []).filter(
+          (edge) => !seenIds.has(edge.Node.Id)
+        );
+
+        return {
+          ...fetchMoreResult,
+          Movies: {
+            ...fetchMoreResult.Movies,
+            Edges: [...previousEdges, ...nextEdges],
+          },
+        };
+      },
+    }).finally(() => {
+      setIsLoadingMore(false);
+    });
+  }, [
+    fetchMore,
+    hasMore,
+    isLoadingMore,
+    movies.length,
+    pageSize,
+    queryVariables,
+    shouldSkipQueries,
+  ]);
 
   // Provide refresh function to parent for subscription updates
   useEffect(() => {
     if (onRefreshReady) {
-      onRefreshReady(refresh);
+      onRefreshReady(() => {
+        void refetch();
+      });
     }
-  }, [refresh, onRefreshReady]);
+  }, [refetch, onRefreshReady]);
 
   // Get letters that have movies (from loaded data)
   const availableLetters = useMemo(() => {
@@ -301,6 +357,39 @@ export function LibraryMoviesTab({
   const rowActions: RowAction<Movie>[] = useMemo(
     () => [
       {
+        key: `pause-${session?.movieId ?? "none"}-${session?.isPlaying ? "playing" : "paused"}`,
+        label: "Pause",
+        icon: (
+          <PlayPauseIndicator
+            size={16}
+            isPlaying={Boolean(session?.isPlaying)}
+            colorClass="bg-success"
+          />
+        ),
+        inDropdown: false,
+        isVisible: (movie) =>
+          Boolean(movie.MediaFileId) &&
+          session?.movieId === movie.Id &&
+          Boolean(session?.isPlaying),
+        onAction: () => {
+          void updatePlayback({ isPlaying: false });
+        },
+      },
+      {
+        key: `play-${session?.movieId ?? "none"}-${session?.isPlaying ? "playing" : "paused"}`,
+        label: "Play",
+        icon: <IconPlayerPlay size={16} />,
+        color: "success",
+        inDropdown: false,
+        isVisible: (movie) =>
+          Boolean(movie.MediaFileId) &&
+          !(session?.movieId === movie.Id && session?.isPlaying),
+        onAction: (movie) => {
+          if (!movie.MediaFileId) return;
+          void startMoviePlayback(movie.Id, movie.MediaFileId, movie);
+        },
+      },
+      {
         key: "view",
         label: "View",
         icon: <IconEye size={16} />,
@@ -318,7 +407,7 @@ export function LibraryMoviesTab({
         onAction: (movie) => onDeleteMovie(movie.Id, movie.Title),
       },
     ],
-    [onDeleteMovie]
+    [onDeleteMovie, session?.isPlaying, session?.movieId, startMoviePlayback, updatePlayback]
   );
 
   // Card renderer
@@ -327,9 +416,19 @@ export function LibraryMoviesTab({
       <MovieCard
         movie={item}
         onDelete={() => onDeleteMovie(item.Id, item.Title)}
+        onPlay={(movie) => {
+          if (!movie.MediaFileId) return;
+          if (session?.movieId === movie.Id && session?.isPlaying) {
+            void updatePlayback({ isPlaying: false });
+            return;
+          }
+          void startMoviePlayback(movie.Id, movie.MediaFileId, movie);
+        }}
+        isCurrentMovie={session?.movieId === item.Id}
+        isPlaying={Boolean(session?.isPlaying)}
       />
     ),
-    [onDeleteMovie]
+    [onDeleteMovie, session?.isPlaying, session?.movieId, startMoviePlayback, updatePlayback]
   );
 
   return (
@@ -359,11 +458,10 @@ export function LibraryMoviesTab({
           serverSide
           serverTotalCount={totalCount ?? undefined}
           onSearchChange={handleSearchChange}
-          // Infinite loading
+          isLoading={queryLoading && movies.length === 0}
           paginationMode="infinite"
-          hasMore={hasMore}
           onLoadMore={loadMore}
-          isLoading={parentLoading || isLoading}
+          hasMore={hasMore}
           isLoadingMore={isLoadingMore}
           headerContent={
             <AlphabetFilter

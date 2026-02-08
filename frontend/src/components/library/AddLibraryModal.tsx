@@ -1,5 +1,6 @@
-import { useState, useCallback } from 'react'
-import { Button } from '@heroui/button'
+import { useState, useCallback, useEffect } from "react";
+import { Button } from "@heroui/button";
+import { addToast } from "@heroui/toast";
 import {
   Modal,
   ModalContent,
@@ -12,7 +13,12 @@ import {
   DEFAULT_LIBRARY_SETTINGS,
   type LibrarySettingsFormValues,
 } from "./LibrarySettingsForm";
-import type { CreateLibraryInput } from '../../lib/graphql'
+import {
+  configureNetworkPath,
+  getFilesystemRuntimeInfo,
+  type RuntimeFilesystemInfo,
+} from "../../lib/graphql";
+import type { CreateLibraryInput } from "../../lib/graphql/generated/graphql";
 
 export type CreateLibraryFormInput = Omit<
   CreateLibraryInput,
@@ -20,10 +26,10 @@ export type CreateLibraryFormInput = Omit<
 >;
 
 export interface AddLibraryModalProps {
-  isOpen: boolean
-  onClose: () => void
-  onAdd: (library: CreateLibraryFormInput) => Promise<void>
-  isLoading: boolean
+  isOpen: boolean;
+  onClose: () => void;
+  onAdd: (library: CreateLibraryFormInput) => Promise<void>;
+  isLoading: boolean;
 }
 
 export function AddLibraryModal({
@@ -37,6 +43,25 @@ export function AddLibraryModal({
     DEFAULT_LIBRARY_SETTINGS,
   );
   const [isFormValid, setIsFormValid] = useState(false);
+  const [runtimeInfo, setRuntimeInfo] = useState<RuntimeFilesystemInfo | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let active = true;
+    getFilesystemRuntimeInfo()
+      .then((info) => {
+        if (active) setRuntimeInfo(info);
+      })
+      .catch(() => {
+        if (active) setRuntimeInfo(null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [isOpen]);
 
   const handleChange = useCallback(
     (values: LibrarySettingsFormValues, isValid: boolean) => {
@@ -48,10 +73,45 @@ export function AddLibraryModal({
 
   const handleSubmit = async () => {
     if (!isFormValid) return;
+    let finalPath = formValues.Path;
+    const pathLooksUnc = /^\\\\|^\/\//.test(formValues.Path.trim());
+
+    if (runtimeInfo && pathLooksUnc) {
+      const isWindows = runtimeInfo.Platform === "windows";
+      const isLinux = runtimeInfo.Platform === "linux";
+      const shouldConfigureWindows =
+        isWindows &&
+        (formValues.NetworkAuthEnabled ||
+          Boolean(formValues.NetworkUsername || formValues.NetworkPassword));
+      const shouldConfigureLinux = isLinux && runtimeInfo.SupportsSambaMount;
+
+      if (shouldConfigureWindows || shouldConfigureLinux) {
+        const configured = await configureNetworkPath({
+          path: formValues.Path,
+          username: formValues.NetworkUsername || undefined,
+          password: formValues.NetworkPassword || undefined,
+          mountPoint: shouldConfigureLinux
+            ? formValues.NetworkMountPoint
+            : undefined,
+          persist: formValues.PersistNetworkCredentials,
+          attemptConnect: true,
+        });
+
+        if (!configured.success) {
+          addToast({
+            title: "Network Path Error",
+            description: configured.error ?? "Failed to configure network path",
+            color: "danger",
+          });
+          return;
+        }
+        finalPath = configured.resolvedPath;
+      }
+    }
 
     await onAdd({
       Name: formValues.Name,
-      Path: formValues.Path,
+      Path: finalPath,
       LibraryType: formValues.LibraryType,
       AutoScan: formValues.AutoScan,
       ScanIntervalMinutes: formValues.ScanIntervalMinutes,
@@ -88,8 +148,13 @@ export function AddLibraryModal({
             initialValues={DEFAULT_LIBRARY_SETTINGS}
             onChange={handleChange}
             mode="create"
+            r
             useCards={false}
             closeSignal={closeSignal}
+            runtimePlatform={runtimeInfo?.Platform}
+            supportsUncCredentials={runtimeInfo?.SupportsUncCredentials}
+            supportsSambaMount={runtimeInfo?.SupportsSambaMount}
+            defaultLinuxMountBase={runtimeInfo?.DefaultLinuxMountBase}
           />
         </ModalBody>
         <ModalFooter>

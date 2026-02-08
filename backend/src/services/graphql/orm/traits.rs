@@ -17,6 +17,8 @@ pub struct ColumnDef {
     pub nullable: bool,
     /// Whether this is the primary key
     pub is_primary_key: bool,
+    /// Whether this column should be unique
+    pub is_unique: bool,
     /// Default value expression (e.g., "datetime('now')")
     pub default: Option<&'static str>,
 }
@@ -28,6 +30,10 @@ impl ColumnDef {
 
         if self.is_primary_key {
             sql.push_str(" PRIMARY KEY");
+        }
+
+        if self.is_unique && !self.is_primary_key {
+            sql.push_str(" UNIQUE");
         }
 
         if !self.nullable && !self.is_primary_key {

@@ -34,6 +34,74 @@ function fromPascal(p: FileOperationPayloadPascal): FileOperationResult {
 export type BrowseDirectoryResult = NonNullable<
   BrowseDirectoryQuery['BrowseDirectory']
 >;
+export type RuntimeFilesystemInfo = {
+  Platform: string;
+  SupportsUncCredentials: boolean;
+  SupportsSambaMount: boolean;
+  DefaultLinuxMountBase?: string | null;
+};
+export type LibraryPathAvailabilityStatus = {
+  Path: string;
+  Reachable: boolean;
+  Exists: boolean;
+  IsDirectory: boolean;
+  NeedsReconnect: boolean;
+  ReconnectAttempted: boolean;
+  ReconnectSucceeded: boolean;
+  Message?: string | null;
+};
+
+const FILESYSTEM_RUNTIME_INFO_QUERY = `
+  query FilesystemRuntimeInfo {
+    FilesystemRuntimeInfo {
+      Platform
+      SupportsUncCredentials
+      SupportsSambaMount
+      DefaultLinuxMountBase
+    }
+  }
+`;
+
+const LIBRARY_PATH_AVAILABILITY_QUERY = `
+  query LibraryPathAvailability($Input: LibraryPathAvailabilityInput!) {
+    LibraryPathAvailability(Input: $Input) {
+      Path
+      Reachable
+      Exists
+      IsDirectory
+      NeedsReconnect
+      ReconnectAttempted
+      ReconnectSucceeded
+      Message
+    }
+  }
+`;
+
+const CONFIGURE_NETWORK_PATH_MUTATION = `
+  mutation ConfigureNetworkPath($Input: ConfigureNetworkPathInput!) {
+    ConfigureNetworkPath(Input: $Input) {
+      Success
+      Error
+      ResolvedPath
+      Connected
+      Stored
+      Message
+    }
+  }
+`;
+
+const RECONNECT_LIBRARY_PATH_MUTATION = `
+  mutation ReconnectLibraryPath($Path: String!) {
+    ReconnectLibraryPath(Path: $Path) {
+      Success
+      Error
+      ResolvedPath
+      Connected
+      Stored
+      Message
+    }
+  }
+`;
 
 /**
  * Browse a directory on the server filesystem
@@ -65,6 +133,124 @@ export async function browseDirectory(
   }
 
   return data;
+}
+
+export async function getFilesystemRuntimeInfo(): Promise<RuntimeFilesystemInfo> {
+  const result = await queryPromise<{ FilesystemRuntimeInfo: RuntimeFilesystemInfo }>(
+    FILESYSTEM_RUNTIME_INFO_QUERY
+  );
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  const data = result.data?.FilesystemRuntimeInfo;
+  if (!data) {
+    throw new Error('Failed to load filesystem runtime info');
+  }
+
+  return data;
+}
+
+export async function getLibraryPathAvailability(
+  paths: string[],
+  attemptReconnect = false
+): Promise<LibraryPathAvailabilityStatus[]> {
+  const result = await queryPromise<{ LibraryPathAvailability: LibraryPathAvailabilityStatus[] }>(
+    LIBRARY_PATH_AVAILABILITY_QUERY,
+    {
+    Input: {
+      Paths: paths,
+      AttemptReconnect: attemptReconnect,
+    },
+    }
+  );
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  return result.data?.LibraryPathAvailability ?? [];
+}
+
+export async function configureNetworkPath(input: {
+  path: string;
+  username?: string;
+  password?: string;
+  mountPoint?: string;
+  persist?: boolean;
+  attemptConnect?: boolean;
+}): Promise<{
+  success: boolean;
+  error?: string;
+  resolvedPath: string;
+  connected: boolean;
+  stored: boolean;
+  message?: string;
+}> {
+  const result = await mutationPromise<{
+    ConfigureNetworkPath: {
+      Success: boolean;
+      Error?: string | null;
+      ResolvedPath: string;
+      Connected: boolean;
+      Stored: boolean;
+      Message?: string | null;
+    };
+  }>(CONFIGURE_NETWORK_PATH_MUTATION, {
+    Input: {
+      Path: input.path,
+      Username: input.username ?? null,
+      Password: input.password ?? null,
+      MountPoint: input.mountPoint ?? null,
+      Persist: input.persist ?? true,
+      AttemptConnect: input.attemptConnect ?? true,
+    },
+  });
+
+  if (result.error || !result.data?.ConfigureNetworkPath) {
+    return {
+      success: false,
+      error: result.error?.message ?? 'Failed to configure network path',
+      resolvedPath: input.path,
+      connected: false,
+      stored: false,
+    };
+  }
+
+  const payload = result.data.ConfigureNetworkPath;
+  return {
+    success: payload.Success,
+    error: payload.Error ?? undefined,
+    resolvedPath: payload.ResolvedPath,
+    connected: payload.Connected,
+    stored: payload.Stored,
+    message: payload.Message ?? undefined,
+  };
+}
+
+export async function reconnectLibraryPath(path: string): Promise<{
+  success: boolean;
+  error?: string;
+}> {
+  const result = await mutationPromise<{
+    ReconnectLibraryPath: {
+      Success: boolean;
+      Error?: string | null;
+    };
+  }>(RECONNECT_LIBRARY_PATH_MUTATION, { Path: path });
+
+  if (result.error || !result.data?.ReconnectLibraryPath) {
+    return {
+      success: false,
+      error: result.error?.message ?? 'Failed to reconnect library path',
+    };
+  }
+
+  return {
+    success: result.data.ReconnectLibraryPath.Success,
+    error: result.data.ReconnectLibraryPath.Error ?? undefined,
+  };
 }
 
 /**

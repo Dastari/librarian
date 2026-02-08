@@ -13,6 +13,7 @@ import { addToast } from "@heroui/toast";
 import { IconShieldCheck, IconAlertCircle } from "@tabler/icons-react";
 import { useAuth } from "../hooks/useAuth";
 import { NeedsSetupDocument } from "../lib/graphql/generated/graphql";
+import { apolloClient } from "../lib/graphql/client";
 
 interface SignInModalProps {
   isOpen: boolean;
@@ -50,8 +51,10 @@ export function SignInModal({
   const checkSetupStatus = async () => {
     setCheckingSetup(true);
     try {
-      const result = await queryPromise(NeedsSetupDocument, {})
-        ;
+      const result = await apolloClient.query({
+        query: NeedsSetupDocument,
+        fetchPolicy: "network-only",
+      });
 
       if (result.data) {
         setNeedsSetup(result.data.NeedsSetup);

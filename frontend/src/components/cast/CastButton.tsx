@@ -2,14 +2,20 @@
  * Cast button with device selection dropdown
  */
 
-import { useState } from 'react';
-import { Button } from '@heroui/button';
-import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, DropdownSection } from '@heroui/dropdown';
-import { Chip } from '@heroui/chip';
-import { Spinner } from '@heroui/spinner';
-import { IconCast, IconRefresh, IconPlus } from '@tabler/icons-react';
-import { useCast } from '../../hooks/useCast';
-import type { CastDevice, CastMediaInput } from '../../lib/graphql';
+import { useState } from "react";
+import { Button } from "@heroui/button";
+import {
+  Dropdown,
+  DropdownTrigger,
+  DropdownMenu,
+  DropdownItem,
+  DropdownSection,
+} from "@heroui/dropdown";
+import { Chip } from "@heroui/chip";
+import { Spinner } from "@heroui/spinner";
+import { IconCast, IconRefresh, IconPlus } from "@tabler/icons-react";
+import { useCast, type CastDevice } from "../../hooks/useCast";
+import type { CastMediaInput } from "../../lib/graphql/generated/graphql";
 
 interface CastButtonProps {
   /** Media file ID to cast */
@@ -19,9 +25,16 @@ interface CastButtonProps {
   /** Start position in seconds */
   startPosition?: number;
   /** Button size */
-  size?: 'sm' | 'md' | 'lg';
+  size?: "sm" | "md" | "lg";
   /** Button variant override */
-  variant?: 'solid' | 'bordered' | 'light' | 'flat' | 'faded' | 'shadow' | 'ghost';
+  variant?:
+    | "solid"
+    | "bordered"
+    | "light"
+    | "flat"
+    | "faded"
+    | "shadow"
+    | "ghost";
   /** Additional class names for the button */
   className?: string;
   /** Called when cast starts */
@@ -34,13 +47,14 @@ export function CastButton({
   mediaFileId,
   episodeId,
   startPosition,
-  size = 'sm',
+  size = "sm",
   variant,
   className,
   onCastStart,
   onError,
 }: CastButtonProps) {
-  const { devices, activeSession, isDiscovering, discoverDevices, castMedia } = useCast();
+  const { devices, activeSession, isDiscovering, discoverDevices, castMedia } =
+    useCast();
   const [isCasting, setIsCasting] = useState(false);
 
   const isCastingThisMedia = activeSession?.mediaFileId === mediaFileId;
@@ -59,7 +73,7 @@ export function CastButton({
       if (result.success) {
         onCastStart?.();
       } else {
-        onError?.(result.error || 'Failed to cast');
+        onError?.(result.error || "Failed to cast");
       }
     } finally {
       setIsCasting(false);
@@ -77,15 +91,15 @@ export function CastButton({
     <Dropdown>
       <DropdownTrigger>
         <Button
-          isIconOnly={size === 'sm'}
+          isIconOnly={size === "sm"}
           size={size}
-          variant={isCastingThisMedia ? 'solid' : (variant || 'flat')}
-          color={isCastingThisMedia ? 'primary' : 'default'}
+          variant={isCastingThisMedia ? "solid" : variant || "flat"}
+          color={isCastingThisMedia ? "primary" : "default"}
           className={className}
           isLoading={isCasting}
         >
-          <IconCast size={size === 'lg' ? 24 : 20} />
-          {size !== 'sm' && <span className="ml-2">Cast</span>}
+          <IconCast size={size === "lg" ? 24 : 20} />
+          {size !== "sm" && <span className="ml-2">Cast</span>}
         </Button>
       </DropdownTrigger>
       <DropdownMenu aria-label="Cast devices">
@@ -101,13 +115,19 @@ export function CastButton({
                 <div className="flex items-center gap-2">
                   {device.name}
                   {device.isFavorite && (
-                    <Chip size="sm" variant="flat" color="warning">★</Chip>
+                    <Chip size="sm" variant="flat" color="warning">
+                      ★
+                    </Chip>
                   )}
                 </div>
               </DropdownItem>
             ))
           ) : (
-            <DropdownItem key="no-devices" isReadOnly className="text-default-400">
+            <DropdownItem
+              key="no-devices"
+              isReadOnly
+              className="text-default-400"
+            >
               No devices found
             </DropdownItem>
           )}
@@ -115,11 +135,13 @@ export function CastButton({
         <DropdownSection>
           <DropdownItem
             key="discover"
-            startContent={isDiscovering ? <Spinner size="sm" /> : <IconRefresh size={16} />}
+            startContent={
+              isDiscovering ? <Spinner size="sm" /> : <IconRefresh size={16} />
+            }
             onPress={discoverDevices}
             isDisabled={isDiscovering}
           >
-            {isDiscovering ? 'Discovering...' : 'Discover devices'}
+            {isDiscovering ? "Discovering..." : "Discover devices"}
           </DropdownItem>
           <DropdownItem
             key="manage"

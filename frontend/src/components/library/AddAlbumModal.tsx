@@ -15,10 +15,14 @@ import {
   IconPlus,
 } from '@tabler/icons-react'
 import {
-  SEARCH_ALBUMS_QUERY,
-  ADD_ALBUM_MUTATION,
-  type AlbumSearchResult,
-} from '../../lib/graphql'
+  useLazyQuery,
+  useMutation,
+} from '../../lib/graphql/client'
+import {
+  AddAlbumDocument,
+  SearchAlbumsDocument,
+  type SearchAlbumsQuery,
+} from '../../lib/graphql/generated/graphql'
 
 // ============================================================================
 // Component Props
@@ -36,7 +40,7 @@ interface AddAlbumModalProps {
 // ============================================================================
 
 interface SearchResultCardProps {
-  result: AlbumSearchResult
+  result: SearchAlbumsQuery['SearchAlbums'][number]
   onAdd: () => void
   isAdding: boolean
 }
@@ -45,10 +49,10 @@ function SearchResultCard({ result, onAdd, isAdding }: SearchResultCardProps) {
   return (
     <Card className="bg-content2">
       <CardBody className="flex flex-row gap-4 p-3">
-        {result.coverUrl ? (
+        {result.CoverUrl ? (
           <Image
-            src={result.coverUrl}
-            alt={result.title}
+            src={result.CoverUrl}
+            alt={result.Title}
             className="w-16 h-16 object-cover flex-shrink-0"
             radius="md"
           />
@@ -58,25 +62,25 @@ function SearchResultCard({ result, onAdd, isAdding }: SearchResultCardProps) {
           </div>
         )}
         <div className="flex-1 min-w-0">
-          <p className="font-semibold line-clamp-1">{result.title}</p>
-          {result.artistName && (
+          <p className="font-semibold line-clamp-1">{result.Title}</p>
+          {result.ArtistName && (
             <p className="text-sm text-default-500 flex items-center gap-1 line-clamp-1">
               <IconUser size={14} />
-              {result.artistName}
+              {result.ArtistName}
             </p>
           )}
           <div className="flex items-center gap-2 mt-1">
-            {result.year && (
+            {result.Year && (
               <Chip size="sm" variant="flat">
                 <span className="flex items-center gap-1">
                   <IconCalendar size={12} />
-                  {result.year}
+                  {result.Year}
                 </span>
               </Chip>
             )}
-            {result.albumType && (
+            {result.AlbumType && (
               <Chip size="sm" variant="flat" color="secondary">
-                {result.albumType}
+                {result.AlbumType}
               </Chip>
             )}
           </div>
@@ -115,8 +119,7 @@ export function AddAlbumModal({
   onAlbumAdded,
 }: AddAlbumModalProps) {
   const [searchQuery, setSearchQuery] = useState('')
-  const [searching, setSearching] = useState(false)
-  const [searchResults, setSearchResults] = useState<AlbumSearchResult[]>([])
+  const [searchResults, setSearchResults] = useState<SearchAlbumsQuery['SearchAlbums']>([])
   const [addingId, setAddingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [_showFilters, _setShowFilters] = useState(false) // TODO: implement filter UI
@@ -127,88 +130,62 @@ export function AddAlbumModal({
     includeLive: false,
     includeSoundtracks: false,
   })
+  const [searchAlbums, { loading: searching }] = useLazyQuery(SearchAlbumsDocument)
+  const [addAlbum] = useMutation(AddAlbumDocument)
 
   const handleSearch = useCallback(async () => {
     if (!searchQuery.trim()) return
 
-    setSearching(true)
     setError(null)
     setSearchResults([])
 
     try {
-      const result = await queryPromise<{
-          SearchAlbums: Array<{
-            Provider: string
-            ProviderId: string
-            Title: string
-            ArtistName: string | null
-            Year: number | null
-            AlbumType: string | null
-            CoverUrl: string | null
-            Score: number | null
-          }>
-        }>(SEARCH_ALBUMS_QUERY, {
-          query: searchQuery,
-          includeEps: filters.includeEps,
-          includeSingles: filters.includeSingles,
-          includeCompilations: filters.includeCompilations,
-          includeLive: filters.includeLive,
-          includeSoundtracks: filters.includeSoundtracks,
-        })
-        
+      const { data, error: queryError } = await searchAlbums({
+        variables: {
+          Query: searchQuery,
+          IncludeEps: filters.includeEps,
+          IncludeSingles: filters.includeSingles,
+          IncludeCompilations: filters.includeCompilations,
+          IncludeLive: filters.includeLive,
+          IncludeSoundtracks: filters.includeSoundtracks,
+        },
+      })
 
-      if (result.error) {
-        setError(result.error.message)
-      } else if (result.data?.SearchAlbums) {
-        setSearchResults(
-          result.data.SearchAlbums.map((item) => ({
-            provider: item.Provider,
-            providerId: item.ProviderId,
-            title: item.Title,
-            artistName: item.ArtistName,
-            year: item.Year,
-            albumType: item.AlbumType,
-            coverUrl: item.CoverUrl,
-            score: item.Score,
-          }))
-        )
+      if (queryError) {
+        setError(queryError.message)
+      } else if (data?.SearchAlbums) {
+        setSearchResults(data.SearchAlbums)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed')
-    } finally {
-      setSearching(false)
     }
   }, [searchQuery, filters])
 
   const handleAddAlbum = useCallback(
-    async (result: AlbumSearchResult) => {
-      setAddingId(result.providerId)
+    async (result: SearchAlbumsQuery['SearchAlbums'][number]) => {
+      setAddingId(result.ProviderId)
       setError(null)
 
       try {
-        const mutationResult = await mutationPromise<{
-            AddAlbum: {
-              Success: boolean
-              Error: string | null
-            }
-          }>(ADD_ALBUM_MUTATION, {
+        const { data, error } = await addAlbum({
+          variables: {
             Input: {
-              MusicbrainzId: result.providerId,
+              MusicbrainzId: result.ProviderId,
               LibraryId: libraryId,
             },
-          })
-          
+          },
+        })
 
-        if (mutationResult.error) {
-          setError(mutationResult.error.message)
-        } else if (mutationResult.data?.AddAlbum.Success) {
+        if (error) {
+          setError(error.message)
+        } else if (data?.AddAlbum.Success) {
           // Remove from search results
           setSearchResults((prev) =>
-            prev.filter((r) => r.providerId !== result.providerId)
+            prev.filter((r) => r.ProviderId !== result.ProviderId)
           )
           onAlbumAdded?.()
-        } else if (mutationResult.data?.AddAlbum.Error) {
-          setError(mutationResult.data.AddAlbum.Error)
+        } else if (data?.AddAlbum.Error) {
+          setError(data.AddAlbum.Error)
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to add album')
@@ -216,7 +193,7 @@ export function AddAlbumModal({
         setAddingId(null)
       }
     },
-    [libraryId, onAlbumAdded]
+    [addAlbum, libraryId, onAlbumAdded]
   )
 
   const handleClose = useCallback(() => {
@@ -339,10 +316,10 @@ export function AddAlbumModal({
               </p>
               {searchResults.map((result) => (
                 <SearchResultCard
-                  key={result.providerId}
+                  key={result.ProviderId}
                   result={result}
                   onAdd={() => handleAddAlbum(result)}
-                  isAdding={addingId === result.providerId}
+                  isAdding={addingId === result.ProviderId}
                 />
               ))}
             </div>

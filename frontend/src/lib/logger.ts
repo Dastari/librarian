@@ -1,9 +1,9 @@
 /**
  * Logger utility that respects environment settings.
- * 
+ *
  * In development: All logs are shown
  * In production: Only warnings and errors are shown
- * 
+ *
  * Usage:
  *   import { logger } from '../lib/logger'
  *   logger.log('Debug info:', data)
@@ -12,17 +12,17 @@
  *   logger.debug('Verbose debug info:', data)
  */
 
-const isDev = import.meta.env.DEV
+const isDev = import.meta.env.DEV;
 
-type LogLevel = 'debug' | 'log' | 'info' | 'warn' | 'error'
+type LogLevel = "debug" | "log" | "info" | "warn" | "error";
 
 interface LoggerConfig {
   /** Minimum level to log (debug < log < info < warn < error) */
-  minLevel: LogLevel
+  minLevel: LogLevel;
   /** Whether to include timestamps in logs */
-  timestamps: boolean
+  timestamps: boolean;
   /** Prefix for all log messages */
-  prefix: string
+  prefix: string;
 }
 
 const LOG_LEVELS: Record<LogLevel, number> = {
@@ -31,32 +31,32 @@ const LOG_LEVELS: Record<LogLevel, number> = {
   info: 2,
   warn: 3,
   error: 4,
-}
+};
 
 const defaultConfig: LoggerConfig = {
-  minLevel: isDev ? 'debug' : 'warn',
+  minLevel: isDev ? "debug" : "warn",
   timestamps: isDev,
-  prefix: '[Librarian]',
-}
+  prefix: "[Librarian]",
+};
 
 function shouldLog(level: LogLevel): boolean {
-  return LOG_LEVELS[level] >= LOG_LEVELS[defaultConfig.minLevel]
+  return LOG_LEVELS[level] >= LOG_LEVELS[defaultConfig.minLevel];
 }
 
 function formatArgs(level: LogLevel, args: unknown[]): unknown[] {
-  const parts: unknown[] = []
-  
+  const parts: unknown[] = [];
+
   if (defaultConfig.prefix) {
-    parts.push(defaultConfig.prefix)
+    parts.push(defaultConfig.prefix);
   }
-  
+
   if (defaultConfig.timestamps) {
-    parts.push(`[${new Date().toISOString()}]`)
+    parts.push(`[${new Date().toISOString()}]`);
   }
-  
-  parts.push(`[${level.toUpperCase()}]`)
-  
-  return [...parts, ...args]
+
+  parts.push(`[${level.toUpperCase()}]`);
+
+  return [...parts, ...args];
 }
 
 /**
@@ -69,8 +69,8 @@ export const logger = {
    * Use for verbose debugging information.
    */
   debug: (...args: unknown[]): void => {
-    if (shouldLog('debug')) {
-      console.debug(...formatArgs('debug', args))
+    if (shouldLog("debug")) {
+      console.debug(...formatArgs("debug", args));
     }
   },
 
@@ -79,8 +79,8 @@ export const logger = {
    * Use for informational messages during development.
    */
   log: (...args: unknown[]): void => {
-    if (shouldLog('log')) {
-      console.log(...formatArgs('log', args))
+    if (shouldLog("log")) {
+      console.log(...formatArgs("log", args));
     }
   },
 
@@ -89,8 +89,8 @@ export const logger = {
    * Use for notable events that aren't errors.
    */
   info: (...args: unknown[]): void => {
-    if (shouldLog('info')) {
-      console.info(...formatArgs('info', args))
+    if (shouldLog("info")) {
+      console.info(...formatArgs("info", args));
     }
   },
 
@@ -99,8 +99,8 @@ export const logger = {
    * Use for potential issues that don't prevent operation.
    */
   warn: (...args: unknown[]): void => {
-    if (shouldLog('warn')) {
-      console.warn(...formatArgs('warn', args))
+    if (shouldLog("warn")) {
+      console.warn(...formatArgs("warn", args));
     }
   },
 
@@ -109,8 +109,8 @@ export const logger = {
    * Use for errors that need attention.
    */
   error: (...args: unknown[]): void => {
-    if (shouldLog('error')) {
-      console.error(...formatArgs('error', args))
+    if (shouldLog("error")) {
+      console.error(...formatArgs("error", args));
     }
   },
 
@@ -119,7 +119,7 @@ export const logger = {
    */
   group: (label: string): void => {
     if (isDev) {
-      console.group(`${defaultConfig.prefix} ${label}`)
+      console.group(`${defaultConfig.prefix} ${label}`);
     }
   },
 
@@ -128,7 +128,7 @@ export const logger = {
    */
   groupEnd: (): void => {
     if (isDev) {
-      console.groupEnd()
+      console.groupEnd();
     }
   },
 
@@ -137,7 +137,7 @@ export const logger = {
    */
   table: (data: unknown): void => {
     if (isDev) {
-      console.table(data)
+      console.table(data);
     }
   },
 
@@ -146,7 +146,7 @@ export const logger = {
    */
   time: (label: string): void => {
     if (isDev) {
-      console.time(`${defaultConfig.prefix} ${label}`)
+      console.time(`${defaultConfig.prefix} ${label}`);
     }
   },
 
@@ -155,47 +155,47 @@ export const logger = {
    */
   timeEnd: (label: string): void => {
     if (isDev) {
-      console.timeEnd(`${defaultConfig.prefix} ${label}`)
+      console.timeEnd(`${defaultConfig.prefix} ${label}`);
     }
   },
-}
+};
 
 /**
  * Create a scoped logger with a custom prefix.
  * Useful for per-component or per-module logging.
- * 
+ *
  * @example
  * const log = createLogger('TorrentService')
  * log.info('Starting download...') // [Librarian:TorrentService] [INFO] Starting download...
  */
 export function createLogger(scope: string) {
-  const scopedPrefix = `${defaultConfig.prefix}:${scope}`
-  
+  const scopedPrefix = `${defaultConfig.prefix}:${scope}`;
+
   return {
     debug: (...args: unknown[]): void => {
-      if (shouldLog('debug')) {
-        console.debug(scopedPrefix, ...args)
+      if (shouldLog("debug")) {
+        console.debug(scopedPrefix, ...args);
       }
     },
     log: (...args: unknown[]): void => {
-      if (shouldLog('log')) {
-        console.log(scopedPrefix, ...args)
+      if (shouldLog("log")) {
+        console.log(scopedPrefix, ...args);
       }
     },
     info: (...args: unknown[]): void => {
-      if (shouldLog('info')) {
-        console.info(scopedPrefix, ...args)
+      if (shouldLog("info")) {
+        console.info(scopedPrefix, ...args);
       }
     },
     warn: (...args: unknown[]): void => {
-      if (shouldLog('warn')) {
-        console.warn(scopedPrefix, ...args)
+      if (shouldLog("warn")) {
+        console.warn(scopedPrefix, ...args);
       }
     },
     error: (...args: unknown[]): void => {
-      if (shouldLog('error')) {
-        console.error(scopedPrefix, ...args)
+      if (shouldLog("error")) {
+        console.error(scopedPrefix, ...args);
       }
     },
-  }
+  };
 }

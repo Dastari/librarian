@@ -9,11 +9,14 @@ import { Switch } from '@heroui/switch'
 import { Spinner } from '@heroui/spinner'
 import { addToast } from '@heroui/toast'
 import {
-  SEARCH_MOVIES_QUERY,
-  ADD_MOVIE_MUTATION,
-  type Movie,
-  type MovieSearchResult,
-} from '../../lib/graphql'
+  useLazyQuery,
+  useMutation,
+} from '../../lib/graphql/client'
+import {
+  AddMovieDocument,
+  SearchMoviesDocument,
+  type SearchMoviesQuery,
+} from '../../lib/graphql/generated/graphql'
 import { IconMovie, IconStar } from '@tabler/icons-react'
 import { sanitizeError } from '../../lib/format'
 
@@ -31,36 +34,23 @@ export function AddMovieModal({
   libraryId,
   onAdded,
 }: AddMovieModalProps) {
+  type MovieSearchResult = SearchMoviesQuery['SearchMovies'][number]
+
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<MovieSearchResult[]>([])
-  const [searching, setSearching] = useState(false)
-  const [adding, setAdding] = useState(false)
   const [selectedMovie, setSelectedMovie] = useState<MovieSearchResult | null>(null)
   const [monitored, setMonitored] = useState(true)
 
-  interface MovieSearchNode {
-    Provider: string
-    ProviderId: number
-    Title: string
-    OriginalTitle: string | null
-    Year: number | null
-    Overview: string | null
-    PosterUrl: string | null
-    BackdropUrl: string | null
-    ImdbId: string | null
-    VoteAverage: number | null
-    Popularity: number | null
-  }
+  const [searchMovies, { loading: searching }] = useLazyQuery(SearchMoviesDocument)
+  const [addMovie, { loading: adding }] = useMutation(AddMovieDocument)
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return
 
     try {
-      setSearching(true)
-      const { data, error } = await queryPromise<{ SearchMovies: MovieSearchNode[] }>(SEARCH_MOVIES_QUERY, {
-          Query: searchQuery,
-        })
-        
+      const { data, error } = await searchMovies({
+        variables: { Query: searchQuery },
+      })
 
       if (error) {
         addToast({
@@ -71,25 +61,9 @@ export function AddMovieModal({
         return
       }
 
-      setSearchResults(
-        (data?.SearchMovies ?? []).map((movie) => ({
-          provider: movie.Provider,
-          providerId: movie.ProviderId,
-          title: movie.Title,
-          originalTitle: movie.OriginalTitle,
-          year: movie.Year,
-          overview: movie.Overview,
-          posterUrl: movie.PosterUrl,
-          backdropUrl: movie.BackdropUrl,
-          imdbId: movie.ImdbId,
-          voteAverage: movie.VoteAverage,
-          popularity: movie.Popularity,
-        }))
-      )
+      setSearchResults(data?.SearchMovies ?? [])
     } catch (err) {
       console.error('Search failed:', err)
-    } finally {
-      setSearching(false)
     }
   }
 
@@ -97,26 +71,20 @@ export function AddMovieModal({
     if (!selectedMovie) return
 
     try {
-      setAdding(true)
-      const { data, error } = await mutationPromise<{
-          AddMovie: {
-            Success: boolean
-            Movie: Movie | null
-            Error: string | null
-          }
-        }>(ADD_MOVIE_MUTATION, {
+      const { data, error } = await addMovie({
+        variables: {
           LibraryId: libraryId,
           Input: {
-            TmdbId: selectedMovie.providerId,
+            TmdbId: selectedMovie.ProviderId,
             Monitored: monitored,
           },
-        })
-        
+        },
+      })
 
       if (error || !data?.AddMovie.Success) {
         addToast({
           title: 'Error',
-          description: sanitizeError(data?.AddMovie.Error || 'Failed to add movie'),
+          description: sanitizeError(data?.AddMovie.Error || error || 'Failed to add movie'),
           color: 'danger',
         })
         return
@@ -124,7 +92,7 @@ export function AddMovieModal({
 
       addToast({
         title: 'Success',
-        description: `Added "${selectedMovie.title}" to library`,
+        description: `Added "${selectedMovie.Title}" to library`,
         color: 'success',
       })
 
@@ -133,8 +101,6 @@ export function AddMovieModal({
       onAdded()
     } catch (err) {
       console.error('Failed to add movie:', err)
-    } finally {
-      setAdding(false)
     }
   }
 
@@ -191,17 +157,17 @@ export function AddMovieModal({
                 <div className="space-y-2 max-h-96 overflow-auto">
                   {searchResults.map((result) => (
                     <Card
-                      key={`${result.provider}-${result.providerId}`}
+                      key={`${result.Provider}-${result.ProviderId}`}
                       isPressable
                       className="bg-content2 w-full hover:bg-content3"
                       onPress={() => setSelectedMovie(result)}
                     >
                       <CardBody className="flex flex-row gap-3 p-2">
                         <div className="shrink-0 w-10">
-                          {result.posterUrl ? (
+                          {result.PosterUrl ? (
                             <Image
-                              src={result.posterUrl}
-                              alt={result.title}
+                              src={result.PosterUrl}
+                              alt={result.Title}
                               classNames={{
                                 wrapper: "w-full",
                                 img: "w-full aspect-[2/3] object-cover",
@@ -219,32 +185,32 @@ export function AddMovieModal({
                         </div>
                         <div className="flex-1 min-w-0">
                           <h4 className="font-medium">
-                            {result.title}
-                            {result.year && (
+                            {result.Title}
+                            {result.Year && (
                               <span className="text-default-500 ml-1">
-                                ({result.year})
+                                ({result.Year})
                               </span>
                             )}
                           </h4>
                           <p className="text-xs text-default-500 line-clamp-2">
-                            {result.overview || "No description available"}
+                            {result.Overview || "No description available"}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
-                          {result.voteAverage && result.voteAverage > 0 && (
+                          {result.VoteAverage && result.VoteAverage > 0 && (
                             <Chip
                               size="sm"
                               variant="flat"
                               color={
-                                result.voteAverage >= 7
+                                result.VoteAverage >= 7
                                   ? "success"
-                                  : result.voteAverage >= 5
+                                  : result.VoteAverage >= 5
                                     ? "warning"
                                     : "danger"
                               }
                               startContent={<IconStar size={10} />}
                             >
-                              {result.voteAverage.toFixed(1)}
+                              {result.VoteAverage.toFixed(1)}
                             </Chip>
                           )}
                         </div>
@@ -263,10 +229,10 @@ export function AddMovieModal({
               <Card className="bg-content2">
                 <CardBody className="flex flex-row gap-4 p-3">
                   <div className="flex-shrink-0 w-24">
-                    {selectedMovie.posterUrl ? (
+                    {selectedMovie.PosterUrl ? (
                       <Image
-                        src={selectedMovie.posterUrl}
-                        alt={selectedMovie.title}
+                        src={selectedMovie.PosterUrl}
+                        alt={selectedMovie.Title}
                         classNames={{
                           wrapper: "w-full",
                           img: "w-full aspect-[2/3] object-cover",
@@ -281,23 +247,23 @@ export function AddMovieModal({
                   </div>
                   <div className="flex-1 min-w-0">
                     <h4 className="font-semibold text-lg">
-                      {selectedMovie.title}
-                      {selectedMovie.year && (
+                      {selectedMovie.Title}
+                      {selectedMovie.Year && (
                         <span className="text-default-500 ml-1">
-                          ({selectedMovie.year})
+                          ({selectedMovie.Year})
                         </span>
                       )}
                     </h4>
-                    {selectedMovie.voteAverage &&
-                      selectedMovie.voteAverage > 0 && (
+                    {selectedMovie.VoteAverage &&
+                      selectedMovie.VoteAverage > 0 && (
                         <div className="flex items-center gap-1 text-sm text-default-500 mt-1">
                           <IconStar size={14} className="text-yellow-400" />
-                          <span>{selectedMovie.voteAverage.toFixed(1)}</span>
+                          <span>{selectedMovie.VoteAverage.toFixed(1)}</span>
                         </div>
                       )}
-                    {selectedMovie.overview && (
+                    {selectedMovie.Overview && (
                       <p className="text-sm text-default-400 mt-2 line-clamp-4">
-                        {selectedMovie.overview}
+                        {selectedMovie.Overview}
                       </p>
                     )}
                   </div>

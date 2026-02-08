@@ -3,7 +3,7 @@ import { Link, useLocation } from '@tanstack/react-router'
 import { Card, CardBody } from '@heroui/card'
 import { RouteError } from '../components/RouteError'
 import type { TablerIcon } from '@tabler/icons-react'
-import { IconSettings, IconDownload, IconRss, IconMovie, IconClipboard, IconSearch, IconCast, IconFolderCog, IconCloud, IconSortDescending } from '@tabler/icons-react'
+import { IconSettings, IconDownload, IconMovie, IconClipboard, IconCast, IconFolderCog, IconCloud, IconRadar } from '@tabler/icons-react'
 
 // This is the parent route for /settings/* that provides the shared layout
 export const Route = createFileRoute('/settings')({
@@ -57,28 +57,12 @@ const settingsTabs: SettingsTab[] = [
     description: 'News server providers',
   },
   {
-    key: 'indexers',
-    path: '/settings/indexers',
-    label: 'Indexers',
-    Icon: IconSearch,
+    key: 'sources',
+    path: '/settings/sources',
+    label: 'Sources',
+    Icon: IconRadar,
     iconColor: 'text-green-400',
-    description: 'Search & encryption',
-  },
-  {
-    key: 'rss',
-    path: '/settings/rss',
-    label: 'RSS Feeds',
-    Icon: IconRss,
-    iconColor: 'text-orange-400',
-    description: 'Torrent feed sources',
-  },
-  {
-    key: 'source-priorities',
-    path: '/settings/source-priorities',
-    label: 'Source Priorities',
-    Icon: IconSortDescending,
-    iconColor: 'text-indigo-400',
-    description: 'Indexer & feed ordering',
+    description: 'Torrent indexers, RSS feeds & source ordering',
   },
   {
     key: 'metadata',

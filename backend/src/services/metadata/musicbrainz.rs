@@ -269,6 +269,7 @@ impl MusicBrainzClient {
                 let q = query_owned.clone();
                 let ua = user_agent.clone();
                 async move {
+                    let q_for_log = q.clone();
                     let query_params = [
                         ("query", q),
                         ("fmt", "json".to_string()),
@@ -280,7 +281,10 @@ impl MusicBrainzClient {
                         .await?;
 
                     if response.status().as_u16() == 503 {
-                        warn!("MusicBrainz rate limit hit, will retry");
+                        warn!(
+                            "MusicBrainz rate limit hit (HTTP 503) while searching artists for query='{}'; retrying",
+                            q_for_log
+                        );
                         anyhow::bail!("Rate limited (503)");
                     }
 

@@ -1,83 +1,128 @@
-import { useEffect, useState } from 'react'
-import { Button } from '@heroui/button'
-import { Card, CardBody } from '@heroui/card'
-import { Spinner } from '@heroui/spinner'
-import { Chip } from '@heroui/chip'
-import { Tooltip } from '@heroui/tooltip'
-import { 
-  IconCircleCheck, 
-  IconVideo, 
+import { useEffect, useState } from "react";
+import { Button } from "@heroui/button";
+import { Card, CardBody } from "@heroui/card";
+import { Spinner } from "@heroui/spinner";
+import { Chip } from "@heroui/chip";
+import { Tooltip } from "@heroui/tooltip";
+import {
+  IconCircleCheck,
+  IconVideo,
   IconRefresh,
   IconTrash,
   IconLink,
-} from '@tabler/icons-react'
-import { UNMATCHED_FILES_QUERY, type MediaFile } from '../../lib/graphql'
-import { sanitizeError } from '../../lib/format'
-import { ErrorState } from '../shared'
-import { ManualMatchModal } from './ManualMatchModal'
+} from "@tabler/icons-react";
+import { type MediaFile } from "../../lib/graphql";
+import { apolloClient } from "../../lib/graphql/client";
+import {
+  LibraryUnmatchedMediaFilesTabDocument,
+  type LibraryUnmatchedMediaFilesTabQuery,
+} from "../../lib/graphql/generated/graphql";
+import { sanitizeError } from "../../lib/format";
+import { formatBytes } from "../../lib/format";
+import { ErrorState } from "../shared";
+import { ManualMatchModal } from "./ManualMatchModal";
 
-interface UnmatchedFilesResponse {
-  unmatchedFiles: MediaFile[]
-}
+type MediaFileNode =
+  LibraryUnmatchedMediaFilesTabQuery["MediaFiles"]["Edges"][number]["Node"];
 
 interface LibraryUnmatchedFilesTabProps {
-  libraryId: string
-  libraryPath: string
-  libraryType: string
+  libraryId: string;
+  libraryPath: string;
+  libraryType: string;
   /** Parent loading state (e.g., library context still loading) */
-  loading?: boolean
+  loading?: boolean;
 }
 
-export function LibraryUnmatchedFilesTab({ libraryId, libraryPath, libraryType, loading: parentLoading }: LibraryUnmatchedFilesTabProps) {
-  const [files, setFiles] = useState<MediaFile[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [matchModalOpen, setMatchModalOpen] = useState(false)
-  const [selectedFile, setSelectedFile] = useState<MediaFile | null>(null)
+export function LibraryUnmatchedFilesTab({
+  libraryId,
+  libraryPath,
+  libraryType,
+  loading: parentLoading,
+}: LibraryUnmatchedFilesTabProps) {
+  const [files, setFiles] = useState<MediaFile[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [matchModalOpen, setMatchModalOpen] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<MediaFile | null>(null);
 
   const fetchUnmatchedFiles = async () => {
-    setIsLoading(true)
-    setError(null)
+    setIsLoading(true);
+    setError(null);
     try {
-      const result = await queryPromise<UnmatchedFilesResponse>(UNMATCHED_FILES_QUERY, { libraryId })
-        
-      
-      if (result.error) {
-        setError(sanitizeError(result.error))
-      } else if (result.data?.unmatchedFiles) {
-        setFiles(result.data.unmatchedFiles)
-      }
+      const result = await apolloClient.query({
+        query: LibraryUnmatchedMediaFilesTabDocument,
+        variables: { LibraryId: libraryId },
+        fetchPolicy: "network-only",
+      });
+
+      const edges = result.data?.MediaFiles?.Edges ?? [];
+      setFiles(edges.map((edge) => mapNodeToMediaFile(edge.Node)));
     } catch (err) {
-      setError(sanitizeError(err))
+      setError(sanitizeError(err));
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  };
+
+  const mapNodeToMediaFile = (node: MediaFileNode): MediaFile => ({
+    id: node.Id,
+    libraryId: node.LibraryId,
+    path: node.Path,
+    relativePath: node.RelativePath ?? null,
+    originalName: node.OriginalName ?? null,
+    sizeBytes: node.Size,
+    sizeFormatted: formatBytes(node.Size),
+    container: node.Container ?? null,
+    videoCodec: node.VideoCodec ?? null,
+    audioCodec: node.AudioCodec ?? null,
+    resolution: node.Resolution ?? null,
+    isHdr: node.IsHdr,
+    hdrType: node.HdrType ?? null,
+    width: node.Width ?? null,
+    height: node.Height ?? null,
+    duration: node.Duration ?? null,
+    bitrate: null,
+    episodeId: node.EpisodeId ?? null,
+    movieId: null,
+    trackId: null,
+    albumId: null,
+    audiobookId: null,
+    chapterId: null,
+    contentType: null,
+    organized: false,
+    organizeStatus: null,
+    organizeError: null,
+    qualityStatus: "UNKNOWN",
+    matchType: null,
+    addedAt: node.AddedAt,
+    matchedAt: null,
+    isManualMatch: false,
+  });
 
   useEffect(() => {
-    fetchUnmatchedFiles()
-  }, [libraryId])
+    fetchUnmatchedFiles();
+  }, [libraryId]);
 
   const getFileName = (path: string) => {
-    const parts = path.split('/')
-    return parts[parts.length - 1]
-  }
+    const parts = path.split("/");
+    return parts[parts.length - 1];
+  };
 
   const getRelativePath = (file: MediaFile) => {
-    if (file.relativePath) return file.relativePath
+    if (file.relativePath) return file.relativePath;
     // Try to extract relative path from full path
     if (file.path.startsWith(libraryPath)) {
-      return file.path.slice(libraryPath.length + 1)
+      return file.path.slice(libraryPath.length + 1);
     }
-    return file.path
-  }
+    return file.path;
+  };
 
   if (isLoading) {
     return (
       <div className="flex justify-center items-center py-12">
         <Spinner size="lg" />
       </div>
-    )
+    );
   }
 
   if (error) {
@@ -87,7 +132,7 @@ export function LibraryUnmatchedFilesTab({ libraryId, libraryPath, libraryType, 
         message={error}
         onRetry={fetchUnmatchedFiles}
       />
-    )
+    );
   }
 
   return (
@@ -96,12 +141,13 @@ export function LibraryUnmatchedFilesTab({ libraryId, libraryPath, libraryType, 
         <div>
           <h2 className="text-xl font-semibold">Unmatched Files</h2>
           <p className="text-sm text-default-500">
-            Files found in the library that couldn't be matched to a show ({files.length} files)
+            Files found in the library that couldn't be matched to a show (
+            {files.length} files)
           </p>
         </div>
-        <Button 
-          color="primary" 
-          variant="flat" 
+        <Button
+          color="primary"
+          variant="flat"
           size="sm"
           onPress={fetchUnmatchedFiles}
           isLoading={parentLoading || isLoading}
@@ -114,13 +160,19 @@ export function LibraryUnmatchedFilesTab({ libraryId, libraryPath, libraryType, 
       {files.length === 0 ? (
         <Card className="bg-content1/50 border-default-300 border-dashed border-2">
           <CardBody className="py-12 text-center">
-            <IconCircleCheck size={48} className="mx-auto mb-4 text-green-400" />
+            <IconCircleCheck
+              size={48}
+              className="mx-auto mb-4 text-green-400"
+            />
             <h3 className="text-lg font-semibold mb-2">No unmatched files</h3>
             <p className="text-default-500 mb-4">
               All files in this library have been matched to shows.
             </p>
             <p className="text-xs text-default-400">
-              Library path: <code className="bg-content2 px-2 py-1 rounded">{libraryPath}</code>
+              Library path:{" "}
+              <code className="bg-content2 px-2 py-1 rounded">
+                {libraryPath}
+              </code>
             </p>
           </CardBody>
         </Card>
@@ -135,7 +187,10 @@ export function LibraryUnmatchedFilesTab({ libraryId, libraryPath, libraryType, 
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <p className="font-medium truncate" title={getFileName(file.path)}>
+                      <p
+                        className="font-medium truncate"
+                        title={getFileName(file.path)}
+                      >
                         {file.originalName || getFileName(file.path)}
                       </p>
                       {file.resolution && (
@@ -145,7 +200,7 @@ export function LibraryUnmatchedFilesTab({ libraryId, libraryPath, libraryType, 
                       )}
                       {file.isHdr && (
                         <Chip size="sm" variant="flat" color="warning">
-                          {file.hdrType || 'HDR'}
+                          {file.hdrType || "HDR"}
                         </Chip>
                       )}
                       {file.videoCodec && (
@@ -154,7 +209,10 @@ export function LibraryUnmatchedFilesTab({ libraryId, libraryPath, libraryType, 
                         </Chip>
                       )}
                     </div>
-                    <p className="text-xs text-default-400 truncate" title={file.path}>
+                    <p
+                      className="text-xs text-default-400 truncate"
+                      title={file.path}
+                    >
                       {getRelativePath(file)}
                     </p>
                     <div className="flex items-center gap-4 mt-2 text-xs text-default-500">
@@ -163,27 +221,34 @@ export function LibraryUnmatchedFilesTab({ libraryId, libraryPath, libraryType, 
                       {file.audioCodec && <span>{file.audioCodec}</span>}
                       {file.duration && (
                         <span>
-                          {Math.floor(file.duration / 60)}m {file.duration % 60}s
+                          {Math.floor(file.duration / 60)}m {file.duration % 60}
+                          s
                         </span>
                       )}
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
                     <Tooltip content="Manually match file">
-                      <Button 
-                        isIconOnly 
-                        size="sm" 
+                      <Button
+                        isIconOnly
+                        size="sm"
                         variant="light"
                         onPress={() => {
-                          setSelectedFile(file)
-                          setMatchModalOpen(true)
+                          setSelectedFile(file);
+                          setMatchModalOpen(true);
                         }}
                       >
                         <IconLink size={16} className="text-primary" />
                       </Button>
                     </Tooltip>
                     <Tooltip content="Remove from database (coming soon)">
-                      <Button isIconOnly size="sm" variant="light" color="danger" isDisabled>
+                      <Button
+                        isIconOnly
+                        size="sm"
+                        variant="light"
+                        color="danger"
+                        isDisabled
+                      >
                         <IconTrash size={16} />
                       </Button>
                     </Tooltip>
@@ -199,16 +264,16 @@ export function LibraryUnmatchedFilesTab({ libraryId, libraryPath, libraryType, 
       <ManualMatchModal
         isOpen={matchModalOpen}
         onClose={() => {
-          setMatchModalOpen(false)
-          setSelectedFile(null)
+          setMatchModalOpen(false);
+          setSelectedFile(null);
         }}
         mediaFile={selectedFile}
         libraryId={libraryId}
         libraryType={libraryType}
         onMatched={() => {
-          fetchUnmatchedFiles()
+          fetchUnmatchedFiles();
         }}
       />
     </div>
-  )
+  );
 }

@@ -27,10 +27,13 @@ use tracing::{info, warn};
 use crate::app::AppState;
 
 use crate::services::auth::{AuthConfig, AuthService};
+use crate::services::cast::{CastService, CastServiceConfig};
 use crate::services::database::{DatabaseService, DatabaseServiceConfig};
 use crate::services::graphql::{GraphqlService, GraphqlServiceConfig};
 use crate::services::http_server::{HttpServerConfig, HttpServerService};
+use crate::services::library_scan::{LibraryScanService, LibraryScanServiceConfig};
 use crate::services::logging::{LoggingService, LoggingServiceConfig};
+use crate::services::sources::service::{SourcesService, SourcesServiceConfig};
 use crate::services::torrent::{TorrentService, TorrentServiceConfig};
 
 /// Health status of a service.
@@ -141,6 +144,9 @@ enum ServiceRegistration {
     Graphql(GraphqlServiceConfig),
     Http(HttpServerConfig),
     Torrent(TorrentServiceConfig),
+    Cast(CastServiceConfig),
+    Sources(SourcesServiceConfig),
+    LibraryScan(LibraryScanServiceConfig),
     Service(Arc<dyn Service>),
 }
 
@@ -185,6 +191,24 @@ impl IntoServiceRegistration for HttpServerConfig {
 impl IntoServiceRegistration for TorrentServiceConfig {
     fn into_registration(self) -> ServiceRegistration {
         ServiceRegistration::Torrent(self)
+    }
+}
+
+impl IntoServiceRegistration for CastServiceConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration::Cast(self)
+    }
+}
+
+impl IntoServiceRegistration for SourcesServiceConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration::Sources(self)
+    }
+}
+
+impl IntoServiceRegistration for LibraryScanServiceConfig {
+    fn into_registration(self) -> ServiceRegistration {
+        ServiceRegistration::LibraryScan(self)
     }
 }
 
@@ -288,6 +312,19 @@ impl ServicesManagerBuilder {
                     let torrent_svc = Arc::new(TorrentService::new(manager.clone(), config));
                     manager.register_torrent(torrent_svc).await;
                 }
+                ServiceRegistration::Cast(config) => {
+                    let cast_svc = Arc::new(CastService::new(config));
+                    manager.register_cast(cast_svc).await;
+                }
+                ServiceRegistration::Sources(_config) => {
+                    let sources_svc = Arc::new(SourcesService::new(manager.clone()));
+                    manager.register_sources(sources_svc).await;
+                }
+                ServiceRegistration::LibraryScan(config) => {
+                    let library_scan_svc =
+                        Arc::new(LibraryScanService::new(manager.clone(), config));
+                    manager.register_library_scan(library_scan_svc).await;
+                }
                 ServiceRegistration::Service(svc) => {
                     manager.register(svc).await;
                 }
@@ -320,6 +357,9 @@ pub struct ServicesManager {
     logging: RwLock<Option<Arc<LoggingService>>>,
     graphql: RwLock<Option<Arc<GraphqlService>>>,
     torrent: RwLock<Option<Arc<TorrentService>>>,
+    cast: RwLock<Option<Arc<CastService>>>,
+    sources: RwLock<Option<Arc<SourcesService>>>,
+    library_scan: RwLock<Option<Arc<LibraryScanService>>>,
     /// Route builders for /api/*; used by [build_api_router]. ParkingRwLock so registration and build are sync.
     api_route_builders: ParkingRwLock<
         Vec<(
@@ -345,6 +385,9 @@ impl ServicesManager {
             logging: RwLock::new(None),
             graphql: RwLock::new(None),
             torrent: RwLock::new(None),
+            cast: RwLock::new(None),
+            sources: RwLock::new(None),
+            library_scan: RwLock::new(None),
             api_route_builders: ParkingRwLock::new(Vec::new()),
         }
     }
@@ -436,7 +479,8 @@ impl ServicesManager {
         let name = service.name().to_string();
         if name == "database" {
             warn!(
-                "Use register_database() to register the database service so get_database() works"
+                "Service registration mismatch for '{}': use register_database() so get_database() returns typed handle",
+                name
             );
         }
         let mut guard = self.services.write().await;
@@ -562,6 +606,71 @@ impl ServicesManager {
         self.torrent.read().await.clone()
     }
 
+    /// Register the cast service so [get_cast](ServicesManager::get_cast) works.
+    pub async fn register_cast(&self, service: Arc<CastService>) {
+        let name = service.name().to_string();
+        *self.cast.write().await = Some(service.clone());
+        let mut guard = self.services.write().await;
+        if guard.insert(name.clone(), service).is_some() {
+            warn!(service = %name, "Service '{}' reregistered, overwriting previous", name);
+        } else {
+            info!(service = %name, "Service '{}' registered", name);
+        }
+    }
+
+    /// Return the cast service if it is registered and currently **started**.
+    pub async fn get_cast(&self) -> Option<Arc<CastService>> {
+        if !self.started.read().await.contains("cast") {
+            return None;
+        }
+        self.cast.read().await.clone()
+    }
+
+    /// Register the sources service so [get_sources](ServicesManager::get_sources) works.
+    pub async fn register_sources(&self, service: Arc<SourcesService>) {
+        let name = service.name().to_string();
+        *self.sources.write().await = Some(service.clone());
+        let mut guard = self.services.write().await;
+        if guard.insert(name.clone(), service).is_some() {
+            warn!(service = %name, "Service '{}' reregistered, overwriting previous", name);
+        } else {
+            info!(service = %name, "Service '{}' registered", name);
+        }
+    }
+
+    /// Return the sources service if it is registered and currently **started**.
+    pub async fn get_sources(&self) -> Option<Arc<SourcesService>> {
+        if !self.started.read().await.contains("sources") {
+            return None;
+        }
+        self.sources.read().await.clone()
+    }
+
+    /// Register the library scan service so [get_library_scan](ServicesManager::get_library_scan) works.
+    pub async fn register_library_scan(&self, service: Arc<LibraryScanService>) {
+        let name = service.name().to_string();
+        *self.library_scan.write().await = Some(service.clone());
+        let mut guard = self.services.write().await;
+        if guard.insert(name.clone(), service).is_some() {
+            warn!(service = %name, "Service '{}' reregistered, overwriting previous", name);
+        } else {
+            info!(service = %name, "Service '{}' registered", name);
+        }
+    }
+
+    /// Return the library scan service if it is registered and currently **started**.
+    pub async fn get_library_scan(&self) -> Option<Arc<LibraryScanService>> {
+        if !self.started.read().await.contains("library_scan") {
+            return None;
+        }
+        self.library_scan.read().await.clone()
+    }
+
+    /// Return the library scan service regardless of started state.
+    pub async fn get_library_scan_unchecked(&self) -> Option<Arc<LibraryScanService>> {
+        self.library_scan.read().await.clone()
+    }
+
     /// Unregister a service by name. Does not stop it; call [stop_one](ServicesManager::stop_one)
     /// before unregistering if it is running. Removes it from the started set.
     /// Returns the previous service if present. Clears typed handles for "auth", "database", "logging", "graphql".
@@ -581,6 +690,15 @@ impl ServicesManager {
         }
         if name == "torrent" {
             *self.torrent.write().await = None;
+        }
+        if name == "cast" {
+            *self.cast.write().await = None;
+        }
+        if name == "sources" {
+            *self.sources.write().await = None;
+        }
+        if name == "library_scan" {
+            *self.library_scan.write().await = None;
         }
         let mut guard = self.services.write().await;
         let out = guard.remove(name);

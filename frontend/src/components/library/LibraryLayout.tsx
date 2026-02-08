@@ -1,8 +1,8 @@
-import type { ReactNode } from 'react'
-import { Link } from '@tanstack/react-router'
-import { Card, CardBody } from '@heroui/card'
-import { Button } from '@heroui/button'
-import type { TablerIcon } from '@tabler/icons-react'
+import type { ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
+import { Card, CardBody } from "@heroui/card";
+import { Button } from "@heroui/button";
+import type { TablerIcon } from "@tabler/icons-react";
 import {
   IconDeviceTv,
   IconMovie,
@@ -15,317 +15,325 @@ import {
   IconMusicBolt,
   IconUser,
   IconStack,
-} from '@tabler/icons-react'
-import type { LibraryType } from '../../lib/graphql'
+} from "@tabler/icons-react";
+type LibraryType = "MOVIES" | "TV" | "MUSIC" | "AUDIOBOOKS" | "OTHER";
 
 // Extended tab keys for all library types
 export type LibraryTab =
   // TV
-  | 'shows'
+  | "shows"
   // Movies
-  | 'movies'
-  | 'collections'
+  | "movies"
+  | "collections"
   // Music
-  | 'artists'
-  | 'albums'
-  | 'tracks'
+  | "artists"
+  | "albums"
+  | "tracks"
   // Audiobooks
-  | 'books'
-  | 'authors'
+  | "books"
+  | "authors"
   // Common
-  | 'unmatched'
-  | 'browser'
-  | 'settings'
+  | "unmatched"
+  | "browser"
+  | "settings";
 
 interface LibraryTabConfig {
-  key: LibraryTab
-  label: string
-  Icon: TablerIcon
-  iconColor: string
-  description: string
-  position?: 'top' | 'bottom'
-  path: string // relative path for the tab
+  key: LibraryTab;
+  label: string;
+  Icon: TablerIcon;
+  iconColor: string;
+  description: string;
+  position?: "top" | "bottom";
+  path: string; // relative path for the tab
 }
 
 // TV Show tabs
 const tvTabs: LibraryTabConfig[] = [
   {
-    key: 'shows',
-    label: 'Shows',
+    key: "shows",
+    label: "Shows",
     Icon: IconDeviceTv,
-    iconColor: 'text-blue-400',
-    description: 'TV shows in library',
-    position: 'top',
-    path: 'shows',
+    iconColor: "text-blue-400",
+    description: "TV shows in library",
+    position: "top",
+    path: "shows",
   },
   {
-    key: 'unmatched',
-    label: 'Unmatched Files',
+    key: "unmatched",
+    label: "Unmatched Files",
     Icon: IconFileSearch,
-    iconColor: 'text-amber-400',
-    description: 'Files without matches',
-    position: 'top',
-    path: 'unmatched',
+    iconColor: "text-amber-400",
+    description: "Files without matches",
+    position: "top",
+    path: "unmatched",
   },
   {
-    key: 'browser',
-    label: 'File Browser',
+    key: "browser",
+    label: "File Browser",
     Icon: IconFolder,
-    iconColor: 'text-amber-400',
-    description: 'Browse library files',
-    position: 'top',
-    path: 'browser',
+    iconColor: "text-amber-400",
+    description: "Browse library files",
+    position: "top",
+    path: "browser",
   },
   {
-    key: 'settings',
-    label: 'Settings',
+    key: "settings",
+    label: "Settings",
     Icon: IconSettings,
-    iconColor: 'text-default-400',
-    description: 'Library configuration',
-    position: 'bottom',
-    path: 'settings',
+    iconColor: "text-default-400",
+    description: "Library configuration",
+    position: "bottom",
+    path: "settings",
   },
-]
+];
 
 // Movie tabs
 const movieTabs: LibraryTabConfig[] = [
   {
-    key: 'movies',
-    label: 'Movies',
+    key: "movies",
+    label: "Movies",
     Icon: IconMovie,
-    iconColor: 'text-purple-400',
-    description: 'Movies in library',
-    position: 'top',
-    path: 'movies',
+    iconColor: "text-purple-400",
+    description: "Movies in library",
+    position: "top",
+    path: "movies",
   },
   {
-    key: 'collections',
-    label: 'Collections',
+    key: "collections",
+    label: "Collections",
     Icon: IconStack,
-    iconColor: 'text-purple-300',
-    description: 'Movie collections',
-    position: 'top',
-    path: 'collections',
+    iconColor: "text-purple-300",
+    description: "Movie collections",
+    position: "top",
+    path: "collections",
   },
   {
-    key: 'unmatched',
-    label: 'Unmatched Files',
+    key: "unmatched",
+    label: "Unmatched Files",
     Icon: IconFileSearch,
-    iconColor: 'text-amber-400',
-    description: 'Files without matches',
-    position: 'top',
-    path: 'unmatched',
+    iconColor: "text-amber-400",
+    description: "Files without matches",
+    position: "top",
+    path: "unmatched",
   },
   {
-    key: 'browser',
-    label: 'File Browser',
+    key: "browser",
+    label: "File Browser",
     Icon: IconFolder,
-    iconColor: 'text-amber-400',
-    description: 'Browse library files',
-    position: 'top',
-    path: 'browser',
+    iconColor: "text-amber-400",
+    description: "Browse library files",
+    position: "top",
+    path: "browser",
   },
   {
-    key: 'settings',
-    label: 'Settings',
+    key: "settings",
+    label: "Settings",
     Icon: IconSettings,
-    iconColor: 'text-default-400',
-    description: 'Library configuration',
-    position: 'bottom',
-    path: 'settings',
+    iconColor: "text-default-400",
+    description: "Library configuration",
+    position: "bottom",
+    path: "settings",
   },
-]
+];
 
 // Music tabs
 const musicTabs: LibraryTabConfig[] = [
   {
-    key: 'artists',
-    label: 'Artists',
+    key: "artists",
+    label: "Artists",
     Icon: IconMicrophone,
-    iconColor: 'text-green-400',
-    description: 'Artists in library',
-    position: 'top',
-    path: 'artists',
+    iconColor: "text-green-400",
+    description: "Artists in library",
+    position: "top",
+    path: "artists",
   },
   {
-    key: 'albums',
-    label: 'Albums',
+    key: "albums",
+    label: "Albums",
     Icon: IconDisc,
-    iconColor: 'text-green-300',
-    description: 'Albums in library',
-    position: 'top',
-    path: 'albums',
+    iconColor: "text-green-300",
+    description: "Albums in library",
+    position: "top",
+    path: "albums",
   },
   {
-    key: 'tracks',
-    label: 'Tracks',
+    key: "tracks",
+    label: "Tracks",
     Icon: IconMusicBolt,
-    iconColor: 'text-green-200',
-    description: 'All tracks',
-    position: 'top',
-    path: 'tracks',
+    iconColor: "text-green-200",
+    description: "All tracks",
+    position: "top",
+    path: "tracks",
   },
   {
-    key: 'browser',
-    label: 'File Browser',
+    key: "browser",
+    label: "File Browser",
     Icon: IconFolder,
-    iconColor: 'text-amber-400',
-    description: 'Browse library files',
-    position: 'top',
-    path: 'browser',
+    iconColor: "text-amber-400",
+    description: "Browse library files",
+    position: "top",
+    path: "browser",
   },
   {
-    key: 'settings',
-    label: 'Settings',
+    key: "settings",
+    label: "Settings",
     Icon: IconSettings,
-    iconColor: 'text-default-400',
-    description: 'Library configuration',
-    position: 'bottom',
-    path: 'settings',
+    iconColor: "text-default-400",
+    description: "Library configuration",
+    position: "bottom",
+    path: "settings",
   },
-]
+];
 
 // Audiobook tabs
 const audiobookTabs: LibraryTabConfig[] = [
   {
-    key: 'books',
-    label: 'Audiobooks',
+    key: "books",
+    label: "Audiobooks",
     Icon: IconHeadphones,
-    iconColor: 'text-orange-400',
-    description: 'Audiobooks in library',
-    position: 'top',
-    path: 'books',
+    iconColor: "text-orange-400",
+    description: "Audiobooks in library",
+    position: "top",
+    path: "books",
   },
   {
-    key: 'authors',
-    label: 'Authors',
+    key: "authors",
+    label: "Authors",
     Icon: IconUser,
-    iconColor: 'text-orange-300',
-    description: 'Authors in library',
-    position: 'top',
-    path: 'authors',
+    iconColor: "text-orange-300",
+    description: "Authors in library",
+    position: "top",
+    path: "authors",
   },
   {
-    key: 'browser',
-    label: 'File Browser',
+    key: "browser",
+    label: "File Browser",
     Icon: IconFolder,
-    iconColor: 'text-amber-400',
-    description: 'Browse library files',
-    position: 'top',
-    path: 'browser',
+    iconColor: "text-amber-400",
+    description: "Browse library files",
+    position: "top",
+    path: "browser",
   },
   {
-    key: 'settings',
-    label: 'Settings',
+    key: "settings",
+    label: "Settings",
     Icon: IconSettings,
-    iconColor: 'text-default-400',
-    description: 'Library configuration',
-    position: 'bottom',
-    path: 'settings',
+    iconColor: "text-default-400",
+    description: "Library configuration",
+    position: "bottom",
+    path: "settings",
   },
-]
+];
 
 // Other/generic tabs
 const otherTabs: LibraryTabConfig[] = [
   {
-    key: 'browser',
-    label: 'File Browser',
+    key: "browser",
+    label: "File Browser",
     Icon: IconFolder,
-    iconColor: 'text-amber-400',
-    description: 'Browse library files',
-    position: 'top',
-    path: 'browser',
+    iconColor: "text-amber-400",
+    description: "Browse library files",
+    position: "top",
+    path: "browser",
   },
   {
-    key: 'settings',
-    label: 'Settings',
+    key: "settings",
+    label: "Settings",
     Icon: IconSettings,
-    iconColor: 'text-default-400',
-    description: 'Library configuration',
-    position: 'bottom',
-    path: 'settings',
+    iconColor: "text-default-400",
+    description: "Library configuration",
+    position: "bottom",
+    path: "settings",
   },
-]
+];
 
 /**
  * Get tabs for a specific library type
  */
-export function getTabsForLibraryType(libraryType: LibraryType): LibraryTabConfig[] {
+export function getTabsForLibraryType(
+  libraryType: LibraryType,
+): LibraryTabConfig[] {
   switch (libraryType) {
-    case 'MOVIES':
-      return movieTabs
-    case 'TV':
-      return tvTabs
-    case 'MUSIC':
-      return musicTabs
-    case 'AUDIOBOOKS':
-      return audiobookTabs
-    case 'OTHER':
+    case "MOVIES":
+      return movieTabs;
+    case "TV":
+      return tvTabs;
+    case "MUSIC":
+      return musicTabs;
+    case "AUDIOBOOKS":
+      return audiobookTabs;
+    case "OTHER":
     default:
-      return otherTabs
+      return otherTabs;
   }
 }
 
 /**
  * Get the default tab for a library type
  */
-export function getDefaultTabForLibraryType(libraryType: LibraryType): LibraryTab {
+export function getDefaultTabForLibraryType(
+  libraryType: LibraryType,
+): LibraryTab {
   switch (libraryType) {
-    case 'MOVIES':
-      return 'movies'
-    case 'TV':
-      return 'shows'
-    case 'MUSIC':
-      return 'albums'
-    case 'AUDIOBOOKS':
-      return 'books'
-    case 'OTHER':
+    case "MOVIES":
+      return "movies";
+    case "TV":
+      return "shows";
+    case "MUSIC":
+      return "albums";
+    case "AUDIOBOOKS":
+      return "books";
+    case "OTHER":
     default:
-      return 'browser'
+      return "browser";
   }
 }
 
 interface LibraryLayoutProps {
-  activeTab: LibraryTab
-  libraryId: string
-  libraryType: LibraryType
-  children: ReactNode
+  activeTab: LibraryTab;
+  libraryId: string;
+  libraryType: LibraryType;
+  children: ReactNode;
 }
 
-export function LibraryLayout({ activeTab, libraryId, libraryType, children }: LibraryLayoutProps) {
-  const tabs = getTabsForLibraryType(libraryType)
-  const topTabs = tabs.filter((tab) => tab.position !== 'bottom')
-  const bottomTabs = tabs.filter((tab) => tab.position === 'bottom')
+export function LibraryLayout({
+  activeTab,
+  libraryId,
+  libraryType,
+  children,
+}: LibraryLayoutProps) {
+  const tabs = getTabsForLibraryType(libraryType);
+  const topTabs = tabs.filter((tab) => tab.position !== "bottom");
+  const bottomTabs = tabs.filter((tab) => tab.position === "bottom");
 
   const renderTabButton = (tab: LibraryTabConfig) => {
-    const isActive = activeTab === tab.key
+    const isActive = activeTab === tab.key;
     return (
       <Button
         key={tab.key}
         as={Link}
         to={`/libraries/${libraryId}/${tab.path}`}
-        variant={isActive ? 'solid' : 'light'}
-        color={isActive ? 'primary' : 'default'}
+        variant={isActive ? "solid" : "light"}
+        color={isActive ? "primary" : "default"}
         className={`
           flex items-center gap-3 px-4 py-3 h-auto justify-start text-left w-full
-          ${isActive ? 'shadow-md' : ''}
+          ${isActive ? "shadow-md" : ""}
         `}
       >
-        <tab.Icon className={`w-5 h-5 ${isActive ? '' : tab.iconColor}`} />
+        <tab.Icon className={`w-5 h-5 ${isActive ? "" : tab.iconColor}`} />
         <div className="flex flex-col min-w-0 items-start">
           <span className="font-medium text-sm">{tab.label}</span>
           <span
-            className={`text-xs truncate ${isActive
-                ? 'text-primary-foreground/70'
-                : 'text-default-400'
-              }`}
+            className={`text-xs truncate ${
+              isActive ? "text-primary-foreground/70" : "text-default-400"
+            }`}
           >
             {tab.description}
           </span>
         </div>
       </Button>
-    )
-  }
+    );
+  };
 
   return (
     <div className="flex gap-6 h-[calc(100vh-15rem)] min-h-[500px]">
@@ -339,9 +347,7 @@ export function LibraryLayout({ activeTab, libraryId, libraryType, children }: L
 
             {/* Bottom tabs (Settings) */}
             {bottomTabs.length > 0 && (
-              <div className="pt-2 mt-2">
-                {bottomTabs.map(renderTabButton)}
-              </div>
+              <div className="pt-2 mt-2">{bottomTabs.map(renderTabButton)}</div>
             )}
           </CardBody>
         </Card>
@@ -349,10 +355,8 @@ export function LibraryLayout({ activeTab, libraryId, libraryType, children }: L
 
       {/* Right Content Area */}
       <div className="flex grow flex-col w-full">
-        <div className="flex grow h-0 overflow-auto px-4 -mx-4">
-          {children}
-        </div>
+        <div className="flex grow h-0 overflow-auto px-4 -mx-4">{children}</div>
       </div>
     </div>
-  )
+  );
 }

@@ -12,7 +12,6 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SearchRouteImport } from './routes/search'
 import { Route as NotificationsRouteImport } from './routes/notifications'
-import { Route as HuntRouteImport } from './routes/hunt'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as LibrariesIndexRouteImport } from './routes/libraries/index'
@@ -20,12 +19,10 @@ import { Route as DownloadsIndexRouteImport } from './routes/downloads/index'
 import { Route as ShowsShowIdRouteImport } from './routes/shows/$showId'
 import { Route as SettingsUsenetRouteImport } from './routes/settings/usenet'
 import { Route as SettingsTorrentRouteImport } from './routes/settings/torrent'
-import { Route as SettingsSourcePrioritiesRouteImport } from './routes/settings/source-priorities'
-import { Route as SettingsRssRouteImport } from './routes/settings/rss'
+import { Route as SettingsSourcesRouteImport } from './routes/settings/sources'
 import { Route as SettingsOrganizationRouteImport } from './routes/settings/organization'
 import { Route as SettingsMetadataRouteImport } from './routes/settings/metadata'
 import { Route as SettingsLogsRouteImport } from './routes/settings/logs'
-import { Route as SettingsIndexersRouteImport } from './routes/settings/indexers'
 import { Route as SettingsCastingRouteImport } from './routes/settings/casting'
 import { Route as MoviesMovieIdRouteImport } from './routes/movies/$movieId'
 import { Route as LibrariesLibraryIdRouteImport } from './routes/libraries/$libraryId'
@@ -58,11 +55,6 @@ const SearchRoute = SearchRouteImport.update({
 const NotificationsRoute = NotificationsRouteImport.update({
   id: '/notifications',
   path: '/notifications',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const HuntRoute = HuntRouteImport.update({
-  id: '/hunt',
-  path: '/hunt',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -100,15 +92,9 @@ const SettingsTorrentRoute = SettingsTorrentRouteImport.update({
   path: '/torrent',
   getParentRoute: () => SettingsRoute,
 } as any)
-const SettingsSourcePrioritiesRoute =
-  SettingsSourcePrioritiesRouteImport.update({
-    id: '/source-priorities',
-    path: '/source-priorities',
-    getParentRoute: () => SettingsRoute,
-  } as any)
-const SettingsRssRoute = SettingsRssRouteImport.update({
-  id: '/rss',
-  path: '/rss',
+const SettingsSourcesRoute = SettingsSourcesRouteImport.update({
+  id: '/sources',
+  path: '/sources',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsOrganizationRoute = SettingsOrganizationRouteImport.update({
@@ -124,11 +110,6 @@ const SettingsMetadataRoute = SettingsMetadataRouteImport.update({
 const SettingsLogsRoute = SettingsLogsRouteImport.update({
   id: '/logs',
   path: '/logs',
-  getParentRoute: () => SettingsRoute,
-} as any)
-const SettingsIndexersRoute = SettingsIndexersRouteImport.update({
-  id: '/indexers',
-  path: '/indexers',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsCastingRoute = SettingsCastingRouteImport.update({
@@ -233,7 +214,6 @@ const LibrariesLibraryIdAlbumsRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/hunt': typeof HuntRoute
   '/notifications': typeof NotificationsRoute
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRouteWithChildren
@@ -243,12 +223,10 @@ export interface FileRoutesByFullPath {
   '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
   '/movies/$movieId': typeof MoviesMovieIdRoute
   '/settings/casting': typeof SettingsCastingRoute
-  '/settings/indexers': typeof SettingsIndexersRoute
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
   '/settings/organization': typeof SettingsOrganizationRoute
-  '/settings/rss': typeof SettingsRssRoute
-  '/settings/source-priorities': typeof SettingsSourcePrioritiesRoute
+  '/settings/sources': typeof SettingsSourcesRoute
   '/settings/torrent': typeof SettingsTorrentRoute
   '/settings/usenet': typeof SettingsUsenetRoute
   '/shows/$showId': typeof ShowsShowIdRoute
@@ -270,7 +248,6 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/hunt': typeof HuntRoute
   '/notifications': typeof NotificationsRoute
   '/search': typeof SearchRoute
   '/albums/$albumId': typeof AlbumsAlbumIdRoute
@@ -278,12 +255,10 @@ export interface FileRoutesByTo {
   '/auth/login': typeof AuthLoginRoute
   '/movies/$movieId': typeof MoviesMovieIdRoute
   '/settings/casting': typeof SettingsCastingRoute
-  '/settings/indexers': typeof SettingsIndexersRoute
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
   '/settings/organization': typeof SettingsOrganizationRoute
-  '/settings/rss': typeof SettingsRssRoute
-  '/settings/source-priorities': typeof SettingsSourcePrioritiesRoute
+  '/settings/sources': typeof SettingsSourcesRoute
   '/settings/torrent': typeof SettingsTorrentRoute
   '/settings/usenet': typeof SettingsUsenetRoute
   '/shows/$showId': typeof ShowsShowIdRoute
@@ -306,7 +281,6 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/hunt': typeof HuntRoute
   '/notifications': typeof NotificationsRoute
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRouteWithChildren
@@ -316,12 +290,10 @@ export interface FileRoutesById {
   '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
   '/movies/$movieId': typeof MoviesMovieIdRoute
   '/settings/casting': typeof SettingsCastingRoute
-  '/settings/indexers': typeof SettingsIndexersRoute
   '/settings/logs': typeof SettingsLogsRoute
   '/settings/metadata': typeof SettingsMetadataRoute
   '/settings/organization': typeof SettingsOrganizationRoute
-  '/settings/rss': typeof SettingsRssRoute
-  '/settings/source-priorities': typeof SettingsSourcePrioritiesRoute
+  '/settings/sources': typeof SettingsSourcesRoute
   '/settings/torrent': typeof SettingsTorrentRoute
   '/settings/usenet': typeof SettingsUsenetRoute
   '/shows/$showId': typeof ShowsShowIdRoute
@@ -345,7 +317,6 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/hunt'
     | '/notifications'
     | '/search'
     | '/settings'
@@ -355,12 +326,10 @@ export interface FileRouteTypes {
     | '/libraries/$libraryId'
     | '/movies/$movieId'
     | '/settings/casting'
-    | '/settings/indexers'
     | '/settings/logs'
     | '/settings/metadata'
     | '/settings/organization'
-    | '/settings/rss'
-    | '/settings/source-priorities'
+    | '/settings/sources'
     | '/settings/torrent'
     | '/settings/usenet'
     | '/shows/$showId'
@@ -382,7 +351,6 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/hunt'
     | '/notifications'
     | '/search'
     | '/albums/$albumId'
@@ -390,12 +358,10 @@ export interface FileRouteTypes {
     | '/auth/login'
     | '/movies/$movieId'
     | '/settings/casting'
-    | '/settings/indexers'
     | '/settings/logs'
     | '/settings/metadata'
     | '/settings/organization'
-    | '/settings/rss'
-    | '/settings/source-priorities'
+    | '/settings/sources'
     | '/settings/torrent'
     | '/settings/usenet'
     | '/shows/$showId'
@@ -417,7 +383,6 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
-    | '/hunt'
     | '/notifications'
     | '/search'
     | '/settings'
@@ -427,12 +392,10 @@ export interface FileRouteTypes {
     | '/libraries/$libraryId'
     | '/movies/$movieId'
     | '/settings/casting'
-    | '/settings/indexers'
     | '/settings/logs'
     | '/settings/metadata'
     | '/settings/organization'
-    | '/settings/rss'
-    | '/settings/source-priorities'
+    | '/settings/sources'
     | '/settings/torrent'
     | '/settings/usenet'
     | '/shows/$showId'
@@ -455,7 +418,6 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  HuntRoute: typeof HuntRoute
   NotificationsRoute: typeof NotificationsRoute
   SearchRoute: typeof SearchRoute
   SettingsRoute: typeof SettingsRouteWithChildren
@@ -490,13 +452,6 @@ declare module '@tanstack/react-router' {
       path: '/notifications'
       fullPath: '/notifications'
       preLoaderRoute: typeof NotificationsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/hunt': {
-      id: '/hunt'
-      path: '/hunt'
-      fullPath: '/hunt'
-      preLoaderRoute: typeof HuntRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -548,18 +503,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsTorrentRouteImport
       parentRoute: typeof SettingsRoute
     }
-    '/settings/source-priorities': {
-      id: '/settings/source-priorities'
-      path: '/source-priorities'
-      fullPath: '/settings/source-priorities'
-      preLoaderRoute: typeof SettingsSourcePrioritiesRouteImport
-      parentRoute: typeof SettingsRoute
-    }
-    '/settings/rss': {
-      id: '/settings/rss'
-      path: '/rss'
-      fullPath: '/settings/rss'
-      preLoaderRoute: typeof SettingsRssRouteImport
+    '/settings/sources': {
+      id: '/settings/sources'
+      path: '/sources'
+      fullPath: '/settings/sources'
+      preLoaderRoute: typeof SettingsSourcesRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/organization': {
@@ -581,13 +529,6 @@ declare module '@tanstack/react-router' {
       path: '/logs'
       fullPath: '/settings/logs'
       preLoaderRoute: typeof SettingsLogsRouteImport
-      parentRoute: typeof SettingsRoute
-    }
-    '/settings/indexers': {
-      id: '/settings/indexers'
-      path: '/indexers'
-      fullPath: '/settings/indexers'
-      preLoaderRoute: typeof SettingsIndexersRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/casting': {
@@ -721,12 +662,10 @@ declare module '@tanstack/react-router' {
 
 interface SettingsRouteChildren {
   SettingsCastingRoute: typeof SettingsCastingRoute
-  SettingsIndexersRoute: typeof SettingsIndexersRoute
   SettingsLogsRoute: typeof SettingsLogsRoute
   SettingsMetadataRoute: typeof SettingsMetadataRoute
   SettingsOrganizationRoute: typeof SettingsOrganizationRoute
-  SettingsRssRoute: typeof SettingsRssRoute
-  SettingsSourcePrioritiesRoute: typeof SettingsSourcePrioritiesRoute
+  SettingsSourcesRoute: typeof SettingsSourcesRoute
   SettingsTorrentRoute: typeof SettingsTorrentRoute
   SettingsUsenetRoute: typeof SettingsUsenetRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
@@ -734,12 +673,10 @@ interface SettingsRouteChildren {
 
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsCastingRoute: SettingsCastingRoute,
-  SettingsIndexersRoute: SettingsIndexersRoute,
   SettingsLogsRoute: SettingsLogsRoute,
   SettingsMetadataRoute: SettingsMetadataRoute,
   SettingsOrganizationRoute: SettingsOrganizationRoute,
-  SettingsRssRoute: SettingsRssRoute,
-  SettingsSourcePrioritiesRoute: SettingsSourcePrioritiesRoute,
+  SettingsSourcesRoute: SettingsSourcesRoute,
   SettingsTorrentRoute: SettingsTorrentRoute,
   SettingsUsenetRoute: SettingsUsenetRoute,
   SettingsIndexRoute: SettingsIndexRoute,
@@ -784,7 +721,6 @@ const LibrariesLibraryIdRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  HuntRoute: HuntRoute,
   NotificationsRoute: NotificationsRoute,
   SearchRoute: SearchRoute,
   SettingsRoute: SettingsRouteWithChildren,

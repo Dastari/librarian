@@ -6,25 +6,32 @@ import { addToast } from "@heroui/toast";
 import { Button } from "@heroui/button";
 import { IconRefresh } from "@tabler/icons-react";
 import {
-  DOWNLOADS_TORRENTS_QUERY,
-  ADD_TORRENT_MUTATION,
-  PAUSE_TORRENT_BY_INFO_HASH_MUTATION,
-  RESUME_TORRENT_BY_INFO_HASH_MUTATION,
-  REMOVE_TORRENT_BY_INFO_HASH_MUTATION,
-  PROCESS_SOURCE_MUTATION,
-  REMATCH_SOURCE_MUTATION,
   TORRENT_PROGRESS_SUBSCRIPTION,
   TORRENT_ADDED_SUBSCRIPTION,
   TORRENT_REMOVED_SUBSCRIPTION,
   TORRENT_COMPLETED_SUBSCRIPTION,
-  type ProcessSourceResult,
-  type RematchSourceResult,
 } from "../../lib/graphql";
-import { useSubscription, gql, queryPromise, mutationPromise } from "../../lib/graphql/client";
-import type {
-  Torrent,
-  TorrentConnection,
+import {
+  useSubscription,
+  gql,
+  apolloClient,
+  useMutation,
+} from "../../lib/graphql/client";
+import {
+  AddTorrentDocument,
+  DownloadsTorrentsDocument,
+  PauseTorrentByInfoHashDocument,
+  ProcessSourceDocument,
+  RematchSourceDocument,
+  RemoveTorrentByInfoHashDocument,
+  ResumeTorrentByInfoHashDocument,
+  type DownloadsTorrentsQuery,
+  type ProcessSourceMutation,
+  type ProcessSourceMutationVariables,
+  type RematchSourceMutation,
+  type RematchSourceMutationVariables,
 } from "../../lib/graphql/generated/graphql";
+import type { DownloadTorrent } from "../../components/downloads/types";
 import {
   TorrentTable,
   AddTorrentModal,
@@ -51,9 +58,12 @@ export const Route = createFileRoute("/downloads/")({
 });
 
 function DownloadsPage() {
-  const [torrents, setTorrents] = useState<Torrent[]>([]);
+  const [torrents, setTorrents] = useState<DownloadTorrent[]>([]);
   const [liveStatsByInfoHash, setLiveStatsByInfoHash] = useState<
-    Record<string, { downloadSpeed: number; uploadSpeed: number; peers: number }>
+    Record<
+      string,
+      { downloadSpeed: number; uploadSpeed: number; peers: number }
+    >
   >({});
   const [isAdding, setIsAdding] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -71,14 +81,29 @@ function DownloadsPage() {
   const [selectedTorrentInfoHash, setSelectedTorrentInfoHash] = useState<
     string | null
   >(null);
-  const [torrentToLink, setTorrentToLink] = useState<Torrent | null>(null);
+  const [torrentToLink, setTorrentToLink] = useState<DownloadTorrent | null>(
+    null,
+  );
+  const [addTorrentMutation] = useMutation(AddTorrentDocument);
+  const [pauseTorrentByHash] = useMutation(PauseTorrentByInfoHashDocument);
+  const [resumeTorrentByHash] = useMutation(ResumeTorrentByInfoHashDocument);
+  const [removeTorrentByHash] = useMutation(RemoveTorrentByInfoHashDocument);
+  const [processSource] = useMutation<
+    ProcessSourceMutation,
+    ProcessSourceMutationVariables
+  >(ProcessSourceDocument);
+  const [rematchSource] = useMutation<
+    RematchSourceMutation,
+    RematchSourceMutationVariables
+  >(RematchSourceDocument);
 
   const fetchTorrents = useCallback(async () => {
     try {
-      const result = await queryPromise<{ Torrents: TorrentConnection }>(DOWNLOADS_TORRENTS_QUERY, {
-          Page: { Limit: 500, Offset: 0 },
-        })
-        ;
+      const result = await apolloClient.query<DownloadsTorrentsQuery>({
+        query: DownloadsTorrentsDocument,
+        fetchPolicy: "network-only",
+        variables: { Page: { Limit: 500, Offset: 0 } },
+      });
       if (result.data?.Torrents?.Edges) {
         const torrentNodes = result.data.Torrents.Edges.map(({ Node }) => Node);
         setTorrents(torrentNodes);
@@ -115,11 +140,19 @@ function DownloadsPage() {
   }, [fetchTorrents]);
 
   // Realtime updates (torrent client events)
-  useSubscription<{ TorrentProgress: { Id: number; InfoHash: string; Progress: number; DownloadSpeed: number; UploadSpeed: number; Peers: number; State: string } }>(
-    gql(TORRENT_PROGRESS_SUBSCRIPTION),
-    {
-      onData: ({ data }) => {
-        const event = data.data?.TorrentProgress;
+  useSubscription<{
+    TorrentProgress: {
+      Id: number;
+      InfoHash: string;
+      Progress: number;
+      DownloadSpeed: number;
+      UploadSpeed: number;
+      Peers: number;
+      State: string;
+    };
+  }>(gql(TORRENT_PROGRESS_SUBSCRIPTION), {
+    onData: ({ data }) => {
+      const event = data.data?.TorrentProgress;
       if (!event) {
         return;
       }
@@ -136,24 +169,22 @@ function DownloadsPage() {
           torrent.InfoHash === event.InfoHash
             ? {
                 ...torrent,
-                  Progress: event.Progress,
-                  State: event.State,
-                }
-              : torrent
-          )
-        );
-      },
-    }
-  );
+                Progress: event.Progress,
+                State: event.State,
+              }
+            : torrent,
+        ),
+      );
+    },
+  });
 
-  useSubscription<{ TorrentAdded: { Id: number; Name: string; InfoHash: string } }>(
-    gql(TORRENT_ADDED_SUBSCRIPTION),
-    {
-      onData: () => {
-        fetchTorrents();
-      },
-    }
-  );
+  useSubscription<{
+    TorrentAdded: { Id: number; Name: string; InfoHash: string };
+  }>(gql(TORRENT_ADDED_SUBSCRIPTION), {
+    onData: () => {
+      fetchTorrents();
+    },
+  });
 
   useSubscription<{ TorrentRemoved: { Id: number; InfoHash: string } }>(
     gql(TORRENT_REMOVED_SUBSCRIPTION),
@@ -169,10 +200,10 @@ function DownloadsPage() {
           return next;
         });
         setTorrents((prev) =>
-          prev.filter((torrent) => torrent.InfoHash !== event.InfoHash)
+          prev.filter((torrent) => torrent.InfoHash !== event.InfoHash),
         );
       },
-    }
+    },
   );
 
   useSubscription<{ TorrentCompleted: { Id: number; InfoHash: string } }>(
@@ -187,27 +218,22 @@ function DownloadsPage() {
           prev.map((torrent) =>
             torrent.InfoHash === event.InfoHash
               ? { ...torrent, State: "seeding", Progress: 1 }
-              : torrent
-          )
+              : torrent,
+          ),
         );
       },
-    }
+    },
   );
 
   // Add torrent handlers
   const handleAddMagnet = async (magnet: string) => {
     setIsAdding(true);
     try {
-      const result = await mutationPromise<{
-          AddTorrent?: {
-            Success: boolean;
-            Torrent: { Name: string } | null;
-            Error?: string | null;
-          };
-        }>(ADD_TORRENT_MUTATION, {
+      const result = await addTorrentMutation({
+        variables: {
           Input: { Magnet: magnet },
-        })
-        ;
+        },
+      });
       const data = result.data?.AddTorrent;
       const success = data?.Success;
       const torrent = data?.Torrent;
@@ -241,16 +267,11 @@ function DownloadsPage() {
   const handleAddUrl = async (url: string) => {
     setIsAdding(true);
     try {
-      const result = await mutationPromise<{
-          AddTorrent?: {
-            Success: boolean;
-            Torrent: { Name: string } | null;
-            Error?: string | null;
-          };
-        }>(ADD_TORRENT_MUTATION, {
+      const result = await addTorrentMutation({
+        variables: {
           Input: { Url: url },
-        })
-        ;
+        },
+      });
       const data = result.data?.AddTorrent;
       const success = data?.Success;
       const torrent = data?.Torrent;
@@ -329,47 +350,44 @@ function DownloadsPage() {
 
   // Single torrent actions (by infoHash – entity Torrents list)
   const handlePause = async (infoHash: string) => {
-    const result = await mutationPromise<{
-        PauseTorrentByInfoHash?: { Success: boolean; Error?: string };
-      }>(PAUSE_TORRENT_BY_INFO_HASH_MUTATION, {
+    const result = await pauseTorrentByHash({
+      variables: {
         InfoHash: infoHash,
-      })
-      ;
+      },
+    });
     const data = result.data?.PauseTorrentByInfoHash;
     if (data?.Success) {
       setTorrents((prev) =>
         prev.map((t) =>
-          t.InfoHash === infoHash ? { ...t, State: "paused" } : t
-        )
+          t.InfoHash === infoHash ? { ...t, State: "paused" } : t,
+        ),
       );
     }
   };
 
   const handleResume = async (infoHash: string) => {
-    const result = await mutationPromise<{
-        ResumeTorrentByInfoHash?: { Success: boolean; Error?: string };
-      }>(RESUME_TORRENT_BY_INFO_HASH_MUTATION, {
+    const result = await resumeTorrentByHash({
+      variables: {
         InfoHash: infoHash,
-      })
-      ;
+      },
+    });
     const data = result.data?.ResumeTorrentByInfoHash;
     if (data?.Success) {
       setTorrents((prev) =>
         prev.map((t) =>
-          t.InfoHash === infoHash ? { ...t, State: "downloading" } : t
-        )
+          t.InfoHash === infoHash ? { ...t, State: "downloading" } : t,
+        ),
       );
     }
   };
 
   const handleRemove = async (infoHash: string) => {
-    const result = await mutationPromise<{
-        RemoveTorrentByInfoHash?: { Success: boolean; Error?: string };
-      }>(REMOVE_TORRENT_BY_INFO_HASH_MUTATION, {
+    const result = await removeTorrentByHash({
+      variables: {
         InfoHash: infoHash,
         DeleteFiles: false,
-      })
-      ;
+      },
+    });
     const data = result.data?.RemoveTorrentByInfoHash;
     if (data?.Success) {
       setTorrents((prev) => prev.filter((t) => t.InfoHash !== infoHash));
@@ -395,29 +413,26 @@ function DownloadsPage() {
   };
 
   // Process pending file matches (copy files to library)
-  const handleProcess = async (torrent: Torrent) => {
-    const result = await mutationPromise<{ processSource: ProcessSourceResult }>(
-        PROCESS_SOURCE_MUTATION,
-        {
-          sourceType: "torrent",
-          sourceId: torrent.InfoHash,
-        }
-      )
-      ;
-
-    if (result.data?.processSource) {
-      const proc = result.data.processSource;
-      if (proc.success) {
+  const handleProcess = async (torrent: DownloadTorrent) => {
+    const result = await processSource({
+      variables: {
+        SourceType: "torrent",
+        SourceId: torrent.InfoHash,
+      },
+    });
+    if (result.data?.ProcessSource) {
+      const proc = result.data.ProcessSource;
+      if (proc.Success) {
         addToast({
           title: "Files Processed",
-          description: `Copied ${proc.filesProcessed} file(s) to library${proc.filesFailed > 0 ? `, ${proc.filesFailed} failed` : ""}`,
+          description: `Copied ${proc.FilesProcessed} file(s) to library${proc.FilesFailed > 0 ? `, ${proc.FilesFailed} failed` : ""}`,
           color: "success",
         });
       } else {
         addToast({
           title: "Processing Failed",
           description:
-            proc.error || proc.messages[0] || "Failed to process files",
+            proc.Error || proc.Messages[0] || "Failed to process files",
           color: "danger",
         });
       }
@@ -431,29 +446,26 @@ function DownloadsPage() {
   };
 
   // Re-match files against library items
-  const handleRematch = async (torrent: Torrent) => {
-    const result = await mutationPromise<{ rematchSource: RematchSourceResult }>(
-        REMATCH_SOURCE_MUTATION,
-        {
-          sourceType: "torrent",
-          sourceId: torrent.InfoHash,
-          libraryId: null, // Match against all libraries
-        }
-      )
-      ;
-
-    if (result.data?.rematchSource) {
-      const match = result.data.rematchSource;
-      if (match.success) {
+  const handleRematch = async (torrent: DownloadTorrent) => {
+    const result = await rematchSource({
+      variables: {
+        SourceType: "torrent",
+        SourceId: torrent.InfoHash,
+        LibraryId: null, // Match against all libraries
+      },
+    });
+    if (result.data?.RematchSource) {
+      const match = result.data.RematchSource;
+      if (match.Success) {
         addToast({
           title: "Files Rematched",
-          description: `Found ${match.matchCount} match(es)`,
+          description: `Found ${match.MatchCount} match(es)`,
           color: "success",
         });
       } else {
         addToast({
           title: "Rematch Failed",
-          description: match.error || "Failed to rematch files",
+          description: match.Error || "Failed to rematch files",
           color: "danger",
         });
       }
@@ -470,19 +482,17 @@ function DownloadsPage() {
   const handleBulkPause = async (infoHashes: string[]) => {
     let successCount = 0;
     for (const infoHash of infoHashes) {
-      const result = await mutationPromise<{ PauseTorrentByInfoHash?: { Success: boolean } }>(
-          PAUSE_TORRENT_BY_INFO_HASH_MUTATION,
-          {
-            InfoHash: infoHash,
-          }
-        )
-        ;
+      const result = await pauseTorrentByHash({
+        variables: {
+          InfoHash: infoHash,
+        },
+      });
       if (result.data?.PauseTorrentByInfoHash?.Success) {
         successCount++;
         setTorrents((prev) =>
           prev.map((t) =>
-            t.InfoHash === infoHash ? { ...t, State: "paused" } : t
-          )
+            t.InfoHash === infoHash ? { ...t, State: "paused" } : t,
+          ),
         );
       }
     }
@@ -496,19 +506,17 @@ function DownloadsPage() {
   const handleBulkResume = async (infoHashes: string[]) => {
     let successCount = 0;
     for (const infoHash of infoHashes) {
-      const result = await mutationPromise<{ ResumeTorrentByInfoHash?: { Success: boolean } }>(
-          RESUME_TORRENT_BY_INFO_HASH_MUTATION,
-          {
-            InfoHash: infoHash,
-          }
-        )
-        ;
+      const result = await resumeTorrentByHash({
+        variables: {
+          InfoHash: infoHash,
+        },
+      });
       if (result.data?.ResumeTorrentByInfoHash?.Success) {
         successCount++;
         setTorrents((prev) =>
           prev.map((t) =>
-            t.InfoHash === infoHash ? { ...t, State: "downloading" } : t
-          )
+            t.InfoHash === infoHash ? { ...t, State: "downloading" } : t,
+          ),
         );
       }
     }
@@ -522,14 +530,12 @@ function DownloadsPage() {
   const handleBulkRemove = async (infoHashes: string[]) => {
     let successCount = 0;
     for (const infoHash of infoHashes) {
-      const result = await mutationPromise<{ RemoveTorrentByInfoHash?: { Success: boolean } }>(
-          REMOVE_TORRENT_BY_INFO_HASH_MUTATION,
-          {
-            InfoHash: infoHash,
-            DeleteFiles: false,
-          }
-        )
-        ;
+      const result = await removeTorrentByHash({
+        variables: {
+          InfoHash: infoHash,
+          DeleteFiles: false,
+        },
+      });
       if (result.data?.RemoveTorrentByInfoHash?.Success) {
         successCount++;
         setTorrents((prev) => prev.filter((t) => t.InfoHash !== infoHash));
@@ -547,9 +553,7 @@ function DownloadsPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold">Downloads</h1>
-          <p className="text-default-500">
-            Manage your torrent downloads
-          </p>
+          <p className="text-default-500">Manage your torrent downloads</p>
         </div>
         <Button
           size="sm"

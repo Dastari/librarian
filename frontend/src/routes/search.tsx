@@ -1,13 +1,18 @@
-import { createFileRoute, redirect, Link, useNavigate } from '@tanstack/react-router'
-import { useState, useEffect, useMemo } from 'react'
-import { useQueryState, parseAsString } from 'nuqs'
-import { Button } from '@heroui/button'
-import { Card, CardBody } from '@heroui/card'
-import { Input } from '@heroui/input'
-import { Image } from '@heroui/image'
-import { Chip } from '@heroui/chip'
-import { Spinner } from '@heroui/spinner'
-import { Tabs, Tab } from '@heroui/tabs'
+import {
+  createFileRoute,
+  redirect,
+  Link,
+  useNavigate,
+} from "@tanstack/react-router";
+import { useState, useEffect, useMemo } from "react";
+import { useQueryState, parseAsString } from "nuqs";
+import { Button } from "@heroui/button";
+import { Card, CardBody } from "@heroui/card";
+import { Input } from "@heroui/input";
+import { Image } from "@heroui/image";
+import { Chip } from "@heroui/chip";
+import { Spinner } from "@heroui/spinner";
+import { Tabs, Tab } from "@heroui/tabs";
 import {
   IconSearch,
   IconDeviceTv,
@@ -15,87 +20,95 @@ import {
   IconMusic,
   IconHeadphones,
   IconFolder,
-} from '@tabler/icons-react'
-import type { Movie, Show } from '../lib/graphql/generated/graphql'
+} from "@tabler/icons-react";
+import { useQuery } from "../lib/graphql/client";
 import {
-  ALL_TV_SHOWS_QUERY,
-  ALL_MOVIES_QUERY,
-} from '../lib/graphql'
-import { useQuery, gql } from '../lib/graphql/client'
-import { RouteError } from '../components/RouteError'
+  LibrarySearchMoviesDocument,
+  LibrarySearchShowsDocument,
+} from "../lib/graphql/generated/graphql";
+import { RouteError } from "../components/RouteError";
 
-export const Route = createFileRoute('/search')({
+export const Route = createFileRoute("/search")({
   beforeLoad: ({ context, location }) => {
     if (!context.auth.isAuthenticated) {
       throw redirect({
-        to: '/',
+        to: "/",
         search: {
           signin: true,
           redirect: location.href,
         },
-      })
+      });
     }
   },
   component: LibrarySearchPage,
   errorComponent: RouteError,
-})
+});
 
-type MediaType = 'all' | 'shows' | 'movies' | 'music' | 'audiobooks'
+type MediaType = "all" | "shows" | "movies" | "music" | "audiobooks";
 
 interface SearchResult {
-  id: string
-  type: 'show' | 'movie' | 'album' | 'audiobook'
-  title: string
-  year?: number
-  posterUrl?: string
-  status?: string
-  libraryId: string
-  libraryName?: string
+  id: string;
+  type: "show" | "movie" | "album" | "audiobook";
+  title: string;
+  year?: number;
+  posterUrl?: string;
+  status?: string;
+  libraryId: string;
+  libraryName?: string;
 }
 
-const ALL_TV_SHOWS_QUERY_DOC = gql`${ALL_TV_SHOWS_QUERY}`
-const ALL_MOVIES_QUERY_DOC = gql`${ALL_MOVIES_QUERY}`
-
 function LibrarySearchPage() {
-  const navigate = useNavigate()
-  const [query, setQuery] = useQueryState('q', parseAsString.withDefault(''))
-  const [searchInput, setSearchInput] = useState(query)
-  const [mediaType, setMediaType] = useState<MediaType>('all')
+  const navigate = useNavigate();
+  const [query, setQuery] = useQueryState("q", parseAsString.withDefault(""));
+  const [searchInput, setSearchInput] = useState(query);
+  const [mediaType, setMediaType] = useState<MediaType>("all");
 
-  const { data: showsData, previousData: previousShowsData, loading: showsLoading } = useQuery<{
-    Shows: { Edges: Array<{ Node: Show }> }
-  }>(ALL_TV_SHOWS_QUERY_DOC, {
-    fetchPolicy: 'cache-and-network',
-  })
+  const {
+    data: showsData,
+    previousData: previousShowsData,
+    loading: showsLoading,
+  } = useQuery(LibrarySearchShowsDocument, {
+    fetchPolicy: "cache-and-network",
+  });
 
-  const { data: moviesData, previousData: previousMoviesData, loading: moviesLoading } = useQuery<{
-    Movies: { Edges: Array<{ Node: Movie }> }
-  }>(ALL_MOVIES_QUERY_DOC, {
-    fetchPolicy: 'cache-and-network',
-  })
+  const {
+    data: moviesData,
+    previousData: previousMoviesData,
+    loading: moviesLoading,
+  } = useQuery(LibrarySearchMoviesDocument, {
+    fetchPolicy: "cache-and-network",
+  });
 
   const shows = useMemo(
-    () => (showsData?.Shows?.Edges ?? previousShowsData?.Shows?.Edges ?? []).map((e) => e.Node),
+    () =>
+      (showsData?.Shows?.Edges ?? previousShowsData?.Shows?.Edges ?? []).map(
+        (e) => e.Node,
+      ),
     [showsData?.Shows?.Edges, previousShowsData?.Shows?.Edges],
-  )
+  );
   const movies = useMemo(
-    () => (moviesData?.Movies?.Edges ?? previousMoviesData?.Movies?.Edges ?? []).map((e) => e.Node),
+    () =>
+      (
+        moviesData?.Movies?.Edges ??
+        previousMoviesData?.Movies?.Edges ??
+        []
+      ).map((e) => e.Node),
     [moviesData?.Movies?.Edges, previousMoviesData?.Movies?.Edges],
-  )
-  const isSearching = showsLoading || moviesLoading
+  );
+  const isSearching = showsLoading || moviesLoading;
 
   // Sync search input with query param
   useEffect(() => {
-    setSearchInput(query)
-  }, [query])
+    setSearchInput(query);
+  }, [query]);
 
   // Filter and convert to search results
   const searchResults = useMemo<SearchResult[]>(() => {
-    const queryLower = query.toLowerCase().trim()
-    const results: SearchResult[] = []
+    const queryLower = query.toLowerCase().trim();
+    const results: SearchResult[] = [];
 
     // Filter shows
-    if (mediaType === 'all' || mediaType === 'shows') {
+    if (mediaType === "all" || mediaType === "shows") {
       for (const show of shows) {
         if (!queryLower || show.Name.toLowerCase().includes(queryLower)) {
           results.push({
@@ -112,42 +125,46 @@ function LibrarySearchPage() {
     }
 
     // Filter movies
-    if (mediaType === 'all' || mediaType === 'movies') {
+    if (mediaType === "all" || mediaType === "movies") {
       for (const movie of movies) {
         if (!queryLower || movie.Title.toLowerCase().includes(queryLower)) {
           results.push({
             id: movie.Id,
-            type: 'movie',
+            type: "movie",
             title: movie.Title,
             year: movie.Year ?? undefined,
             posterUrl: movie.PosterUrl ?? undefined,
             status: movie.Status ?? undefined,
             libraryId: movie.LibraryId,
-          })
+          });
         }
       }
     }
 
     // Sort by title
-    results.sort((a, b) => a.title.localeCompare(b.title))
+    results.sort((a, b) => a.title.localeCompare(b.title));
 
-    return results
-  }, [query, mediaType, shows, movies])
+    return results;
+  }, [query, mediaType, shows, movies]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      setQuery(searchInput)
+    if (e.key === "Enter") {
+      setQuery(searchInput);
     }
-  }
+  };
 
   const getResultLink = (result: SearchResult): string => {
-    if (result.type === 'show') return `/shows/${result.id}`
-    if (result.type === 'movie') return `/movies/${result.id}`
-    return `/libraries/${result.libraryId}`
-  }
+    if (result.type === "show") return `/shows/${result.id}`;
+    if (result.type === "movie") return `/movies/${result.id}`;
+    return `/libraries/${result.libraryId}`;
+  };
 
-  const showsCount = shows.filter(s => !query || s.Name.toLowerCase().includes(query.toLowerCase())).length
-  const moviesCount = movies.filter(m => !query || m.Title.toLowerCase().includes(query.toLowerCase())).length
+  const showsCount = shows.filter(
+    (s) => !query || s.Name.toLowerCase().includes(query.toLowerCase()),
+  ).length;
+  const moviesCount = movies.filter(
+    (m) => !query || m.Title.toLowerCase().includes(query.toLowerCase()),
+  ).length;
 
   return (
     <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 min-w-0 grow flex flex-col gap-4">
@@ -174,7 +191,7 @@ function LibrarySearchPage() {
             startContent={<IconSearch size={18} className="text-default-400" />}
             className="flex-1"
             classNames={{
-              label: 'text-sm font-medium text-primary!',
+              label: "text-sm font-medium text-primary!",
             }}
             size="lg"
             autoFocus
@@ -188,7 +205,7 @@ function LibrarySearchPage() {
         onSelectionChange={(key) => setMediaType(key as MediaType)}
         variant="underlined"
         classNames={{
-          tabList: 'gap-4',
+          tabList: "gap-4",
         }}
       >
         <Tab
@@ -197,7 +214,9 @@ function LibrarySearchPage() {
             <div className="flex items-center gap-2">
               <IconFolder size={16} />
               <span>All</span>
-              <Chip size="sm" variant="flat">{searchResults.length}</Chip>
+              <Chip size="sm" variant="flat">
+                {searchResults.length}
+              </Chip>
             </div>
           }
         />
@@ -207,7 +226,9 @@ function LibrarySearchPage() {
             <div className="flex items-center gap-2">
               <IconDeviceTv size={16} className="text-blue-400" />
               <span>TV Shows</span>
-              <Chip size="sm" variant="flat">{showsCount}</Chip>
+              <Chip size="sm" variant="flat">
+                {showsCount}
+              </Chip>
             </div>
           }
         />
@@ -217,7 +238,9 @@ function LibrarySearchPage() {
             <div className="flex items-center gap-2">
               <IconMovie size={16} className="text-purple-400" />
               <span>Movies</span>
-              <Chip size="sm" variant="flat">{moviesCount}</Chip>
+              <Chip size="sm" variant="flat">
+                {moviesCount}
+              </Chip>
             </div>
           }
         />
@@ -227,7 +250,9 @@ function LibrarySearchPage() {
             <div className="flex items-center gap-2">
               <IconMusic size={16} className="text-green-400" />
               <span>Music</span>
-              <Chip size="sm" variant="flat">0</Chip>
+              <Chip size="sm" variant="flat">
+                0
+              </Chip>
             </div>
           }
         />
@@ -237,7 +262,9 @@ function LibrarySearchPage() {
             <div className="flex items-center gap-2">
               <IconHeadphones size={16} className="text-amber-400" />
               <span>Audiobooks</span>
-              <Chip size="sm" variant="flat">0</Chip>
+              <Chip size="sm" variant="flat">
+                0
+              </Chip>
             </div>
           }
         />
@@ -252,7 +279,10 @@ function LibrarySearchPage() {
       ) : searchResults.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
           {searchResults.map((result) => (
-            <Link key={`${result.type}-${result.id}`} to={getResultLink(result)}>
+            <Link
+              key={`${result.type}-${result.id}`}
+              to={getResultLink(result)}
+            >
               <Card isPressable className="h-full">
                 <CardBody className="p-0 overflow-hidden">
                   {result.posterUrl ? (
@@ -264,7 +294,7 @@ function LibrarySearchPage() {
                     />
                   ) : (
                     <div className="w-full aspect-[2/3] bg-default-200 flex items-center justify-center">
-                      {result.type === 'show' ? (
+                      {result.type === "show" ? (
                         <IconDeviceTv size={48} className="text-blue-400" />
                       ) : (
                         <IconMovie size={48} className="text-purple-400" />
@@ -273,7 +303,10 @@ function LibrarySearchPage() {
                   )}
                 </CardBody>
                 <div className="p-2">
-                  <p className="font-medium text-sm line-clamp-1" title={result.title}>
+                  <p
+                    className="font-medium text-sm line-clamp-1"
+                    title={result.title}
+                  >
                     {result.title}
                   </p>
                   <div className="flex items-center gap-1 text-xs text-default-500">
@@ -281,7 +314,9 @@ function LibrarySearchPage() {
                     {result.status && (
                       <>
                         <span>•</span>
-                        <span className="capitalize">{result.status.toLowerCase()}</span>
+                        <span className="capitalize">
+                          {result.status.toLowerCase()}
+                        </span>
                       </>
                     )}
                   </div>
@@ -300,10 +335,7 @@ function LibrarySearchPage() {
             </p>
             <Button
               color="primary"
-              onPress={() => navigate({
-                to: '/hunt',
-                search: { q: query, type: 'all' },
-              })}
+              onPress={() => navigate({ to: "/settings/sources" })}
             >
               Search for "{query}" online
             </Button>
@@ -315,11 +347,12 @@ function LibrarySearchPage() {
             <IconSearch size={48} className="mx-auto mb-4 text-primary-400" />
             <h3 className="text-lg font-semibold mb-2">Search your library</h3>
             <p className="text-default-500">
-              Type above to find TV shows, movies, music, and audiobooks in your library.
+              Type above to find TV shows, movies, music, and audiobooks in your
+              library.
             </p>
           </CardBody>
         </Card>
       )}
     </div>
-  )
+  );
 }

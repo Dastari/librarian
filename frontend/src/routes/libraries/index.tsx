@@ -1,10 +1,9 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   useQuery,
   useMutation,
   useSubscription,
-  gql,
 } from "../../lib/graphql/client";
 import { Button } from "@heroui/button";
 import { Card, CardBody } from "@heroui/card";
@@ -12,6 +11,7 @@ import { useDisclosure } from "@heroui/modal";
 import { Skeleton } from "@heroui/skeleton";
 import { addToast } from "@heroui/toast";
 import { IconPlus } from "@tabler/icons-react";
+import { IconRefresh } from "@tabler/icons-react";
 import { Image } from "@heroui/image";
 
 import { RouteError } from "../../components/RouteError";
@@ -19,18 +19,37 @@ import { DataTable } from "../../components/data-table/DataTable";
 import {
   AddLibraryModal,
   DeleteLibraryModal,
-  ScanLibraryModal,
   LibraryGridCard,
+  ScanLibraryModal,
   type CreateLibraryFormInput,
 } from "../../components/library";
 import {
   ChangeAction,
-  type LibraryConnection,
   type CreateLibraryInput,
-  type Library,
+  type CreateLibraryMutation,
+  type CreateLibraryMutationVariables,
+  type LibrariesQuery,
+  type LibrariesQueryVariables,
+  type LibraryChangedSubscription,
+  type LibraryChangedSubscriptionVariables,
+  type MovieChangedSubscription,
+  type MovieChangedSubscriptionVariables,
+  type ShowChangedSubscription,
+  type ShowChangedSubscriptionVariables,
+  LibrariesDocument,
+  LibraryChangedDocument,
+  MovieChangedDocument,
+  ShowChangedDocument,
+  CreateLibraryDocument,
 } from "../../lib/graphql/generated/graphql";
-import { LIBRARIES_WITH_COUNTS_QUERY } from "@/lib/graphql/queries";
+import {
+  getLibraryPathAvailability,
+  reconnectLibraryPath,
+  type LibraryPathAvailabilityStatus,
+} from "../../lib/graphql";
 import { useAuth } from "@/hooks/useAuth";
+
+type LibraryListNode = LibrariesQuery["Libraries"]["Edges"][number]["Node"];
 
 export const Route = createFileRoute("/libraries/")({
   beforeLoad: ({ context, location }) => {
@@ -48,31 +67,11 @@ export const Route = createFileRoute("/libraries/")({
   errorComponent: RouteError,
 });
 
-// GraphQL operations
-const LIBRARIES_QUERY = gql`
-  ${LIBRARIES_WITH_COUNTS_QUERY}
-`;
-
-const CREATE_LIBRARY = gql`
-  mutation CreateLibrary($Input: CreateLibraryInput!) {
-    CreateLibrary(Input: $Input) {
-      Success
-      Error
-    }
-  }
-`;
-
-const LIBRARY_CHANGED_SUBSCRIPTION = gql`
-  subscription LibraryChanged {
-    LibraryChanged {
-      Id
-      Action
-    }
-  }
-`;
-
 function LibrariesPage() {
   const { user } = useAuth();
+  const refetchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   // Modal states
   const {
@@ -90,12 +89,19 @@ function LibrariesPage() {
     onOpen: onScanOpen,
     onClose: onScanClose,
   } = useDisclosure();
-
   // Track which library is being acted upon
   const [targetLibrary, setTargetLibrary] = useState<{
     id: string;
     name: string;
   } | null>(null);
+  const [scanTargetLibrary, setScanTargetLibrary] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const [pathAvailability, setPathAvailability] = useState<
+    Record<string, LibraryPathAvailabilityStatus>
+  >({});
+  const [isRecheckingOffline, setIsRecheckingOffline] = useState(false);
 
   // Query libraries
   const {
@@ -103,22 +109,75 @@ function LibrariesPage() {
     previousData: previousLibrariesData,
     loading: librariesLoading,
     refetch,
-  } = useQuery<{ Libraries: LibraryConnection }>(LIBRARIES_QUERY, {
-    fetchPolicy: "cache-and-network",
+  } = useQuery<LibrariesQuery, LibrariesQueryVariables>(LibrariesDocument, {
+    fetchPolicy: "no-cache",
+    notifyOnNetworkStatusChange: true,
   });
-  const libraries =
-    (librariesData?.Libraries ?? previousLibrariesData?.Libraries)?.Edges.map(
-      (edge) => edge.Node,
-    ) ?? [];
+  const libraries = useMemo(
+    () =>
+      (librariesData?.Libraries ?? previousLibrariesData?.Libraries)?.Edges.map(
+        (edge) => edge.Node
+      ) ?? [],
+    [librariesData?.Libraries, previousLibrariesData?.Libraries]
+  );
+
+  const uniqueLibraryPaths = useMemo(
+    () => Array.from(new Set(libraries.map((lib) => lib.Path).filter(Boolean))).sort(),
+    [libraries]
+  );
+  const libraryPathsKey = useMemo(() => uniqueLibraryPaths.join("|"), [uniqueLibraryPaths]);
+
+  useEffect(() => {
+    return () => {
+      if (refetchDebounceRef.current) {
+        clearTimeout(refetchDebounceRef.current);
+        refetchDebounceRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleWindowFocus = () => {
+      void refetch();
+    };
+    window.addEventListener("focus", handleWindowFocus);
+    return () => window.removeEventListener("focus", handleWindowFocus);
+  }, [refetch]);
+
+  useEffect(() => {
+    if (uniqueLibraryPaths.length === 0) {
+      setPathAvailability({});
+      return;
+    }
+
+    let active = true;
+    getLibraryPathAvailability(uniqueLibraryPaths, false)
+      .then((statuses) => {
+        if (!active) return;
+        const map: Record<string, LibraryPathAvailabilityStatus> = {};
+        statuses.forEach((s) => {
+          map[s.Path] = s;
+        });
+        setPathAvailability(map);
+      })
+      .catch(() => {
+        if (active) setPathAvailability({});
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [libraryPathsKey, uniqueLibraryPaths]);
 
   // Create library mutation
-  const [createLibrary, { loading: createLoading }] = useMutation<{
-    CreateLibrary: { Success: boolean; Error: string | null };
-  }>(CREATE_LIBRARY);
+  const [createLibrary, { loading: createLoading }] = useMutation<
+    CreateLibraryMutation,
+    CreateLibraryMutationVariables
+  >(CreateLibraryDocument);
 
   // Subscribe to library changes for real-time updates
-  useSubscription<{ LibraryChanged: { Id: string; Action: ChangeAction } }>(
-    LIBRARY_CHANGED_SUBSCRIPTION,
+  useSubscription<LibraryChangedSubscription, LibraryChangedSubscriptionVariables>(
+    LibraryChangedDocument,
     {
       onData: ({ data }) => {
         const event = data.data?.LibraryChanged;
@@ -136,18 +195,57 @@ function LibrariesPage() {
             break;
         }
       },
-    },
+    }
+  );
+
+  const scheduleLibrariesRefetch = () => {
+    if (refetchDebounceRef.current) {
+      clearTimeout(refetchDebounceRef.current);
+    }
+    const timeout = setTimeout(() => {
+      void refetch();
+    }, 250);
+    refetchDebounceRef.current = timeout;
+  };
+
+  useSubscription<MovieChangedSubscription, MovieChangedSubscriptionVariables>(
+    MovieChangedDocument,
+    {
+      variables: {
+        Filter: {
+          Actions: [ChangeAction.Created, ChangeAction.Updated, ChangeAction.Deleted],
+        },
+      },
+      onData: ({ data }) => {
+        const event = data.data?.MovieChanged;
+        if (!event?.Movie?.LibraryId) return;
+        scheduleLibrariesRefetch();
+      },
+    }
+  );
+
+  useSubscription<ShowChangedSubscription, ShowChangedSubscriptionVariables>(
+    ShowChangedDocument,
+    {
+      variables: {
+        Filter: {
+          Actions: [ChangeAction.Created, ChangeAction.Updated, ChangeAction.Deleted],
+        },
+      },
+      onData: ({ data }) => {
+        const event = data.data?.ShowChanged;
+        if (!event?.Show?.LibraryId) return;
+        scheduleLibrariesRefetch();
+      },
+    }
   );
 
   // Handlers
   const handleAddLibrary = async (input: CreateLibraryFormInput) => {
-    const now = new Date().toISOString();
     const Input: CreateLibraryInput = {
       ...input,
       Scanning: false,
       UserId: user?.id ?? "",
-      CreatedAt: now,
-      UpdatedAt: now,
     };
 
     try {
@@ -180,14 +278,78 @@ function LibrariesPage() {
     }
   };
 
-  const handleScanClick = (id: string, name: string) => {
-    setTargetLibrary({ id, name });
-    onScanOpen();
-  };
-
   const handleDeleteClick = (id: string, name: string) => {
     setTargetLibrary({ id, name });
     onDeleteOpen();
+  };
+
+  const handleScanClick = (id: string, name: string) => {
+    setScanTargetLibrary({ id, name });
+    onScanOpen();
+  };
+
+  const handleReconnect = async (path: string) => {
+    const result = await reconnectLibraryPath(path);
+    if (!result.success) {
+      addToast({
+        title: "Reconnect Failed",
+        description: result.error ?? "Unable to reconnect path",
+        color: "danger",
+      });
+      return;
+    }
+
+    addToast({
+      title: "Reconnect Requested",
+      description: "Retrying access for library path",
+      color: "success",
+    });
+    const statuses = await getLibraryPathAvailability([path], true).catch(
+      () => [],
+    );
+    if (statuses[0]) {
+      setPathAvailability((prev) => ({ ...prev, [path]: statuses[0] }));
+    }
+  };
+
+  const recheckOfflineLibraries = async () => {
+    const offlinePaths = Object.values(pathAvailability)
+      .filter((s) => !s.Reachable)
+      .map((s) => s.Path);
+    if (offlinePaths.length === 0) return;
+
+    setIsRecheckingOffline(true);
+    try {
+      const statuses = await getLibraryPathAvailability(offlinePaths, true);
+      const next = { ...pathAvailability };
+      statuses.forEach((s) => {
+        next[s.Path] = s;
+      });
+      setPathAvailability(next);
+
+      const stillOffline = statuses.filter((s) => !s.Reachable).length;
+      if (stillOffline === 0) {
+        addToast({
+          title: "Libraries Reconnected",
+          description: "All previously offline libraries are now reachable",
+          color: "success",
+        });
+      } else {
+        addToast({
+          title: "Recheck Complete",
+          description: `${stillOffline} library path(s) remain offline`,
+          color: "warning",
+        });
+      }
+    } catch (err) {
+      addToast({
+        title: "Recheck Failed",
+        description: err instanceof Error ? err.message : "Failed to recheck offline libraries",
+        color: "danger",
+      });
+    } finally {
+      setIsRecheckingOffline(false);
+    }
   };
 
   // Empty state
@@ -226,7 +388,7 @@ function LibrariesPage() {
         stateKey="libraries"
         data={libraries}
         columns={[]}
-        getRowKey={(lib: Library) => lib.Id}
+        getRowKey={(lib: LibraryListNode) => lib.Id}
         isLoading={librariesLoading && libraries.length === 0}
         skeletonDelay={300}
         emptyContent={emptyContent}
@@ -237,6 +399,8 @@ function LibrariesPage() {
             library={item}
             onScan={() => handleScanClick(item.Id, item.Name)}
             onDelete={() => handleDeleteClick(item.Id, item.Name)}
+            pathStatus={pathAvailability[item.Path]}
+            onReconnect={() => handleReconnect(item.Path)}
           />
         )}
         cardSkeleton={cardSkeleton}
@@ -250,14 +414,29 @@ function LibrariesPage() {
                 Organize and manage your media collections
               </p>
             </div>
-            <Button
-              color="primary"
-              size="sm"
-              startContent={<IconPlus size={16} />}
-              onPress={onAddOpen}
-            >
-              Add Library
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="flat"
+                startContent={<IconRefresh size={16} />}
+                isLoading={isRecheckingOffline}
+                isDisabled={
+                  isRecheckingOffline ||
+                  !Object.values(pathAvailability).some((s) => !s.Reachable)
+                }
+                onPress={() => void recheckOfflineLibraries()}
+              >
+                Recheck Offline
+              </Button>
+              <Button
+                color="primary"
+                size="sm"
+                startContent={<IconPlus size={16} />}
+                onPress={onAddOpen}
+              >
+                Add Library
+              </Button>
+            </div>
           </div>
         }
         hideToolbar
@@ -282,9 +461,11 @@ function LibrariesPage() {
       <ScanLibraryModal
         isOpen={isScanOpen}
         onClose={onScanClose}
-        libraryId={targetLibrary?.id ?? null}
-        libraryName={targetLibrary?.name ?? null}
+        libraryId={scanTargetLibrary?.id ?? null}
+        libraryName={scanTargetLibrary?.name ?? null}
+        onScanStarted={refetch}
       />
+
     </div>
   );
 }

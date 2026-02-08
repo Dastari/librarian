@@ -20,33 +20,29 @@ import {
   IconCheck,
   IconDisc,
 } from "@tabler/icons-react";
+import { type LibraryNode } from "../../lib/graphql";
 import {
-  ORGANIZE_TORRENT_MUTATION,
-  type LibraryNode,
-  type OrganizeTorrentResult,
-  type Album,
-} from "../../lib/graphql";
-import {
+  LinkTorrentToLibraryDocument,
   LibrariesDocument,
-  type Torrent,
+  ManualMatchAlbumsByLibraryDocument,
+  type LinkTorrentToLibraryMutation,
+  type LinkTorrentToLibraryMutationVariables,
+  type LibrariesQuery,
+  type ManualMatchAlbumsByLibraryQuery,
 } from "../../lib/graphql/generated/graphql";
+import { apolloClient, useMutation } from "../../lib/graphql/client";
+import type { DownloadTorrent } from "./types";
 
-// Query to get albums for a library
-const ALBUMS_FOR_LIBRARY_QUERY = `
-  query AlbumsForLibrary($libraryId: String!) {
-    albums(libraryId: $libraryId) {
-      id
-      name
-      year
-      coverUrl
-    }
-  }
-`;
+type AlbumOption = {
+  id: string;
+  name: string;
+  year: number | null;
+};
 
 export interface LinkToLibraryModalProps {
   isOpen: boolean;
   onClose: () => void;
-  torrent: Torrent | null;
+  torrent: DownloadTorrent | null;
   onLinked: () => void;
 }
 
@@ -127,7 +123,7 @@ export function LinkToLibraryModal({
   onLinked,
 }: LinkToLibraryModalProps) {
   const [libraries, setLibraries] = useState<LibraryNode[]>([]);
-  const [albums, setAlbums] = useState<Album[]>([]);
+  const [albums, setAlbums] = useState<AlbumOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingAlbums, setLoadingAlbums] = useState(false);
   const [organizing, setOrganizing] = useState(false);
@@ -135,6 +131,10 @@ export function LinkToLibraryModal({
     null,
   );
   const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null);
+  const [linkTorrentToLibrary] = useMutation<
+    LinkTorrentToLibraryMutation,
+    LinkTorrentToLibraryMutationVariables
+  >(LinkTorrentToLibraryDocument);
 
   // Get the selected library
   const selectedLibrary = useMemo(() => {
@@ -151,10 +151,14 @@ export function LinkToLibraryModal({
       setSelectedLibraryId(null);
       setSelectedAlbumId(null);
       setAlbums([]);
-      queryPromise(LibrariesDocument, {})
-        
+      apolloClient
+        .query<LibrariesQuery>({
+          query: LibrariesDocument,
+          fetchPolicy: "network-only",
+          variables: {},
+        })
         .then((result) => {
-          setLibraries(result.data?.Libraries.Edges.map((e: any) => e.Node) ?? []);
+          setLibraries(result.data?.Libraries.Edges.map((e) => e.Node) ?? []);
         })
         .finally(() => setLoading(false));
     }
@@ -165,13 +169,21 @@ export function LinkToLibraryModal({
     if (selectedLibraryId && isMusicLibrary) {
       setLoadingAlbums(true);
       setSelectedAlbumId(null);
-      queryPromise<{ albums: Album[] }>(ALBUMS_FOR_LIBRARY_QUERY, {
-          libraryId: selectedLibraryId,
+      apolloClient
+        .query<ManualMatchAlbumsByLibraryQuery>({
+          query: ManualMatchAlbumsByLibraryDocument,
+          fetchPolicy: "network-only",
+          variables: { LibraryId: selectedLibraryId },
         })
-        
         .then((result) => {
-          if (result.data?.albums) {
-            setAlbums(result.data.albums);
+          if (result.data?.Albums?.Edges) {
+            setAlbums(
+              result.data.Albums.Edges.map((e) => ({
+                id: e.Node.Id,
+                name: e.Node.Name,
+                year: e.Node.Year ?? null,
+              })),
+            );
           }
         })
         .finally(() => setLoadingAlbums(false));
@@ -219,51 +231,34 @@ export function LinkToLibraryModal({
 
     setOrganizing(true);
     try {
-      // Legacy OrganizeTorrent expects Int (session id). We only have entity id (string); backend would need OrganizeTorrentByInfoHash to support this.
-      // Try to parse Id as number for legacy API, otherwise show warning
-      const numericId = parseInt(torrent.Id, 10);
-      if (isNaN(numericId)) {
+      const result = await linkTorrentToLibrary({
+        variables: {
+          Id: torrent.Id,
+          Input: {
+            LibraryId: selectedLibraryId,
+          },
+        },
+      });
+
+      if (result.data?.UpdateTorrent?.Success) {
+        const albumNote =
+          isMusicLibrary && selectedAlbumId
+            ? " Album linking will be applied in post-processing."
+            : "";
         addToast({
-          title: "Linking not available",
-          description:
-            "Organize by info hash is not yet supported. Use the legacy torrent ID for now.",
-          color: "warning",
+          title: "Linked Successfully",
+          description: `Torrent linked to library.${albumNote}`,
+          color: "success",
         });
-        setOrganizing(false);
-        return;
-      }
-
-      const result = await mutationPromise<{ organizeTorrent: OrganizeTorrentResult }>(
-          ORGANIZE_TORRENT_MUTATION,
-          {
-            id: numericId,
-            libraryId: selectedLibraryId,
-            albumId: selectedAlbumId,
-          }
-        )
-        ;
-
-      if (result.data?.organizeTorrent) {
-        const { success, messages } = result.data.organizeTorrent;
-
-        if (success) {
-          addToast({
-            title: "Linked Successfully",
-            description: messages[0] || "Torrent linked to library",
-            color: "success",
-          });
-          onLinked();
-          onClose();
-        } else {
-          // Show messages even on "failure" - they may be informational
-          addToast({
-            title: "Link Result",
-            description: messages[0] || "Linking completed with notes",
-            color: messages.length > 0 ? "warning" : "success",
-          });
-          onLinked();
-          onClose();
-        }
+        onLinked();
+        onClose();
+      } else {
+        addToast({
+          title: "Link Failed",
+          description:
+            result.data?.UpdateTorrent?.Error || "Failed to link torrent",
+          color: "danger",
+        });
       }
     } catch (e) {
       addToast({

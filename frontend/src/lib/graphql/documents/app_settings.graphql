@@ -11,7 +11,10 @@ query PlaybackSyncInterval($Key: String!) {
 }
 
 query TorrentAppSettings {
-  AppSettings(Where: { Category: { Eq: "torrent" } }, Page: { Limit: 20, Offset: 0 }) {
+  AppSettings(
+    Where: { Category: { Eq: "torrent" } }
+    Page: { Limit: 20, Offset: 0 }
+  ) {
     Edges {
       Node {
         Id
@@ -26,6 +29,21 @@ query MetadataAppSettings {
   AppSettings(
     Where: { Category: { Eq: "metadata" } }
     Page: { Limit: 50, Offset: 0 }
+  ) {
+    Edges {
+      Node {
+        Id
+        Key
+        Value
+      }
+    }
+  }
+}
+
+query LlmAppSettings {
+  AppSettings(
+    Where: { Category: { Eq: "llm" } }
+    Page: { Limit: 100, Offset: 0 }
   ) {
     Edges {
       Node {

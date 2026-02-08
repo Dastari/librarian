@@ -35,3 +35,75 @@ mutation AddMovie($LibraryId: String!, $Input: AddMovieInput!) {
     Error
   }
 }
+
+subscription MovieChanged($Filter: SubscriptionFilterInput) {
+  MovieChanged(Filter: $Filter) {
+    Action
+    Id
+    Movie {
+      LibraryId
+    }
+  }
+}
+
+query MovieDetailRoute($Id: String!) {
+  Movie(Id: $Id) {
+    Id
+    LibraryId
+    Title
+    SortTitle
+    OriginalTitle
+    Year
+    TmdbId
+    ImdbId
+    Status
+    Overview
+    Tagline
+    Runtime
+    Genres
+    Director
+    CastNames
+    PosterUrl
+    BackdropUrl
+    Monitored
+    MediaFileId
+    CollectionId
+    CollectionName
+    CollectionPosterUrl
+    TmdbRating
+    TmdbVoteCount
+    Certification
+    ReleaseDate
+    ProductionCountries
+    SpokenLanguages
+    MediaFile {
+      Id
+      Size
+      Duration
+    }
+  }
+}
+
+mutation RefreshMovieRoute($Id: String!) {
+  RefreshMovie(Id: $Id) {
+    Success
+    Error
+    Movie {
+      Id
+      Title
+      Overview
+      Tagline
+      PosterUrl
+      BackdropUrl
+      TmdbRating
+      TmdbVoteCount
+    }
+  }
+}
+
+mutation DeleteMovieModal($Id: String!) {
+  DeleteMovie(Id: $Id) {
+    Success
+    Error
+  }
+}

@@ -1,0 +1,128 @@
+query MediaFileProperties($Id: String!) {
+  MediaFile(Id: $Id) {
+    Id
+    LibraryId
+    Path
+    RelativePath
+    OriginalName
+    Size
+    Container
+    VideoCodec
+    AudioCodec
+    Resolution
+    IsHdr
+    HdrType
+    Width
+    Height
+    Duration
+    Bitrate
+    AudioChannels
+    EpisodeId
+    MovieId
+    TrackId
+    ContentType
+    AddedAt
+  }
+  VideoStreams(
+    Where: { MediaFileId: { Eq: $Id } }
+    OrderBy: [{ StreamIndex: Asc }]
+    Page: { Limit: 200, Offset: 0 }
+  ) {
+    Edges {
+      Node {
+        Id
+        StreamIndex
+        Codec
+        CodecLongName
+        Width
+        Height
+        AspectRatio
+        FrameRate
+        Bitrate
+        PixelFormat
+        HdrType
+        BitDepth
+        Language
+        Title
+        IsDefault
+      }
+    }
+  }
+  AudioStreams(
+    Where: { MediaFileId: { Eq: $Id } }
+    OrderBy: [{ StreamIndex: Asc }]
+    Page: { Limit: 200, Offset: 0 }
+  ) {
+    Edges {
+      Node {
+        Id
+        StreamIndex
+        Codec
+        CodecLongName
+        Channels
+        ChannelLayout
+        SampleRate
+        Bitrate
+        BitDepth
+        Language
+        Title
+        IsDefault
+        IsCommentary
+      }
+    }
+  }
+  Subtitles(
+    Where: { MediaFileId: { Eq: $Id } }
+    OrderBy: [{ CreatedAt: Asc }]
+    Page: { Limit: 200, Offset: 0 }
+  ) {
+    Edges {
+      Node {
+        Id
+        StreamIndex
+        SourceType
+        Codec
+        CodecLongName
+        Language
+        Title
+        IsDefault
+        IsForced
+        IsHearingImpaired
+        FilePath
+      }
+    }
+  }
+  MediaChapters(
+    Where: { MediaFileId: { Eq: $Id } }
+    OrderBy: [{ ChapterIndex: Asc }]
+    Page: { Limit: 500, Offset: 0 }
+  ) {
+    Edges {
+      Node {
+        Id
+        ChapterIndex
+        StartSecs
+        EndSecs
+        Title
+      }
+    }
+  }
+}
+
+query MediaFileByPathLookup($Path: String!) {
+  MediaFiles(Where: { Path: { Eq: $Path } }, Page: { Limit: 1, Offset: 0 }) {
+    Edges {
+      Node {
+        Id
+        Path
+      }
+    }
+  }
+}
+
+query MediaFileMetadata($Id: String!) {
+  MediaFile(Id: $Id) {
+    Id
+    Metadata
+  }
+}

@@ -18,10 +18,20 @@ impl MetadataSettings {
     pub async fn load(db: &Database) -> Result<Self> {
         let tmdb_api_key = get_setting_string(db, "metadata.tmdb_api_key").await?;
         let tvdb_api_key = get_setting_string(db, "metadata.tvdb_api_key").await?;
-        let preferred_language = get_setting::<String>(db, "metadata.preferred_language").await?;
-        let auto_fetch = get_setting::<bool>(db, "metadata.auto_fetch")
-            .await?
-            .unwrap_or(true);
+        // Use get_setting_string instead of get_setting::<String> to avoid JSON parse
+        // failures on plain string values (e.g. "en" without quotes)
+        let preferred_language = get_setting_string(db, "metadata.preferred_language").await?;
+        let auto_fetch = match get_setting::<bool>(db, "metadata.auto_fetch").await {
+            Ok(v) => v.unwrap_or(true),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to parse app_settings key 'metadata.auto_fetch'; defaulting auto_fetch=true. error={}",
+                    e
+                );
+                true
+            }
+        };
         let musicbrainz_user_agent =
             get_setting_string(db, "metadata.musicbrainz_user_agent").await?;
 

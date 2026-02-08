@@ -26,8 +26,8 @@ import { Select, SelectItem } from "@heroui/select";
 import { Switch } from "@heroui/switch";
 import { ConfirmModal } from "../../components/ConfirmModal";
 import {
-  queryPromise,
-  mutationPromise,
+  apolloClient,
+  useMutation,
   subscriptionStream,
 } from "../../lib/graphql/client";
 import {
@@ -37,6 +37,8 @@ import {
   ChangeAction,
   SortDirection,
   type AppLogWhereInput,
+  type DeleteAppLogsMutation,
+  type DeleteAppLogsMutationVariables,
 } from "../../lib/graphql/generated/graphql";
 import { sanitizeError } from "../../lib/format";
 import {
@@ -167,6 +169,10 @@ function LogsSettingsPage() {
     message: string;
     onConfirm: () => Promise<void>;
   } | null>(null);
+  const [deleteAppLogs] = useMutation<
+    DeleteAppLogsMutation,
+    DeleteAppLogsMutationVariables
+  >(DeleteAppLogsDocument);
 
   // Source filter - persisted in URL via nuqs
   const [sources, setSources] = useState<string[]>([]);
@@ -241,17 +247,42 @@ function LogsSettingsPage() {
       const currentSortDirection = sortDirectionRef.current;
       const orderBy =
         currentSortColumn === "timestamp"
-          ? [{ Timestamp: currentSortDirection === "desc" ? SortDirection.Desc : SortDirection.Asc }]
+          ? [
+              {
+                Timestamp:
+                  currentSortDirection === "desc"
+                    ? SortDirection.Desc
+                    : SortDirection.Asc,
+              },
+            ]
           : currentSortColumn === "level"
-            ? [{ Level: currentSortDirection === "desc" ? SortDirection.Desc : SortDirection.Asc }]
-            : [{ Target: currentSortDirection === "desc" ? SortDirection.Desc : SortDirection.Asc }];
+            ? [
+                {
+                  Level:
+                    currentSortDirection === "desc"
+                      ? SortDirection.Desc
+                      : SortDirection.Asc,
+                },
+              ]
+            : [
+                {
+                  Target:
+                    currentSortDirection === "desc"
+                      ? SortDirection.Desc
+                      : SortDirection.Asc,
+                },
+              ];
 
-      const result = await queryPromise(AppLogsDocument, {
+      const result = await apolloClient.query({
+        query: AppLogsDocument,
+        variables: {
           Where: where,
           OrderBy: orderBy,
           Page: { Limit: pageSize, Offset: offsetRef.current },
-        })
-        ;
+        },
+        fetchPolicy: "network-only",
+        errorPolicy: "all",
+      });
 
       if (result.data?.AppLogs) {
         const connection = result.data.AppLogs;
@@ -323,33 +354,36 @@ function LogsSettingsPage() {
   useEffect(() => {
     if (!isLiveFeedEnabled) return;
 
-    const subscription = subscriptionStream(AppLogChangedDocument, {})
-      .subscribe({
-        next: (result) => {
-          const event = result.data?.AppLogChanged;
-          if (!event || event.Action !== ChangeAction.Created || !event.AppLog) return;
+    const subscription = subscriptionStream(
+      AppLogChangedDocument,
+      {},
+    ).subscribe({
+      next: (result) => {
+        const event = result.data?.AppLogChanged;
+        if (!event || event.Action !== ChangeAction.Created || !event.AppLog)
+          return;
 
-          const node = event.AppLog;
+        const node = event.AppLog;
 
-          // Filter by source if selected
-          if (
-            selectedSource &&
-            node.Target !== selectedSource &&
-            !node.Target.includes(selectedSource)
-          ) {
-            return;
-          }
+        // Filter by source if selected
+        if (
+          selectedSource &&
+          node.Target !== selectedSource &&
+          !node.Target.includes(selectedSource)
+        ) {
+          return;
+        }
 
-          const newLog = appLogNodeToEntry(node);
+        const newLog = appLogNodeToEntry(node);
 
-          setLogs((prev) => [newLog, ...prev.slice(0, 499)]);
-          setLiveEventCount((prev) => prev + 1);
-          setTotalCount((prev) => prev + 1);
-          setSources((prev) =>
-            prev.includes(node.Target) ? prev : [...prev, node.Target].sort(),
-          );
-        },
-      });
+        setLogs((prev) => [newLog, ...prev.slice(0, 499)]);
+        setLiveEventCount((prev) => prev + 1);
+        setTotalCount((prev) => prev + 1);
+        setSources((prev) =>
+          prev.includes(node.Target) ? prev : [...prev, node.Target].sort(),
+        );
+      },
+    });
 
     return () => {
       subscription.unsubscribe();
@@ -364,10 +398,11 @@ function LogsSettingsPage() {
         "Are you sure you want to delete ALL logs? This cannot be undone.",
       onConfirm: async () => {
         try {
-          const result = await mutationPromise(DeleteAppLogsDocument, {
+          const result = await deleteAppLogs({
+            variables: {
               Where: { Timestamp: { Gte: "1970-01-01T00:00:00.000Z" } },
-            })
-            ;
+            },
+          });
           const payload = result.data?.DeleteAppLogs;
           if (payload?.success) {
             addToast({
@@ -382,7 +417,9 @@ function LogsSettingsPage() {
             addToast({
               title: "Error",
               description: sanitizeError(
-                payload?.error ?? result.error?.message ?? "Failed to clear logs",
+                payload?.error ??
+                  result.error?.message ??
+                  "Failed to clear logs",
               ),
               color: "danger",
             });
@@ -406,10 +443,11 @@ function LogsSettingsPage() {
     date.setDate(date.getDate() - days);
     const isoBefore = date.toISOString();
     try {
-      const result = await mutationPromise(DeleteAppLogsDocument, {
+      const result = await deleteAppLogs({
+        variables: {
           Where: { Timestamp: { Lt: isoBefore } },
-        })
-        ;
+        },
+      });
       const payload = result.data?.DeleteAppLogs;
       if (payload?.success) {
         addToast({
@@ -422,7 +460,9 @@ function LogsSettingsPage() {
         addToast({
           title: "Error",
           description: sanitizeError(
-            payload?.error ?? result.error?.message ?? "Failed to clear old logs",
+            payload?.error ??
+              result.error?.message ??
+              "Failed to clear old logs",
           ),
           color: "danger",
         });

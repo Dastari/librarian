@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import {
-  CONTENT_DOWNLOAD_PROGRESS_SUBSCRIPTION,
   type ContentDownloadProgressEvent,
   type ContentDownloadType,
 } from '../lib/graphql'
@@ -75,32 +74,14 @@ export function useContentDownloadProgress(
     [contentType]
   )
 
-  // Subscribe to content download progress
+  // No server-side subscription exists for content progress in the current schema.
+  // Keep hook behavior stable (returning a map) but skip opening a websocket
+  // subscription to avoid repeated GraphQL errors.
   useEffect(() => {
-    if (!enabled) {
-      return
-    }
-
-    const sub = graphqlClient
-      .subscription<{ contentDownloadProgress: ContentDownloadProgressEvent }>(
-        CONTENT_DOWNLOAD_PROGRESS_SUBSCRIPTION,
-        {
-          libraryId: libraryId ?? null,
-          parentId: parentId ?? null,
-        }
-      )
-      .subscribe({
-        next: (result: any) => {
-          if (result.data?.contentDownloadProgress) {
-            handleProgress(result.data.contentDownloadProgress)
-          }
-        },
-        error: (err: any) => {
-          console.debug('[ContentProgress] Subscription error:', err)
-        },
-      })
-
-    return () => sub.unsubscribe()
+    if (!enabled) return
+    void libraryId
+    void parentId
+    void handleProgress
   }, [libraryId, parentId, enabled, handleProgress])
 
   return progressMap

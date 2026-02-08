@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod entities;
+pub mod filesystem_network;
 pub mod filters;
 //pub mod helpers;
 pub mod loaders;

@@ -1,56 +1,31 @@
-import { useMemo, useState, useCallback, useEffect } from 'react'
-import { useQueryState, parseAsString, parseAsStringLiteral } from 'nuqs'
-import { Card, CardBody } from '@heroui/card'
+import { useMemo, useState, useCallback, useEffect } from "react";
+import { useQueryState, parseAsString, parseAsStringLiteral } from "nuqs";
+import { Card, CardBody } from "@heroui/card";
 import {
   DataTable,
   AlphabetFilter,
   getFirstLetter,
   type DataTableColumn,
   type CardRendererProps,
-} from '../data-table'
-import { ARTISTS_QUERY, ALBUMS_QUERY, type Artist, type Album } from '../../lib/graphql'
-import { IconUser, IconDisc, IconMicrophone } from '@tabler/icons-react'
-import { SquareCardSkeleton } from './MediaCardSkeleton'
+} from "../data-table";
+import { type Artist, type Album } from "../../lib/graphql";
+import { apolloClient } from "../../lib/graphql/client";
+import {
+  LibraryAlbumsTabDocument,
+  LibraryArtistsTabDocument,
+} from "../../lib/graphql/generated/graphql";
+import { IconUser, IconDisc, IconMicrophone } from "@tabler/icons-react";
+import { SquareCardSkeleton } from "./MediaCardSkeleton";
 
 // ============================================================================
 // Component Props
 // ============================================================================
 
 interface LibraryArtistsTabProps {
-  libraryId: string
+  libraryId: string;
   /** Parent loading state (e.g., library context still loading) */
-  loading?: boolean
-  onSelectArtist?: (artistId: string) => void
-}
-
-interface AlbumNode {
-  Id: string
-  ArtistId: string
-  LibraryId: string
-  Name: string
-  SortName: string | null
-  Year: number | null
-  MusicbrainzId: string | null
-  AlbumType: string | null
-  Genres: string[]
-  Label: string | null
-  Country: string | null
-  ReleaseDate: string | null
-  CoverUrl: string | null
-  TrackCount: number | null
-  DiscCount: number | null
-  TotalDurationSecs: number | null
-  HasFiles: boolean
-  SizeBytes: number | null
-  Path: string | null
-}
-
-interface ArtistNode {
-  Id: string
-  LibraryId: string
-  Name: string
-  SortName: string | null
-  MusicbrainzId: string | null
+  loading?: boolean;
+  onSelectArtist?: (artistId: string) => void;
 }
 
 // ============================================================================
@@ -58,9 +33,9 @@ interface ArtistNode {
 // ============================================================================
 
 interface ArtistCardProps {
-  artist: Artist
-  albumCount: number
-  onSelect?: () => void
+  artist: Artist;
+  albumCount: number;
+  onSelect?: () => void;
 }
 
 function ArtistCard({ artist, albumCount, onSelect }: ArtistCardProps) {
@@ -94,12 +69,14 @@ function ArtistCard({ artist, albumCount, onSelect }: ArtistCardProps) {
             {artist.name}
           </h3>
           <div className="flex items-center gap-1.5 text-xs text-white/70">
-            <span>{albumCount} {albumCount === 1 ? 'album' : 'albums'}</span>
+            <span>
+              {albumCount} {albumCount === 1 ? "album" : "albums"}
+            </span>
           </div>
         </div>
       </Card>
     </div>
-  )
+  );
 }
 
 // ============================================================================
@@ -112,156 +89,186 @@ export function LibraryArtistsTab({
   onSelectArtist,
 }: LibraryArtistsTabProps) {
   // URL-persisted state via nuqs
-  const [selectedLetter, setSelectedLetter] = useQueryState('letter', parseAsString.withDefault(''))
-  const [searchTerm, setSearchTerm] = useQueryState('q', parseAsString.withDefault(''))
-  const [sortColumn, setSortColumn] = useQueryState('sort', parseAsString.withDefault('name'))
+  const [selectedLetter, setSelectedLetter] = useQueryState(
+    "letter",
+    parseAsString.withDefault(""),
+  );
+  const [searchTerm, setSearchTerm] = useQueryState(
+    "q",
+    parseAsString.withDefault(""),
+  );
+  const [sortColumn, setSortColumn] = useQueryState(
+    "sort",
+    parseAsString.withDefault("name"),
+  );
   const [sortDirection, setSortDirection] = useQueryState(
-    'order',
-    parseAsStringLiteral(['asc', 'desc'] as const).withDefault('asc')
-  )
-  const normalizedLetter = selectedLetter === '' ? null : selectedLetter
+    "order",
+    parseAsStringLiteral(["asc", "desc"] as const).withDefault("asc"),
+  );
+  const normalizedLetter = selectedLetter === "" ? null : selectedLetter;
 
   // Handle sort change from DataTable
-  const handleSortChange = useCallback((column: string, direction: 'asc' | 'desc') => {
-    setSortColumn(column)
-    setSortDirection(direction)
-  }, [setSortColumn, setSortDirection])
+  const handleSortChange = useCallback(
+    (column: string, direction: "asc" | "desc") => {
+      setSortColumn(column);
+      setSortDirection(direction);
+    },
+    [setSortColumn, setSortDirection],
+  );
 
-  const [albums, setAlbums] = useState<Album[]>([])
-  const [albumsLoading, setAlbumsLoading] = useState(true)
-  const [artists, setArtists] = useState<Artist[]>([])
-  const [artistsLoading, setArtistsLoading] = useState(true)
+  const [albums, setAlbums] = useState<Album[]>([]);
+  const [albumsLoading, setAlbumsLoading] = useState(true);
+  const [artists, setArtists] = useState<Artist[]>([]);
+  const [artistsLoading, setArtistsLoading] = useState(true);
 
   // Check if we should skip queries (loading or template ID)
-  const shouldSkipQueries = parentLoading || libraryId.startsWith('template')
+  const shouldSkipQueries = parentLoading || libraryId.startsWith("template");
 
   useEffect(() => {
-    if (shouldSkipQueries) return
+    if (shouldSkipQueries) return;
 
     const fetchAlbums = async () => {
       try {
-        const result = await queryPromise<{ Albums: { Edges: Array<{ Node: AlbumNode }> } }>(ALBUMS_QUERY, { libraryId })
-          
-        const edges = result.data?.Albums?.Edges ?? []
+        const result = await apolloClient.query({
+          query: LibraryAlbumsTabDocument,
+          variables: { LibraryId: libraryId },
+          fetchPolicy: "network-only",
+        });
+
+        const edges = result.data?.Albums?.Edges ?? [];
         setAlbums(
           edges.map((e) => ({
             id: e.Node.Id,
             artistId: e.Node.ArtistId,
             libraryId: e.Node.LibraryId,
             name: e.Node.Name,
-            sortName: e.Node.SortName,
-            year: e.Node.Year,
-            musicbrainzId: e.Node.MusicbrainzId,
-            albumType: e.Node.AlbumType,
+            sortName: e.Node.SortName ?? null,
+            year: e.Node.Year ?? null,
+            musicbrainzId: e.Node.MusicbrainzId ?? null,
+            albumType: e.Node.AlbumType ?? null,
             genres: e.Node.Genres,
-            label: e.Node.Label,
-            country: e.Node.Country,
-            releaseDate: e.Node.ReleaseDate,
-            coverUrl: e.Node.CoverUrl,
-            trackCount: e.Node.TrackCount,
-            discCount: e.Node.DiscCount,
-            totalDurationSecs: e.Node.TotalDurationSecs,
+            label: e.Node.Label ?? null,
+            country: e.Node.Country ?? null,
+            releaseDate: e.Node.ReleaseDate ?? null,
+            coverUrl: e.Node.CoverUrl ?? null,
+            trackCount: e.Node.TrackCount ?? null,
+            discCount: e.Node.DiscCount ?? null,
+            totalDurationSecs: e.Node.TotalDurationSecs ?? null,
             hasFiles: e.Node.HasFiles,
-            sizeBytes: e.Node.SizeBytes,
-            path: e.Node.Path,
+            sizeBytes: e.Node.SizeBytes ?? null,
+            path: e.Node.Path ?? null,
             downloadedTrackCount: null,
-          }))
-        )
+          })),
+        );
       } catch (err) {
-        console.error('Failed to fetch albums:', err)
+        console.error("Failed to fetch albums:", err);
       } finally {
-        setAlbumsLoading(false)
+        setAlbumsLoading(false);
       }
-    }
+    };
 
     const fetchArtists = async () => {
       try {
-        const result = await queryPromise<{ Artists: { Edges: Array<{ Node: ArtistNode }> } }>(ARTISTS_QUERY, { libraryId })
-          
-        const edges = result.data?.Artists?.Edges ?? []
-        setArtists(edges.map((e) => ({
-          id: e.Node.Id,
-          libraryId: e.Node.LibraryId,
-          name: e.Node.Name,
-          sortName: e.Node.SortName,
-          musicbrainzId: e.Node.MusicbrainzId,
-        })))
+        const result = await apolloClient.query({
+          query: LibraryArtistsTabDocument,
+          variables: { LibraryId: libraryId },
+          fetchPolicy: "network-only",
+        });
+
+        const edges = result.data?.Artists?.Edges ?? [];
+        setArtists(
+          edges.map((e) => ({
+            id: e.Node.Id,
+            libraryId: e.Node.LibraryId,
+            name: e.Node.Name,
+            sortName: e.Node.SortName ?? null,
+            musicbrainzId: e.Node.MusicbrainzId ?? null,
+          })),
+        );
       } catch (err) {
-        console.error('Failed to fetch artists:', err)
+        console.error("Failed to fetch artists:", err);
       } finally {
-        setArtistsLoading(false)
+        setArtistsLoading(false);
       }
-    }
+    };
 
-    void fetchAlbums()
-    void fetchArtists()
-  }, [libraryId, shouldSkipQueries])
+    void fetchAlbums();
+    void fetchArtists();
+  }, [libraryId, shouldSkipQueries]);
 
-  const isLoading = artistsLoading || albumsLoading
+  const isLoading = artistsLoading || albumsLoading;
 
   // Count albums per artist
   const albumCountByArtist = useMemo(() => {
-    const counts = new Map<string, number>()
+    const counts = new Map<string, number>();
     albums.forEach((album) => {
-      const current = counts.get(album.artistId) || 0
-      counts.set(album.artistId, current + 1)
-    })
-    return counts
-  }, [albums])
+      const current = counts.get(album.artistId) || 0;
+      counts.set(album.artistId, current + 1);
+    });
+    return counts;
+  }, [albums]);
 
   // Get letters that have artists
   const availableLetters = useMemo(() => {
-    const letters = new Set<string>()
+    const letters = new Set<string>();
     artists.forEach((artist) => {
-      letters.add(getFirstLetter(artist.name))
-    })
-    return letters
-  }, [artists])
+      letters.add(getFirstLetter(artist.name));
+    });
+    return letters;
+  }, [artists]);
 
   const sortedArtists = useMemo(() => {
-    const sorted = [...artists]
+    const sorted = [...artists];
     sorted.sort((a, b) => {
-      if (sortColumn === 'albums') {
-        const av = albumCountByArtist.get(a.id) ?? 0
-        const bv = albumCountByArtist.get(b.id) ?? 0
-        return sortDirection === 'asc' ? av - bv : bv - av
+      if (sortColumn === "albums") {
+        const av = albumCountByArtist.get(a.id) ?? 0;
+        const bv = albumCountByArtist.get(b.id) ?? 0;
+        return sortDirection === "asc" ? av - bv : bv - av;
       }
-      const cmp = a.name.localeCompare(b.name)
-      return sortDirection === 'asc' ? cmp : -cmp
-    })
-    return sorted
-  }, [artists, sortColumn, sortDirection, albumCountByArtist])
+      const cmp = a.name.localeCompare(b.name);
+      return sortDirection === "asc" ? cmp : -cmp;
+    });
+    return sorted;
+  }, [artists, sortColumn, sortDirection, albumCountByArtist]);
 
   // Filter artists by selected letter and search term
   const filteredArtists = useMemo(() => {
-    let list = sortedArtists
+    let list = sortedArtists;
     if (searchTerm) {
-      const q = searchTerm.toLowerCase()
-      list = list.filter((artist) => artist.name.toLowerCase().includes(q))
+      const q = searchTerm.toLowerCase();
+      list = list.filter((artist) => artist.name.toLowerCase().includes(q));
     }
     if (normalizedLetter) {
-      list = list.filter((artist) => getFirstLetter(artist.name) === normalizedLetter)
+      list = list.filter(
+        (artist) => getFirstLetter(artist.name) === normalizedLetter,
+      );
     }
-    return list
-  }, [sortedArtists, searchTerm, normalizedLetter])
+    return list;
+  }, [sortedArtists, searchTerm, normalizedLetter]);
 
   // Handle letter change - toggle filter
-  const handleLetterChange = useCallback((letter: string | null) => {
-    setSelectedLetter(normalizedLetter === letter ? '' : (letter ?? ''))
-  }, [normalizedLetter, setSelectedLetter])
+  const handleLetterChange = useCallback(
+    (letter: string | null) => {
+      setSelectedLetter(normalizedLetter === letter ? "" : (letter ?? ""));
+    },
+    [normalizedLetter, setSelectedLetter],
+  );
 
   // Handle search change for server-side filtering
-  const handleSearchChange = useCallback((term: string) => {
-    setSearchTerm(term || '')
-    setSelectedLetter('') // Reset letter filter when searching
-  }, [setSearchTerm, setSelectedLetter])
+  const handleSearchChange = useCallback(
+    (term: string) => {
+      setSearchTerm(term || "");
+      setSelectedLetter(""); // Reset letter filter when searching
+    },
+    [setSearchTerm, setSelectedLetter],
+  );
 
   // Column definitions
   const columns: DataTableColumn<Artist>[] = useMemo(
     () => [
       {
-        key: 'name',
-        label: 'ARTIST',
+        key: "name",
+        label: "ARTIST",
         // sortable: true (default) - server handles actual sorting
         render: (artist) => (
           <div className="flex items-center gap-3">
@@ -275,8 +282,8 @@ export function LibraryArtistsTab({
         ),
       },
       {
-        key: 'albums',
-        label: 'ALBUMS',
+        key: "albums",
+        label: "ALBUMS",
         width: 100,
         sortable: false,
         render: (artist) => (
@@ -287,8 +294,8 @@ export function LibraryArtistsTab({
         ),
       },
     ],
-    [albumCountByArtist]
-  )
+    [albumCountByArtist],
+  );
 
   // Card renderer
   const cardRenderer = useCallback(
@@ -299,8 +306,8 @@ export function LibraryArtistsTab({
         onSelect={onSelectArtist ? () => onSelectArtist(item.id) : undefined}
       />
     ),
-    [albumCountByArtist, onSelectArtist]
-  )
+    [albumCountByArtist, onSelectArtist],
+  );
 
   return (
     <div className="flex flex-col grow w-full">
@@ -312,7 +319,7 @@ export function LibraryArtistsTab({
           columns={columns}
           getRowKey={(artist) => artist.id}
           searchPlaceholder="Search artists..."
-          sortColumn={sortColumn || 'name'}
+          sortColumn={sortColumn || "name"}
           sortDirection={sortDirection}
           onSortChange={handleSortChange}
           showViewModeToggle
@@ -337,7 +344,10 @@ export function LibraryArtistsTab({
           emptyContent={
             <Card className="bg-content1/50 border-default-300 border-dashed border-2">
               <CardBody className="py-12 text-center">
-                <IconMicrophone size={48} className="mx-auto mb-4 text-green-400" />
+                <IconMicrophone
+                  size={48}
+                  className="mx-auto mb-4 text-green-400"
+                />
                 <h3 className="text-lg font-semibold mb-2">No artists yet</h3>
                 <p className="text-default-500 mb-4">
                   Artists will appear here as you add albums to your library.
@@ -348,5 +358,5 @@ export function LibraryArtistsTab({
         />
       </div>
     </div>
-  )
+  );
 }

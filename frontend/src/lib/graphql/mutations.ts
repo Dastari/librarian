@@ -212,7 +212,7 @@ export const DELETE_LIBRARY_MUTATION = `
 export const SCAN_LIBRARY_MUTATION = `
   mutation ScanLibrary($Id: String!) {
     ScanLibrary(Id: $Id) {
-      LibraryId
+      Success
       Status
       Message
     }
@@ -585,7 +585,7 @@ export const CLEAR_OLD_LOGS_MUTATION = `
 
 export const DISCOVER_CAST_DEVICES_MUTATION = `
   mutation DiscoverCastDevices {
-    discoverCastDevices {
+    DiscoverCastDevices {
       id
       name
       address
@@ -602,7 +602,7 @@ export const DISCOVER_CAST_DEVICES_MUTATION = `
 
 export const ADD_CAST_DEVICE_MUTATION = `
   mutation AddCastDevice($input: AddCastDeviceInput!) {
-    addCastDevice(input: $input) {
+    AddCastDevice(input: $input) {
       success
       device {
         id
@@ -623,7 +623,7 @@ export const ADD_CAST_DEVICE_MUTATION = `
 
 export const UPDATE_CAST_DEVICE_MUTATION = `
   mutation UpdateCastDevice($id: ID!, $input: UpdateCastDeviceInput!) {
-    updateCastDevice(id: $id, input: $input) {
+    UpdateCastDevice(id: $id, input: $input) {
       success
       device {
         id
@@ -644,7 +644,7 @@ export const UPDATE_CAST_DEVICE_MUTATION = `
 
 export const REMOVE_CAST_DEVICE_MUTATION = `
   mutation RemoveCastDevice($id: ID!) {
-    removeCastDevice(id: $id) {
+    RemoveCastDevice(id: $id) {
       success
       error
     }
@@ -653,7 +653,7 @@ export const REMOVE_CAST_DEVICE_MUTATION = `
 
 export const CAST_MEDIA_MUTATION = `
   mutation CastMedia($input: CastMediaInput!) {
-    castMedia(input: $input) {
+    CastMedia(input: $input) {
       success
       session {
         id
@@ -676,7 +676,7 @@ export const CAST_MEDIA_MUTATION = `
 
 export const CAST_PLAY_MUTATION = `
   mutation CastPlay($sessionId: ID!) {
-    castPlay(sessionId: $sessionId) {
+    CastPlay(sessionId: $sessionId) {
       success
       session {
         id
@@ -690,7 +690,7 @@ export const CAST_PLAY_MUTATION = `
 
 export const CAST_PAUSE_MUTATION = `
   mutation CastPause($sessionId: ID!) {
-    castPause(sessionId: $sessionId) {
+    CastPause(sessionId: $sessionId) {
       success
       session {
         id
@@ -704,7 +704,7 @@ export const CAST_PAUSE_MUTATION = `
 
 export const CAST_STOP_MUTATION = `
   mutation CastStop($sessionId: ID!) {
-    castStop(sessionId: $sessionId) {
+    CastStop(sessionId: $sessionId) {
       success
       error
     }
@@ -713,7 +713,7 @@ export const CAST_STOP_MUTATION = `
 
 export const CAST_SEEK_MUTATION = `
   mutation CastSeek($sessionId: ID!, $position: Float!) {
-    castSeek(sessionId: $sessionId, position: $position) {
+    CastSeek(sessionId: $sessionId, position: $position) {
       success
       session {
         id
@@ -727,7 +727,7 @@ export const CAST_SEEK_MUTATION = `
 
 export const CAST_SET_VOLUME_MUTATION = `
   mutation CastSetVolume($sessionId: ID!, $volume: Float!) {
-    castSetVolume(sessionId: $sessionId, volume: $volume) {
+    CastSetVolume(sessionId: $sessionId, volume: $volume) {
       success
       session {
         id
@@ -741,7 +741,7 @@ export const CAST_SET_VOLUME_MUTATION = `
 
 export const CAST_SET_MUTED_MUTATION = `
   mutation CastSetMuted($sessionId: ID!, $muted: Boolean!) {
-    castSetMuted(sessionId: $sessionId, muted: $muted) {
+    CastSetMuted(sessionId: $sessionId, muted: $muted) {
       success
       session {
         id
@@ -755,7 +755,7 @@ export const CAST_SET_MUTED_MUTATION = `
 
 export const UPDATE_CAST_SETTINGS_MUTATION = `
   mutation UpdateCastSettings($input: UpdateCastSettingsInput!) {
-    updateCastSettings(input: $input) {
+    UpdateCastSettings(input: $input) {
       success
       settings {
         autoDiscoveryEnabled

@@ -1,16 +1,20 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
-import { Button } from '@heroui/button'
-import { Spinner } from '@heroui/spinner'
-import { Progress } from '@heroui/progress'
-import { Chip } from '@heroui/chip'
-import { Card, CardBody } from '@heroui/card'
-import { Tooltip } from '@heroui/tooltip'
-import { addToast } from '@heroui/toast'
+import { useState, useEffect, useCallback } from "react";
+import {
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+} from "@heroui/modal";
+import { Button } from "@heroui/button";
+import { Spinner } from "@heroui/spinner";
+import { Progress } from "@heroui/progress";
+import { Chip } from "@heroui/chip";
+import { Card, CardBody } from "@heroui/card";
+import { Tooltip } from "@heroui/tooltip";
+import { addToast } from "@heroui/toast";
 import {
   TORRENT_DETAILS_QUERY,
-  TORRENT_BY_INFO_HASH_QUERY,
-  PENDING_FILE_MATCHES_QUERY,
   REMOVE_MATCH_MUTATION,
   TORRENT_PROGRESS_SUBSCRIPTION,
   TORRENT_FILE_CHANGED_SUBSCRIPTION,
@@ -18,14 +22,32 @@ import {
   type TorrentFileInfo,
   type PendingFileMatch,
   type RemoveMatchResult,
-} from '../../lib/graphql'
-import { formatBytes, sanitizeError } from '../../lib/format'
-import { TORRENT_STATE_INFO } from './TorrentCard'
-import { DataTable, type DataTableColumn } from '../data-table'
-import { ErrorState } from '../shared'
-import { IconCheck, IconArrowDown, IconArrowUp, IconFolder, IconLink, IconX, IconTrash, IconCopy, IconBolt, IconUsers } from '@tabler/icons-react'
+} from "../../lib/graphql";
+import { formatBytes, sanitizeError } from "../../lib/format";
+import { TORRENT_STATE_INFO } from "./TorrentCard";
+import { DataTable, type DataTableColumn } from "../data-table";
+import { ErrorState } from "../shared";
+import {
+  IconCheck,
+  IconArrowDown,
+  IconArrowUp,
+  IconFolder,
+  IconLink,
+  IconX,
+  IconTrash,
+  IconCopy,
+  IconBolt,
+  IconUsers,
+} from "@tabler/icons-react";
 import { getFileIcon } from "../../lib/fileIcons";
-import { TorrentChangedDocument } from '../../lib/graphql/generated/graphql'
+import {
+  PendingFileMatchesBySourceDocument,
+  TorrentByInfoHashWithFilesDocument,
+  TorrentChangedDocument,
+  type PendingFileMatchesBySourceQuery,
+  type TorrentByInfoHashWithFilesQuery,
+} from "../../lib/graphql/generated/graphql";
+import { apolloClient } from "../../lib/graphql/client";
 
 interface TorrentInfoModalProps {
   /** Legacy numeric id (session handle). Prefer torrentInfoHash when using entity list. */
@@ -72,7 +94,7 @@ function FileProgressBar({
 // Helper to create file columns with match info
 function createFileColumns(
   matchesByIndex: Map<number, PendingFileMatch>,
-  onRemoveMatch?: (matchId: string) => void
+  onRemoveMatch?: (matchId: string) => void,
 ): DataTableColumn<TorrentFileInfo>[] {
   return [
     {
@@ -273,30 +295,12 @@ export function TorrentInfoModal({
   isOpen,
   onClose,
 }: TorrentInfoModalProps) {
+  type EntityTorrentNode =
+    TorrentByInfoHashWithFilesQuery["Torrents"]["Edges"][number]["Node"];
   const [details, setDetails] = useState<TorrentDetails | null>(null);
-  const [entityTorrent, setEntityTorrent] = useState<{
-    Id: string;
-    InfoHash: string;
-    Name: string;
-    State: string;
-    Progress: number;
-    TotalBytes: number;
-    DownloadedBytes: number;
-    UploadedBytes: number;
-    SavePath: string;
-    AddedAt: string;
-    Files?: {
-      Edges: Array<{
-        Node: {
-          FileIndex: number;
-          FilePath: string;
-          FileSize: number;
-          DownloadedBytes: number;
-          Progress: number;
-        };
-      }>;
-    };
-  } | null>(null);
+  const [entityTorrent, setEntityTorrent] = useState<EntityTorrentNode | null>(
+    null,
+  );
   const [fileMatches, setFileMatches] = useState<PendingFileMatch[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -314,40 +318,14 @@ export function TorrentInfoModal({
       }
 
       try {
-        const result = await queryPromise<{
-            Torrents: {
-              Edges: Array<{
-                Node: {
-                  Id: string;
-                  InfoHash: string;
-                  Name: string;
-                  State: string;
-                  Progress: number;
-                  TotalBytes: number;
-                  DownloadedBytes: number;
-                  UploadedBytes: number;
-                  SavePath: string;
-                  AddedAt: string;
-                  Files?: {
-                    Edges: Array<{
-                      Node: {
-                        FileIndex: number;
-                        FilePath: string;
-                        FileSize: number;
-                        DownloadedBytes: number;
-                        Progress: number;
-                      };
-                    }>;
-                  };
-                };
-              }>;
-            };
-          }>(TORRENT_BY_INFO_HASH_QUERY, {
+        const result = await apolloClient.query({
+          query: TorrentByInfoHashWithFilesDocument,
+          variables: {
             Where: { InfoHash: { Eq: torrentInfoHash } },
             Page: { Limit: 1, Offset: 0 },
-          })
-          ;
-
+          },
+          fetchPolicy: "network-only",
+        });
         const node = result.data?.Torrents?.Edges?.[0]?.Node;
         if (node) {
           setEntityTorrent(node);
@@ -364,7 +342,7 @@ export function TorrentInfoModal({
         }
       }
     },
-    [torrentInfoHash]
+    [torrentInfoHash],
   );
 
   const fetchLegacyDetails = useCallback(
@@ -375,25 +353,62 @@ export function TorrentInfoModal({
       }
 
       try {
-        const result = await queryPromise<{ torrentDetails: TorrentDetails }>(TORRENT_DETAILS_QUERY, {
+        const result = await queryPromise<{ torrentDetails: TorrentDetails }>(
+          TORRENT_DETAILS_QUERY,
+          {
             id: torrentId,
-          })
-          ;
-
+          },
+        );
         if (result.data?.torrentDetails) {
           const det = result.data.torrentDetails;
           setDetails(det);
 
           if (includeMatches) {
             try {
-              const matchResult = await queryPromise<{ pendingFileMatches: PendingFileMatch[] }>(
-                  PENDING_FILE_MATCHES_QUERY,
-                  { sourceType: "torrent", sourceId: det.infoHash }
-                )
-                ;
+              const matchResult = await apolloClient.query({
+                query: PendingFileMatchesBySourceDocument,
+                variables: {
+                  Where: {
+                    SourceType: { Eq: "torrent" },
+                    SourceId: { Eq: det.infoHash },
+                  },
+                  Page: { Limit: 500, Offset: 0 },
+                },
+                fetchPolicy: "network-only",
+              });
 
-              if (matchResult.data?.pendingFileMatches) {
-                setFileMatches(matchResult.data.pendingFileMatches);
+              if (matchResult.data?.PendingFileMatches?.Edges) {
+                const mappedMatches: PendingFileMatch[] =
+                  matchResult.data.PendingFileMatches.Edges.map(
+                    (
+                      edge: PendingFileMatchesBySourceQuery["PendingFileMatches"]["Edges"][number],
+                    ) => ({
+                      id: edge.Node.Id,
+                      sourceType: edge.Node.SourceType,
+                      sourceId: edge.Node.SourceId ?? null,
+                      sourceFileIndex: edge.Node.SourceFileIndex ?? null,
+                      sourcePath: edge.Node.SourcePath,
+                      fileSize: edge.Node.FileSize,
+                      episodeId: edge.Node.EpisodeId ?? null,
+                      movieId: edge.Node.MovieId ?? null,
+                      trackId: edge.Node.TrackId ?? null,
+                      chapterId: edge.Node.ChapterId ?? null,
+                      matchType:
+                        edge.Node.MatchType === "manual" ? "manual" : "auto",
+                      matchConfidence: edge.Node.MatchConfidence ?? null,
+                      parsedResolution: edge.Node.ParsedResolution ?? null,
+                      parsedCodec: edge.Node.ParsedCodec ?? null,
+                      parsedSource: edge.Node.ParsedSource ?? null,
+                      parsedAudio: edge.Node.ParsedAudio ?? null,
+                      copied: Boolean(
+                        edge.Node.CopiedAt && !edge.Node.CopyError,
+                      ),
+                      copiedAt: edge.Node.CopiedAt ?? null,
+                      copyError: edge.Node.CopyError ?? null,
+                      createdAt: "",
+                    }),
+                  );
+                setFileMatches(mappedMatches);
               }
             } catch {
               // File matches are optional, don't fail the whole modal
@@ -415,16 +430,14 @@ export function TorrentInfoModal({
         }
       }
     },
-    [torrentId]
+    [torrentId],
   );
 
   // Handle removing a match
   const handleRemoveMatch = useCallback(async (matchId: string) => {
     const result = await mutationPromise<{
-        removeMatch: RemoveMatchResult;
-      }>(REMOVE_MATCH_MUTATION, { matchId })
-      ;
-
+      removeMatch: RemoveMatchResult;
+    }>(REMOVE_MATCH_MUTATION, { matchId });
     if (result.data?.removeMatch.success) {
       setFileMatches((prev) => prev.filter((m) => m.id !== matchId));
       addToast({
@@ -445,7 +458,7 @@ export function TorrentInfoModal({
   const matchesByIndex = new Map(
     fileMatches
       .filter((m) => m.sourceFileIndex !== null)
-      .map((m) => [m.sourceFileIndex as number, m])
+      .map((m) => [m.sourceFileIndex as number, m]),
   );
 
   useEffect(() => {
@@ -465,7 +478,13 @@ export function TorrentInfoModal({
     if (torrentId != null) {
       fetchLegacyDetails(true, true);
     }
-  }, [isOpen, torrentId, torrentInfoHash, fetchEntityTorrent, fetchLegacyDetails]);
+  }, [
+    isOpen,
+    torrentId,
+    torrentInfoHash,
+    fetchEntityTorrent,
+    fetchLegacyDetails,
+  ]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -474,13 +493,15 @@ export function TorrentInfoModal({
 
     if (torrentInfoHash && entityTorrent?.Id) {
       try {
-        const torrentSub = subscriptionStream(TorrentChangedDocument, {})
-          .subscribe({
-            next: () => {
-              fetchEntityTorrent();
-            },
-            error: () => {},
-          });
+        const torrentSub = subscriptionStream(
+          TorrentChangedDocument,
+          {},
+        ).subscribe({
+          next: () => {
+            fetchEntityTorrent();
+          },
+          error: () => {},
+        });
         subscriptions.push(torrentSub);
       } catch {
         // Ignore subscription setup failures
@@ -488,74 +509,73 @@ export function TorrentInfoModal({
 
       try {
         const fileSub = subscriptionStream<{
-            TorrentFileChanged: {
-              Action: "Created" | "Updated" | "Deleted";
-              Id: string;
-              TorrentFile?: {
-                TorrentId: string;
-                FileIndex: number;
-                FilePath: string;
-                FileSize: number;
-                DownloadedBytes: number;
-                Progress: number;
-              };
+          TorrentFileChanged: {
+            Action: "Created" | "Updated" | "Deleted";
+            Id: string;
+            TorrentFile?: {
+              TorrentId: string;
+              FileIndex: number;
+              FilePath: string;
+              FileSize: number;
+              DownloadedBytes: number;
+              Progress: number;
             };
-          }>(TORRENT_FILE_CHANGED_SUBSCRIPTION, {})
-          .subscribe({
-            next: (result: any) => {
-              const payload = result.data?.TorrentFileChanged;
-              const torrentFile = payload?.TorrentFile;
-              if (!torrentFile || torrentFile.TorrentId !== entityTorrent.Id) {
-                return;
+          };
+        }>(TORRENT_FILE_CHANGED_SUBSCRIPTION, {}).subscribe({
+          next: (result: any) => {
+            const payload = result.data?.TorrentFileChanged;
+            const torrentFile = payload?.TorrentFile;
+            if (!torrentFile || torrentFile.TorrentId !== entityTorrent.Id) {
+              return;
+            }
+
+            setEntityTorrent((prev) => {
+              if (!prev?.Files?.Edges) return prev;
+              if (torrentFile.TorrentId !== prev.Id) return prev;
+
+              const edges = prev.Files.Edges;
+              const existingIndex = edges.findIndex(
+                (edge) => edge.Node.FileIndex === torrentFile.FileIndex,
+              );
+
+              if (payload.Action === "Deleted") {
+                if (existingIndex === -1) return prev;
+                const nextEdges = edges.filter(
+                  (_, index) => index !== existingIndex,
+                );
+                return {
+                  ...prev,
+                  Files: { ...prev.Files, Edges: nextEdges },
+                };
               }
 
-              setEntityTorrent((prev) => {
-                if (!prev?.Files?.Edges) return prev;
-                if (torrentFile.TorrentId !== prev.Id) return prev;
+              const nextNode = {
+                FileIndex: torrentFile.FileIndex,
+                FilePath: torrentFile.FilePath,
+                FileSize: torrentFile.FileSize,
+                DownloadedBytes: torrentFile.DownloadedBytes,
+                Progress: torrentFile.Progress,
+              };
 
-                const edges = prev.Files.Edges;
-                const existingIndex = edges.findIndex(
-                  (edge) => edge.Node.FileIndex === torrentFile.FileIndex
-                );
-
-                if (payload.Action === "Deleted") {
-                  if (existingIndex === -1) return prev;
-                  const nextEdges = edges.filter(
-                    (_, index) => index !== existingIndex
-                  );
-                  return {
-                    ...prev,
-                    Files: { ...prev.Files, Edges: nextEdges },
-                  };
-                }
-
-                const nextNode = {
-                  FileIndex: torrentFile.FileIndex,
-                  FilePath: torrentFile.FilePath,
-                  FileSize: torrentFile.FileSize,
-                  DownloadedBytes: torrentFile.DownloadedBytes,
-                  Progress: torrentFile.Progress,
+              if (existingIndex === -1) {
+                return {
+                  ...prev,
+                  Files: {
+                    ...prev.Files,
+                    Edges: [...edges, { Node: nextNode }],
+                  },
                 };
+              }
 
-                if (existingIndex === -1) {
-                  return {
-                    ...prev,
-                    Files: {
-                      ...prev.Files,
-                      Edges: [...edges, { Node: nextNode }],
-                    },
-                  };
-                }
+              const nextEdges = edges.map((edge, index) =>
+                index === existingIndex ? { ...edge, Node: nextNode } : edge,
+              );
 
-                const nextEdges = edges.map((edge, index) =>
-                  index === existingIndex ? { ...edge, Node: nextNode } : edge
-                );
-
-                return { ...prev, Files: { ...prev.Files, Edges: nextEdges } };
-              });
-            },
-            error: () => {},
-          });
+              return { ...prev, Files: { ...prev.Files, Edges: nextEdges } };
+            });
+          },
+          error: () => {},
+        });
         subscriptions.push(fileSub);
       } catch {
         // Ignore subscription setup failures
@@ -563,25 +583,24 @@ export function TorrentInfoModal({
 
       try {
         const progressSub = subscriptionStream<{
-            TorrentProgress: {
-              InfoHash: string;
-              DownloadSpeed: number;
-              UploadSpeed: number;
-              Peers: number;
-            };
-          }>(TORRENT_PROGRESS_SUBSCRIPTION)
-          .subscribe({
-            next: (result: any) => {
-              const progress = result.data?.TorrentProgress;
-              if (!progress || progress.InfoHash !== torrentInfoHash) return;
-              setEntityLiveStats({
-                downloadSpeed: progress.DownloadSpeed ?? 0,
-                uploadSpeed: progress.UploadSpeed ?? 0,
-                peers: progress.Peers ?? 0,
-              });
-            },
-            error: () => {},
-          });
+          TorrentProgress: {
+            InfoHash: string;
+            DownloadSpeed: number;
+            UploadSpeed: number;
+            Peers: number;
+          };
+        }>(TORRENT_PROGRESS_SUBSCRIPTION).subscribe({
+          next: (result: any) => {
+            const progress = result.data?.TorrentProgress;
+            if (!progress || progress.InfoHash !== torrentInfoHash) return;
+            setEntityLiveStats({
+              downloadSpeed: progress.DownloadSpeed ?? 0,
+              uploadSpeed: progress.UploadSpeed ?? 0,
+              peers: progress.Peers ?? 0,
+            });
+          },
+          error: () => {},
+        });
         subscriptions.push(progressSub);
       } catch {
         // Ignore subscription setup failures
@@ -591,16 +610,15 @@ export function TorrentInfoModal({
     if (torrentId != null) {
       try {
         const progressSub = subscriptionStream<{
-            TorrentProgress: { Id: number };
-          }>(TORRENT_PROGRESS_SUBSCRIPTION)
-          .subscribe({
-            next: (result: any) => {
-              if (result.data?.TorrentProgress?.Id === torrentId) {
-                fetchLegacyDetails(false, false);
-              }
-            },
-            error: () => {},
-          });
+          TorrentProgress: { Id: number };
+        }>(TORRENT_PROGRESS_SUBSCRIPTION).subscribe({
+          next: (result: any) => {
+            if (result.data?.TorrentProgress?.Id === torrentId) {
+              fetchLegacyDetails(false, false);
+            }
+          },
+          error: () => {},
+        });
         subscriptions.push(progressSub);
       } catch {
         // Ignore subscription setup failures
@@ -752,7 +770,9 @@ export function TorrentInfoModal({
                 />
                 <StatCard
                   title="Peers"
-                  value={entityLiveStats ? entityLiveStats.peers.toString() : "-"}
+                  value={
+                    entityLiveStats ? entityLiveStats.peers.toString() : "-"
+                  }
                   icon={<IconUsers size={20} className="text-default-400" />}
                 />
               </div>
@@ -950,7 +970,7 @@ export function TorrentInfoModal({
                               m.episodeId ||
                               m.movieId ||
                               m.trackId ||
-                              m.chapterId
+                              m.chapterId,
                           ).length
                         }{" "}
                         matched
@@ -962,7 +982,7 @@ export function TorrentInfoModal({
                     data={details.files}
                     columns={createFileColumns(
                       matchesByIndex,
-                      handleRemoveMatch
+                      handleRemoveMatch,
                     )}
                     getRowKey={(file) => file.index}
                     isCompact
@@ -1004,27 +1024,31 @@ function StatCard({
   icon,
   valueColor,
 }: {
-  title: string
-  value: string
-  subtitle?: string
-  icon: React.ReactNode
-  valueColor?: 'primary' | 'success' | 'danger'
+  title: string;
+  value: string;
+  subtitle?: string;
+  icon: React.ReactNode;
+  valueColor?: "primary" | "success" | "danger";
 }) {
   const colorClass = valueColor
-    ? valueColor === 'success'
-      ? 'text-success'
-      : valueColor === 'danger'
-        ? 'text-danger'
-        : 'text-primary'
-    : 'text-foreground'
+    ? valueColor === "success"
+      ? "text-success"
+      : valueColor === "danger"
+        ? "text-danger"
+        : "text-primary"
+    : "text-foreground";
 
   return (
     <Card className="bg-content2/50">
       <CardBody className="p-3">
         <div className="flex items-start justify-between">
           <div>
-            <span className="text-xs text-default-400 uppercase tracking-wide">{title}</span>
-            <div className={`text-lg font-bold tabular-nums ${colorClass}`}>{value}</div>
+            <span className="text-xs text-default-400 uppercase tracking-wide">
+              {title}
+            </span>
+            <div className={`text-lg font-bold tabular-nums ${colorClass}`}>
+              {value}
+            </div>
             {subtitle && (
               <span className="text-xs text-default-400">{subtitle}</span>
             )}
@@ -1033,7 +1057,7 @@ function StatCard({
         </div>
       </CardBody>
     </Card>
-  )
+  );
 }
 
 // Mini stat for secondary metrics
@@ -1042,22 +1066,22 @@ function MiniStat({
   value,
   color,
 }: {
-  label: string
-  value: string
-  color?: 'success' | 'danger' | 'primary'
+  label: string;
+  value: string;
+  color?: "success" | "danger" | "primary";
 }) {
   const colorClass = color
-    ? color === 'success'
-      ? 'text-success'
-      : color === 'danger'
-        ? 'text-danger'
-        : 'text-primary'
-    : 'text-foreground'
+    ? color === "success"
+      ? "text-success"
+      : color === "danger"
+        ? "text-danger"
+        : "text-primary"
+    : "text-foreground";
 
   return (
     <div className="bg-content2/30 rounded-lg p-2 text-center">
       <div className="text-xs text-default-400 mb-0.5">{label}</div>
       <div className={`font-semibold tabular-nums ${colorClass}`}>{value}</div>
     </div>
-  )
+  );
 }

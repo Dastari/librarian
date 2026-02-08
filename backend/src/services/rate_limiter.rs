@@ -141,9 +141,27 @@ impl RateLimitedClient {
             "indexer",
             RateLimitConfig {
                 requests_per_second: 1,
-                burst_size: 3,
+                burst_size: 1,
             },
         )
+    }
+
+    /// Create a client for torrent indexers with a fixed minimum delay between requests.
+    pub fn for_indexer_with_request_delay(request_delay: Duration) -> Self {
+        let quota = Quota::with_period(request_delay)
+            .expect("request_delay must be non-zero")
+            .allow_burst(NonZeroU32::MIN);
+
+        let limiter = Arc::new(RateLimiter::direct(quota));
+
+        Self {
+            client: Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .expect("Failed to create HTTP client"),
+            limiter,
+            name: "indexer".to_string(),
+        }
     }
 
     /// Wait for rate limit and make a GET request
@@ -269,7 +287,10 @@ where
                         operation = %operation_name,
                         attempts = attempts,
                         error = %e,
-                        "Operation failed after max retries"
+                        "Operation failed after max retries: operation='{}', attempts={}, error={}",
+                        operation_name,
+                        attempts,
+                        e
                     );
                     return Err(e);
                 }
@@ -281,7 +302,11 @@ where
                         attempt = attempts,
                         error = %e,
                         retry_in_ms = retry_ms,
-                        "Operation failed, retrying"
+                        "Operation failed, retrying: operation='{}', attempt={}, retry_in_ms={}, error={}",
+                        operation_name,
+                        attempts,
+                        retry_ms,
+                        e
                     );
                     tokio::time::sleep(duration).await;
                 } else {

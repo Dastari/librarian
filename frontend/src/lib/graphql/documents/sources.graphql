@@ -1,0 +1,149 @@
+# Sources: CRUD, search, test, definitions, and priorities
+# Used by codegen for TypedDocumentNode and types
+
+# Fetch all sources
+query Sources(
+  $Where: SourceWhereInput
+  $OrderBy: [SourceOrderByInput!]
+  $Page: PageInput
+) {
+  Sources(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
+    Edges {
+      Node {
+        Id
+        Name
+        SourceType
+        DefinitionId
+        Enabled
+        Priority
+        MediaTypes
+        SiteUrl
+        SupportsSearch
+        SupportsTvSearch
+        SupportsMovieSearch
+        SupportsMusicSearch
+        SupportsBookSearch
+        Settings
+        LastError
+        ErrorCount
+        LastSuccessAt
+        LastErrorAt
+        CreatedAt
+        UpdatedAt
+      }
+    }
+    PageInfo {
+      TotalCount
+      HasNextPage
+      HasPreviousPage
+    }
+  }
+}
+
+# Get available source definitions (e.g., IPTorrents)
+query AvailableSourceDefinitions {
+  AvailableSourceDefinitions {
+    Id
+    Name
+    Description
+    SourceType
+    TrackerType
+    Language
+    SiteLink
+    RequiredCredentials
+  }
+}
+
+# Get setting definitions for a specific source definition
+query SourceSettingDefinitions($DefinitionId: String!) {
+  SourceSettingDefinitions(DefinitionId: $DefinitionId) {
+    Key
+    Label
+    SettingType
+    DefaultValue
+    Options {
+      Value
+      Label
+    }
+  }
+}
+
+# Search across sources
+query SearchSources($Input: SearchSourcesInput!) {
+  SearchSources(Input: $Input) {
+    Sources {
+      SourceId
+      SourceName
+      Releases {
+        Title
+        Guid
+        Link
+        MagnetUri
+        InfoHash
+        Details
+        PublishDate
+        Categories
+        Size
+        SizeFormatted
+        Seeders
+        Leechers
+        Peers
+        Grabs
+        IsFreeleech
+        ImdbId
+        Poster
+        Description
+        SourceId
+        SourceName
+      }
+      ElapsedMs
+      FromCache
+      Error
+    }
+    TotalReleases
+    TotalElapsedMs
+    SourcesSearched
+  }
+}
+
+# Create a new source
+mutation CreateSource($Input: CreateSourceInput!) {
+  CreateSource(Input: $Input) {
+    Success
+    Error
+  }
+}
+
+# Update an existing source
+mutation UpdateSource($Id: String!, $Input: UpdateSourceInput!) {
+  UpdateSource(Id: $Id, Input: $Input) {
+    Success
+    Error
+  }
+}
+
+# Delete a source
+mutation DeleteSource($Id: String!) {
+  DeleteSource(Id: $Id) {
+    Success
+    Error
+  }
+}
+
+# Test a source connection
+mutation TestSource($Id: String!) {
+  TestSource(Id: $Id) {
+    Success
+    Error
+    ReleasesFound
+    ElapsedMs
+  }
+}
+
+# Update source priorities (reorder)
+mutation UpdateSourcePriorities($Input: UpdateSourcePrioritiesInput!) {
+  UpdateSourcePriorities(Input: $Input) {
+    Success
+    Error
+  }
+}

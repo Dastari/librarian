@@ -1,12 +1,18 @@
-import { useState, useEffect, useMemo } from 'react'
-import { Button } from '@heroui/button'
-import { Card, CardBody } from '@heroui/card'
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
-import { Spinner } from '@heroui/spinner'
-import { Select, SelectItem } from '@heroui/select'
-import { Chip } from '@heroui/chip'
-import { Input } from '@heroui/input'
-import { addToast } from '@heroui/toast'
+import { useState, useEffect, useMemo } from "react";
+import { Button } from "@heroui/button";
+import { Card, CardBody } from "@heroui/card";
+import {
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+} from "@heroui/modal";
+import { Spinner } from "@heroui/spinner";
+import { Select, SelectItem } from "@heroui/select";
+import { Chip } from "@heroui/chip";
+import { Input } from "@heroui/input";
+import { addToast } from "@heroui/toast";
 import {
   IconDeviceTv,
   IconMovie,
@@ -16,196 +22,82 @@ import {
   IconSearch,
   IconFile,
   IconAlertCircle,
-} from '@tabler/icons-react'
+} from "@tabler/icons-react";
+import { type MediaFile } from "../../lib/graphql";
+import { apolloClient, useMutation } from "../../lib/graphql/client";
 import {
-  MANUAL_MATCH_MUTATION,
-  type MediaFile,
-  type ManualMatchResult,
-} from '../../lib/graphql'
-
-// Queries for fetching library items (PascalCase schema)
-const TV_SHOWS_QUERY = `
-  query TvShows($libraryId: String!) {
-    Shows(Where: { LibraryId: { Eq: $libraryId } }) {
-      Edges {
-        Node {
-          Id
-          Name
-          Year
-          Episodes {
-            Id
-            Season
-            Episode
-            Title
-          }
-        }
-      }
-    }
-  }
-`
-
-const MOVIES_QUERY = `
-  query Movies($libraryId: String!) {
-    Movies(Where: { LibraryId: { Eq: $libraryId } }) {
-      Edges {
-        Node {
-          Id
-          Title
-          Year
-        }
-      }
-    }
-  }
-`
-
-const ALBUMS_QUERY = `
-  query Albums($libraryId: String!) {
-    Albums(Where: { LibraryId: { Eq: $libraryId } }, Page: { Limit: 500, Offset: 0 }) {
-      Edges {
-        Node {
-          Id
-          Name
-          Year
-          Artist {
-            Name
-          }
-          Tracks {
-            Edges {
-              Node {
-                Id
-                TrackNumber
-                Title
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-`
-
-const AUDIOBOOKS_QUERY = `
-  query Audiobooks($libraryId: String!) {
-    Audiobooks(Where: { LibraryId: { Eq: $libraryId } }, Page: { Limit: 500, Offset: 0 }) {
-      Edges {
-        Node {
-          Id
-          Title
-          AuthorName
-          Chapters {
-            Edges {
-              Node {
-                Id
-                ChapterNumber
-                Title
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-`
+  ManualMatchAlbumsByLibraryDocument,
+  ManualMatchAudiobooksByLibraryDocument,
+  ManualMatchFileDocument,
+  ManualMatchMoviesByLibraryDocument,
+  ManualMatchShowsByLibraryDocument,
+  type ManualMatchAlbumsByLibraryQuery,
+  type ManualMatchAudiobooksByLibraryQuery,
+  type ManualMatchFileMutation,
+  type ManualMatchFileMutationVariables,
+  type ManualMatchMoviesByLibraryQuery,
+  type ManualMatchShowsByLibraryQuery,
+} from "../../lib/graphql/generated/graphql";
 
 interface TvShow {
-  id: string
-  name: string
-  year: number | null
-  seasons: Season[]
-}
-
-/** Raw show node from GraphQL (Shows.Edges[].Node with Episodes) */
-interface ShowNode {
-  Id: string
-  Name: string
-  Year: number | null
-  Episodes: Array< { Id: string; Season: number; Episode: number; Title: string | null } >
+  id: string;
+  name: string;
+  year: number | null;
+  seasons: Season[];
 }
 
 interface Season {
-  id: string
-  seasonNumber: number
-  episodeCount: number
-  episodes: Episode[]
+  id: string;
+  seasonNumber: number;
+  episodeCount: number;
+  episodes: Episode[];
 }
 
 interface Episode {
-  id: string
-  episodeNumber: number
-  name: string | null
+  id: string;
+  episodeNumber: number;
+  name: string | null;
 }
 
-interface Movie {
-  Id: string
-  Title: string
-  Year: number | null
-}
+type Movie = ManualMatchMoviesByLibraryQuery["Movies"]["Edges"][number]["Node"];
 
 interface Album {
-  id: string
-  name: string
-  year: number | null
-  artist: string | null
-  tracks: Track[]
+  id: string;
+  name: string;
+  year: number | null;
+  artist: string | null;
+  tracks: Track[];
 }
 
-interface AlbumNode {
-  Id: string
-  Name: string
-  Year: number | null
-  Artist: { Name: string } | null
-  Tracks: {
-    Edges: Array<{
-      Node: {
-        Id: string
-        TrackNumber: number | null
-        Title: string | null
-      }
-    }>
-  }
-}
+type AlbumTrackNode =
+  ManualMatchAlbumsByLibraryQuery["Tracks"]["Edges"][number]["Node"];
 
 interface Track {
-  id: string
-  trackNumber: number | null
-  title: string | null
+  id: string;
+  trackNumber: number | null;
+  title: string | null;
 }
 
 interface Audiobook {
-  id: string
-  title: string
-  author: string | null
-  chapters: Chapter[]
-}
-
-interface AudiobookNode {
-  Id: string
-  Title: string
-  AuthorName: string | null
-  Chapters: {
-    Edges: Array<{
-      Node: {
-        Id: string
-        ChapterNumber: number | null
-        Title: string | null
-      }
-    }>
-  }
+  id: string;
+  title: string;
+  author: string | null;
+  chapters: Chapter[];
 }
 
 interface Chapter {
-  id: string
-  chapterNumber: number | null
-  title: string | null
+  id: string;
+  chapterNumber: number | null;
+  title: string | null;
 }
 
 export interface ManualMatchModalProps {
-  isOpen: boolean
-  onClose: () => void
-  mediaFile: MediaFile | null
-  libraryId: string
-  libraryType: string
-  onMatched: () => void
+  isOpen: boolean;
+  onClose: () => void;
+  mediaFile: MediaFile | null;
+  libraryId: string;
+  libraryType: string;
+  onMatched: () => void;
 }
 
 export function ManualMatchModal({
@@ -216,54 +108,64 @@ export function ManualMatchModal({
   libraryType,
   onMatched,
 }: ManualMatchModalProps) {
-  const [isLoading, setIsLoading] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Library items
-  const [tvShows, setTvShows] = useState<TvShow[]>([])
-  const [movies, setMovies] = useState<Movie[]>([])
-  const [albums, setAlbums] = useState<Album[]>([])
-  const [audiobooks, setAudiobooks] = useState<Audiobook[]>([])
+  const [tvShows, setTvShows] = useState<TvShow[]>([]);
+  const [movies, setMovies] = useState<Movie[]>([]);
+  const [albums, setAlbums] = useState<Album[]>([]);
+  const [audiobooks, setAudiobooks] = useState<Audiobook[]>([]);
 
   // Selection state
-  const [selectedShowId, setSelectedShowId] = useState<string>('')
-  const [selectedSeasonNumber, setSelectedSeasonNumber] = useState<string>('')
-  const [selectedEpisodeId, setSelectedEpisodeId] = useState<string>('')
-  const [selectedMovieId, setSelectedMovieId] = useState<string>('')
-  const [selectedAlbumId, setSelectedAlbumId] = useState<string>('')
-  const [selectedTrackId, setSelectedTrackId] = useState<string>('')
-  const [selectedAudiobookId, setSelectedAudiobookId] = useState<string>('')
-  const [selectedChapterId, setSelectedChapterId] = useState<string>('')
+  const [selectedShowId, setSelectedShowId] = useState<string>("");
+  const [selectedSeasonNumber, setSelectedSeasonNumber] = useState<string>("");
+  const [selectedEpisodeId, setSelectedEpisodeId] = useState<string>("");
+  const [selectedMovieId, setSelectedMovieId] = useState<string>("");
+  const [selectedAlbumId, setSelectedAlbumId] = useState<string>("");
+  const [selectedTrackId, setSelectedTrackId] = useState<string>("");
+  const [selectedAudiobookId, setSelectedAudiobookId] = useState<string>("");
+  const [selectedChapterId, setSelectedChapterId] = useState<string>("");
+  const [manualMatchFile] = useMutation<
+    ManualMatchFileMutation,
+    ManualMatchFileMutationVariables
+  >(ManualMatchFileDocument);
 
   // Normalize library type
-  const normalizedType = libraryType.toUpperCase()
+  const normalizedType = libraryType.toUpperCase();
 
   // Fetch library items when modal opens
   useEffect(() => {
-    if (!isOpen || !libraryId) return
+    if (!isOpen || !libraryId) return;
 
     const fetchItems = async () => {
-      setIsLoading(true)
-      setError(null)
+      setIsLoading(true);
+      setError(null);
 
       try {
-        if (normalizedType === 'TV') {
-          const result = await queryPromise<{ Shows: { Edges: Array<{ Node: ShowNode }> } }>(TV_SHOWS_QUERY, { libraryId })
-            
+        if (normalizedType === "TV") {
+          const result =
+            await apolloClient.query<ManualMatchShowsByLibraryQuery>({
+              query: ManualMatchShowsByLibraryDocument,
+              variables: { LibraryId: libraryId },
+              fetchPolicy: "network-only",
+            });
+
           if (result.data?.Shows?.Edges) {
             const list: TvShow[] = result.data.Shows.Edges.map((e) => {
-              const n = e.Node
-              const bySeason = new Map<number, Episode[]>()
-              for (const ep of n.Episodes) {
-                const list = bySeason.get(ep.Season) ?? []
+              const n = e.Node;
+              const bySeason = new Map<number, Episode[]>();
+              for (const episodeEdge of n.Episodes?.Edges ?? []) {
+                const ep = episodeEdge.Node;
+                const list = bySeason.get(ep.Season) ?? [];
                 list.push({
                   id: ep.Id,
                   episodeNumber: ep.Episode,
                   name: ep.Title ?? null,
-                })
-                bySeason.set(ep.Season, list)
+                });
+                bySeason.set(ep.Season, list);
               }
               const seasons: Season[] = Array.from(bySeason.entries())
                 .sort((a, b) => a[0] - b[0])
@@ -271,165 +173,226 @@ export function ManualMatchModal({
                   id: `s${seasonNumber}`,
                   seasonNumber,
                   episodeCount: episodes.length,
-                  episodes: episodes.sort((a, b) => a.episodeNumber - b.episodeNumber),
-                }))
+                  episodes: episodes.sort(
+                    (a, b) => a.episodeNumber - b.episodeNumber,
+                  ),
+                }));
               return {
                 id: n.Id,
                 name: n.Name,
                 year: n.Year ?? null,
                 seasons,
-              }
-            })
-            setTvShows(list)
+              };
+            });
+            setTvShows(list);
           }
-        } else if (normalizedType === 'MOVIES') {
-          const result = await queryPromise<{ Movies: { Edges: Array<{ Node: Movie }> } }>(MOVIES_QUERY, { libraryId })
-            
+        } else if (normalizedType === "MOVIES") {
+          const result =
+            await apolloClient.query<ManualMatchMoviesByLibraryQuery>({
+              query: ManualMatchMoviesByLibraryDocument,
+              variables: { LibraryId: libraryId },
+              fetchPolicy: "network-only",
+            });
+
           if (result.data?.Movies?.Edges) {
-            setMovies(result.data.Movies.Edges.map((e) => e.Node))
+            setMovies(result.data.Movies.Edges.map((e) => e.Node));
           }
-        } else if (normalizedType === 'MUSIC') {
-          const result = await queryPromise<{ Albums: { Edges: Array<{ Node: AlbumNode }> } }>(ALBUMS_QUERY, { libraryId })
-            
+        } else if (normalizedType === "MUSIC") {
+          const result =
+            await apolloClient.query<ManualMatchAlbumsByLibraryQuery>({
+              query: ManualMatchAlbumsByLibraryDocument,
+              variables: { LibraryId: libraryId },
+              fetchPolicy: "network-only",
+            });
+
           if (result.data?.Albums?.Edges) {
-            setAlbums(result.data.Albums.Edges.map((edge) => ({
-              id: edge.Node.Id,
-              name: edge.Node.Name,
-              year: edge.Node.Year,
-              artist: edge.Node.Artist?.Name ?? null,
-              tracks: (edge.Node.Tracks?.Edges ?? []).map((trackEdge) => ({
-                id: trackEdge.Node.Id,
-                trackNumber: trackEdge.Node.TrackNumber,
-                title: trackEdge.Node.Title,
+            const tracksByAlbum = new Map<string, AlbumTrackNode[]>();
+            for (const edge of result.data.Tracks?.Edges ?? []) {
+              const track = edge.Node;
+              const tracks = tracksByAlbum.get(track.AlbumId) ?? [];
+              tracks.push(track);
+              tracksByAlbum.set(track.AlbumId, tracks);
+            }
+            setAlbums(
+              result.data.Albums.Edges.map((edge) => ({
+                id: edge.Node.Id,
+                name: edge.Node.Name,
+                year: edge.Node.Year ?? null,
+                artist:
+                  tracksByAlbum
+                    .get(edge.Node.Id)
+                    ?.find((t) => Boolean(t.ArtistName))?.ArtistName ?? null,
+                tracks: (tracksByAlbum.get(edge.Node.Id) ?? []).map(
+                  (track) => ({
+                    id: track.Id,
+                    trackNumber: track.TrackNumber,
+                    title: track.Title ?? null,
+                  }),
+                ),
               })),
-            })))
+            );
           }
-        } else if (normalizedType === 'AUDIOBOOKS') {
-          const result = await queryPromise<{ Audiobooks: { Edges: Array<{ Node: AudiobookNode }> } }>(AUDIOBOOKS_QUERY, { libraryId })
-            
+        } else if (normalizedType === "AUDIOBOOKS") {
+          const result =
+            await apolloClient.query<ManualMatchAudiobooksByLibraryQuery>({
+              query: ManualMatchAudiobooksByLibraryDocument,
+              variables: { LibraryId: libraryId },
+              fetchPolicy: "network-only",
+            });
+
           if (result.data?.Audiobooks?.Edges) {
-            setAudiobooks(result.data.Audiobooks.Edges.map((edge) => ({
-              id: edge.Node.Id,
-              title: edge.Node.Title,
-              author: edge.Node.AuthorName,
-              chapters: (edge.Node.Chapters?.Edges ?? []).map((ch) => ({
-                id: ch.Node.Id,
-                chapterNumber: ch.Node.ChapterNumber,
-                title: ch.Node.Title,
+            setAudiobooks(
+              result.data.Audiobooks.Edges.map((edge) => ({
+                id: edge.Node.Id,
+                title: edge.Node.Title,
+                author: edge.Node.AuthorName ?? null,
+                chapters: (edge.Node.Chapters?.Edges ?? []).map((ch) => ({
+                  id: ch.Node.Id,
+                  chapterNumber: ch.Node.ChapterNumber,
+                  title: ch.Node.Title ?? null,
+                })),
               })),
-            })))
+            );
           }
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load library items')
+        setError(
+          err instanceof Error ? err.message : "Failed to load library items",
+        );
       } finally {
-        setIsLoading(false)
+        setIsLoading(false);
       }
-    }
+    };
 
-    fetchItems()
-  }, [isOpen, libraryId, normalizedType])
+    fetchItems();
+  }, [isOpen, libraryId, normalizedType]);
 
   // Reset selection when modal closes
   useEffect(() => {
     if (!isOpen) {
-      setSelectedShowId('')
-      setSelectedSeasonNumber('')
-      setSelectedEpisodeId('')
-      setSelectedMovieId('')
-      setSelectedAlbumId('')
-      setSelectedTrackId('')
-      setSelectedAudiobookId('')
-      setSelectedChapterId('')
-      setSearchQuery('')
+      setSelectedShowId("");
+      setSelectedSeasonNumber("");
+      setSelectedEpisodeId("");
+      setSelectedMovieId("");
+      setSelectedAlbumId("");
+      setSelectedTrackId("");
+      setSelectedAudiobookId("");
+      setSelectedChapterId("");
+      setSearchQuery("");
     }
-  }, [isOpen])
+  }, [isOpen]);
 
   // Get selected show/album/audiobook details
-  const selectedShow = useMemo(() => tvShows.find(s => s.id === selectedShowId), [tvShows, selectedShowId])
-  const selectedSeason = useMemo(() => selectedShow?.seasons.find(s => s.seasonNumber.toString() === selectedSeasonNumber), [selectedShow, selectedSeasonNumber])
-  const selectedAlbum = useMemo(() => albums.find(a => a.id === selectedAlbumId), [albums, selectedAlbumId])
-  const selectedAudiobook = useMemo(() => audiobooks.find(a => a.id === selectedAudiobookId), [audiobooks, selectedAudiobookId])
+  const selectedShow = useMemo(
+    () => tvShows.find((s) => s.id === selectedShowId),
+    [tvShows, selectedShowId],
+  );
+  const selectedSeason = useMemo(
+    () =>
+      selectedShow?.seasons.find(
+        (s) => s.seasonNumber.toString() === selectedSeasonNumber,
+      ),
+    [selectedShow, selectedSeasonNumber],
+  );
+  const selectedAlbum = useMemo(
+    () => albums.find((a) => a.id === selectedAlbumId),
+    [albums, selectedAlbumId],
+  );
+  const selectedAudiobook = useMemo(
+    () => audiobooks.find((a) => a.id === selectedAudiobookId),
+    [audiobooks, selectedAudiobookId],
+  );
 
   // Filter items by search query
   const filteredShows = useMemo(() => {
-    if (!searchQuery) return tvShows
-    const q = searchQuery.toLowerCase()
-    return tvShows.filter(s => s.name.toLowerCase().includes(q))
-  }, [tvShows, searchQuery])
+    if (!searchQuery) return tvShows;
+    const q = searchQuery.toLowerCase();
+    return tvShows.filter((s) => s.name.toLowerCase().includes(q));
+  }, [tvShows, searchQuery]);
 
   const filteredMovies = useMemo(() => {
-    if (!searchQuery) return movies
-    const q = searchQuery.toLowerCase()
-    return movies.filter(m => m.Title.toLowerCase().includes(q))
-  }, [movies, searchQuery])
+    if (!searchQuery) return movies;
+    const q = searchQuery.toLowerCase();
+    return movies.filter((m) => m.Title.toLowerCase().includes(q));
+  }, [movies, searchQuery]);
 
   const filteredAlbums = useMemo(() => {
-    if (!searchQuery) return albums
-    const q = searchQuery.toLowerCase()
-    return albums.filter(a => a.name.toLowerCase().includes(q) || a.artist?.toLowerCase().includes(q))
-  }, [albums, searchQuery])
+    if (!searchQuery) return albums;
+    const q = searchQuery.toLowerCase();
+    return albums.filter(
+      (a) =>
+        a.name.toLowerCase().includes(q) || a.artist?.toLowerCase().includes(q),
+    );
+  }, [albums, searchQuery]);
 
   const filteredAudiobooks = useMemo(() => {
-    if (!searchQuery) return audiobooks
-    const q = searchQuery.toLowerCase()
-    return audiobooks.filter(a => a.title.toLowerCase().includes(q) || a.author?.toLowerCase().includes(q))
-  }, [audiobooks, searchQuery])
+    if (!searchQuery) return audiobooks;
+    const q = searchQuery.toLowerCase();
+    return audiobooks.filter(
+      (a) =>
+        a.title.toLowerCase().includes(q) ||
+        a.author?.toLowerCase().includes(q),
+    );
+  }, [audiobooks, searchQuery]);
 
   // Check if we have a valid selection
   const hasValidSelection = useMemo(() => {
-    if (normalizedType === 'TV') return !!selectedEpisodeId
-    if (normalizedType === 'MOVIES') return !!selectedMovieId
-    if (normalizedType === 'MUSIC') return !!selectedTrackId
-    if (normalizedType === 'AUDIOBOOKS') return !!selectedChapterId || !!selectedAudiobookId
-    return false
-  }, [normalizedType, selectedEpisodeId, selectedMovieId, selectedTrackId, selectedChapterId, selectedAudiobookId])
+    if (normalizedType === "TV") return !!selectedEpisodeId;
+    if (normalizedType === "MOVIES") return !!selectedMovieId;
+    if (normalizedType === "MUSIC") return !!selectedTrackId;
+    if (normalizedType === "AUDIOBOOKS") return !!selectedChapterId;
+    return false;
+  }, [
+    normalizedType,
+    selectedEpisodeId,
+    selectedMovieId,
+    selectedTrackId,
+    selectedChapterId,
+  ]);
 
   const handleMatch = async () => {
-    if (!mediaFile || !hasValidSelection) return
+    if (!mediaFile || !hasValidSelection) return;
 
-    setIsSubmitting(true)
-    setError(null)
+    setIsSubmitting(true);
+    setError(null);
 
     try {
-      const result = await mutationPromise<{ manualMatch: ManualMatchResult }>(MANUAL_MATCH_MUTATION, {
-          mediaFileId: mediaFile.id,
-          episodeId: selectedEpisodeId || null,
-          movieId: selectedMovieId || null,
-          trackId: selectedTrackId || null,
-          albumId: selectedAlbumId || null,
-          audiobookId: selectedAudiobookId || null,
-          chapterId: selectedChapterId || null,
-        })
-        
+      const result = await manualMatchFile({
+        variables: {
+          Input: {
+            MediaFileId: mediaFile.id,
+            LibraryId: libraryId || undefined,
+            EpisodeId: selectedEpisodeId || undefined,
+            MovieId: selectedMovieId || undefined,
+            TrackId: selectedTrackId || undefined,
+            ChapterId: selectedChapterId || undefined,
+          },
+        },
+      });
 
-      if (result.error) {
-        setError(result.error.message)
-        return
-      }
-
-      if (result.data?.manualMatch.success) {
+      if (result.data?.MatchMediaFile?.Success) {
         addToast({
-          title: 'File Matched',
-          description: 'The file has been manually matched to the selected item',
-          color: 'success',
-        })
-        onMatched()
-        onClose()
+          title: "File Matched",
+          description:
+            "The file has been manually matched to the selected item",
+          color: "success",
+        });
+        onMatched();
+        onClose();
       } else {
-        setError(result.data?.manualMatch.error || 'Failed to match file')
+        setError(result.data?.MatchMediaFile?.Reason || "Failed to match file");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
+      setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
-      setIsSubmitting(false)
+      setIsSubmitting(false);
     }
-  }
+  };
 
   const getFileName = (path: string) => {
-    const parts = path.split('/')
-    return parts[parts.length - 1]
-  }
+    const parts = path.split("/");
+    return parts[parts.length - 1];
+  };
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="2xl" scrollBehavior="inside">
@@ -444,16 +407,35 @@ export function ManualMatchModal({
             <Card className="mb-4">
               <CardBody className="py-3">
                 <div className="flex items-start gap-3">
-                  <IconFile size={24} className="text-default-400 mt-1 flex-shrink-0" />
+                  <IconFile
+                    size={24}
+                    className="text-default-400 mt-1 flex-shrink-0"
+                  />
                   <div className="min-w-0">
-                    <p className="font-medium truncate">{getFileName(mediaFile.path)}</p>
-                    <p className="text-sm text-default-500 truncate">{mediaFile.path}</p>
+                    <p className="font-medium truncate">
+                      {getFileName(mediaFile.path)}
+                    </p>
+                    <p className="text-sm text-default-500 truncate">
+                      {mediaFile.path}
+                    </p>
                     <div className="flex items-center gap-2 mt-1">
-                      <Chip size="sm" variant="flat">{mediaFile.sizeFormatted}</Chip>
-                      {mediaFile.resolution && <Chip size="sm" variant="flat" color="primary">{mediaFile.resolution}</Chip>}
-                      {mediaFile.videoCodec && <Chip size="sm" variant="flat">{mediaFile.videoCodec}</Chip>}
+                      <Chip size="sm" variant="flat">
+                        {mediaFile.sizeFormatted}
+                      </Chip>
+                      {mediaFile.resolution && (
+                        <Chip size="sm" variant="flat" color="primary">
+                          {mediaFile.resolution}
+                        </Chip>
+                      )}
+                      {mediaFile.videoCodec && (
+                        <Chip size="sm" variant="flat">
+                          {mediaFile.videoCodec}
+                        </Chip>
+                      )}
                       {mediaFile.isManualMatch && (
-                        <Chip size="sm" variant="flat" color="warning">Currently Manual Match</Chip>
+                        <Chip size="sm" variant="flat" color="warning">
+                          Currently Manual Match
+                        </Chip>
                       )}
                     </div>
                   </div>
@@ -491,19 +473,21 @@ export function ManualMatchModal({
           ) : (
             <div className="space-y-4">
               {/* TV Shows selection */}
-              {normalizedType === 'TV' && (
+              {normalizedType === "TV" && (
                 <>
                   <Select
                     label="Select Show"
                     placeholder="Choose a TV show"
                     selectedKeys={selectedShowId ? [selectedShowId] : []}
                     onSelectionChange={(keys) => {
-                      const key = Array.from(keys)[0]?.toString() || ''
-                      setSelectedShowId(key)
-                      setSelectedSeasonNumber('')
-                      setSelectedEpisodeId('')
+                      const key = Array.from(keys)[0]?.toString() || "";
+                      setSelectedShowId(key);
+                      setSelectedSeasonNumber("");
+                      setSelectedEpisodeId("");
                     }}
-                    startContent={<IconDeviceTv size={16} className="text-blue-400" />}
+                    startContent={
+                      <IconDeviceTv size={16} className="text-blue-400" />
+                    }
                   >
                     {filteredShows.map((show) => (
                       <SelectItem key={show.id} textValue={show.name}>
@@ -516,16 +500,22 @@ export function ManualMatchModal({
                     <Select
                       label="Select Season"
                       placeholder="Choose a season"
-                      selectedKeys={selectedSeasonNumber ? [selectedSeasonNumber] : []}
+                      selectedKeys={
+                        selectedSeasonNumber ? [selectedSeasonNumber] : []
+                      }
                       onSelectionChange={(keys) => {
-                        const key = Array.from(keys)[0]?.toString() || ''
-                        setSelectedSeasonNumber(key)
-                        setSelectedEpisodeId('')
+                        const key = Array.from(keys)[0]?.toString() || "";
+                        setSelectedSeasonNumber(key);
+                        setSelectedEpisodeId("");
                       }}
                     >
                       {selectedShow.seasons.map((season) => (
-                        <SelectItem key={season.seasonNumber.toString()} textValue={`Season ${season.seasonNumber}`}>
-                          Season {season.seasonNumber} ({season.episodeCount} episodes)
+                        <SelectItem
+                          key={season.seasonNumber.toString()}
+                          textValue={`Season ${season.seasonNumber}`}
+                        >
+                          Season {season.seasonNumber} ({season.episodeCount}{" "}
+                          episodes)
                         </SelectItem>
                       ))}
                     </Select>
@@ -535,15 +525,21 @@ export function ManualMatchModal({
                     <Select
                       label="Select Episode"
                       placeholder="Choose an episode"
-                      selectedKeys={selectedEpisodeId ? [selectedEpisodeId] : []}
+                      selectedKeys={
+                        selectedEpisodeId ? [selectedEpisodeId] : []
+                      }
                       onSelectionChange={(keys) => {
-                        const key = Array.from(keys)[0]?.toString() || ''
-                        setSelectedEpisodeId(key)
+                        const key = Array.from(keys)[0]?.toString() || "";
+                        setSelectedEpisodeId(key);
                       }}
                     >
                       {selectedSeason.episodes.map((ep) => (
-                        <SelectItem key={ep.id} textValue={`Episode ${ep.episodeNumber}`}>
-                          Episode {ep.episodeNumber}{ep.name && `: ${ep.name}`}
+                        <SelectItem
+                          key={ep.id}
+                          textValue={`Episode ${ep.episodeNumber}`}
+                        >
+                          Episode {ep.episodeNumber}
+                          {ep.name && `: ${ep.name}`}
                         </SelectItem>
                       ))}
                     </Select>
@@ -552,16 +548,18 @@ export function ManualMatchModal({
               )}
 
               {/* Movies selection */}
-              {normalizedType === 'MOVIES' && (
+              {normalizedType === "MOVIES" && (
                 <Select
                   label="Select Movie"
                   placeholder="Choose a movie"
                   selectedKeys={selectedMovieId ? [selectedMovieId] : []}
                   onSelectionChange={(keys) => {
-                    const key = Array.from(keys)[0]?.toString() || ''
-                    setSelectedMovieId(key)
+                    const key = Array.from(keys)[0]?.toString() || "";
+                    setSelectedMovieId(key);
                   }}
-                  startContent={<IconMovie size={16} className="text-purple-400" />}
+                  startContent={
+                    <IconMovie size={16} className="text-purple-400" />
+                  }
                 >
                   {filteredMovies.map((movie) => (
                     <SelectItem key={movie.Id} textValue={movie.Title}>
@@ -572,22 +570,25 @@ export function ManualMatchModal({
               )}
 
               {/* Music selection */}
-              {normalizedType === 'MUSIC' && (
+              {normalizedType === "MUSIC" && (
                 <>
                   <Select
                     label="Select Album"
                     placeholder="Choose an album"
                     selectedKeys={selectedAlbumId ? [selectedAlbumId] : []}
                     onSelectionChange={(keys) => {
-                      const key = Array.from(keys)[0]?.toString() || ''
-                      setSelectedAlbumId(key)
-                      setSelectedTrackId('')
+                      const key = Array.from(keys)[0]?.toString() || "";
+                      setSelectedAlbumId(key);
+                      setSelectedTrackId("");
                     }}
-                    startContent={<IconMusic size={16} className="text-green-400" />}
+                    startContent={
+                      <IconMusic size={16} className="text-green-400" />
+                    }
                   >
                     {filteredAlbums.map((album) => (
                       <SelectItem key={album.id} textValue={album.name}>
-                        {album.name} {album.artist && `- ${album.artist}`} {album.year && `(${album.year})`}
+                        {album.name} {album.artist && `- ${album.artist}`}{" "}
+                        {album.year && `(${album.year})`}
                       </SelectItem>
                     ))}
                   </Select>
@@ -598,13 +599,16 @@ export function ManualMatchModal({
                       placeholder="Choose a track"
                       selectedKeys={selectedTrackId ? [selectedTrackId] : []}
                       onSelectionChange={(keys) => {
-                        const key = Array.from(keys)[0]?.toString() || ''
-                        setSelectedTrackId(key)
+                        const key = Array.from(keys)[0]?.toString() || "";
+                        setSelectedTrackId(key);
                       }}
                     >
                       {selectedAlbum.tracks.map((track) => (
-                        <SelectItem key={track.id} textValue={`Track ${track.trackNumber}`}>
-                          {track.trackNumber}. {track.title || 'Untitled'}
+                        <SelectItem
+                          key={track.id}
+                          textValue={`Track ${track.trackNumber}`}
+                        >
+                          {track.trackNumber}. {track.title || "Untitled"}
                         </SelectItem>
                       ))}
                     </Select>
@@ -613,18 +617,22 @@ export function ManualMatchModal({
               )}
 
               {/* Audiobooks selection */}
-              {normalizedType === 'AUDIOBOOKS' && (
+              {normalizedType === "AUDIOBOOKS" && (
                 <>
                   <Select
                     label="Select Audiobook"
                     placeholder="Choose an audiobook"
-                    selectedKeys={selectedAudiobookId ? [selectedAudiobookId] : []}
+                    selectedKeys={
+                      selectedAudiobookId ? [selectedAudiobookId] : []
+                    }
                     onSelectionChange={(keys) => {
-                      const key = Array.from(keys)[0]?.toString() || ''
-                      setSelectedAudiobookId(key)
-                      setSelectedChapterId('')
+                      const key = Array.from(keys)[0]?.toString() || "";
+                      setSelectedAudiobookId(key);
+                      setSelectedChapterId("");
                     }}
-                    startContent={<IconHeadphones size={16} className="text-orange-400" />}
+                    startContent={
+                      <IconHeadphones size={16} className="text-orange-400" />
+                    }
                   >
                     {filteredAudiobooks.map((book) => (
                       <SelectItem key={book.id} textValue={book.title}>
@@ -633,23 +641,30 @@ export function ManualMatchModal({
                     ))}
                   </Select>
 
-                  {selectedAudiobook && selectedAudiobook.chapters.length > 0 && (
-                    <Select
-                      label="Select Chapter (Optional)"
-                      placeholder="Choose a chapter"
-                      selectedKeys={selectedChapterId ? [selectedChapterId] : []}
-                      onSelectionChange={(keys) => {
-                        const key = Array.from(keys)[0]?.toString() || ''
-                        setSelectedChapterId(key)
-                      }}
-                    >
-                      {selectedAudiobook.chapters.map((chapter) => (
-                        <SelectItem key={chapter.id} textValue={`Chapter ${chapter.chapterNumber}`}>
-                          {chapter.chapterNumber}. {chapter.title || 'Untitled'}
-                        </SelectItem>
-                      ))}
-                    </Select>
-                  )}
+                  {selectedAudiobook &&
+                    selectedAudiobook.chapters.length > 0 && (
+                      <Select
+                        label="Select Chapter (Optional)"
+                        placeholder="Choose a chapter"
+                        selectedKeys={
+                          selectedChapterId ? [selectedChapterId] : []
+                        }
+                        onSelectionChange={(keys) => {
+                          const key = Array.from(keys)[0]?.toString() || "";
+                          setSelectedChapterId(key);
+                        }}
+                      >
+                        {selectedAudiobook.chapters.map((chapter) => (
+                          <SelectItem
+                            key={chapter.id}
+                            textValue={`Chapter ${chapter.chapterNumber}`}
+                          >
+                            {chapter.chapterNumber}.{" "}
+                            {chapter.title || "Untitled"}
+                          </SelectItem>
+                        ))}
+                      </Select>
+                    )}
                 </>
               )}
             </div>
@@ -659,8 +674,9 @@ export function ManualMatchModal({
           <Card className="mt-4 bg-warning-50 dark:bg-warning-900/20">
             <CardBody className="py-3">
               <p className="text-sm text-warning-700 dark:text-warning-300">
-                <strong>Note:</strong> Manual matches will never be overwritten by automatic scanning or matching.
-                To change this match later, you'll need to unmatch and re-match manually.
+                <strong>Note:</strong> Manual matches will never be overwritten
+                by automatic scanning or matching. To change this match later,
+                you'll need to unmatch and re-match manually.
               </p>
             </CardBody>
           </Card>
@@ -681,5 +697,5 @@ export function ManualMatchModal({
         </ModalFooter>
       </ModalContent>
     </Modal>
-  )
+  );
 }

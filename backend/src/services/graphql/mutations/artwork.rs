@@ -28,7 +28,11 @@ impl ArtworkMutations {
         if let Some((poster_url, backdrop_url)) = movie {
             let artwork_service = ArtworkService::new(db.clone());
 
-            info!(movie_id = %movie_id, "Recaching movie artwork");
+            info!(
+                movie_id = %movie_id,
+                "Recaching movie artwork requested: movie_id={}",
+                movie_id
+            );
 
             // Cache in background
             tokio::spawn(async move {
@@ -62,7 +66,10 @@ impl ArtworkMutations {
         let count = movies.len() as i64;
         let db_clone = db.clone();
 
-        info!(count = count, "Recaching artwork for all movies");
+        info!(
+            count = count,
+            "Recaching artwork for all movies requested: movie_count={}", count
+        );
 
         // Process in background
         tokio::spawn(async move {
@@ -81,7 +88,7 @@ impl ArtworkMutations {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
 
-            info!("Finished recaching artwork for all movies");
+            info!("Finished recaching artwork for all movies background job");
         });
 
         Ok(count)

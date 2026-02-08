@@ -6,6 +6,147 @@ query ActiveDownloadCount($Where: TorrentWhereInput, $Page: PageInput) {
   }
 }
 
+query DownloadsTorrents($Where: TorrentWhereInput, $Page: PageInput) {
+  Torrents(Where: $Where, Page: $Page) {
+    Edges {
+      Node {
+        Id
+        InfoHash
+        Name
+        State
+        Progress
+        TotalBytes
+        DownloadedBytes
+        UploadedBytes
+        SavePath
+        AddedAt
+      }
+    }
+    PageInfo {
+      TotalCount
+      HasNextPage
+    }
+  }
+}
+
+query TorrentByInfoHashWithFiles($Where: TorrentWhereInput, $Page: PageInput) {
+  Torrents(Where: $Where, Page: $Page) {
+    Edges {
+      Node {
+        Id
+        InfoHash
+        Name
+        State
+        Progress
+        TotalBytes
+        DownloadedBytes
+        UploadedBytes
+        SavePath
+        AddedAt
+        Files(Page: { Limit: 500 }) {
+          Edges {
+            Node {
+              FileIndex
+              FilePath
+              FileSize
+              DownloadedBytes
+              Progress
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+query PendingFileMatchesBySource(
+  $Where: PendingFileMatchWhereInput
+  $Page: PageInput
+) {
+  PendingFileMatches(Where: $Where, Page: $Page) {
+    Edges {
+      Node {
+        Id
+        SourceType
+        SourceId
+        SourceFileIndex
+        SourcePath
+        FileSize
+        EpisodeId
+        MovieId
+        TrackId
+        ChapterId
+        MatchType
+        MatchConfidence
+        ParsedResolution
+        ParsedCodec
+        ParsedSource
+        ParsedAudio
+        CopiedAt
+        CopyError
+      }
+    }
+  }
+}
+
+mutation PauseTorrentByInfoHash($InfoHash: String!) {
+  PauseTorrentByInfoHash(InfoHash: $InfoHash) {
+    Success
+    Error
+  }
+}
+
+mutation ResumeTorrentByInfoHash($InfoHash: String!) {
+  ResumeTorrentByInfoHash(InfoHash: $InfoHash) {
+    Success
+    Error
+  }
+}
+
+mutation RemoveTorrentByInfoHash($InfoHash: String!, $DeleteFiles: Boolean) {
+  RemoveTorrentByInfoHash(InfoHash: $InfoHash, DeleteFiles: $DeleteFiles) {
+    Success
+    Error
+  }
+}
+
+mutation ProcessSource($SourceType: String!, $SourceId: String!) {
+  ProcessSource(SourceType: $SourceType, SourceId: $SourceId) {
+    Success
+    FilesProcessed
+    FilesFailed
+    Messages
+    Error
+  }
+}
+
+mutation RematchSource(
+  $SourceType: String!
+  $SourceId: String!
+  $LibraryId: String
+) {
+  RematchSource(
+    SourceType: $SourceType
+    SourceId: $SourceId
+    LibraryId: $LibraryId
+  ) {
+    Success
+    MatchCount
+    Error
+  }
+}
+
+mutation LinkTorrentToLibrary($Id: String!, $Input: UpdateTorrentInput!) {
+  UpdateTorrent(Id: $Id, Input: $Input) {
+    Success
+    Error
+    Torrent {
+      Id
+      LibraryId
+    }
+  }
+}
+
 subscription TorrentChanged {
   TorrentChanged: torrentProgress {
     Id: id

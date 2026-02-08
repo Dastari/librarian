@@ -7,11 +7,13 @@ import { Spinner } from "@heroui/spinner";
 import { Image } from "@heroui/image";
 import { ScrollShadow } from "@heroui/scroll-shadow";
 import { IconSearch, IconDeviceTv, IconMovie } from "@tabler/icons-react";
-import type { Movie, Show } from "../lib/graphql/generated/graphql";
+import { apolloClient } from "../lib/graphql/client";
 import {
-  ALL_TV_SHOWS_QUERY,
-  ALL_MOVIES_QUERY,
-} from "../lib/graphql";
+  LibrarySearchMoviesDocument,
+  LibrarySearchShowsDocument,
+  type LibrarySearchMoviesQuery,
+  type LibrarySearchShowsQuery,
+} from "../lib/graphql/generated/graphql";
 
 export interface SearchModalProps {
   isOpen: boolean;
@@ -32,8 +34,12 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [shows, setShows] = useState<Show[]>([]);
-  const [movies, setMovies] = useState<Movie[]>([]);
+  const [shows, setShows] = useState<
+    LibrarySearchShowsQuery["Shows"]["Edges"][number]["Node"][]
+  >([]);
+  const [movies, setMovies] = useState<
+    LibrarySearchMoviesQuery["Movies"]["Edges"][number]["Node"][]
+  >([]);
 
   // Fetch all content when modal opens
   useEffect(() => {
@@ -53,14 +59,8 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
     setIsLoading(true);
     try {
       const [showsResult, moviesResult] = await Promise.all([
-        queryPromise<{
-            Shows: { Edges: Array<{ Node: Show }> };
-          }>(ALL_TV_SHOWS_QUERY, {})
-          ,
-        queryPromise<{
-            Movies: { Edges: Array<{ Node: Movie }> };
-          }>(ALL_MOVIES_QUERY, {})
-          ,
+        apolloClient.query({ query: LibrarySearchShowsDocument }),
+        apolloClient.query({ query: LibrarySearchMoviesDocument }),
       ]);
 
       const showNodes =
@@ -130,13 +130,10 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
     [navigate, onClose],
   );
 
-  // Navigate to hunt page
-  const handleHuntClick = () => {
+  // Navigate to sources settings (for searching external sources)
+  const handleSearchSourcesClick = () => {
     onClose();
-    navigate({
-      to: "/hunt",
-      search: { q: searchQuery, type: "all" },
-    });
+    navigate({ to: "/settings/sources" });
   };
 
   const totalCount = shows.length + movies.length;
@@ -177,9 +174,9 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
             {searchQuery && searchResults.length === 0 && (
               <span
                 className="text-primary cursor-pointer hover:underline"
-                onClick={handleHuntClick}
+                onClick={handleSearchSourcesClick}
               >
-                Search for "{searchQuery}" online →
+                Search external sources →
               </span>
             )}
           </div>
@@ -255,9 +252,9 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
               </p>
               <span
                 className="text-primary cursor-pointer hover:underline"
-                onClick={handleHuntClick}
+                onClick={handleSearchSourcesClick}
               >
-                Search for "{searchQuery}" online →
+                Search external sources →
               </span>
             </div>
           ) : (

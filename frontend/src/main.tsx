@@ -32,7 +32,6 @@ import reportWebVitals from "./reportWebVitals.ts";
 // Initialize theme immediately to prevent flash of wrong theme
 initializeTheme();
 
-
 // Create a new router instance with auth context
 const router = createRouter({
   routeTree,
@@ -74,11 +73,10 @@ function InnerApp() {
     }
 
     try {
-      const result = await mutationPromise(RefreshTokenDocument, {
-          input: { RefreshToken: refreshToken },
-        })
-        ;
-
+      const result = await apolloClient.mutate({
+        mutation: RefreshTokenDocument,
+        variables: { input: { RefreshToken: refreshToken } },
+      });
       const payload = result.data?.RefreshToken;
       if (payload?.Success && payload.Tokens) {
         const tokens = payload.Tokens;
@@ -144,9 +142,10 @@ function InnerApp() {
         } else {
           // Token is still valid, verify with server
           try {
-            const result = await queryPromise(MeDocument, {})
-              ;
-
+            const result = await apolloClient.query({
+              query: MeDocument,
+              fetchPolicy: "network-only",
+            });
             if (result.data?.Me) {
               const meUser = result.data.Me;
               const authUser: AuthUser = {
@@ -204,7 +203,7 @@ function InnerApp() {
     // Handle same-tab auth changes (custom event from setTokens/clearTokens)
     const handleAuthChange = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      if (detail?.type === 'login') {
+      if (detail?.type === "login") {
         const newSession = getSession();
         if (newSession && hasValidToken()) {
           setAuth({
@@ -214,7 +213,7 @@ function InnerApp() {
             user: newSession.user,
           });
         }
-      } else if (detail?.type === 'logout') {
+      } else if (detail?.type === "logout") {
         setAuth({
           isAuthenticated: false,
           isLoading: false,
@@ -228,9 +227,9 @@ function InnerApp() {
     // Cookies are shared across tabs, but we need to notify other tabs to update their state
     let authChannel: BroadcastChannel | null = null;
     try {
-      authChannel = new BroadcastChannel('librarian-auth');
+      authChannel = new BroadcastChannel("librarian-auth");
       authChannel.onmessage = (e) => {
-        if (e.data?.type === 'login') {
+        if (e.data?.type === "login") {
           const newSession = getSession();
           if (newSession && hasValidToken()) {
             setAuth({
@@ -240,7 +239,7 @@ function InnerApp() {
               user: newSession.user,
             });
           }
-        } else if (e.data?.type === 'logout') {
+        } else if (e.data?.type === "logout") {
           setAuth({
             isAuthenticated: false,
             isLoading: false,
@@ -251,7 +250,9 @@ function InnerApp() {
       };
     } catch {
       // BroadcastChannel not supported, fall back to no cross-tab sync
-      console.warn('[Auth] BroadcastChannel not supported, cross-tab sync disabled');
+      console.warn(
+        "[Auth] BroadcastChannel not supported, cross-tab sync disabled",
+      );
     }
 
     window.addEventListener("auth-change", handleAuthChange);

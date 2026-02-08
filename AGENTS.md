@@ -27,6 +27,18 @@
 - Tailwind + HeroUI drive UI styling; follow `.cursor/rules/` (especially `frontend-ui.mdc`) for layout and UI patterns.
 - Follow `docs/design.md` for product, architecture, and agent rules.
 
+## Backend Data Access Rules (Mandatory)
+
+- Never use direct SQL for application domain reads/writes in services, resolvers, or jobs.
+- Required path for data changes: generated GraphQL entity mutations via `execute_mutation` (or generated resolvers in GraphQL context).
+- Required path for reads: generated GraphQL queries/types (or existing typed repository/query abstractions that are already part of the GraphQL entity layer).
+- Do not add new `sqlx::query*`, raw `SELECT/INSERT/UPDATE/DELETE`, or ad-hoc table access for domain entities.
+- Allowed exceptions:
+  - `backend/src/db/schema_sync.rs` for schema/table creation + migration sync logic.
+  - startup/infra plumbing where no entity layer exists yet (must be explicitly documented in PR notes).
+- If a required mutation/query does not exist, add it to the GraphQL entity layer first; do not bypass with SQL.
+- Before finishing backend work, run a quick grep and ensure no new direct SQL was introduced outside allowed files.
+
 ## Testing Guidelines
 
 - Backend: `cargo test`; integration tests live in `backend/tests/`.

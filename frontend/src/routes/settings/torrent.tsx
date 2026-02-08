@@ -1,97 +1,119 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Input } from '@heroui/input'
-import { Switch } from '@heroui/switch'
-import { Accordion, AccordionItem } from '@heroui/accordion'
-import { Button } from '@heroui/button'
-import { addToast } from '@heroui/toast'
-import { queryPromise, mutationPromise } from '../../lib/graphql/client'
+import { createFileRoute } from "@tanstack/react-router";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { Input } from "@heroui/input";
+import { Switch } from "@heroui/switch";
+import { Accordion, AccordionItem } from "@heroui/accordion";
+import { Button } from "@heroui/button";
+import { addToast } from "@heroui/toast";
+import { useMutation, useQuery } from "../../lib/graphql/client";
 import {
   TorrentAppSettingsDocument,
   CreateAppSettingDocument,
   UpdateAppSettingDocument,
   type TorrentAppSettingsQuery,
-} from '../../lib/graphql/generated/graphql'
+} from "../../lib/graphql/generated/graphql";
+import { FolderBrowserInput } from "../../components/FolderBrowserInput";
+import { SettingsHeader } from "../../components/shared";
+import { sanitizeError } from "../../lib/format";
 import {
-  UPnP_STATUS_QUERY,
-  TEST_PORT_ACCESSIBILITY_QUERY,
-  ATTEMPT_UPNP_PORT_FORWARDING_MUTATION,
-  type UpnpResult,
-  type PortTestResult,
-} from '../../lib/graphql'
-import { FolderBrowserInput } from '../../components/FolderBrowserInput'
-import { SettingsHeader } from '../../components/shared'
-import { sanitizeError } from '../../lib/format'
-import { IconFolder, IconNetwork, IconGauge, IconTestPipe, IconAlertTriangle, IconCheck, IconX } from '@tabler/icons-react'
+  IconFolder,
+  IconNetwork,
+  IconGauge,
+  IconTestPipe,
+  IconAlertTriangle,
+  IconCheck,
+  IconX,
+} from "@tabler/icons-react";
 
-const TORRENT_CATEGORY = 'torrent'
+interface UpnpResult {
+  success: boolean;
+  tcpForwarded: boolean;
+  udpForwarded: boolean;
+  localIp: string | null;
+  externalIp: string | null;
+  error: string | null;
+}
+
+interface PortTestResult {
+  success: boolean;
+  portOpen: boolean;
+  externalIp: string | null;
+  error: string | null;
+}
+
+const TORRENT_CATEGORY = "torrent";
 const TORRENT_KEYS = {
-  download_dir: 'torrent.download_dir',
-  session_dir: 'torrent.session_dir',
-  enable_dht: 'torrent.enable_dht',
-  listen_port: 'torrent.listen_port',
-  max_concurrent: 'torrent.max_concurrent',
-  upload_limit: 'torrent.upload_limit',
-  download_limit: 'torrent.download_limit',
-} as const
+  download_dir: "torrent.download_dir",
+  session_dir: "torrent.session_dir",
+  enable_dht: "torrent.enable_dht",
+  listen_port: "torrent.listen_port",
+  max_concurrent: "torrent.max_concurrent",
+  upload_limit: "torrent.upload_limit",
+  download_limit: "torrent.download_limit",
+} as const;
 
 /** Shape used by the form and for change detection (from AppSettings key/value store). */
 interface TorrentSettingsShape {
-  downloadDir: string
-  sessionDir: string
-  enableDht: boolean
-  listenPort: number
-  maxConcurrent: number
-  uploadLimit: number
-  downloadLimit: number
+  downloadDir: string;
+  sessionDir: string;
+  enableDht: boolean;
+  listenPort: number;
+  maxConcurrent: number;
+  uploadLimit: number;
+  downloadLimit: number;
 }
 
 function appSettingsToTorrentSettings(
-  edges: TorrentAppSettingsQuery['AppSettings']['Edges']
+  edges: TorrentAppSettingsQuery["AppSettings"]["Edges"],
 ): TorrentSettingsShape {
-  const map = new Map(edges.map((e) => [e.Node.Key, e.Node.Value]))
-  const get = (k: string, def: string) => map.get(k) ?? def
+  const map = new Map(edges.map((e) => [e.Node.Key, e.Node.Value]));
+  const get = (k: string, def: string) => map.get(k) ?? def;
   return {
-    downloadDir: get(TORRENT_KEYS.download_dir, ''),
-    sessionDir: get(TORRENT_KEYS.session_dir, ''),
-    enableDht: get(TORRENT_KEYS.enable_dht, 'true') === 'true',
-    listenPort: parseInt(get(TORRENT_KEYS.listen_port, '6881'), 10) || 6881,
-    maxConcurrent: parseInt(get(TORRENT_KEYS.max_concurrent, '5'), 10) || 5,
-    uploadLimit: parseInt(get(TORRENT_KEYS.upload_limit, '0'), 10) || 0,
-    downloadLimit: parseInt(get(TORRENT_KEYS.download_limit, '0'), 10) || 0,
-  }
+    downloadDir: get(TORRENT_KEYS.download_dir, ""),
+    sessionDir: get(TORRENT_KEYS.session_dir, ""),
+    enableDht: get(TORRENT_KEYS.enable_dht, "true") === "true",
+    listenPort: parseInt(get(TORRENT_KEYS.listen_port, "6881"), 10) || 6881,
+    maxConcurrent: parseInt(get(TORRENT_KEYS.max_concurrent, "5"), 10) || 5,
+    uploadLimit: parseInt(get(TORRENT_KEYS.upload_limit, "0"), 10) || 0,
+    downloadLimit: parseInt(get(TORRENT_KEYS.download_limit, "0"), 10) || 0,
+  };
 }
 
 /** Map from app setting key to node Id (for updates). */
-function keyToIdMap(edges: TorrentAppSettingsQuery['AppSettings']['Edges']): Map<string, string> {
-  return new Map(edges.map((e) => [e.Node.Key, e.Node.Id]))
+function keyToIdMap(
+  edges: TorrentAppSettingsQuery["AppSettings"]["Edges"],
+): Map<string, string> {
+  return new Map(edges.map((e) => [e.Node.Key, e.Node.Id]));
 }
 
-export const Route = createFileRoute('/settings/torrent')({
+export const Route = createFileRoute("/settings/torrent")({
   component: TorrentSettingsPage,
-})
+});
 
 function TorrentSettingsPage() {
-  const [originalSettings, setOriginalSettings] = useState<TorrentSettingsShape | null>(null)
-  const [settingIds, setSettingIds] = useState<Map<string, string>>(new Map())
-  const [isLoading, setIsLoading] = useState(true)
-  const [isSaving, setIsSaving] = useState(false)
+  const [originalSettings, setOriginalSettings] =
+    useState<TorrentSettingsShape | null>(null);
+  const [settingIds, setSettingIds] = useState<Map<string, string>>(new Map());
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
 
-  const [downloadDir, setDownloadDir] = useState('')
-  const [sessionDir, setSessionDir] = useState('')
-  const [enableDht, setEnableDht] = useState(true)
-  const [listenPort, setListenPort] = useState(6881)
-  const [maxConcurrent, setMaxConcurrent] = useState(5)
-  const [uploadLimit, setUploadLimit] = useState(0)
-  const [downloadLimit, setDownloadLimit] = useState(0)
+  const [downloadDir, setDownloadDir] = useState("");
+  const [sessionDir, setSessionDir] = useState("");
+  const [enableDht, setEnableDht] = useState(true);
+  const [listenPort, setListenPort] = useState(6881);
+  const [maxConcurrent, setMaxConcurrent] = useState(5);
+  const [uploadLimit, setUploadLimit] = useState(0);
+  const [downloadLimit, setDownloadLimit] = useState(0);
 
-  const [upnpStatus, setUpnpStatus] = useState<UpnpResult | null>(null)
-  const [portTestResult, setPortTestResult] = useState<PortTestResult | null>(null)
-  const [isTestingPort, setIsTestingPort] = useState(false)
-  const [isAttemptingUpnp, setIsAttemptingUpnp] = useState(false)
+  const [upnpStatus, setUpnpStatus] = useState<UpnpResult | null>(null);
+  const [portTestResult, setPortTestResult] = useState<PortTestResult | null>(
+    null,
+  );
+  const [isTestingPort, setIsTestingPort] = useState(false);
+  const [isAttemptingUpnp, setIsAttemptingUpnp] = useState(false);
 
   const hasChanges = useMemo(() => {
-    if (!originalSettings) return false
+    if (!originalSettings) return false;
     return (
       downloadDir !== originalSettings.downloadDir ||
       sessionDir !== originalSettings.sessionDir ||
@@ -100,183 +122,227 @@ function TorrentSettingsPage() {
       maxConcurrent !== originalSettings.maxConcurrent ||
       uploadLimit !== originalSettings.uploadLimit ||
       downloadLimit !== originalSettings.downloadLimit
-    )
-  }, [originalSettings, downloadDir, sessionDir, enableDht, listenPort, maxConcurrent, uploadLimit, downloadLimit])
+    );
+  }, [
+    originalSettings,
+    downloadDir,
+    sessionDir,
+    enableDht,
+    listenPort,
+    maxConcurrent,
+    uploadLimit,
+    downloadLimit,
+  ]);
 
-  const fetchSettings = useCallback(async () => {
-    try {
-      const result = await queryPromise(TorrentAppSettingsDocument, {})
-      const data = result.data as TorrentAppSettingsQuery | undefined
-      const edges = data?.AppSettings?.Edges ?? []
-      const settings = appSettingsToTorrentSettings(edges)
-      setOriginalSettings(settings)
-      setSettingIds(keyToIdMap(edges))
-      setDownloadDir(settings.downloadDir)
-      setSessionDir(settings.sessionDir)
-      setEnableDht(settings.enableDht)
-      setListenPort(settings.listenPort)
-      setMaxConcurrent(settings.maxConcurrent)
-      setUploadLimit(settings.uploadLimit)
-      setDownloadLimit(settings.downloadLimit)
-    } catch (e) {
-      const isAuthError = (e instanceof Error ? e.message : String(e)).toLowerCase().includes('authentication')
-      if (!isAuthError) {
-        addToast({ title: 'Error', description: sanitizeError(e), color: 'danger' })
-      }
-    } finally {
-      setIsLoading(false)
-    }
-  }, [])
+  const {
+    data: settingsData,
+    loading: settingsLoading,
+    error: settingsError,
+    refetch: refetchSettings,
+  } = useQuery<TorrentAppSettingsQuery>(TorrentAppSettingsDocument, {
+    fetchPolicy: "network-only",
+    notifyOnNetworkStatusChange: false,
+    variables: {},
+  });
+  const [updateAppSetting] = useMutation(UpdateAppSettingDocument);
+  const [createAppSetting] = useMutation(CreateAppSettingDocument);
 
   useEffect(() => {
-    fetchSettings()
-  }, [fetchSettings])
+    if (!settingsData?.AppSettings?.Edges) return;
+    if (originalSettings !== null) return;
+    const settings = appSettingsToTorrentSettings(
+      settingsData.AppSettings.Edges,
+    );
+    setOriginalSettings(settings);
+    setSettingIds(keyToIdMap(settingsData.AppSettings.Edges));
+    setDownloadDir(settings.downloadDir);
+    setSessionDir(settings.sessionDir);
+    setEnableDht(settings.enableDht);
+    setListenPort(settings.listenPort);
+    setMaxConcurrent(settings.maxConcurrent);
+    setUploadLimit(settings.uploadLimit);
+    setDownloadLimit(settings.downloadLimit);
+    setIsLoading(false);
+  }, [originalSettings, settingsData]);
+
+  useEffect(() => {
+    if (settingsLoading) return;
+    setIsLoading(false);
+  }, [settingsLoading]);
+
+  useEffect(() => {
+    if (!settingsError) return;
+    const isAuthError = settingsError.message
+      .toLowerCase()
+      .includes("authentication");
+    if (!isAuthError) {
+      addToast({
+        title: "Error",
+        description: sanitizeError(settingsError),
+        color: "danger",
+      });
+    }
+  }, [settingsError]);
 
   const fetchUpnpStatus = useCallback(async () => {
-    try {
-      const result = await queryPromise<{ upnpStatus: UpnpResult | null }>(UPnP_STATUS_QUERY, {})
-      if (result.data?.upnpStatus) setUpnpStatus(result.data.upnpStatus)
-    } catch {
-      console.warn('Failed to fetch UPnP status')
-    }
-  }, [])
+    setUpnpStatus(null);
+  }, []);
 
   const testPortAccessibility = useCallback(async () => {
-    setIsTestingPort(true)
+    setIsTestingPort(true);
     try {
-      const result = await queryPromise<{ testPortAccessibility: PortTestResult }>(TEST_PORT_ACCESSIBILITY_QUERY, {
-        port: listenPort,
-      })
-      if (result.data?.testPortAccessibility) {
-        setPortTestResult(result.data.testPortAccessibility)
-        addToast({
-          title: result.data.testPortAccessibility.portOpen ? 'Port Test Successful' : 'Port Test Failed',
-          description: result.data.testPortAccessibility.portOpen
-            ? `Port ${listenPort} is accessible from the internet`
-            : `Port ${listenPort} is not accessible from the internet`,
-          color: result.data.testPortAccessibility.portOpen ? 'success' : 'warning',
-        })
-      }
-    } catch (e) {
-      addToast({ title: 'Port Test Error', description: sanitizeError(e), color: 'danger' })
+      setPortTestResult({
+        success: false,
+        portOpen: false,
+        externalIp: null,
+        error: "Typed port-test resolver is not available yet.",
+      });
+      addToast({
+        title: "Port test unavailable",
+        description: `Port ${listenPort} test requires a typed backend resolver.`,
+        color: "warning",
+      });
     } finally {
-      setIsTestingPort(false)
+      setIsTestingPort(false);
     }
-  }, [listenPort])
+  }, [listenPort]);
 
   const attemptUpnpForwarding = useCallback(async () => {
-    setIsAttemptingUpnp(true)
+    setIsAttemptingUpnp(true);
     try {
-      const result = await mutationPromise<{ attemptUpnpPortForwarding: UpnpResult }>(ATTEMPT_UPNP_PORT_FORWARDING_MUTATION, {})
-        
-      if (result.data?.attemptUpnpPortForwarding) {
-        const upnpResult = result.data.attemptUpnpPortForwarding
-        setUpnpStatus(upnpResult)
-        addToast({
-          title: upnpResult.success ? 'UPnP Port Forwarding Successful' : 'UPnP Port Forwarding Failed',
-          description: upnpResult.success
-            ? `Successfully forwarded port ${listenPort} via UPnP`
-            : `Failed to forward port ${listenPort} via UPnP: ${upnpResult.error ?? 'Unknown error'}`,
-          color: upnpResult.success ? 'success' : 'warning',
-        })
-      }
-    } catch (e) {
-      addToast({ title: 'UPnP Error', description: sanitizeError(e), color: 'danger' })
+      setUpnpStatus({
+        success: false,
+        tcpForwarded: false,
+        udpForwarded: false,
+        localIp: null,
+        externalIp: null,
+        error: "Typed UPnP resolver is not available yet.",
+      });
+      addToast({
+        title: "UPnP test unavailable",
+        description: `UPnP test for port ${listenPort} requires a typed backend resolver.`,
+        color: "warning",
+      });
     } finally {
-      setIsAttemptingUpnp(false)
+      setIsAttemptingUpnp(false);
     }
-  }, [listenPort])
+  }, [listenPort]);
 
   useEffect(() => {
-    fetchUpnpStatus()
-  }, [fetchUpnpStatus])
+    fetchUpnpStatus();
+  }, [fetchUpnpStatus]);
 
   const handleSave = async () => {
-    setIsSaving(true)
-    const now = new Date().toISOString()
+    setIsSaving(true);
     const pairs: [keyof typeof TORRENT_KEYS, string][] = [
-      ['download_dir', downloadDir],
-      ['session_dir', sessionDir],
-      ['enable_dht', enableDht ? 'true' : 'false'],
-      ['listen_port', String(listenPort)],
-      ['max_concurrent', String(maxConcurrent)],
-      ['upload_limit', String(uploadLimit)],
-      ['download_limit', String(downloadLimit)],
-    ]
+      ["download_dir", downloadDir],
+      ["session_dir", sessionDir],
+      ["enable_dht", enableDht ? "true" : "false"],
+      ["listen_port", String(listenPort)],
+      ["max_concurrent", String(maxConcurrent)],
+      ["upload_limit", String(uploadLimit)],
+      ["download_limit", String(downloadLimit)],
+    ];
 
     try {
       for (const [key, value] of pairs) {
-        const settingKey = TORRENT_KEYS[key]
-        const id = settingIds.get(settingKey)
+        const settingKey = TORRENT_KEYS[key];
+        const id = settingIds.get(settingKey);
         if (id) {
-          const res = await mutationPromise(UpdateAppSettingDocument, {
-            Id: id,
-            Input: { Value: value },
-          })
-          const data = res.data as { UpdateAppSetting?: { Success: boolean; Error?: string | null } }
+          const { data } = await updateAppSetting({
+            variables: {
+              Id: id,
+              Input: { Value: value },
+            },
+          });
           if (!data?.UpdateAppSetting?.Success) {
             addToast({
-              title: 'Error',
-              description: sanitizeError(data?.UpdateAppSetting?.Error ?? 'Failed to save setting'),
-              color: 'danger',
-            })
-            return
+              title: "Error",
+              description: sanitizeError(
+                data?.UpdateAppSetting?.Error ?? "Failed to save setting",
+              ),
+              color: "danger",
+            });
+            return;
           }
         } else {
-          const res = await mutationPromise(CreateAppSettingDocument, {
-            Input: {
-              Key: settingKey,
-              Value: value,
-              Category: TORRENT_CATEGORY,
-              CreatedAt: now,
-              UpdatedAt: now,
+          const { data } = await createAppSetting({
+            variables: {
+              Input: {
+                Key: settingKey,
+                Value: value,
+                Category: TORRENT_CATEGORY,
+              },
             },
-          })
-          const data = res.data as { CreateAppSetting?: { Success: boolean; Error?: string | null } }
+          });
           if (!data?.CreateAppSetting?.Success) {
             addToast({
-              title: 'Error',
-              description: sanitizeError(data?.CreateAppSetting?.Error ?? 'Failed to create setting'),
-              color: 'danger',
-            })
-            return
+              title: "Error",
+              description: sanitizeError(
+                data?.CreateAppSetting?.Error ?? "Failed to create setting",
+              ),
+              color: "danger",
+            });
+            return;
           }
         }
       }
       addToast({
-        title: 'Settings Saved',
-        description: 'Restart the server for changes to take effect.',
-        color: 'success',
-      })
-      await fetchSettings()
+        title: "Settings Saved",
+        description: "Restart the server for changes to take effect.",
+        color: "success",
+      });
+      const refreshed = await refetchSettings();
+      if (refreshed.data?.AppSettings?.Edges) {
+        const settings = appSettingsToTorrentSettings(
+          refreshed.data.AppSettings.Edges,
+        );
+        setOriginalSettings(settings);
+        setSettingIds(keyToIdMap(refreshed.data.AppSettings.Edges));
+        setDownloadDir(settings.downloadDir);
+        setSessionDir(settings.sessionDir);
+        setEnableDht(settings.enableDht);
+        setListenPort(settings.listenPort);
+        setMaxConcurrent(settings.maxConcurrent);
+        setUploadLimit(settings.uploadLimit);
+        setDownloadLimit(settings.downloadLimit);
+      }
     } catch (e) {
-      addToast({ title: 'Error', description: sanitizeError(e), color: 'danger' })
+      addToast({
+        title: "Error",
+        description: sanitizeError(e),
+        color: "danger",
+      });
     } finally {
-      setIsSaving(false)
+      setIsSaving(false);
     }
-  }
+  };
 
   const handleReset = useCallback(() => {
     if (originalSettings) {
-      setDownloadDir(originalSettings.downloadDir)
-      setSessionDir(originalSettings.sessionDir)
-      setEnableDht(originalSettings.enableDht)
-      setListenPort(originalSettings.listenPort)
-      setMaxConcurrent(originalSettings.maxConcurrent)
-      setUploadLimit(originalSettings.uploadLimit)
-      setDownloadLimit(originalSettings.downloadLimit)
+      setDownloadDir(originalSettings.downloadDir);
+      setSessionDir(originalSettings.sessionDir);
+      setEnableDht(originalSettings.enableDht);
+      setListenPort(originalSettings.listenPort);
+      setMaxConcurrent(originalSettings.maxConcurrent);
+      setUploadLimit(originalSettings.uploadLimit);
+      setDownloadLimit(originalSettings.downloadLimit);
     }
-  }, [originalSettings])
+  }, [originalSettings]);
 
   const formatSpeed = (bytesPerSec: number) => {
-    if (bytesPerSec === 0) return 'Unlimited'
-    if (bytesPerSec >= 1024 * 1024) return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
-    if (bytesPerSec >= 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`
-    return `${bytesPerSec} B/s`
-  }
+    if (bytesPerSec === 0) return "Unlimited";
+    if (bytesPerSec >= 1024 * 1024)
+      return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+    if (bytesPerSec >= 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+    return `${bytesPerSec} B/s`;
+  };
 
   return (
-    <div className="grow overflow-y-auto overflow-x-hidden pb-8" style={{ scrollbarGutter: 'stable' }}>
+    <div
+      className="grow overflow-y-auto overflow-x-hidden pb-8"
+      style={{ scrollbarGutter: "stable" }}
+    >
       <SettingsHeader
         title="Torrent Client"
         subtitle="Configure the built-in torrent downloader"
@@ -337,9 +403,15 @@ function TorrentSettingsPage() {
             <div className="flex justify-between items-center">
               <div>
                 <p className="font-medium">Enable DHT</p>
-                <p className="text-xs text-default-400">Distributed Hash Table for finding peers without trackers</p>
+                <p className="text-xs text-default-400">
+                  Distributed Hash Table for finding peers without trackers
+                </p>
               </div>
-              <Switch isSelected={enableDht} onValueChange={setEnableDht} isDisabled={isLoading} />
+              <Switch
+                isSelected={enableDht}
+                onValueChange={setEnableDht}
+                isDisabled={isLoading}
+              />
             </div>
 
             <Input
@@ -353,7 +425,7 @@ function TorrentSettingsPage() {
               placeholder="6881"
               className="max-w-xs"
               isDisabled={isLoading}
-              classNames={{ label: 'text-sm font-medium text-primary!' }}
+              classNames={{ label: "text-sm font-medium text-primary!" }}
             />
 
             <Input
@@ -369,14 +441,18 @@ function TorrentSettingsPage() {
               min={1}
               max={20}
               isDisabled={isLoading}
-              classNames={{ label: 'text-sm font-medium text-primary!' }}
+              classNames={{ label: "text-sm font-medium text-primary!" }}
             />
 
             <div className="space-y-3 p-4 bg-content2 rounded-lg">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="font-medium text-foreground">UPnP Port Forwarding</p>
-                  <p className="text-xs text-default-500">Automatic port forwarding via UPnP for better connectivity</p>
+                  <p className="font-medium text-foreground">
+                    UPnP Port Forwarding
+                  </p>
+                  <p className="text-xs text-default-500">
+                    Automatic port forwarding via UPnP for better connectivity
+                  </p>
                 </div>
                 <div className="flex gap-2">
                   {upnpStatus && (
@@ -409,12 +485,19 @@ function TorrentSettingsPage() {
 
               {upnpStatus && !upnpStatus.success && !isAttemptingUpnp && (
                 <div className="flex items-start gap-3 p-3 bg-warning-50 border border-warning-200 rounded-md">
-                  <IconAlertTriangle size={16} className="text-warning mt-0.5 shrink-0" />
+                  <IconAlertTriangle
+                    size={16}
+                    className="text-warning mt-0.5 shrink-0"
+                  />
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-warning-800">Port forwarding required</p>
+                    <p className="text-sm font-medium text-warning-800">
+                      Port forwarding required
+                    </p>
                     <p className="text-xs text-warning-700 mt-1">
-                      UPnP port forwarding failed. To improve torrent performance, create a port forwarding rule in
-                      your router for port {listenPort} (TCP and UDP) to your backend's local IP address.
+                      UPnP port forwarding failed. To improve torrent
+                      performance, create a port forwarding rule in your router
+                      for port {listenPort} (TCP and UDP) to your backend's
+                      local IP address.
                     </p>
                   </div>
                 </div>
@@ -422,8 +505,12 @@ function TorrentSettingsPage() {
 
               <div className="flex items-center justify-between pt-2 border-t border-default-200">
                 <div>
-                  <p className="text-sm font-medium text-foreground">Port Accessibility</p>
-                  <p className="text-xs text-default-500">Test if port {listenPort} is accessible from the internet</p>
+                  <p className="text-sm font-medium text-foreground">
+                    Port Accessibility
+                  </p>
+                  <p className="text-xs text-default-500">
+                    Test if port {listenPort} is accessible from the internet
+                  </p>
                 </div>
                 <Button
                   size="sm"
@@ -440,14 +527,24 @@ function TorrentSettingsPage() {
               {portTestResult && (
                 <div
                   className={`flex items-center gap-2 p-2 rounded text-xs ${
-                    portTestResult.portOpen ? 'bg-success-50 text-success-700' : 'bg-danger-50 text-danger-700'
+                    portTestResult.portOpen
+                      ? "bg-success-50 text-success-700"
+                      : "bg-danger-50 text-danger-700"
                   }`}
                 >
-                  {portTestResult.portOpen ? <IconCheck size={14} /> : <IconX size={14} />}
+                  {portTestResult.portOpen ? (
+                    <IconCheck size={14} />
+                  ) : (
+                    <IconX size={14} />
+                  )}
                   <span>
-                    Port {listenPort} is {portTestResult.portOpen ? 'accessible' : 'not accessible'} from the internet
+                    Port {listenPort} is{" "}
+                    {portTestResult.portOpen ? "accessible" : "not accessible"}{" "}
+                    from the internet
                     {portTestResult.externalIp && (
-                      <span className="ml-1 text-default-500">(External IP: {portTestResult.externalIp})</span>
+                      <span className="ml-1 text-default-500">
+                        (External IP: {portTestResult.externalIp})
+                      </span>
                     )}
                   </span>
                 </div>
@@ -479,7 +576,7 @@ function TorrentSettingsPage() {
               placeholder="0"
               endContent={<span className="text-default-400 text-sm">B/s</span>}
               isDisabled={isLoading}
-              classNames={{ label: 'text-sm font-medium text-primary!' }}
+              classNames={{ label: "text-sm font-medium text-primary!" }}
             />
             <Input
               type="number"
@@ -492,11 +589,11 @@ function TorrentSettingsPage() {
               placeholder="0"
               endContent={<span className="text-default-400 text-sm">B/s</span>}
               isDisabled={isLoading}
-              classNames={{ label: 'text-sm font-medium text-primary!' }}
+              classNames={{ label: "text-sm font-medium text-primary!" }}
             />
           </div>
         </AccordionItem>
       </Accordion>
     </div>
-  )
+  );
 }

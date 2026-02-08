@@ -10,8 +10,9 @@
 // //! - Artwork serving (SQLite mode only - images are stored as BLOBs)
 
 pub mod artwork;
+pub mod health;
+pub mod media;
 // pub mod filesystem;
 // pub mod health;
-// pub mod media;
 // pub mod torrents;
 // pub mod torznab;

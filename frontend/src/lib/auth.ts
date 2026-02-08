@@ -58,7 +58,7 @@ interface CookieOptions {
 function setCookie(
   name: string,
   value: string,
-  options: CookieOptions = {},
+  options: CookieOptions = {}
 ): void {
   const {
     expires,
@@ -83,7 +83,7 @@ function setCookie(
   // Debug logging in development
   if (import.meta.env?.DEV && name === COOKIE_NAMES.ACCESS_TOKEN) {
     console.debug(
-      `[Cookie] Setting ${name}: ${value.substring(0, 20)}... (secure=${secure}, sameSite=${sameSite})`,
+      `[Cookie] Setting ${name}: ${value.substring(0, 20)}... (secure=${secure}, sameSite=${sameSite})`
     );
   }
 
@@ -95,20 +95,10 @@ function getCookie(name: string): string | null {
   const nameEQ = encodeURIComponent(name) + "=";
   const cookies = document.cookie.split(";");
 
-  // Debug logging in development
-  if (import.meta.env?.DEV && name === COOKIE_NAMES.ACCESS_TOKEN) {
-    console.debug(
-      `[Cookie] Looking for "${name}", document.cookie has ${cookies.length} cookies`,
-    );
-  }
-
   for (const cookie of cookies) {
     let c = cookie.trim();
     if (c.indexOf(nameEQ) === 0) {
       const value = decodeURIComponent(c.substring(nameEQ.length));
-      if (import.meta.env?.DEV && name === COOKIE_NAMES.ACCESS_TOKEN) {
-        console.debug(`[Cookie] Found ${name}: ${value.substring(0, 20)}...`);
-      }
       return value;
     }
   }
@@ -131,9 +121,6 @@ export function getAccessToken(): string | null {
   try {
     const token = getCookie(COOKIE_NAMES.ACCESS_TOKEN);
     // Only log when token is found (debug level) - no token is normal for unauthenticated users
-    if (import.meta.env?.DEV && token) {
-      console.debug(`[Auth] Access token found: ${token.substring(0, 30)}...`);
-    }
     return token;
   } catch (e) {
     console.error("[Auth] Error reading access token:", e);
@@ -194,24 +181,28 @@ export function setTokens(session: AuthSession): void {
 
     // Reset Apollo cache first, then notify listeners
     // This ensures the cache is ready before components try to refetch
-    import("./graphql/client").then(({ resetApolloCache, restartWebSocket }) => {
-      resetApolloCache();
-      restartWebSocket();
-      // Small delay to let the cache reset complete before triggering refetches
-      setTimeout(() => {
-        // Dispatch custom event for same-tab listeners
-        window.dispatchEvent(
-          new CustomEvent("auth-change", { detail: { type: "login" } }),
-        );
+    import("./graphql/client").then(
+      ({ resetApolloCache, restartWebSocket }) => {
+        resetApolloCache();
+        restartWebSocket();
+        // Small delay to let the cache reset complete before triggering refetches
+        setTimeout(() => {
+          // Dispatch custom event for same-tab listeners
+          window.dispatchEvent(
+            new CustomEvent("auth-change", { detail: { type: "login" } })
+          );
 
-        // Broadcast to other tabs
-        try {
-          new BroadcastChannel("librarian-auth").postMessage({ type: "login" });
-        } catch {
-          // BroadcastChannel not supported
-        }
-      }, 50);
-    });
+          // Broadcast to other tabs
+          try {
+            new BroadcastChannel("librarian-auth").postMessage({
+              type: "login",
+            });
+          } catch {
+            // BroadcastChannel not supported
+          }
+        }, 50);
+      }
+    );
   } catch (error) {
     console.error("[Auth] Failed to store tokens:", error);
   }
@@ -225,20 +216,24 @@ export function clearTokens(): void {
     deleteCookie(COOKIE_NAMES.EXPIRES_AT);
     deleteCookie(COOKIE_NAMES.USER);
 
-    import("./graphql/client").then(({ resetApolloCache, restartWebSocket }) => {
-      resetApolloCache();
-      restartWebSocket();
-      setTimeout(() => {
-        window.dispatchEvent(
-          new CustomEvent("auth-change", { detail: { type: "logout" } }),
-        );
-        try {
-          new BroadcastChannel("librarian-auth").postMessage({ type: "logout" });
-        } catch {
-          // BroadcastChannel not supported
-        }
-      }, 50);
-    });
+    import("./graphql/client").then(
+      ({ resetApolloCache, restartWebSocket }) => {
+        resetApolloCache();
+        restartWebSocket();
+        setTimeout(() => {
+          window.dispatchEvent(
+            new CustomEvent("auth-change", { detail: { type: "logout" } })
+          );
+          try {
+            new BroadcastChannel("librarian-auth").postMessage({
+              type: "logout",
+            });
+          } catch {
+            // BroadcastChannel not supported
+          }
+        }, 50);
+      }
+    );
   } catch (error) {
     console.error("[Auth] Failed to clear tokens:", error);
   }

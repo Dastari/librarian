@@ -1,20 +1,40 @@
-import { createFileRoute, Link, redirect, useNavigate } from '@tanstack/react-router'
+import {
+  createFileRoute,
+  Link,
+  redirect,
+  useNavigate,
+} from "@tanstack/react-router";
 import { useState, useCallback, useMemo } from "react";
-import { useQuery, useMutation, gql } from "../../lib/graphql/client";
+import { useQuery, useMutation } from "../../lib/graphql/client";
 import { Button } from "@heroui/button";
-import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/dropdown";
+import {
+  Dropdown,
+  DropdownTrigger,
+  DropdownMenu,
+  DropdownItem,
+} from "@heroui/dropdown";
 import { Card, CardBody } from "@heroui/card";
 import { Chip } from "@heroui/chip";
 import { Image } from "@heroui/image";
 import { Spinner } from "@heroui/spinner";
-import { Accordion, AccordionItem } from '@heroui/accordion'
-import { Breadcrumbs, BreadcrumbItem } from '@heroui/breadcrumbs'
-import { useDisclosure } from '@heroui/modal'
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
+import { Accordion, AccordionItem } from "@heroui/accordion";
+import { Breadcrumbs, BreadcrumbItem } from "@heroui/breadcrumbs";
+import { useDisclosure } from "@heroui/modal";
+import {
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+} from "@heroui/modal";
 import { addToast } from "@heroui/toast";
 import { RouteError } from "../../components/RouteError";
 import { sanitizeError, formatBytes, formatDate } from "../../lib/format";
-import { DataTable, type DataTableColumn, type RowAction } from '../../components/data-table'
+import {
+  DataTable,
+  type DataTableColumn,
+  type RowAction,
+} from "../../components/data-table";
 import {
   IconDeviceTv,
   IconClipboard,
@@ -33,95 +53,94 @@ import {
 } from "../../components/shared";
 import { usePlaybackContext } from "../../contexts/PlaybackContext";
 import { FilePropertiesModal } from "../../components/FilePropertiesModal";
-import type { Show, Library } from "../../lib/graphql/generated/graphql";
 import {
-  TV_SHOW_QUERY,
-  LIBRARY_QUERY,
-} from "../../lib/graphql/queries";
-import {
-  REFRESH_TV_SHOW_MUTATION,
-  DELETE_TV_SHOW_MUTATION,
-} from "../../lib/graphql/mutations";
+  DeleteShowRouteDocument,
+  LibraryDetailRouteDocument,
+  MeDocument,
+  RefreshShowRouteDocument,
+  ShowDetailRouteDocument,
+  type ShowDetailRouteQuery,
+  ShowPlaybackProgressByMediaDocument,
+  type ShowPlaybackProgressByMediaQuery,
+} from "../../lib/graphql/generated/graphql";
 
-export const Route = createFileRoute('/shows/$showId')({
+export const Route = createFileRoute("/shows/$showId")({
   beforeLoad: ({ context, location }) => {
     if (!context.auth.isAuthenticated) {
       throw redirect({
-        to: '/',
+        to: "/",
         search: {
           signin: true,
           redirect: location.href,
         },
-      })
+      });
     }
   },
   component: ShowDetailPage,
   errorComponent: RouteError,
-})
+});
 
 // Type for episode - using PascalCase to match backend
 interface Episode {
-  Id: string
-  ShowId: string
-  Season: number
-  Episode: number
-  AbsoluteNumber: number | null
-  Title: string | null
-  Overview: string | null
-  AirDate: string | null
-  Runtime: number | null
-  TvmazeId: number | null
-  TmdbId: number | null
-  TvdbId: number | null
-  ImdbId: string | null
-  MediaFileId: string | null
-  Resolution: string | null
-  VideoCodec: string | null
-  AudioCodec: string | null
-  AudioChannels: string | null
-  IsHdr: boolean | null
-  HdrType: string | null
-  FileSizeBytes: number | null
-  FileSizeFormatted: string | null
-  WatchProgress: number | null
-  WatchPosition: number | null
-  IsWatched: boolean
-  DownloadProgress: number | null
-  CreatedAt: string
-  UpdatedAt: string
+  Id: string;
+  ShowId: string;
+  Season: number;
+  Episode: number;
+  AbsoluteNumber: number | null;
+  Title: string | null;
+  Overview: string | null;
+  AirDate: string | null;
+  Runtime: number | null;
+  TvmazeId: number | null;
+  TmdbId: number | null;
+  TvdbId: number | null;
+  ImdbId: string | null;
+  MediaFileId: string | null;
+  Resolution: string | null;
+  VideoCodec: string | null;
+  AudioCodec: string | null;
+  AudioChannels: string | null;
+  IsHdr: boolean | null;
+  HdrType: string | null;
+  FileSizeBytes: number | null;
+  FileSizeFormatted: string | null;
+  WatchProgress: number | null;
+  WatchPosition: number | null;
+  IsWatched: boolean;
+  DownloadProgress: number | null;
+  CreatedAt: string;
+  UpdatedAt: string;
 }
 
 interface SeasonData {
-  season: number
-  episodes: Episode[]
-  downloadedCount: number
-  totalCount: number
+  season: number;
+  episodes: Episode[];
+  downloadedCount: number;
+  totalCount: number;
 }
-
-// GraphQL queries
-const SHOW_QUERY = gql`${TV_SHOW_QUERY}`
-const LIBRARY_GQL = gql`${LIBRARY_QUERY}`
-const REFRESH_SHOW = gql`${REFRESH_TV_SHOW_MUTATION}`
-const DELETE_SHOW = gql`${DELETE_TV_SHOW_MUTATION}`
+type ShowDetailNode = NonNullable<ShowDetailRouteQuery["Show"]>;
+type ShowEpisodeNode = ShowDetailNode["Episodes"]["Edges"][number]["Node"];
+type PlaybackProgressNode =
+  ShowPlaybackProgressByMediaQuery["PlaybackProgresses"]["Edges"][number]["Node"];
 
 // Helper functions
 function formatAirDate(dateStr: string | null): string {
-  return formatDate(dateStr, 'TBA')
+  return formatDate(dateStr, "TBA");
 }
 
 function formatVideoCodec(codec: string | null): string {
-  if (!codec) return ''
-  const normalized = codec.toLowerCase()
-  if (normalized.includes('hevc') || normalized === 'h265') return 'HEVC'
-  if (normalized.includes('h264') || normalized === 'avc') return 'H.264'
-  if (normalized.includes('av1')) return 'AV1'
-  if (normalized.includes('vp9')) return 'VP9'
-  return codec.toUpperCase()
+  if (!codec) return "";
+  const normalized = codec.toLowerCase();
+  if (normalized.includes("hevc") || normalized === "h265") return "HEVC";
+  if (normalized.includes("h264") || normalized === "avc") return "H.264";
+  if (normalized.includes("av1")) return "AV1";
+  if (normalized.includes("vp9")) return "VP9";
+  return codec.toUpperCase();
 }
 
 function formatAudioCodec(
   codec: string | null,
-  channels: string | null
+  channels: string | null,
 ): string {
   if (!codec) return "";
   const normalized = codec.toLowerCase();
@@ -291,7 +310,7 @@ interface EpisodeTableProps {
   episodes: Episode[];
   seasonNumber: number;
   showId: string;
-  onPlay: (episode: Episode) => void;
+  onPlay: (episode: Episode, startFromBeginning?: boolean) => void;
   onSearch: (episode: Episode) => void;
   onShowProperties: (episode: Episode) => void;
 }
@@ -307,7 +326,7 @@ function EpisodeTable({
   const { session, updatePlayback } = usePlaybackContext();
   const handlePause = useCallback(
     () => updatePlayback({ isPlaying: false }),
-    [updatePlayback]
+    [updatePlayback],
   );
   const currentlyPlayingEpisodeId =
     session?.tvShowId === showId ? session?.episodeId : null;
@@ -348,6 +367,16 @@ function EpisodeTable({
       isVisible: (ep) =>
         hasFile(ep) && hasResumeProgress(ep) && !isCurrentlyPlaying(ep),
       onAction: (ep) => onPlay(ep),
+    },
+    {
+      key: `restart-${playActionKey}`,
+      label: "Start from beginning",
+      icon: <IconPlayerPlay size={16} />,
+      color: "default",
+      inDropdown: true,
+      isVisible: (ep) =>
+        hasFile(ep) && hasResumeProgress(ep) && !isCurrentlyPlaying(ep),
+      onAction: (ep) => onPlay(ep, true),
     },
     {
       key: `play-${playActionKey}`,
@@ -409,7 +438,8 @@ function EpisodeTable({
 function ShowDetailPage() {
   const navigate = useNavigate();
   const { showId } = Route.useParams();
-  const { startEpisodePlayback, session, updatePlayback } = usePlaybackContext();
+  const { startEpisodePlayback, session, updatePlayback } =
+    usePlaybackContext();
 
   const {
     isOpen: isDeleteOpen,
@@ -422,7 +452,7 @@ function ShowDetailPage() {
     onClose: onPropertiesClose,
   } = useDisclosure();
   const [propertiesEpisode, setPropertiesEpisode] = useState<Episode | null>(
-    null
+    null,
   );
 
   // Query show data
@@ -431,15 +461,15 @@ function ShowDetailPage() {
     previousData: previousShowData,
     loading: showLoading,
     refetch,
-  } = useQuery<{ Show: Show | null }>(SHOW_QUERY, {
+  } = useQuery(ShowDetailRouteDocument, {
     variables: { Id: showId },
     fetchPolicy: "cache-and-network",
   });
   const show = showData?.Show ?? previousShowData?.Show;
 
-  const episodes = useMemo<Episode[]>(() => {
+  const rawEpisodes = useMemo<Episode[]>(() => {
     const edges = show?.Episodes?.Edges ?? [];
-    return edges.map(({ Node: ep }) => {
+    return edges.map(({ Node: ep }: { Node: ShowEpisodeNode }) => {
       const mediaFile = ep.MediaFile ?? null;
       return {
         Id: ep.Id,
@@ -474,23 +504,87 @@ function ShowDetailPage() {
     });
   }, [show]);
 
-  // Query library
-  const { data: libraryData, previousData: previousLibraryData } = useQuery<{
-    Library: Library | null;
-  }>(LIBRARY_GQL, {
-    variables: { Id: show?.LibraryId || "" },
-    skip: !show?.LibraryId,
-    fetchPolicy: "cache-and-network",
+  const { data: meData } = useQuery(MeDocument, {
+    fetchPolicy: "cache-first",
   });
+  const userId = meData?.Me?.Id;
+  const episodeMediaFileIds = useMemo(
+    () => [
+      ...new Set(
+        rawEpisodes
+          .map((ep) => ep.MediaFileId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ],
+    [rawEpisodes],
+  );
+  const { data: progressData, previousData: previousProgressData } = useQuery(
+    ShowPlaybackProgressByMediaDocument,
+    {
+      variables: {
+        Where: {
+          UserId: { Eq: userId },
+          MediaFileId: { In: episodeMediaFileIds },
+        },
+        Page: { Limit: 5000, Offset: 0 },
+        OrderBy: [{ UpdatedAt: "Desc" }],
+      },
+      skip: !userId || episodeMediaFileIds.length === 0,
+      fetchPolicy: "cache-and-network",
+    },
+  );
+  const progressEdges =
+    progressData?.PlaybackProgresses?.Edges ??
+    previousProgressData?.PlaybackProgresses?.Edges ??
+    [];
+  const progressByMediaFile = useMemo(() => {
+    const map = new Map<string, PlaybackProgressNode>();
+    for (const edge of progressEdges) {
+      const node = edge.Node;
+      if (!node.MediaFileId) continue;
+      if (!map.has(node.MediaFileId)) {
+        map.set(node.MediaFileId, node);
+      }
+    }
+    return map;
+  }, [progressEdges]);
+
+  const episodes = useMemo<Episode[]>(() => {
+    return rawEpisodes.map((ep) => {
+      if (!ep.MediaFileId) {
+        return ep;
+      }
+      const progress = progressByMediaFile.get(ep.MediaFileId);
+      if (!progress) {
+        return ep;
+      }
+      return {
+        ...ep,
+        WatchProgress: Math.max(0, Math.min(1, progress.ProgressPercent)),
+        WatchPosition: progress.CurrentPosition,
+        IsWatched: progress.IsWatched,
+      };
+    });
+  }, [progressByMediaFile, rawEpisodes]);
+
+  // Query library
+  const { data: libraryData, previousData: previousLibraryData } = useQuery(
+    LibraryDetailRouteDocument,
+    {
+      variables: { Id: show?.LibraryId || "" },
+      skip: !show?.LibraryId,
+      fetchPolicy: "cache-and-network",
+    },
+  );
   const library = libraryData?.Library ?? previousLibraryData?.Library;
 
   // Mutations
-  const [refreshShow, { loading: refreshing }] = useMutation<{
-    RefreshShow: { Success: boolean; Error: string | null };
-  }>(REFRESH_SHOW);
-  const [deleteShow, { loading: deleting }] = useMutation<{
-    DeleteShow: { Success: boolean; Error: string | null };
-  }>(DELETE_SHOW);
+  const [refreshShow, { loading: refreshing }] = useMutation(
+    RefreshShowRouteDocument,
+  );
+  const [deleteShow, { loading: deleting }] = useMutation(
+    DeleteShowRouteDocument,
+  );
 
   const handleRefresh = async () => {
     try {
@@ -499,7 +593,7 @@ function ShowDetailPage() {
         addToast({
           title: "Error",
           description: sanitizeError(
-            data?.RefreshShow?.Error || "Failed to refresh show"
+            data?.RefreshShow?.Error || "Failed to refresh show",
           ),
           color: "danger",
         });
@@ -528,7 +622,7 @@ function ShowDetailPage() {
         addToast({
           title: "Error",
           description: sanitizeError(
-            data?.DeleteShow?.Error || "Failed to delete show"
+            data?.DeleteShow?.Error || "Failed to delete show",
           ),
           color: "danger",
         });
@@ -555,10 +649,14 @@ function ShowDetailPage() {
   };
 
   const handlePlay = useCallback(
-    async (episode: Episode) => {
+    async (episode: Episode, startFromBeginning = false) => {
       if (episode.MediaFileId && show) {
         let startPosition = 0;
-        if (episode.WatchPosition && episode.WatchProgress !== null) {
+        if (
+          !startFromBeginning &&
+          episode.WatchPosition &&
+          episode.WatchProgress !== null
+        ) {
           if (!episode.IsWatched && episode.WatchProgress > 0) {
             startPosition = episode.WatchPosition;
           }
@@ -569,22 +667,19 @@ function ShowDetailPage() {
           show.Id,
           episode as any,
           show as any,
-          startPosition
+          startPosition,
         );
       }
     },
-    [show, startEpisodePlayback]
+    [show, startEpisodePlayback],
   );
 
   const handleSearchEpisode = useCallback(
-    (episode: Episode) => {
+    (_episode: Episode) => {
       if (!show) return;
-      const seasonPadded = String(episode.Season).padStart(2, "0");
-      const episodePadded = String(episode.Episode).padStart(2, "0");
-      const searchQuery = `${show.Name} S${seasonPadded}E${episodePadded}`;
-      navigate({ to: "/hunt", search: { q: searchQuery, type: "tv" } });
+      navigate({ to: "/settings/sources" });
     },
-    [show, navigate]
+    [show, navigate],
   );
 
   const handleShowProperties = useCallback(
@@ -592,7 +687,7 @@ function ShowDetailPage() {
       setPropertiesEpisode(episode);
       onPropertiesOpen();
     },
-    [onPropertiesOpen]
+    [onPropertiesOpen],
   );
 
   // Group episodes by season
@@ -621,10 +716,10 @@ function ShowDetailPage() {
         missingEpisodes: episodes.filter((e: Episode) => !e.MediaFileId).length,
         totalSizeBytes: episodes.reduce(
           (sum: number, e: Episode) => sum + (e.FileSizeBytes || 0),
-          0
+          0,
         ),
       }),
-      [episodes]
+      [episodes],
     );
 
   const playableEpisodes = useMemo(
@@ -632,12 +727,22 @@ function ShowDetailPage() {
       [...episodes]
         .filter((e) => !!e.MediaFileId)
         .sort((a, b) =>
-          a.Season === b.Season ? a.Episode - b.Episode : a.Season - b.Season
+          a.Season === b.Season ? a.Episode - b.Episode : a.Season - b.Season,
         ),
-    [episodes]
+    [episodes],
   );
 
-  const isThisShowPlaying = session?.tvShowId === showId && !!session?.isPlaying;
+  const isThisShowPlaying =
+    session?.tvShowId === showId && !!session?.isPlaying;
+  const defaultEpisodeToPlay = useMemo(() => {
+    const resumable = playableEpisodes.find(
+      (episode) =>
+        episode.WatchProgress !== null &&
+        episode.WatchProgress > 0 &&
+        !episode.IsWatched,
+    );
+    return resumable ?? playableEpisodes[0];
+  }, [playableEpisodes]);
 
   // Loading state
   if (showLoading && !show) {
@@ -686,7 +791,9 @@ function ShowDetailPage() {
                 if (isThisShowPlaying) {
                   updatePlayback({ isPlaying: false });
                 } else {
-                  void handlePlay(playableEpisodes[0]);
+                  if (defaultEpisodeToPlay) {
+                    void handlePlay(defaultEpisodeToPlay);
+                  }
                 }
               }}
               className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 rounded-lg cursor-pointer"
@@ -736,7 +843,7 @@ function ShowDetailPage() {
                 aria-label="Show actions menu"
                 onAction={(key) => {
                   if (key === "search") {
-                    navigate({ to: "/hunt", search: { q: show.Name, type: "tv" } });
+                    navigate({ to: "/settings/sources" });
                   } else if (key === "refresh") {
                     void handleRefresh();
                   } else if (key === "properties") {
@@ -771,7 +878,9 @@ function ShowDetailPage() {
                 ) : null}
                 <DropdownItem
                   key="delete"
-                  startContent={<IconTrash size={16} className="text-red-400" />}
+                  startContent={
+                    <IconTrash size={16} className="text-red-400" />
+                  }
                   className="text-danger"
                   color="danger"
                 >
@@ -835,7 +944,6 @@ function ShowDetailPage() {
               Mode: {show.AutoDownloadMode}
             </Chip>
           </div>
-
         </div>
       </div>
 
@@ -944,7 +1052,8 @@ function ShowDetailPage() {
                 Are you sure you want to delete <strong>{show.Name}</strong>?
               </p>
               <p className="text-sm text-default-500 mt-2">
-                This will remove the show from the library. Associated files will not be deleted.
+                This will remove the show from the library. Associated files
+                will not be deleted.
               </p>
             </ModalBody>
             <ModalFooter>

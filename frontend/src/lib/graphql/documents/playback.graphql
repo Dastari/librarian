@@ -28,3 +28,148 @@ query PlaybackSessions(
     }
   }
 }
+
+query ShowPlaybackProgressByMedia(
+  $Where: PlaybackProgressWhereInput
+  $Page: PageInput
+  $OrderBy: [PlaybackProgressOrderByInput!]
+) {
+  PlaybackProgresses(Where: $Where, Page: $Page, OrderBy: $OrderBy) {
+    Edges {
+      Node {
+        Id
+        MediaFileId
+        CurrentPosition
+        Duration
+        ProgressPercent
+        IsWatched
+        UpdatedAt
+      }
+    }
+  }
+}
+
+query PlaybackProgressByMediaFileContext(
+  $Where: PlaybackProgressWhereInput
+  $Page: PageInput
+  $OrderBy: [PlaybackProgressOrderByInput!]
+) {
+  PlaybackProgresses(Where: $Where, Page: $Page, OrderBy: $OrderBy) {
+    Edges {
+      Node {
+        Id
+        UserId
+        MediaFileId
+        CurrentPosition
+        Duration
+        ProgressPercent
+        IsWatched
+        WatchedAt
+        CreatedAt
+        UpdatedAt
+      }
+    }
+  }
+}
+
+mutation CreatePlaybackSessionContext($Input: CreatePlaybackSessionInput!) {
+  CreatePlaybackSession(Input: $Input) {
+    Success
+    Error
+    PlaybackSession {
+      Id
+      UserId
+      ContentType
+      MediaFileId
+      EpisodeId
+      MovieId
+      TrackId
+      AudiobookId
+      TvShowId
+      AlbumId
+      CurrentPosition
+      Duration
+      Volume
+      IsMuted
+      IsPlaying
+      StartedAt
+      LastUpdatedAt
+      CompletedAt
+      CreatedAt
+      UpdatedAt
+    }
+  }
+}
+
+mutation UpdatePlaybackSessionContext(
+  $Id: String!
+  $Input: UpdatePlaybackSessionInput!
+) {
+  UpdatePlaybackSession(Id: $Id, Input: $Input) {
+    Success
+    Error
+    PlaybackSession {
+      Id
+      UserId
+      ContentType
+      MediaFileId
+      EpisodeId
+      MovieId
+      TrackId
+      AudiobookId
+      TvShowId
+      AlbumId
+      CurrentPosition
+      Duration
+      Volume
+      IsMuted
+      IsPlaying
+      StartedAt
+      LastUpdatedAt
+      CompletedAt
+      CreatedAt
+      UpdatedAt
+    }
+  }
+}
+
+mutation CreatePlaybackProgressContext($Input: CreatePlaybackProgressInput!) {
+  CreatePlaybackProgress(Input: $Input) {
+    Success
+    Error
+    PlaybackProgress {
+      Id
+      UserId
+      MediaFileId
+      CurrentPosition
+      Duration
+      ProgressPercent
+      IsWatched
+      WatchedAt
+      CreatedAt
+      UpdatedAt
+    }
+  }
+}
+
+mutation UpdatePlaybackProgressContext(
+  $Id: String!
+  $Input: UpdatePlaybackProgressInput!
+) {
+  UpdatePlaybackProgress(Id: $Id, Input: $Input) {
+    Success
+    Error
+    PlaybackProgress {
+      Id
+      UserId
+      MediaFileId
+      CurrentPosition
+      Duration
+      ProgressPercent
+      IsWatched
+      WatchedAt
+      CreatedAt
+      UpdatedAt
+    }
+  }
+}

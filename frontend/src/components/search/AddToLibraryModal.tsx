@@ -21,18 +21,21 @@ import {
   IconCheck,
 } from '@tabler/icons-react'
 import {
+  useLazyQuery,
+  useMutation,
+  useQuery,
+} from '../../lib/graphql/client'
+import {
   LibrariesDocument,
   SearchTvShowsDocument,
   SearchMoviesDocument,
   AddTvShowDocument,
   AddMovieDocument,
+  AddTorrentDocument,
   type LibrariesQuery,
   type SearchTvShowsQuery,
   type SearchMoviesQuery,
-  type AddTvShowMutation,
-  type AddMovieMutation,
 } from '../../lib/graphql/generated/graphql'
-// import { sanitizeError } from '../../lib/format'
 
 type LibraryNode = LibrariesQuery['Libraries']['Edges'][number]['Node']
 type LibraryType = 'TV' | 'MOVIES' | 'MUSIC' | 'AUDIOBOOKS'
@@ -185,19 +188,32 @@ export function AddToLibraryModal({
   const [selectedType, setSelectedType] = useState<DetectedType>('movies')
   
   // Libraries
-  const [libraries, setLibraries] = useState<LibraryNode[]>([])
   const [selectedLibraryId, setSelectedLibraryId] = useState<string>('')
-  const [loadingLibraries, setLoadingLibraries] = useState(false)
   
   // Search for existing items
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<(TvShowSearchResult | MovieSearchResult)[]>([])
-  const [searching, setSearching] = useState(false)
   const [selectedItem, setSelectedItem] = useState<TvShowSearchResult | MovieSearchResult | null>(null)
   
   // Options
   const [startDownload, setStartDownload] = useState(true)
   const [creating, setCreating] = useState(false)
+  const { data: librariesData, loading: loadingLibraries } = useQuery(LibrariesDocument, {
+    skip: !isOpen,
+    fetchPolicy: 'network-only',
+    notifyOnNetworkStatusChange: false,
+    variables: {},
+  })
+  const [searchTvShows, { loading: searchingTvShows }] = useLazyQuery(SearchTvShowsDocument)
+  const [searchMovies, { loading: searchingMovies }] = useLazyQuery(SearchMoviesDocument)
+  const [addTvShow] = useMutation(AddTvShowDocument)
+  const [addMovie] = useMutation(AddMovieDocument)
+  const [addTorrent] = useMutation(AddTorrentDocument)
+  const searching = searchingTvShows || searchingMovies
+  const libraries: LibraryNode[] = useMemo(
+    () => librariesData?.Libraries.Edges.map((edge) => edge.Node) ?? [],
+    [librariesData],
+  )
   
   // Parse release name when modal opens
   useEffect(() => {
@@ -210,19 +226,6 @@ export function AddToLibraryModal({
       setSearchResults([])
     }
   }, [isOpen, release])
-  
-  // Fetch libraries
-  useEffect(() => {
-    if (isOpen) {
-      setLoadingLibraries(true)
-      queryPromise(LibrariesDocument, {})
-        
-        .then(({ data }) => {
-          setLibraries(data?.Libraries.Edges.map((edge: LibrariesQuery['Libraries']['Edges'][number]) => edge.Node) ?? [])
-        })
-        .finally(() => setLoadingLibraries(false))
-    }
-  }, [isOpen])
   
   // Filter libraries by selected type
   const filteredLibraries = useMemo(() => {
@@ -243,16 +246,18 @@ export function AddToLibraryModal({
   // Search for matching items
   const handleSearch = async () => {
     if (!searchQuery.trim() || !selectedType) return
-    
-    setSearching(true)
     setSelectedItem(null)
     
     try {
       if (selectedType === 'tv') {
-        const { data } = await queryPromise<SearchTvShowsQuery>(SearchTvShowsDocument, { Query: searchQuery })
+        const { data } = await searchTvShows({
+          variables: { Query: searchQuery },
+        })
         setSearchResults(data?.SearchTvShows ?? [])
       } else if (selectedType === 'movies') {
-        const { data } = await queryPromise<SearchMoviesQuery>(SearchMoviesDocument, { Query: searchQuery })
+        const { data } = await searchMovies({
+          variables: { Query: searchQuery },
+        })
         setSearchResults(data?.SearchMovies ?? [])
       } else {
         // Music and audiobooks - no search yet
@@ -260,8 +265,6 @@ export function AddToLibraryModal({
       }
     } catch (err) {
       console.error('Search failed:', err)
-    } finally {
-      setSearching(false)
     }
   }
   
@@ -283,17 +286,15 @@ export function AddToLibraryModal({
       if (selectedItem && (selectedType === 'tv' || selectedType === 'movies')) {
         if (selectedType === 'tv') {
           const tvItem = selectedItem as TvShowSearchResult
-          const { data, error } = await mutationPromise<AddTvShowMutation>(
-              AddTvShowDocument,
-              {
-                LibraryId: selectedLibraryId,
-                Input: {
-                  TvmazeId: tvItem.ProviderId,
-                  AutoDownloadMode: 'ALL',
-                },
-              }
-            )
-            
+          const { data, error } = await addTvShow({
+            variables: {
+              LibraryId: selectedLibraryId,
+              Input: {
+                TvmazeId: tvItem.ProviderId,
+                AutoDownloadMode: 'ALL',
+              },
+            },
+          })
           
           if (error || !data?.AddTvShow.Success) {
             throw new Error(data?.AddTvShow.Error || 'Failed to add TV show')
@@ -301,17 +302,15 @@ export function AddToLibraryModal({
           // TODO: Use data.AddTvShow.Show?.Id to link torrent to show
         } else if (selectedType === 'movies') {
           const movieItem = selectedItem as MovieSearchResult
-          const { data, error } = await mutationPromise<AddMovieMutation>(
-              AddMovieDocument,
-              {
-                LibraryId: selectedLibraryId,
-                Input: {
-                  TmdbId: movieItem.ProviderId,
-                  Monitored: true,
-                },
-              }
-            )
-            
+          const { data, error } = await addMovie({
+            variables: {
+              LibraryId: selectedLibraryId,
+              Input: {
+                TmdbId: movieItem.ProviderId,
+                Monitored: true,
+              },
+            },
+          })
           
           if (error || !data?.AddMovie.Success) {
             throw new Error(data?.AddMovie.Error || 'Failed to add movie')
@@ -330,34 +329,17 @@ export function AddToLibraryModal({
           throw new Error('No download link available')
         }
         
-        const ADD_TORRENT = `
-          mutation AddTorrentToLibrary($Input: AddTorrentInput!) {
-            AddTorrent(Input: $Input) {
-              Success
-              Torrent { Id Name }
-              Error
-            }
-          }
-        `
-        
-        interface AddTorrentResponse {
-          AddTorrent: {
-            Success: boolean
-            Torrent: { Id: string; Name: string } | null
-            Error: string | null
-          }
-        }
-        
         // Use magnet field for magnet links, url field for .torrent file URLs
         const isMagnet = magnetUri?.startsWith('magnet:')
         
-        const { data, error } = await mutationPromise<AddTorrentResponse>(ADD_TORRENT, {
+        const { data, error } = await addTorrent({
+          variables: {
             Input: {
               Magnet: isMagnet ? magnetUri : undefined,
               Url: !isMagnet ? (magnetUri || torrentUrl) : undefined,
             },
-          })
-          
+          },
+        })
         
         if (error || !data?.AddTorrent?.Success) {
           throw new Error(data?.AddTorrent?.Error || 'Failed to add torrent')

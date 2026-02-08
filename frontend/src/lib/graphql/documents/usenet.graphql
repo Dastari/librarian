@@ -1,0 +1,68 @@
+query SettingsUsenetServers(
+  $OrderBy: [UsenetServerOrderByInput!]
+  $Page: PageInput
+) {
+  UsenetServers(OrderBy: $OrderBy, Page: $Page) {
+    Edges {
+      Node {
+        Id
+        Name
+        Host
+        Port
+        UseSsl
+        Username
+        Connections
+        Priority
+        Enabled
+        RetentionDays
+        LastSuccessAt
+        LastError
+        ErrorCount
+      }
+    }
+  }
+}
+
+mutation SettingsUpdateUsenetServer(
+  $Id: String!
+  $Input: UpdateUsenetServerInput!
+) {
+  UpdateUsenetServer(Id: $Id, Input: $Input) {
+    Success
+    Error
+    UsenetServer {
+      Id
+      Enabled
+      Priority
+    }
+  }
+}
+
+mutation SettingsCreateUsenetServer($Input: CreateUsenetServerInput!) {
+  CreateUsenetServer(Input: $Input) {
+    Success
+    Error
+    UsenetServer {
+      Id
+      Name
+      Host
+      Port
+      UseSsl
+      Username
+      Connections
+      Priority
+      Enabled
+      RetentionDays
+      LastSuccessAt
+      LastError
+      ErrorCount
+    }
+  }
+}
+
+mutation SettingsDeleteUsenetServer($Id: String!) {
+  DeleteUsenetServer(Id: $Id) {
+    Success
+    Error
+  }
+}

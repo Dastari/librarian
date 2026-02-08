@@ -30,7 +30,6 @@ import { DownloadIndicator } from "./DownloadIndicator";
 const navItems = [
   { to: "/", label: "Home" },
   { to: "/libraries", label: "Libraries" },
-  { to: "/hunt", label: "Hunt" },
   { to: "/downloads", label: "Downloads" },
   { to: "/settings", label: "Settings" },
 ];

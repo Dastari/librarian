@@ -1,9 +1,9 @@
-import { useMemo, useState, useCallback, useEffect } from 'react'
-import { useQueryState, parseAsString, parseAsStringLiteral } from 'nuqs'
-import { Button } from '@heroui/button'
-import { Image } from '@heroui/image'
-import { Card, CardBody } from '@heroui/card'
-import { Link } from '@tanstack/react-router'
+import { useMemo, useState, useCallback, useEffect } from "react";
+import { useQueryState, parseAsString, parseAsStringLiteral } from "nuqs";
+import { Button } from "@heroui/button";
+import { Image } from "@heroui/image";
+import { Card, CardBody } from "@heroui/card";
+import { Link } from "@tanstack/react-router";
 import {
   DataTable,
   AlphabetFilter,
@@ -11,58 +11,30 @@ import {
   type DataTableColumn,
   type RowAction,
   type CardRendererProps,
-} from '../data-table'
+} from "../data-table";
+import { type Audiobook, type AudiobookAuthor } from "../../lib/graphql";
+import { apolloClient } from "../../lib/graphql/client";
+import { LibraryAudiobooksTabDocument } from "../../lib/graphql/generated/graphql";
 import {
-  AUDIOBOOKS_QUERY,
-  AUDIOBOOK_AUTHORS_QUERY,
-  type Audiobook,
-  type AudiobookAuthor,
-} from '../../lib/graphql'
-import { IconPlus, IconTrash, IconEye, IconHeadphones, IconUser } from '@tabler/icons-react'
-import { AudiobookCard } from './AudiobookCard'
-import { MediaCardSkeleton } from './MediaCardSkeleton'
-
-interface AudiobookNode {
-  Id: string
-  AuthorId: string | null
-  LibraryId: string
-  Title: string
-  SortTitle: string | null
-  Subtitle: string | null
-  OpenlibraryId: string | null
-  Isbn: string | null
-  Description: string | null
-  Publisher: string | null
-  Language: string | null
-  Narrators: string[]
-  SeriesName: string | null
-  DurationSecs: number | null
-  CoverUrl: string | null
-  HasFiles: boolean
-  SizeBytes: number | null
-  Path: string | null
-  ChapterCount: number | null
-  DownloadedChapterCount: number | null
-}
-
-interface AudiobookAuthorNode {
-  Id: string
-  LibraryId: string
-  Name: string
-  SortName: string | null
-  OpenlibraryId: string | null
-}
+  IconPlus,
+  IconTrash,
+  IconEye,
+  IconHeadphones,
+  IconUser,
+} from "@tabler/icons-react";
+import { AudiobookCard } from "./AudiobookCard";
+import { MediaCardSkeleton } from "./MediaCardSkeleton";
 
 // ============================================================================
 // Component Props
 // ============================================================================
 
 interface LibraryAudiobooksTabProps {
-  libraryId: string
+  libraryId: string;
   /** Parent loading state (e.g., library context still loading) */
-  loading?: boolean
-  onDeleteAudiobook?: (audiobookId: string, audiobookTitle: string) => void
-  onAddAudiobook?: () => void
+  loading?: boolean;
+  onDeleteAudiobook?: (audiobookId: string, audiobookTitle: string) => void;
+  onAddAudiobook?: () => void;
 }
 
 // ============================================================================
@@ -76,161 +48,191 @@ export function LibraryAudiobooksTab({
   onAddAudiobook,
 }: LibraryAudiobooksTabProps) {
   // URL-persisted state via nuqs
-  const [selectedLetter, setSelectedLetter] = useQueryState('letter', parseAsString.withDefault(''))
-  const [searchTerm, setSearchTerm] = useQueryState('q', parseAsString.withDefault(''))
-  const [sortColumn, setSortColumn] = useQueryState('sort', parseAsString.withDefault('title'))
+  const [selectedLetter, setSelectedLetter] = useQueryState(
+    "letter",
+    parseAsString.withDefault(""),
+  );
+  const [searchTerm, setSearchTerm] = useQueryState(
+    "q",
+    parseAsString.withDefault(""),
+  );
+  const [sortColumn, setSortColumn] = useQueryState(
+    "sort",
+    parseAsString.withDefault("title"),
+  );
   const [sortDirection, setSortDirection] = useQueryState(
-    'order',
-    parseAsStringLiteral(['asc', 'desc'] as const).withDefault('asc')
-  )
-  const normalizedLetter = selectedLetter === '' ? null : selectedLetter
+    "order",
+    parseAsStringLiteral(["asc", "desc"] as const).withDefault("asc"),
+  );
+  const normalizedLetter = selectedLetter === "" ? null : selectedLetter;
 
   // Handle sort change from DataTable
-  const handleSortChange = useCallback((column: string, direction: 'asc' | 'desc') => {
-    setSortColumn(column)
-    setSortDirection(direction)
-  }, [setSortColumn, setSortDirection])
-  
-  const [audiobooks, setAudiobooks] = useState<Audiobook[]>([])
-  const [audiobooksLoading, setAudiobooksLoading] = useState(true)
-  const [authors, setAuthors] = useState<AudiobookAuthor[]>([])
-  const [authorsLoading, setAuthorsLoading] = useState(true)
+  const handleSortChange = useCallback(
+    (column: string, direction: "asc" | "desc") => {
+      setSortColumn(column);
+      setSortDirection(direction);
+    },
+    [setSortColumn, setSortDirection],
+  );
+
+  const [audiobooks, setAudiobooks] = useState<Audiobook[]>([]);
+  const [audiobooksLoading, setAudiobooksLoading] = useState(true);
+  const [authors, setAuthors] = useState<AudiobookAuthor[]>([]);
+  const [authorsLoading, setAuthorsLoading] = useState(true);
 
   // Check if we should skip queries (loading or template ID)
-  const shouldSkipQueries = parentLoading || libraryId.startsWith('template')
+  const shouldSkipQueries = parentLoading || libraryId.startsWith("template");
 
   // Fetch authors separately (still needed for name lookup)
   useEffect(() => {
     if (shouldSkipQueries) {
-      return
+      return;
     }
     const fetchAudiobooks = async () => {
       try {
-        const result = await queryPromise<{ Audiobooks: { Edges: Array<{ Node: AudiobookNode }> } }>(AUDIOBOOKS_QUERY, { libraryId })
-          
-        const edges = result.data?.Audiobooks?.Edges ?? []
-        setAudiobooks(edges.map((e) => ({
+        const result = await apolloClient.query({
+          query: LibraryAudiobooksTabDocument,
+          variables: { LibraryId: libraryId },
+          fetchPolicy: "network-only",
+        });
+
+        const edges = result.data?.Audiobooks?.Edges ?? [];
+        const mappedAudiobooks = edges.map((e) => ({
           id: e.Node.Id,
-          authorId: e.Node.AuthorId,
+          authorId: e.Node.AuthorName ?? null,
           libraryId: e.Node.LibraryId,
           title: e.Node.Title,
-          sortTitle: e.Node.SortTitle,
-          subtitle: e.Node.Subtitle,
-          openlibraryId: e.Node.OpenlibraryId,
-          isbn: e.Node.Isbn,
-          description: e.Node.Description,
-          publisher: e.Node.Publisher,
-          language: e.Node.Language,
+          sortTitle: e.Node.SortTitle ?? null,
+          subtitle: null,
+          openlibraryId: null,
+          isbn: e.Node.Isbn ?? null,
+          description: e.Node.Description ?? null,
+          publisher: e.Node.Publisher ?? null,
+          language: e.Node.Language ?? null,
           narrators: e.Node.Narrators,
-          seriesName: e.Node.SeriesName,
-          durationSecs: e.Node.DurationSecs,
-          coverUrl: e.Node.CoverUrl,
+          seriesName: null,
+          durationSecs: e.Node.TotalDurationSecs ?? null,
+          coverUrl: e.Node.CoverUrl ?? null,
           hasFiles: e.Node.HasFiles,
-          sizeBytes: e.Node.SizeBytes,
-          path: e.Node.Path,
-          chapterCount: e.Node.ChapterCount,
-          downloadedChapterCount: e.Node.DownloadedChapterCount,
-        })))
+          sizeBytes: e.Node.SizeBytes ?? null,
+          path: e.Node.Path ?? null,
+          chapterCount: e.Node.ChapterCount ?? null,
+          downloadedChapterCount: null,
+        }));
+        setAudiobooks(mappedAudiobooks);
+        const derivedAuthors = Array.from(
+          new Map(
+            edges
+              .filter((e) => Boolean(e.Node.AuthorName))
+              .map((e) => [
+                e.Node.AuthorName as string,
+                e.Node.AuthorName as string,
+              ]),
+          ).values(),
+        ).map((authorName) => ({
+          id: authorName,
+          libraryId,
+          name: authorName,
+          sortName: authorName,
+          openlibraryId: null,
+        }));
+        setAuthors(derivedAuthors);
       } catch (err) {
-        console.error('Failed to fetch audiobooks:', err)
+        console.error("Failed to fetch audiobooks:", err);
       } finally {
-        setAudiobooksLoading(false)
+        setAudiobooksLoading(false);
+        setAuthorsLoading(false);
       }
-    }
+    };
+    fetchAudiobooks();
+  }, [libraryId, shouldSkipQueries]);
 
-    const fetchAuthors = async () => {
-      try {
-        const result = await queryPromise<{ AudiobookAuthors: { Edges: Array<{ Node: AudiobookAuthorNode }> } }>(AUDIOBOOK_AUTHORS_QUERY, { libraryId })
-          
-        const edges = result.data?.AudiobookAuthors?.Edges ?? []
-        setAuthors(edges.map((e) => ({
-          id: e.Node.Id,
-          libraryId: e.Node.LibraryId,
-          name: e.Node.Name,
-          sortName: e.Node.SortName,
-          openlibraryId: e.Node.OpenlibraryId,
-        })))
-      } catch (err) {
-        console.error('Failed to fetch authors:', err)
-      } finally {
-        setAuthorsLoading(false)
-      }
-    }
-    fetchAudiobooks()
-    fetchAuthors()
-  }, [libraryId, shouldSkipQueries])
-
-  const isLoading = audiobooksLoading || authorsLoading
+  const isLoading = audiobooksLoading || authorsLoading;
 
   // Create author lookup map
   const authorMap = useMemo(() => {
-    const map = new Map<string, string>()
+    const map = new Map<string, string>();
     authors.forEach((author) => {
-      map.set(author.id, author.name)
-    })
-    return map
-  }, [authors])
+      map.set(author.id, author.name);
+    });
+    return map;
+  }, [authors]);
 
   // Get letters that have audiobooks
   const availableLetters = useMemo(() => {
-    const letters = new Set<string>()
+    const letters = new Set<string>();
     audiobooks.forEach((audiobook) => {
-      letters.add(getFirstLetter(audiobook.title))
-    })
-    return letters
-  }, [audiobooks])
+      letters.add(getFirstLetter(audiobook.title));
+    });
+    return letters;
+  }, [audiobooks]);
 
   const visibleAudiobooks = useMemo(() => {
-    let list = audiobooks
+    let list = audiobooks;
 
     if (searchTerm) {
-      const q = searchTerm.toLowerCase()
-      list = list.filter((item) => item.title.toLowerCase().includes(q))
+      const q = searchTerm.toLowerCase();
+      list = list.filter((item) => item.title.toLowerCase().includes(q));
     }
 
     if (normalizedLetter) {
-      list = list.filter((item) => getFirstLetter(item.title) === normalizedLetter)
+      list = list.filter(
+        (item) => getFirstLetter(item.title) === normalizedLetter,
+      );
     }
 
-    const sorted = [...list]
+    const sorted = [...list];
     sorted.sort((a, b) => {
-      let av: string | number = a.title
-      let bv: string | number = b.title
-      if (sortColumn === 'author') {
-        av = (a.authorId && authorMap.get(a.authorId)) ?? ''
-        bv = (b.authorId && authorMap.get(b.authorId)) ?? ''
-      } else if (sortColumn === 'duration') {
-        av = a.durationSecs ?? 0
-        bv = b.durationSecs ?? 0
+      let av: string | number = a.title;
+      let bv: string | number = b.title;
+      if (sortColumn === "author") {
+        av = (a.authorId && authorMap.get(a.authorId)) ?? "";
+        bv = (b.authorId && authorMap.get(b.authorId)) ?? "";
+      } else if (sortColumn === "duration") {
+        av = a.durationSecs ?? 0;
+        bv = b.durationSecs ?? 0;
       }
 
-      if (typeof av === 'number' && typeof bv === 'number') {
-        return sortDirection === 'asc' ? av - bv : bv - av
+      if (typeof av === "number" && typeof bv === "number") {
+        return sortDirection === "asc" ? av - bv : bv - av;
       }
-      const cmp = String(av).localeCompare(String(bv))
-      return sortDirection === 'asc' ? cmp : -cmp
-    })
+      const cmp = String(av).localeCompare(String(bv));
+      return sortDirection === "asc" ? cmp : -cmp;
+    });
 
-    return sorted
-  }, [audiobooks, searchTerm, normalizedLetter, sortColumn, sortDirection, authorMap])
+    return sorted;
+  }, [
+    audiobooks,
+    searchTerm,
+    normalizedLetter,
+    sortColumn,
+    sortDirection,
+    authorMap,
+  ]);
 
   // Handle letter change - toggle filter
-  const handleLetterChange = useCallback((letter: string | null) => {
-    setSelectedLetter(normalizedLetter === letter ? '' : (letter ?? ''))
-  }, [normalizedLetter, setSelectedLetter])
+  const handleLetterChange = useCallback(
+    (letter: string | null) => {
+      setSelectedLetter(normalizedLetter === letter ? "" : (letter ?? ""));
+    },
+    [normalizedLetter, setSelectedLetter],
+  );
 
   // Handle search change for server-side filtering
-  const handleSearchChange = useCallback((term: string) => {
-    setSearchTerm(term || '')
-    setSelectedLetter('') // Reset letter filter when searching
-  }, [setSearchTerm, setSelectedLetter])
+  const handleSearchChange = useCallback(
+    (term: string) => {
+      setSearchTerm(term || "");
+      setSelectedLetter(""); // Reset letter filter when searching
+    },
+    [setSearchTerm, setSelectedLetter],
+  );
 
   // Column definitions
   const columns: DataTableColumn<Audiobook>[] = useMemo(
     () => [
       {
-        key: 'title',
-        label: 'AUDIOBOOK',
+        key: "title",
+        label: "AUDIOBOOK",
         // sortable: true (default) - server handles actual sorting
         render: (audiobook) => (
           <Link
@@ -261,50 +263,56 @@ export function LibraryAudiobooksTab({
         ),
       },
       {
-        key: 'author',
-        label: 'AUTHOR',
+        key: "author",
+        label: "AUTHOR",
         width: 150,
         sortable: false,
         render: (audiobook) => (
           <span className="flex items-center gap-1">
             <IconUser size={14} className="text-default-400" />
-            {(audiobook.authorId && authorMap.get(audiobook.authorId)) || '—'}
+            {(audiobook.authorId && authorMap.get(audiobook.authorId)) || "—"}
           </span>
         ),
       },
       {
-        key: 'series',
-        label: 'SERIES',
+        key: "series",
+        label: "SERIES",
         width: 150,
         sortable: false,
-        render: (audiobook) => <span>{audiobook.seriesName || '—'}</span>,
+        render: (audiobook) => <span>{audiobook.seriesName || "—"}</span>,
       },
       {
-        key: 'progress',
-        label: 'PROGRESS',
+        key: "progress",
+        label: "PROGRESS",
         width: 80,
         sortable: false,
         render: (audiobook) => {
-          const downloaded = audiobook.downloadedChapterCount ?? 0
-          const total = audiobook.chapterCount ?? 0
-          const isComplete = total > 0 && downloaded >= total
+          const downloaded = audiobook.downloadedChapterCount ?? 0;
+          const total = audiobook.chapterCount ?? 0;
+          const isComplete = total > 0 && downloaded >= total;
           return (
-            <span className={isComplete ? 'text-success font-medium' : 'text-warning font-medium'}>
+            <span
+              className={
+                isComplete
+                  ? "text-success font-medium"
+                  : "text-warning font-medium"
+              }
+            >
               {downloaded}/{total}
             </span>
-          )
+          );
         },
       },
     ],
-    [authorMap]
-  )
+    [authorMap],
+  );
 
   // Row actions
   const rowActions: RowAction<Audiobook>[] = useMemo(
     () => [
       {
-        key: 'view',
-        label: 'View',
+        key: "view",
+        label: "View",
         icon: <IconEye size={16} />,
         inDropdown: true,
         onAction: () => {
@@ -314,18 +322,19 @@ export function LibraryAudiobooksTab({
       ...(onDeleteAudiobook
         ? [
             {
-              key: 'delete',
-              label: 'Delete',
+              key: "delete",
+              label: "Delete",
               icon: <IconTrash size={16} className="text-red-400" />,
               isDestructive: true,
               inDropdown: true,
-              onAction: (audiobook: Audiobook) => onDeleteAudiobook(audiobook.id, audiobook.title),
+              onAction: (audiobook: Audiobook) =>
+                onDeleteAudiobook(audiobook.id, audiobook.title),
             },
           ]
         : []),
     ],
-    [onDeleteAudiobook]
-  )
+    [onDeleteAudiobook],
+  );
 
   // Card renderer
   const cardRenderer = useCallback(
@@ -333,11 +342,15 @@ export function LibraryAudiobooksTab({
       <AudiobookCard
         audiobook={item}
         authorName={item.authorId ? authorMap.get(item.authorId) : undefined}
-        onDelete={onDeleteAudiobook ? () => onDeleteAudiobook(item.id, item.title) : undefined}
+        onDelete={
+          onDeleteAudiobook
+            ? () => onDeleteAudiobook(item.id, item.title)
+            : undefined
+        }
       />
     ),
-    [authorMap, onDeleteAudiobook]
-  )
+    [authorMap, onDeleteAudiobook],
+  );
 
   return (
     <div className="flex flex-col grow w-full">
@@ -349,7 +362,7 @@ export function LibraryAudiobooksTab({
           columns={columns}
           getRowKey={(audiobook) => audiobook.id}
           searchPlaceholder="Search audiobooks..."
-          sortColumn={sortColumn || 'title'}
+          sortColumn={sortColumn || "title"}
           sortDirection={sortDirection}
           onSortChange={handleSortChange}
           showViewModeToggle
@@ -375,8 +388,13 @@ export function LibraryAudiobooksTab({
           emptyContent={
             <Card className="bg-content1/50 border-default-300 border-dashed border-2">
               <CardBody className="py-12 text-center">
-                <IconHeadphones size={48} className="mx-auto mb-4 text-orange-400" />
-                <h3 className="text-lg font-semibold mb-2">No audiobooks yet</h3>
+                <IconHeadphones
+                  size={48}
+                  className="mx-auto mb-4 text-orange-400"
+                />
+                <h3 className="text-lg font-semibold mb-2">
+                  No audiobooks yet
+                </h3>
                 <p className="text-default-500 mb-4">
                   Add audiobooks to this library to start listening.
                 </p>
@@ -390,7 +408,12 @@ export function LibraryAudiobooksTab({
           }
           toolbarContent={
             onAddAudiobook ? (
-              <Button color="primary" size="sm" onPress={onAddAudiobook} isIconOnly>
+              <Button
+                color="primary"
+                size="sm"
+                onPress={onAddAudiobook}
+                isIconOnly
+              >
                 <IconPlus size={16} />
               </Button>
             ) : undefined
@@ -399,5 +422,5 @@ export function LibraryAudiobooksTab({
         />
       </div>
     </div>
-  )
+  );
 }

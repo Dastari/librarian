@@ -707,7 +707,10 @@ impl Service for AuthService {
     }
 
     async fn start(&self) -> Result<()> {
-        info!(service = "auth", "Auth service starting");
+        info!(
+            service = "auth",
+            "Auth service starting: acquiring database handle and JWT secret"
+        );
         let db = self
             .manager
             .get_database()
@@ -727,14 +730,20 @@ impl Service for AuthService {
                 anyhow!("JWT secret not found in database (run database service first)")
             })?;
         *self.jwt_secret.write().await = Some(secret);
-        info!(service = "auth", "Auth service started");
+        info!(
+            service = "auth",
+            "Auth service started: database handle set and JWT secret loaded"
+        );
         Ok(())
     }
 
     async fn stop(&self) -> Result<()> {
         *self.jwt_secret.write().await = None;
         *self.db.write().await = None;
-        info!(service = "auth", "Stopped");
+        info!(
+            service = "auth",
+            "Auth service stopped: in-memory JWT secret and DB handle cleared"
+        );
         Ok(())
     }
 }

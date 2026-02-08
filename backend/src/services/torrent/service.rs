@@ -332,7 +332,10 @@ impl Service for TorrentService {
     }
 
     async fn start(&self) -> Result<()> {
-        info!(service = "torrent", "Torrent service starting");
+        info!(
+            service = "torrent",
+            "Torrent service starting: loading settings, initializing session, and restoring torrents"
+        );
 
         let db_svc = self
             .manager
@@ -369,7 +372,11 @@ impl Service for TorrentService {
             config.max_concurrent = v;
         }
 
-        info!(path = %config.download_dir.display(), "Using download directory");
+        info!(
+            path = %config.download_dir.display(),
+            "Using configured torrent download directory: {}",
+            config.download_dir.display()
+        );
 
         let download_dir_ok = tokio::fs::create_dir_all(&config.download_dir)
             .await
@@ -378,7 +385,11 @@ impl Service for TorrentService {
             config.download_dir.clone()
         } else {
             let temp = std::env::temp_dir().join("librarian-downloads");
-            warn!(path = %temp.display(), "Using temp directory for downloads");
+            warn!(
+                path = %temp.display(),
+                "Configured download directory could not be created; falling back to temp download directory {}",
+                temp.display()
+            );
             let _ = tokio::fs::create_dir_all(&temp).await;
             config.download_dir = temp.clone();
             temp
@@ -389,7 +400,11 @@ impl Service for TorrentService {
             config.session_dir.clone()
         } else {
             let temp = std::env::temp_dir().join("librarian-session");
-            warn!(path = %temp.display(), "Using temp directory for session");
+            warn!(
+                path = %temp.display(),
+                "Configured session directory could not be created; falling back to temp session directory {}",
+                temp.display()
+            );
             let _ = tokio::fs::create_dir_all(&temp).await;
             config.session_dir = temp.clone();
             temp
@@ -445,15 +460,23 @@ impl Service for TorrentService {
             if let Err(e) =
                 database::sync_session_to_database(&session, &db, &schema, user, &config).await
             {
-                warn!(error = %e, "Failed to sync session torrents to database");
+                warn!(
+                    error = %e,
+                    "Failed to sync existing session torrents to database during startup: error={}",
+                    e
+                );
             }
         } else {
-            warn!("No user found in database, skipping session sync");
+            warn!("No default user found in database; skipping initial torrent session-to-DB sync");
         }
         if let Err(e) =
             database::restore_from_database(&session, &db, &schema, auth_user.as_ref()).await
         {
-            warn!(error = %e, "Failed to restore torrents from database");
+            warn!(
+                error = %e,
+                "Failed to restore torrents from database during startup: error={}",
+                e
+            );
         }
 
         let cancel_token = CancellationToken::new();
@@ -514,6 +537,11 @@ impl Service for TorrentService {
             });
         }
 
+        let started_download_dir = config.download_dir.clone();
+        let started_session_dir = config.session_dir.clone();
+        let started_listen_port = config.listen_port;
+        let started_enable_dht = config.enable_dht;
+
         let runtime = Arc::new(TorrentRuntime {
             session,
             config,
@@ -528,12 +556,26 @@ impl Service for TorrentService {
         });
 
         *self.inner.write().await = Some(runtime);
-        info!(service = "torrent", "Torrent service started");
+        info!(
+            service = "torrent",
+            download_dir = %started_download_dir.display(),
+            session_dir = %started_session_dir.display(),
+            listen_port = started_listen_port,
+            enable_dht = started_enable_dht,
+            "Torrent service started: download_dir={}, session_dir={}, listen_port={}, enable_dht={}",
+            started_download_dir.display(),
+            started_session_dir.display(),
+            started_listen_port,
+            started_enable_dht
+        );
         Ok(())
     }
 
     async fn stop(&self) -> Result<()> {
-        info!(service = "torrent", "Torrent service stopping");
+        info!(
+            service = "torrent",
+            "Torrent service stopping: canceling background loops and shutting down runtime"
+        );
         let previous = self.inner.write().await.take();
         if let Some(arc_r) = previous {
             arc_r.cancel_token.cancel();
@@ -541,7 +583,10 @@ impl Service for TorrentService {
                 runtime.shutdown().await;
             }
         }
-        info!(service = "torrent", "Torrent service stopped");
+        info!(
+            service = "torrent",
+            "Torrent service stopped: runtime and background loops shut down"
+        );
         Ok(())
     }
 

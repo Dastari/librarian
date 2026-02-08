@@ -9,6 +9,7 @@ import {
   IconTrash,
   IconDeviceTv,
   IconDotsVertical,
+  IconPlayerPlay,
 } from "@tabler/icons-react";
 
 // ============================================================================
@@ -85,6 +86,18 @@ export function TvShowCard({ show, onDelete }: TvShowCardProps) {
           <div className="flex items-center gap-1.5 text-xs text-white/70">
             {show.Network && <span className="truncate">{show.Network}</span>}
           </div>
+        </div>
+
+        {/* Play overlay button (open detail for playback controls) */}
+        <div className="absolute inset-0 z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
+          <Link
+            to="/shows/$showId"
+            params={{ showId: show.Id }}
+            className="pointer-events-auto w-14 h-14 rounded-full bg-primary/90 text-white flex items-center justify-center shadow-lg hover:scale-110 transition-transform"
+            aria-label={`Open ${show.Name} to play`}
+          >
+            <IconPlayerPlay size={28} className="ml-1" />
+          </Link>
         </div>
 
         {/* Action menu - bottom right, visible on hover, above the clickable overlay */}

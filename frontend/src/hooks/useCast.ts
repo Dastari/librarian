@@ -1,39 +1,67 @@
 /**
  * Cast hook for managing Chromecast/media casting state.
  * Uses codegen CastDevices, CastSessions, CastSettings queries.
- * Legacy mutation strings kept for discover/castMedia/play/pause (custom backend ops).
+ * Uses generated mutation documents for custom cast control operations.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from "react";
 import {
   CastDevicesDocument,
   CastSessionsDocument,
   CastSettingsDocument,
-} from '../lib/graphql/generated/graphql';
+  DiscoverCastDevicesOpDocument,
+  CastMediaOpDocument,
+  CastPlayOpDocument,
+  CastPauseOpDocument,
+  CastStopOpDocument,
+  CastSeekOpDocument,
+  CastSetVolumeOpDocument,
+  CastSetMutedOpDocument,
+} from "../lib/graphql/generated/graphql";
 import type {
+  CastMediaInput,
+  CastMediaOpMutationVariables,
+  CastPlayOpMutation,
+  CastPlayOpMutationVariables,
+  CastPauseOpMutation,
+  CastPauseOpMutationVariables,
+  CastStopOpMutation,
+  CastStopOpMutationVariables,
+  CastSeekOpMutation,
+  CastSeekOpMutationVariables,
+  CastSetVolumeOpMutation,
+  CastSetVolumeOpMutationVariables,
+  CastSetMutedOpMutation,
+  CastSetMutedOpMutationVariables,
+  CastMediaOpMutation,
+  DiscoverCastDevicesOpMutation,
+  DiscoverCastDevicesOpMutationVariables,
   CastDevicesQuery,
   CastSessionsQuery,
   CastSettingsQuery,
-} from '../lib/graphql/generated/graphql';
-import {
-  DISCOVER_CAST_DEVICES_MUTATION,
-  CAST_MEDIA_MUTATION,
-  CAST_PLAY_MUTATION,
-  CAST_PAUSE_MUTATION,
-  CAST_STOP_MUTATION,
-  CAST_SEEK_MUTATION,
-  CAST_SET_VOLUME_MUTATION,
-  CAST_SET_MUTED_MUTATION,
-  type CastDevice,
-  type CastSession,
-  type CastSettings,
-  type CastMediaInput,
-  type CastSessionResult,
-} from '../lib/graphql';
+} from "../lib/graphql/generated/graphql";
+import { apolloClient, useMutation } from "../lib/graphql/client";
 
-type DeviceNode = CastDevicesQuery['CastDevices']['Edges'][0]['Node'];
-type SessionNode = CastSessionsQuery['CastSessions']['Edges'][0]['Node'];
-type SettingNode = CastSettingsQuery['CastSettings']['Edges'][0]['Node'];
+type DeviceNode = CastDevicesQuery["CastDevices"]["Edges"][0]["Node"];
+type SessionNode = CastSessionsQuery["CastSessions"]["Edges"][0]["Node"];
+type SettingNode = CastSettingsQuery["CastSettings"]["Edges"][0]["Node"];
+export type CastDevice =
+  DiscoverCastDevicesOpMutation["DiscoverCastDevices"][number];
+export type CastSession = NonNullable<
+  CastMediaOpMutation["CastMedia"]["session"]
+>;
+export type CastSessionResult = {
+  success: boolean;
+  session: CastSession | null;
+  error: string | null;
+};
+export type CastSettings = {
+  autoDiscoveryEnabled: boolean;
+  discoveryIntervalSeconds: number;
+  defaultVolume: number;
+  transcodeIncompatible: boolean;
+  preferredQuality: string | null;
+};
 
 function deviceNodeToApp(node: DeviceNode): CastDevice {
   return {
@@ -42,7 +70,7 @@ function deviceNodeToApp(node: DeviceNode): CastDevice {
     address: node.Address,
     port: node.Port,
     model: node.Model ?? null,
-    deviceType: node.DeviceType as CastDevice['deviceType'],
+    deviceType: node.DeviceType as CastDevice["deviceType"],
     isFavorite: node.IsFavorite,
     isManual: node.IsManual,
     isConnected: false,
@@ -58,7 +86,7 @@ function sessionNodeToApp(node: SessionNode): CastSession {
     mediaFileId: node.MediaFileId ?? null,
     episodeId: node.EpisodeId ?? null,
     streamUrl: node.StreamUrl,
-    playerState: node.PlayerState as CastSession['playerState'],
+    playerState: node.PlayerState as CastSession["playerState"],
     currentTime: node.CurrentPosition,
     duration: node.Duration ?? null,
     volume: node.Volume,
@@ -74,6 +102,42 @@ function settingNodeToApp(node: SettingNode): CastSettings {
     defaultVolume: node.DefaultVolume,
     transcodeIncompatible: node.TranscodeIncompatible,
     preferredQuality: node.PreferredQuality ?? null,
+  };
+}
+
+function normalizeDiscoveredDevice(
+  device: DiscoverCastDevicesOpMutation["DiscoverCastDevices"][number],
+): CastDevice {
+  return {
+    id: device.id,
+    name: device.name,
+    address: device.address,
+    port: device.port,
+    model: device.model ?? null,
+    deviceType: device.deviceType as CastDevice["deviceType"],
+    isFavorite: device.isFavorite,
+    isManual: device.isManual,
+    isConnected: device.isConnected ?? false,
+    lastSeenAt: device.lastSeenAt ?? null,
+  };
+}
+
+function normalizeCastSession(
+  session: NonNullable<CastMediaOpMutation["CastMedia"]["session"]>,
+): CastSession {
+  return {
+    id: session.id,
+    deviceId: session.deviceId ?? null,
+    deviceName: session.deviceName ?? null,
+    mediaFileId: session.mediaFileId ?? null,
+    episodeId: session.episodeId ?? null,
+    streamUrl: session.streamUrl,
+    playerState: session.playerState as CastSession["playerState"],
+    currentTime: session.currentTime,
+    duration: session.duration ?? null,
+    volume: session.volume,
+    isMuted: session.isMuted,
+    startedAt: session.startedAt,
   };
 }
 
@@ -102,28 +166,76 @@ export function useCast(): UseCastResult {
   const [isLoading, setIsLoading] = useState(true);
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [discoverCastDevices] = useMutation<
+    DiscoverCastDevicesOpMutation,
+    DiscoverCastDevicesOpMutationVariables
+  >(DiscoverCastDevicesOpDocument);
+  const [castMediaMutation] = useMutation<
+    CastMediaOpMutation,
+    CastMediaOpMutationVariables
+  >(CastMediaOpDocument);
+  const [castPlayMutation] = useMutation<
+    CastPlayOpMutation,
+    CastPlayOpMutationVariables
+  >(CastPlayOpDocument);
+  const [castPauseMutation] = useMutation<
+    CastPauseOpMutation,
+    CastPauseOpMutationVariables
+  >(CastPauseOpDocument);
+  const [castStopMutation] = useMutation<
+    CastStopOpMutation,
+    CastStopOpMutationVariables
+  >(CastStopOpDocument);
+  const [castSeekMutation] = useMutation<
+    CastSeekOpMutation,
+    CastSeekOpMutationVariables
+  >(CastSeekOpDocument);
+  const [castSetVolumeMutation] = useMutation<
+    CastSetVolumeOpMutation,
+    CastSetVolumeOpMutationVariables
+  >(CastSetVolumeOpDocument);
+  const [castSetMutedMutation] = useMutation<
+    CastSetMutedOpMutation,
+    CastSetMutedOpMutationVariables
+  >(CastSetMutedOpDocument);
 
   const refresh = useCallback(async () => {
     try {
       setError(null);
       const [devicesRes, sessionsRes, settingsRes] = await Promise.all([
-        queryPromise(CastDevicesDocument, {}),
-        queryPromise(CastSessionsDocument, {}),
-        queryPromise(CastSettingsDocument, { Page: { Limit: 1, Offset: 0 } }),
+        apolloClient.query({
+          query: CastDevicesDocument,
+          fetchPolicy: "network-only",
+        }),
+        apolloClient.query({
+          query: CastSessionsDocument,
+          fetchPolicy: "network-only",
+        }),
+        apolloClient.query({
+          query: CastSettingsDocument,
+          variables: { Page: { Limit: 1, Offset: 0 } },
+          fetchPolicy: "network-only",
+        }),
       ]);
 
       if (devicesRes.data?.CastDevices?.Edges) {
-        setDevices(devicesRes.data.CastDevices.Edges.map((e: any) => deviceNodeToApp(e.Node)));
+        setDevices(
+          devicesRes.data.CastDevices.Edges.map((e) => deviceNodeToApp(e.Node)),
+        );
       }
       if (sessionsRes.data?.CastSessions?.Edges) {
-        const sessions = sessionsRes.data.CastSessions.Edges.map((e: any) => sessionNodeToApp(e.Node));
+        const sessions = sessionsRes.data.CastSessions.Edges.map((e) =>
+          sessionNodeToApp(e.Node),
+        );
         setActiveSession(sessions[0] ?? null);
       }
       if (settingsRes.data?.CastSettings?.Edges?.length) {
-        setSettings(settingNodeToApp(settingsRes.data.CastSettings.Edges[0].Node));
+        setSettings(
+          settingNodeToApp(settingsRes.data.CastSettings.Edges[0].Node),
+        );
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load cast data');
+      setError(e instanceof Error ? e.message : "Failed to load cast data");
     } finally {
       setIsLoading(false);
     }
@@ -136,11 +248,11 @@ export function useCast(): UseCastResult {
   const discoverDevices = useCallback(async () => {
     setIsDiscovering(true);
     try {
-      const result = await mutationPromise<{ discoverCastDevices: CastDevice[] }>(DISCOVER_CAST_DEVICES_MUTATION, {})
-        ;
-
-      if (result.data?.discoverCastDevices) {
-        setDevices(result.data.discoverCastDevices);
+      const result = await discoverCastDevices();
+      if (result.data?.DiscoverCastDevices) {
+        setDevices(
+          result.data.DiscoverCastDevices.map(normalizeDiscoveredDevice),
+        );
       } else {
         await refresh();
       }
@@ -149,129 +261,189 @@ export function useCast(): UseCastResult {
     } finally {
       setIsDiscovering(false);
     }
-  }, [refresh]);
+  }, [discoverCastDevices, refresh]);
 
-  const castMedia = useCallback(async (input: CastMediaInput): Promise<CastSessionResult> => {
-    try {
-      const result = await mutationPromise<{ castMedia: CastSessionResult }>(CAST_MEDIA_MUTATION, { input })
-        ;
+  const castMedia = useCallback(
+    async (input: CastMediaInput): Promise<CastSessionResult> => {
+      try {
+        const result = await castMediaMutation({ variables: { input } });
+        if (result.data?.CastMedia.success && result.data.CastMedia.session) {
+          setActiveSession(normalizeCastSession(result.data.CastMedia.session));
+        }
 
-      if (result.data?.castMedia.success && result.data.castMedia.session) {
-        setActiveSession(result.data.castMedia.session);
+        const castResult = result.data?.CastMedia;
+        return (
+          (castResult
+            ? {
+                success: castResult.success,
+                error: castResult.error ?? null,
+                session: castResult.session
+                  ? normalizeCastSession(castResult.session)
+                  : null,
+              }
+            : null) ?? {
+            success: false,
+            session: null,
+            error: "Unknown error",
+          }
+        );
+      } catch (e) {
+        return {
+          success: false,
+          session: null,
+          error: e instanceof Error ? e.message : "Failed to cast",
+        };
       }
-
-      return result.data?.castMedia ?? { success: false, session: null, error: 'Unknown error' };
-    } catch (e) {
-      return {
-        success: false,
-        session: null,
-        error: e instanceof Error ? e.message : 'Failed to cast',
-      };
-    }
-  }, []);
+    },
+    [castMediaMutation],
+  );
 
   const play = useCallback(async () => {
     if (!activeSession) return;
     try {
-      const result = await mutationPromise<{ castPlay: CastSessionResult }>(CAST_PLAY_MUTATION, {
-          sessionId: activeSession.id,
-        })
-        ;
-      if (result.data?.castPlay?.session) {
-        setActiveSession((prev) => (prev ? { ...prev, ...result.data!.castPlay!.session! } : null));
+      const result = await castPlayMutation({
+        variables: { sessionId: activeSession.id },
+      });
+      if (result.data?.CastPlay?.session) {
+        const patch = result.data.CastPlay.session;
+        setActiveSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                id: patch.id,
+                playerState: patch.playerState as CastSession["playerState"],
+                currentTime: patch.currentTime,
+              }
+            : null,
+        );
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to play');
+      setError(e instanceof Error ? e.message : "Failed to play");
     }
-  }, [activeSession]);
+  }, [activeSession, castPlayMutation]);
 
   const pause = useCallback(async () => {
     if (!activeSession) return;
     try {
-      const result = await mutationPromise<{ castPause: CastSessionResult }>(CAST_PAUSE_MUTATION, {
-          sessionId: activeSession.id,
-        })
-        ;
-      if (result.data?.castPause?.session) {
-        setActiveSession((prev) => (prev ? { ...prev, ...result.data!.castPause!.session! } : null));
+      const result = await castPauseMutation({
+        variables: { sessionId: activeSession.id },
+      });
+      if (result.data?.CastPause?.session) {
+        const patch = result.data.CastPause.session;
+        setActiveSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                id: patch.id,
+                playerState: patch.playerState as CastSession["playerState"],
+                currentTime: patch.currentTime,
+              }
+            : null,
+        );
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to pause');
+      setError(e instanceof Error ? e.message : "Failed to pause");
     }
-  }, [activeSession]);
+  }, [activeSession, castPauseMutation]);
 
   const stop = useCallback(async () => {
     if (!activeSession) return;
     try {
-      await mutationPromise(CAST_STOP_MUTATION, { sessionId: activeSession.id })
-        ;
+      await castStopMutation({ variables: { sessionId: activeSession.id } });
       setActiveSession(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to stop');
+      setError(e instanceof Error ? e.message : "Failed to stop");
     }
-  }, [activeSession]);
+  }, [activeSession, castStopMutation]);
 
   const seek = useCallback(
     async (position: number) => {
       if (!activeSession) return;
       try {
-        const result = await mutationPromise<{ castSeek: CastSessionResult }>(CAST_SEEK_MUTATION, {
+        const result = await castSeekMutation({
+          variables: {
             sessionId: activeSession.id,
             position,
-          })
-          ;
-        if (result.data?.castSeek?.session) {
+          },
+        });
+        if (result.data?.CastSeek?.session) {
+          const patch = result.data.CastSeek.session;
           setActiveSession((prev) =>
-            prev ? { ...prev, ...result.data!.castSeek!.session! } : null,
+            prev
+              ? {
+                  ...prev,
+                  id: patch.id,
+                  playerState: patch.playerState as CastSession["playerState"],
+                  currentTime: patch.currentTime,
+                }
+              : null,
           );
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to seek');
+        setError(e instanceof Error ? e.message : "Failed to seek");
       }
     },
-    [activeSession],
+    [activeSession, castSeekMutation],
   );
 
   const setVolume = useCallback(
     async (volume: number) => {
       if (!activeSession) return;
       try {
-        const result = await mutationPromise<{ castSetVolume: CastSessionResult }>(CAST_SET_VOLUME_MUTATION, {
+        const result = await castSetVolumeMutation({
+          variables: {
             sessionId: activeSession.id,
             volume,
-          })
-          ;
-        if (result.data?.castSetVolume?.session) {
+          },
+        });
+        if (result.data?.CastSetVolume?.session) {
+          const patch = result.data.CastSetVolume.session;
           setActiveSession((prev) =>
-            prev ? { ...prev, ...result.data!.castSetVolume!.session! } : null,
+            prev
+              ? {
+                  ...prev,
+                  id: patch.id,
+                  volume: patch.volume,
+                  isMuted: patch.isMuted,
+                }
+              : null,
           );
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to set volume');
+        setError(e instanceof Error ? e.message : "Failed to set volume");
       }
     },
-    [activeSession],
+    [activeSession, castSetVolumeMutation],
   );
 
   const setMuted = useCallback(
     async (muted: boolean) => {
       if (!activeSession) return;
       try {
-        const result = await mutationPromise<{ castSetMuted: CastSessionResult }>(CAST_SET_MUTED_MUTATION, {
+        const result = await castSetMutedMutation({
+          variables: {
             sessionId: activeSession.id,
             muted,
-          })
-          ;
-        if (result.data?.castSetMuted?.session) {
+          },
+        });
+        if (result.data?.CastSetMuted?.session) {
+          const patch = result.data.CastSetMuted.session;
           setActiveSession((prev) =>
-            prev ? { ...prev, ...result.data!.castSetMuted!.session! } : null,
+            prev
+              ? {
+                  ...prev,
+                  id: patch.id,
+                  volume: patch.volume,
+                  isMuted: patch.isMuted,
+                }
+              : null,
           );
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to toggle mute');
+        setError(e instanceof Error ? e.message : "Failed to toggle mute");
       }
     },
-    [activeSession],
+    [activeSession, castSetMutedMutation],
   );
 
   return {

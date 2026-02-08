@@ -2,11 +2,14 @@
 //! Exposes BrowseDirectory with PascalCase types for the codegen frontend.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use async_graphql::{Context, InputObject, Object, Result, SimpleObject};
 use tokio::fs;
 
 use crate::services::graphql::auth::AuthUser;
+use crate::services::graphql::filesystem_network;
+use crate::{db::Database, services::manager::ServicesManager};
 
 /// Input for the BrowseDirectory query (PascalCase for GraphQL).
 #[derive(Default, InputObject)]
@@ -73,6 +76,50 @@ pub struct BrowseDirectoryResult {
     pub is_library_path: bool,
     #[graphql(name = "LibraryId")]
     pub library_id: Option<String>,
+}
+
+/// Runtime filesystem/network capabilities exposed to frontend.
+#[derive(SimpleObject)]
+#[graphql(name = "FilesystemRuntimeInfo")]
+pub struct FilesystemRuntimeInfo {
+    #[graphql(name = "Platform")]
+    pub platform: String,
+    #[graphql(name = "SupportsUncCredentials")]
+    pub supports_unc_credentials: bool,
+    #[graphql(name = "SupportsSambaMount")]
+    pub supports_samba_mount: bool,
+    #[graphql(name = "DefaultLinuxMountBase")]
+    pub default_linux_mount_base: Option<String>,
+}
+
+#[derive(InputObject)]
+#[graphql(name = "LibraryPathAvailabilityInput")]
+pub struct LibraryPathAvailabilityInput {
+    #[graphql(name = "Paths")]
+    pub paths: Vec<String>,
+    #[graphql(name = "AttemptReconnect")]
+    pub attempt_reconnect: Option<bool>,
+}
+
+#[derive(SimpleObject)]
+#[graphql(name = "LibraryPathAvailability")]
+pub struct LibraryPathAvailability {
+    #[graphql(name = "Path")]
+    pub path: String,
+    #[graphql(name = "Reachable")]
+    pub reachable: bool,
+    #[graphql(name = "Exists")]
+    pub exists: bool,
+    #[graphql(name = "IsDirectory")]
+    pub is_directory: bool,
+    #[graphql(name = "NeedsReconnect")]
+    pub needs_reconnect: bool,
+    #[graphql(name = "ReconnectAttempted")]
+    pub reconnect_attempted: bool,
+    #[graphql(name = "ReconnectSucceeded")]
+    pub reconnect_succeeded: bool,
+    #[graphql(name = "Message")]
+    pub message: Option<String>,
 }
 
 fn format_size(bytes: u64) -> String {
@@ -185,6 +232,55 @@ pub struct FilesystemQueries;
 
 #[Object]
 impl FilesystemQueries {
+    #[graphql(name = "FilesystemRuntimeInfo")]
+    async fn filesystem_runtime_info(&self, ctx: &Context<'_>) -> Result<FilesystemRuntimeInfo> {
+        let _user = ctx.data_opt::<AuthUser>().ok_or_else(|| {
+            async_graphql::Error::new("Authentication required to fetch runtime info")
+        })?;
+
+        Ok(FilesystemRuntimeInfo {
+            platform: filesystem_network::current_platform(),
+            supports_unc_credentials: filesystem_network::supports_unc_credentials(),
+            supports_samba_mount: filesystem_network::supports_samba_mount(),
+            default_linux_mount_base: filesystem_network::default_mount_base()
+                .map(ToString::to_string),
+        })
+    }
+
+    #[graphql(name = "LibraryPathAvailability")]
+    async fn library_path_availability(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "Input")] input: LibraryPathAvailabilityInput,
+    ) -> Result<Vec<LibraryPathAvailability>> {
+        let _user = ctx.data_opt::<AuthUser>().ok_or_else(|| {
+            async_graphql::Error::new("Authentication required to check path availability")
+        })?;
+
+        let db = ctx.data::<Database>()?;
+        let services = ctx.data::<Arc<ServicesManager>>()?;
+        let attempt_reconnect = input.attempt_reconnect.unwrap_or(false);
+
+        let mut out = Vec::with_capacity(input.paths.len());
+        for path in input.paths {
+            let status =
+                filesystem_network::check_path_availability(db, services, &path, attempt_reconnect)
+                    .await;
+            out.push(LibraryPathAvailability {
+                path: status.path,
+                reachable: status.reachable,
+                exists: status.exists,
+                is_directory: status.is_directory,
+                needs_reconnect: status.needs_reconnect,
+                reconnect_attempted: status.reconnect_attempted,
+                reconnect_succeeded: status.reconnect_succeeded,
+                message: status.message,
+            });
+        }
+
+        Ok(out)
+    }
+
     /// Browse a directory on the server. Requires authentication.
     #[graphql(name = "BrowseDirectory")]
     async fn browse_directory(

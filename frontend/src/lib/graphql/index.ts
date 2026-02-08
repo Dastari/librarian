@@ -168,8 +168,6 @@ export type {
   UpdatePlaybackInput,
   UpdatePlaybackSettingsInput,
   PlaybackResult,
-  // Indexer Types
-  IndexerConfig,
   // LLM Parser Types
   LlmParserSettings,
   OllamaConnectionResult,
@@ -284,9 +282,6 @@ export {
   // Playback Queries
   PLAYBACK_SESSION_QUERY,
   PLAYBACK_SETTINGS_QUERY,
-  // Indexer Search Queries
-  SEARCH_INDEXERS_QUERY,
-  INDEXER_CONFIGS_QUERY,
   // LLM Parser Queries
   LLM_PARSER_SETTINGS_QUERY,
   // Notification Queries
@@ -393,7 +388,6 @@ export {
   ACTIVE_DOWNLOAD_COUNT_SUBSCRIPTION,
   USENET_DOWNLOAD_CHANGED_SUBSCRIPTION,
   LOG_EVENTS_SUBSCRIPTION,
-  ERROR_LOGS_SUBSCRIPTION,
   // Library Subscriptions
   LIBRARY_CHANGED_SUBSCRIPTION,
   MOVIE_CHANGED_SUBSCRIPTION,
@@ -405,17 +399,23 @@ export {
   // Notification Subscriptions
   NOTIFICATION_RECEIVED_SUBSCRIPTION,
   NOTIFICATION_COUNTS_SUBSCRIPTION,
-  // Content Download Progress Subscriptions
-  CONTENT_DOWNLOAD_PROGRESS_SUBSCRIPTION,
 } from "./subscriptions";
 
 // GraphQL-based filesystem functions (replaces REST API)
 export {
   browseDirectory,
+  getFilesystemRuntimeInfo,
+  getLibraryPathAvailability,
+  configureNetworkPath,
+  reconnectLibraryPath,
   createDirectory,
   deleteFiles,
   copyFiles,
   moveFiles,
   renameFile,
 } from "./filesystem";
-export type { BrowseDirectoryResult } from "./filesystem";
+export type {
+  BrowseDirectoryResult,
+  RuntimeFilesystemInfo,
+  LibraryPathAvailabilityStatus,
+} from "./filesystem";

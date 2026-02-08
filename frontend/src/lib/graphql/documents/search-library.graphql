@@ -1,0 +1,28 @@
+query LibrarySearchShows {
+  Shows {
+    Edges {
+      Node {
+        Id
+        LibraryId
+        Name
+        Year
+        PosterUrl
+      }
+    }
+  }
+}
+
+query LibrarySearchMovies {
+  Movies {
+    Edges {
+      Node {
+        Id
+        LibraryId
+        Title
+        Year
+        PosterUrl
+        Status
+      }
+    }
+  }
+}

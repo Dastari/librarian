@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Button } from '@heroui/button'
 import { Input } from '@heroui/input'
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from '@heroui/modal'
@@ -32,6 +32,10 @@ interface FolderBrowserInputProps {
   isDisabled?: boolean
   /** Custom class name for the container */
   className?: string
+  /** Optional extra action rendered beside "New Folder" inside modal */
+  modalInlineAction?: React.ReactNode
+  /** Increment to force browser to open and navigate to current value */
+  navigateToValueSignal?: number
 }
 
 export function FolderBrowserInput({
@@ -43,6 +47,8 @@ export function FolderBrowserInput({
   modalTitle = 'Select Folder',
   isDisabled = false,
   className = '',
+  modalInlineAction,
+  navigateToValueSignal,
 }: FolderBrowserInputProps) {
   const { isOpen, onOpen, onClose } = useDisclosure()
   const [currentPath, setCurrentPath] = useState('')
@@ -95,6 +101,21 @@ export function FolderBrowserInput({
     // Always open modal - if browse failed, it will show the error message
     onOpen()
   }
+
+  useEffect(() => {
+    if (navigateToValueSignal == null) return
+    if (navigateToValueSignal <= 0) return
+    const navigateAndOpen = async () => {
+      const targetPath = value || '/'
+      let success = await browse(targetPath)
+      if (!success && targetPath !== '/') {
+        success = await browse('/')
+      }
+      onOpen()
+    }
+    void navigateAndOpen()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigateToValueSignal])
 
   const selectPath = () => {
     onChange(currentPath)
@@ -310,14 +331,17 @@ export function FolderBrowserInput({
                 }
               />
             ) : (
-              <Button 
-                size="sm" 
-                variant="flat" 
-                onPress={() => setShowNewFolder(true)}
-                startContent={<span>+</span>}
-              >
-                New Folder
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="flat"
+                  onPress={() => setShowNewFolder(true)}
+                  startContent={<span>+</span>}
+                >
+                  New Folder
+                </Button>
+                {modalInlineAction}
+              </div>
             )}
           </ModalBody>
           <ModalFooter>

@@ -27,3 +27,87 @@ mutation AddTvShow($LibraryId: String!, $Input: AddTvShowInput!) {
     Error
   }
 }
+
+subscription ShowChanged($Filter: SubscriptionFilterInput) {
+  ShowChanged(Filter: $Filter) {
+    Action
+    Id
+    Show {
+      LibraryId
+    }
+  }
+}
+
+query ShowDetailRoute($Id: String!) {
+  Show(Id: $Id) {
+    Id
+    LibraryId
+    Name
+    SortName
+    Year
+    TvmazeId
+    TmdbId
+    TvdbId
+    ImdbId
+    Overview
+    Network
+    Runtime
+    Genres
+    PosterUrl
+    BackdropUrl
+    AutoDownload
+    AutoDownloadMode
+    Path
+    CreatedAt
+    UpdatedAt
+    UserId
+    Episodes(Page: { Limit: 2000 }) {
+      Edges {
+        Node {
+          Id
+          ShowId
+          Season
+          Episode
+          AbsoluteNumber
+          Title
+          Overview
+          AirDate
+          Runtime
+          TvmazeId
+          TmdbId
+          TvdbId
+          MediaFileId
+          Wanted
+          Status
+          MediaFile {
+            Id
+            Size
+            Duration
+            Resolution
+            VideoCodec
+            AudioCodec
+            AudioChannels
+            IsHdr
+            HdrType
+          }
+          CreatedAt
+          UpdatedAt
+        }
+      }
+    }
+  }
+}
+
+mutation RefreshShowRoute($Id: String!) {
+  RefreshShow(Id: $Id) {
+    Success
+    Show {
+      Id
+      Name
+      Overview
+      PosterUrl
+      BackdropUrl
+    }
+    Error
+  }
+}

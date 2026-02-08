@@ -99,6 +99,9 @@ pub struct MediaFile {
     #[filterable(type = "string")]
     pub audio_channels: Option<String>,
 
+    #[graphql(name = "Metadata")]
+    pub metadata: Option<String>,
+
     #[graphql(name = "ContentType")]
     #[filterable(type = "string")]
     pub content_type: Option<String>,

@@ -9,11 +9,15 @@ import { Chip } from '@heroui/chip'
 import { Spinner } from '@heroui/spinner'
 import { addToast } from '@heroui/toast'
 import {
-  SEARCH_TV_SHOWS_QUERY,
-  ADD_TV_SHOW_MUTATION,
-  type TvShowSearchResult,
-} from '../../lib/graphql'
-import type { AutoDownloadMode } from '../../lib/graphql/generated/graphql'
+  useLazyQuery,
+  useMutation,
+} from '../../lib/graphql/client'
+import {
+  AddTvShowDocument,
+  SearchTvShowsDocument,
+  type AutoDownloadMode,
+  type SearchTvShowsQuery,
+} from '../../lib/graphql/generated/graphql'
 import { IconDeviceTv } from '@tabler/icons-react'
 import { sanitizeError } from '../../lib/format'
 
@@ -31,36 +35,23 @@ export function AddShowModal({
   libraryId,
   onAdded,
 }: AddShowModalProps) {
+  type TvShowSearchResult = SearchTvShowsQuery['SearchTvShows'][number]
+
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<TvShowSearchResult[]>([])
-  const [searching, setSearching] = useState(false)
-  const [adding, setAdding] = useState(false)
   const [selectedShow, setSelectedShow] = useState<TvShowSearchResult | null>(null)
   const [monitorType, setMonitorType] = useState<AutoDownloadMode>('ALL')
 
-  interface TvShowSearchNode {
-    Provider: string
-    ProviderId: number
-    Name: string
-    Year: number | null
-    Status: string | null
-    Network: string | null
-    Overview: string | null
-    PosterUrl: string | null
-    TvdbId: number | null
-    ImdbId: string | null
-    Score: number | null
-  }
+  const [searchTvShows, { loading: searching }] = useLazyQuery(SearchTvShowsDocument)
+  const [addTvShow, { loading: adding }] = useMutation(AddTvShowDocument)
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return
 
     try {
-      setSearching(true)
-      const { data, error } = await queryPromise<{ SearchTvShows: TvShowSearchNode[] }>(SEARCH_TV_SHOWS_QUERY, {
-          Query: searchQuery,
-        })
-        
+      const { data, error } = await searchTvShows({
+        variables: { Query: searchQuery },
+      })
 
       if (error) {
         addToast({
@@ -71,25 +62,9 @@ export function AddShowModal({
         return
       }
 
-      setSearchResults(
-        (data?.SearchTvShows ?? []).map((show) => ({
-          provider: show.Provider,
-          providerId: show.ProviderId,
-          name: show.Name,
-          year: show.Year,
-          status: show.Status,
-          network: show.Network,
-          overview: show.Overview,
-          posterUrl: show.PosterUrl,
-          tvdbId: show.TvdbId,
-          imdbId: show.ImdbId,
-          score: show.Score ?? 0,
-        }))
-      )
+      setSearchResults(data?.SearchTvShows ?? [])
     } catch (err) {
       console.error('Search failed:', err)
-    } finally {
-      setSearching(false)
     }
   }
 
@@ -97,26 +72,20 @@ export function AddShowModal({
     if (!selectedShow) return
 
     try {
-      setAdding(true)
-      const { data, error } = await mutationPromise<{
-          AddTvShow: {
-            Success: boolean
-            Show: { Id: string } | null
-            Error: string | null
-          }
-        }>(ADD_TV_SHOW_MUTATION, {
+      const { data, error } = await addTvShow({
+        variables: {
           LibraryId: libraryId,
           Input: {
-            TvmazeId: selectedShow.providerId,
+            TvmazeId: selectedShow.ProviderId,
             AutoDownloadMode: monitorType,
           },
-        })
-        
+        },
+      })
 
       if (error || !data?.AddTvShow.Success) {
         addToast({
           title: 'Error',
-          description: sanitizeError(data?.AddTvShow.Error || 'Failed to add show'),
+          description: sanitizeError(data?.AddTvShow.Error || error || 'Failed to add show'),
           color: 'danger',
         })
         return
@@ -124,7 +93,7 @@ export function AddShowModal({
 
       addToast({
         title: 'Success',
-        description: `Added "${selectedShow.name}" to library`,
+        description: `Added "${selectedShow.Name}" to library`,
         color: 'success',
       })
 
@@ -136,8 +105,6 @@ export function AddShowModal({
       onAdded()
     } catch (err) {
       console.error('Failed to add show:', err)
-    } finally {
-      setAdding(false)
     }
   }
 
@@ -182,17 +149,17 @@ export function AddShowModal({
                 <div className="space-y-2 max-h-96 overflow-auto">
                   {searchResults.map((result) => (
                     <Card
-                      key={`${result.provider}-${result.providerId}`}
+                      key={`${result.Provider}-${result.ProviderId}`}
                       isPressable
                       className="bg-content2 w-full hover:bg-content3"
                       onPress={() => setSelectedShow(result)}
                     >
                       <CardBody className="flex flex-row gap-3 p-2">
                         <div className="shrink-0 w-10">
-                          {result.posterUrl ? (
+                          {result.PosterUrl ? (
                             <Image
-                              src={result.posterUrl}
-                              alt={result.name}
+                              src={result.PosterUrl}
+                              alt={result.Name}
                               classNames={{
                                 wrapper: "w-full",
                                 img: "w-full aspect-[2/3] object-cover"
@@ -207,21 +174,21 @@ export function AddShowModal({
                         </div>
                         <div className="flex-1 min-w-0">
                           <h4 className="font-medium">
-                            {result.name}
-                            {result.year && (
+                            {result.Name}
+                            {result.Year && (
                               <span className="text-default-500 ml-1">
-                                ({result.year})
+                                ({result.Year})
                               </span>
                             )}
                           </h4>
                           <p className="text-xs text-default-500 line-clamp-2">
-                            {result.network && `${result.network} • `}
-                            {result.status}
+                            {result.Network && `${result.Network} • `}
+                            {result.Status}
                           </p>
                         </div>
                         <div className="flex items-center">
                           <Chip size="sm" variant="flat">
-                            {result.provider}
+                            {result.Provider}
                           </Chip>
                         </div>
                       </CardBody>
@@ -239,10 +206,10 @@ export function AddShowModal({
               <Card className="bg-content2">
                 <CardBody className="flex flex-row gap-4 p-3">
                   <div className="flex-shrink-0 w-24">
-                            {selectedShow.posterUrl ? (
+                            {selectedShow.PosterUrl ? (
                               <Image
-                                src={selectedShow.posterUrl}
-                                alt={selectedShow.name}
+                                src={selectedShow.PosterUrl}
+                                alt={selectedShow.Name}
                                 classNames={{
                                   wrapper: "w-full",
                                   img: "w-full aspect-[2/3] object-cover"
@@ -257,20 +224,20 @@ export function AddShowModal({
                   </div>
                   <div className="flex-1 min-w-0">
                     <h4 className="font-semibold text-lg">
-                    {selectedShow.name}
-                    {selectedShow.year && (
+                    {selectedShow.Name}
+                    {selectedShow.Year && (
                       <span className="text-default-500 ml-1">
-                        ({selectedShow.year})
+                        ({selectedShow.Year})
                       </span>
                     )}
                   </h4>
                   <p className="text-sm text-default-500">
-                    {selectedShow.network && `${selectedShow.network} • `}
-                    {selectedShow.status}
+                    {selectedShow.Network && `${selectedShow.Network} • `}
+                    {selectedShow.Status}
                   </p>
-                  {selectedShow.overview && (
+                  {selectedShow.Overview && (
                     <p className="text-sm text-default-400 mt-2 line-clamp-3">
-                      {selectedShow.overview}
+                      {selectedShow.Overview}
                     </p>
                   )}
                   </div>

@@ -1,0 +1,60 @@
+query OrganizationNamingPatterns(
+  $OrderBy: [NamingPatternOrderByInput!]
+  $Page: PageInput
+) {
+  NamingPatterns(OrderBy: $OrderBy, Page: $Page) {
+    Edges {
+      Node {
+        Id
+        Name
+        Pattern
+        Description
+        LibraryType
+        IsDefault
+        IsSystem
+      }
+    }
+  }
+}
+
+mutation OrganizationCreateNamingPattern($Input: CreateNamingPatternInput!) {
+  CreateNamingPattern(Input: $Input) {
+    Success
+    Error
+    NamingPattern {
+      Id
+      Name
+      Pattern
+      Description
+      LibraryType
+      IsDefault
+      IsSystem
+    }
+  }
+}
+
+mutation OrganizationUpdateNamingPattern(
+  $Id: String!
+  $Input: UpdateNamingPatternInput!
+) {
+  UpdateNamingPattern(Id: $Id, Input: $Input) {
+    Success
+    Error
+    NamingPattern {
+      Id
+      Name
+      Pattern
+      Description
+      LibraryType
+      IsDefault
+      IsSystem
+    }
+  }
+}
+
+mutation OrganizationDeleteNamingPattern($Id: String!) {
+  DeleteNamingPattern(Id: $Id) {
+    Success
+    Error
+  }
+}

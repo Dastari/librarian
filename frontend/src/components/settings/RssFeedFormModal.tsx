@@ -1,22 +1,34 @@
-import { useState, useEffect } from 'react'
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
-import { Button } from '@heroui/button'
-import { Input } from '@heroui/input'
-import { Switch } from '@heroui/switch'
-import type { RssFeed } from '../../lib/graphql'
+import { useState, useEffect } from "react";
+import {
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+} from "@heroui/modal";
+import { Button } from "@heroui/button";
+import { Input } from "@heroui/input";
+import { Switch } from "@heroui/switch";
+
+interface RssFeedFormFeed {
+  name: string;
+  url: string;
+  enabled: boolean;
+  pollIntervalMinutes: number;
+}
 
 export interface RssFeedFormData {
-  name: string
-  url: string
-  enabled: boolean
-  pollIntervalMinutes: number
+  name: string;
+  url: string;
+  enabled: boolean;
+  pollIntervalMinutes: number;
 }
 
 export interface AddRssFeedModalProps {
-  isOpen: boolean
-  onClose: () => void
-  onAdd: (data: RssFeedFormData) => Promise<void>
-  isLoading: boolean
+  isOpen: boolean;
+  onClose: () => void;
+  onAdd: (data: RssFeedFormData) => Promise<void>;
+  isLoading: boolean;
 }
 
 export function AddRssFeedModal({
@@ -25,20 +37,20 @@ export function AddRssFeedModal({
   onAdd,
   isLoading,
 }: AddRssFeedModalProps) {
-  const [name, setName] = useState('')
-  const [url, setUrl] = useState('')
-  const [enabled, setEnabled] = useState(true)
-  const [pollInterval, setPollInterval] = useState(15)
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const [enabled, setEnabled] = useState(true);
+  const [pollInterval, setPollInterval] = useState(15);
 
   // Reset form when modal opens
   useEffect(() => {
     if (isOpen) {
-      setName('')
-      setUrl('')
-      setEnabled(true)
-      setPollInterval(15)
+      setName("");
+      setUrl("");
+      setEnabled(true);
+      setPollInterval(15);
     }
-  }, [isOpen])
+  }, [isOpen]);
 
   const handleSubmit = async () => {
     await onAdd({
@@ -46,8 +58,8 @@ export function AddRssFeedModal({
       url,
       enabled,
       pollIntervalMinutes: pollInterval,
-    })
-  }
+    });
+  };
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="lg">
@@ -62,7 +74,7 @@ export function AddRssFeedModal({
             value={name}
             onChange={(e) => setName(e.target.value)}
             classNames={{
-              label: 'text-sm font-medium text-primary!',
+              label: "text-sm font-medium text-primary!",
             }}
           />
           <Input
@@ -73,7 +85,7 @@ export function AddRssFeedModal({
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             classNames={{
-              label: 'text-sm font-medium text-primary!',
+              label: "text-sm font-medium text-primary!",
             }}
           />
           <div className="flex justify-between items-center">
@@ -97,7 +109,7 @@ export function AddRssFeedModal({
             min={5}
             max={1440}
             classNames={{
-              label: 'text-sm font-medium text-primary!',
+              label: "text-sm font-medium text-primary!",
             }}
           />
         </ModalBody>
@@ -116,15 +128,15 @@ export function AddRssFeedModal({
         </ModalFooter>
       </ModalContent>
     </Modal>
-  )
+  );
 }
 
 export interface EditRssFeedModalProps {
-  isOpen: boolean
-  onClose: () => void
-  feed: RssFeed | null
-  onSave: (data: RssFeedFormData) => Promise<void>
-  isLoading: boolean
+  isOpen: boolean;
+  onClose: () => void;
+  feed: RssFeedFormFeed | null;
+  onSave: (data: RssFeedFormData) => Promise<void>;
+  isLoading: boolean;
 }
 
 export function EditRssFeedModal({
@@ -134,20 +146,20 @@ export function EditRssFeedModal({
   onSave,
   isLoading,
 }: EditRssFeedModalProps) {
-  const [name, setName] = useState('')
-  const [url, setUrl] = useState('')
-  const [enabled, setEnabled] = useState(true)
-  const [pollInterval, setPollInterval] = useState(15)
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const [enabled, setEnabled] = useState(true);
+  const [pollInterval, setPollInterval] = useState(15);
 
   // Initialize form when feed changes
   useEffect(() => {
     if (feed) {
-      setName(feed.name)
-      setUrl(feed.url)
-      setEnabled(feed.enabled)
-      setPollInterval(feed.pollIntervalMinutes)
+      setName(feed.name);
+      setUrl(feed.url);
+      setEnabled(feed.enabled);
+      setPollInterval(feed.pollIntervalMinutes);
     }
-  }, [feed])
+  }, [feed]);
 
   const handleSubmit = async () => {
     await onSave({
@@ -155,8 +167,8 @@ export function EditRssFeedModal({
       url,
       enabled,
       pollIntervalMinutes: pollInterval,
-    })
-  }
+    });
+  };
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="lg">
@@ -171,7 +183,7 @@ export function EditRssFeedModal({
             value={name}
             onChange={(e) => setName(e.target.value)}
             classNames={{
-              label: 'text-sm font-medium text-primary!',
+              label: "text-sm font-medium text-primary!",
             }}
           />
           <Input
@@ -182,13 +194,15 @@ export function EditRssFeedModal({
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             classNames={{
-              label: 'text-sm font-medium text-primary!',
+              label: "text-sm font-medium text-primary!",
             }}
           />
           <div className="flex justify-between items-center">
             <div>
               <p className="font-medium">Enabled</p>
-              <p className="text-xs text-default-400">Enable or disable polling</p>
+              <p className="text-xs text-default-400">
+                Enable or disable polling
+              </p>
             </div>
             <Switch isSelected={enabled} onValueChange={setEnabled} />
           </div>
@@ -204,7 +218,7 @@ export function EditRssFeedModal({
             min={5}
             max={1440}
             classNames={{
-              label: 'text-sm font-medium text-primary!',
+              label: "text-sm font-medium text-primary!",
             }}
           />
         </ModalBody>
@@ -223,5 +237,5 @@ export function EditRssFeedModal({
         </ModalFooter>
       </ModalContent>
     </Modal>
-  )
+  );
 }
