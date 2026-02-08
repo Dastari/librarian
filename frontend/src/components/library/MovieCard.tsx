@@ -45,6 +45,7 @@ export function MovieCard({ movie, onDelete, onPlay, isCurrentMovie = false, isP
             <Image
               src={movie.PosterUrl}
               alt={movie.Title}
+              loading="lazy"
               classNames={{
                 wrapper: "absolute inset-0 w-full h-full !max-w-full",
                 img: "w-full h-full object-cover"

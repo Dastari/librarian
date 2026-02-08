@@ -168,7 +168,7 @@ pub fn parse_pagination_args(
     first: Option<i32>,
     after: Option<String>,
 ) -> Result<(i64, i64), &'static str> {
-    let limit = first.unwrap_or(25).min(100) as i64;
+    let limit = first.unwrap_or(25) as i64;
 
     let offset = if let Some(cursor) = after {
         decode_cursor(&cursor)? + 1 // Start after the cursor
@@ -207,10 +207,10 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_pagination_max_limit() {
+    fn test_parse_pagination_large_limit() {
         let (offset, limit) = parse_pagination_args(Some(1000), None).unwrap();
         assert_eq!(offset, 0);
-        assert_eq!(limit, 100); // Capped at 100
+        assert_eq!(limit, 1000);
     }
 
     #[test]

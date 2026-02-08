@@ -1,7 +1,7 @@
 query LibraryAlbumsTab($LibraryId: String!) {
   Albums(
     Where: { LibraryId: { Eq: $LibraryId } }
-    Page: { Limit: 500, Offset: 0 }
+    Page: { Limit: 5000, Offset: 0 }
   ) {
     Edges {
       Node {
@@ -32,7 +32,7 @@ query LibraryAlbumsTab($LibraryId: String!) {
 query LibraryArtistsTab($LibraryId: String!) {
   Artists(
     Where: { LibraryId: { Eq: $LibraryId } }
-    Page: { Limit: 500, Offset: 0 }
+    Page: { Limit: 5000, Offset: 0 }
   ) {
     Edges {
       Node {
@@ -49,7 +49,7 @@ query LibraryArtistsTab($LibraryId: String!) {
 query LibraryAudiobooksTab($LibraryId: String!) {
   Audiobooks(
     Where: { LibraryId: { Eq: $LibraryId } }
-    Page: { Limit: 500, Offset: 0 }
+    Page: { Limit: 5000, Offset: 0 }
   ) {
     Edges {
       Node {

@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useEffect, useState } from "react";
+import { useMemo, useCallback, useEffect } from "react";
 import { useQueryState, parseAsString, parseAsStringLiteral } from "nuqs";
 import { Button } from "@heroui/button";
 import { Chip } from "@heroui/chip";
@@ -85,8 +85,7 @@ export function LibraryMoviesTab({
   onRefreshReady,
 }: LibraryMoviesTabProps) {
   const { session, startMoviePlayback, updatePlayback } = usePlaybackContext();
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const pageSize = 100;
+  const pageSize = 5000;
 
   // URL-persisted state via nuqs (clean URLs when using defaults)
   const [selectedLetter, setSelectedLetter] = useQueryState(
@@ -143,7 +142,6 @@ export function LibraryMoviesTab({
     previousData,
     loading: queryLoading,
     refetch,
-    fetchMore,
   } = useQuery<MoviesConnectionResponse>(MOVIES_QUERY, {
     variables: queryVariables,
     skip: shouldSkipQueries,
@@ -163,52 +161,6 @@ export function LibraryMoviesTab({
     data?.Movies?.PageInfo?.TotalCount ??
     previousData?.Movies?.PageInfo?.TotalCount ??
     null;
-  const hasMore =
-    data?.Movies?.PageInfo?.HasNextPage ??
-    previousData?.Movies?.PageInfo?.HasNextPage ??
-    false;
-
-  const loadMore = useCallback(() => {
-    if (isLoadingMore || !hasMore || shouldSkipQueries) return;
-
-    const nextOffset = movies.length;
-    setIsLoadingMore(true);
-
-    void fetchMore({
-      variables: {
-        ...queryVariables,
-        Page: { Limit: pageSize, Offset: nextOffset },
-      },
-      updateQuery: (previousResult, { fetchMoreResult }) => {
-        if (!fetchMoreResult?.Movies) return previousResult;
-
-        const previousEdges = previousResult.Movies?.Edges ?? [];
-        const seenIds = new Set(previousEdges.map((edge) => edge.Node.Id));
-        const nextEdges = (fetchMoreResult.Movies.Edges ?? []).filter(
-          (edge) => !seenIds.has(edge.Node.Id)
-        );
-
-        return {
-          ...fetchMoreResult,
-          Movies: {
-            ...fetchMoreResult.Movies,
-            Edges: [...previousEdges, ...nextEdges],
-          },
-        };
-      },
-    }).finally(() => {
-      setIsLoadingMore(false);
-    });
-  }, [
-    fetchMore,
-    hasMore,
-    isLoadingMore,
-    movies.length,
-    pageSize,
-    queryVariables,
-    shouldSkipQueries,
-  ]);
-
   // Provide refresh function to parent for subscription updates
   useEffect(() => {
     if (onRefreshReady) {
@@ -270,6 +222,7 @@ export function LibraryMoviesTab({
                 src={movie.PosterUrl}
                 alt={movie.Title}
                 className="w-10 h-14 object-cover rounded"
+                loading="lazy"
               />
             ) : (
               <div className="w-10 h-14 bg-default-200 rounded flex items-center justify-center">
@@ -459,10 +412,6 @@ export function LibraryMoviesTab({
           serverTotalCount={totalCount ?? undefined}
           onSearchChange={handleSearchChange}
           isLoading={queryLoading && movies.length === 0}
-          paginationMode="infinite"
-          onLoadMore={loadMore}
-          hasMore={hasMore}
-          isLoadingMore={isLoadingMore}
           headerContent={
             <AlphabetFilter
               selectedLetter={normalizedLetter}

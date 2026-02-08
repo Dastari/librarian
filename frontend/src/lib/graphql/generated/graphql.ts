@@ -15105,7 +15105,7 @@ export const LibraryAlbumsTabDocument = {
                     {
                       kind: "ObjectField",
                       name: { kind: "Name", value: "Limit" },
-                      value: { kind: "IntValue", value: "500" },
+                      value: { kind: "IntValue", value: "5000" },
                     },
                     {
                       kind: "ObjectField",
@@ -15292,7 +15292,7 @@ export const LibraryArtistsTabDocument = {
                     {
                       kind: "ObjectField",
                       name: { kind: "Name", value: "Limit" },
-                      value: { kind: "IntValue", value: "500" },
+                      value: { kind: "IntValue", value: "5000" },
                     },
                     {
                       kind: "ObjectField",
@@ -15420,7 +15420,7 @@ export const LibraryAudiobooksTabDocument = {
                     {
                       kind: "ObjectField",
                       name: { kind: "Name", value: "Limit" },
-                      value: { kind: "IntValue", value: "500" },
+                      value: { kind: "IntValue", value: "5000" },
                     },
                     {
                       kind: "ObjectField",

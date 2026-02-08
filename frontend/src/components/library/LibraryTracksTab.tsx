@@ -111,7 +111,7 @@ export function LibraryTracksTab({ libraryId, loading: _parentLoading }: Library
     // Add order by from sort state
     const graphqlField = SORT_FIELD_MAP[sortColumn || 'title'] || 'Title'
     vars.OrderBy = [{ [graphqlField]: sortDirection === 'asc' ? 'Asc' : 'Desc' }]
-    vars.Page = { Limit: 500 }
+    vars.Page = { Limit: 5000 }
     
     return vars
   }, [libraryId, searchTerm, sortColumn, sortDirection])

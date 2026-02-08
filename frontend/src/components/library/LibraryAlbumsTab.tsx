@@ -256,6 +256,7 @@ export function LibraryAlbumsTab({
                 src={album.coverUrl}
                 alt={album.name}
                 className="w-10 h-10 object-cover rounded"
+                loading="lazy"
               />
             ) : (
               <div className="w-10 h-10 bg-default-200 rounded flex items-center justify-center">

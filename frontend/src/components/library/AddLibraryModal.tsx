@@ -148,7 +148,6 @@ export function AddLibraryModal({
             initialValues={DEFAULT_LIBRARY_SETTINGS}
             onChange={handleChange}
             mode="create"
-            r
             useCards={false}
             closeSignal={closeSignal}
             runtimePlatform={runtimeInfo?.Platform}

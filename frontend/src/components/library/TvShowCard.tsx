@@ -46,6 +46,7 @@ export function TvShowCard({ show, onDelete }: TvShowCardProps) {
               <Image
                 src={show.PosterUrl}
                 alt={show.Name}
+                loading="lazy"
                 classNames={{
                   wrapper: "absolute inset-0 w-full h-full !max-w-full",
                   img: "w-full h-full object-cover",

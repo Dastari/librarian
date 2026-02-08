@@ -219,7 +219,7 @@ impl SqlValue {
 #[derive(async_graphql::InputObject, Default, Clone, Debug)]
 #[graphql(name = "PageInput")]
 pub struct PageInput {
-    /// Maximum number of items to return (default: 25, max: 100)
+    /// Maximum number of items to return (default: 25)
     #[graphql(name = "Limit")]
     pub limit: Option<i32>,
 
@@ -230,7 +230,7 @@ pub struct PageInput {
 
 impl PageInput {
     pub fn limit(&self) -> i64 {
-        self.limit.unwrap_or(25).min(100) as i64
+        self.limit.unwrap_or(25) as i64
     }
 
     pub fn offset(&self) -> i64 {
@@ -262,7 +262,7 @@ pub struct CursorInput {
 impl CursorInput {
     /// Parse cursor input into offset and limit
     pub fn to_offset_limit(&self) -> Result<(i64, i64), &'static str> {
-        let limit = self.first.unwrap_or(25).min(100) as i64;
+        let limit = self.first.unwrap_or(25) as i64;
 
         let offset = if let Some(ref cursor) = self.after {
             super::decode_cursor(cursor)? + 1

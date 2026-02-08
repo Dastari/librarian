@@ -98,7 +98,7 @@ export function LibraryShowsTab({
     if (searchTerm) where.Name = { Contains: searchTerm }
     const graphqlField = SORT_FIELD_MAP[sortColumn || 'name'] || 'SortName'
     const orderBy = [{ [graphqlField]: sortDirection === 'asc' ? 'Asc' : 'Desc' }]
-    return { Where: where, Page: { Limit: 500 }, OrderBy: orderBy }
+    return { Where: where, Page: { Limit: 5000 }, OrderBy: orderBy }
   }, [libraryId, searchTerm, sortColumn, sortDirection])
 
   const {
@@ -178,6 +178,7 @@ export function LibraryShowsTab({
                 src={show.PosterUrl}
                 alt={show.Name}
                 className="w-10 h-14 object-cover rounded"
+                loading="lazy"
               />
             ) : (
               <div className="w-10 h-14 bg-default-200 rounded flex items-center justify-center">

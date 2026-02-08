@@ -60,6 +60,7 @@ export function AlbumCard({ album, artistName, onDelete }: AlbumCardProps) {
               <Image
                 src={album.coverUrl}
                 alt={album.name}
+                loading="lazy"
                 classNames={{
                   wrapper: "absolute inset-0 w-full h-full !max-w-full",
                   img: "w-full h-full object-cover",

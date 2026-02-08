@@ -245,6 +245,7 @@ export function LibraryAudiobooksTab({
                 src={audiobook.coverUrl}
                 alt={audiobook.title}
                 className="w-10 h-14 object-cover rounded"
+                loading="lazy"
               />
             ) : (
               <div className="w-10 h-14 bg-default-200 rounded flex items-center justify-center">

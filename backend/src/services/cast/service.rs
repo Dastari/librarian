@@ -454,9 +454,9 @@ impl CastService {
         let device = RustCastDevice::connect_without_host_verification(address, port)
             .context("Failed to connect to cast device")?;
         device.connection.connect("receiver-0")?;
-        // rust_cast receiver API currently toggles mute through set_volume(bool)
-        // in the same way as the legacy implementation used by Librarian.
-        device.receiver.set_volume(muted)?;
+        // Send both current level and muted state; some receivers ignore muted-only updates.
+        let current_level = device.receiver.get_status()?.volume.level.unwrap_or(1.0);
+        device.receiver.set_volume((current_level, muted))?;
         Ok(())
     }
 }
