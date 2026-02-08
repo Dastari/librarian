@@ -16,7 +16,7 @@
 .LSOverride
 
 # Rust
-backend/data/
+backend/data/*
 backend/target/
 **/*.rs.bk
 Cargo.lock
