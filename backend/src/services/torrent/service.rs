@@ -3,6 +3,7 @@
 //! Implements [Service](crate::services::manager::Service) and depends on the database service.
 //! Provides the librqbit session, progress monitor, and DB sync loops with graceful shutdown.
 
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,6 +12,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use librqbit::api::TorrentIdOrHash;
 use librqbit::dht::PersistentDhtConfig;
+use librqbit::limits::LimitsConfig;
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions};
 use parking_lot::RwLock;
 use tokio::sync::broadcast;
@@ -43,6 +45,7 @@ struct TorrentRuntime {
     cancel_token: CancellationToken,
     progress_handle: tokio::task::JoinHandle<()>,
     db_sync_handle: tokio::task::JoinHandle<()>,
+    completion_handle: tokio::task::JoinHandle<()>,
 }
 
 impl TorrentRuntime {
@@ -50,6 +53,7 @@ impl TorrentRuntime {
         self.cancel_token.cancel();
         let _ = self.progress_handle.await;
         let _ = self.db_sync_handle.await;
+        let _ = self.completion_handle.await;
         // session dropped here
     }
 }
@@ -102,9 +106,14 @@ impl TorrentService {
         let config = &r.config;
         let schema = &r.schema;
         let event_tx = &r.event_tx;
+        let start_paused = config.max_concurrent > 0
+            && count_active_downloads(session.as_ref()) >= config.max_concurrent;
 
         let add_result = session
-            .add_torrent(AddTorrent::from_url(magnet), Some(add_torrent_opts()))
+            .add_torrent(
+                AddTorrent::from_url(magnet),
+                Some(add_torrent_opts(start_paused)),
+            )
             .await
             .context("Failed to add torrent")?;
 
@@ -127,7 +136,11 @@ impl TorrentService {
                         Some(magnet),
                         &name,
                         &config.download_dir.to_string_lossy(),
-                        "downloading",
+                        if start_paused {
+                            "paused"
+                        } else {
+                            "downloading"
+                        },
                         0.0,
                         stats.total_bytes as i64,
                         0,
@@ -328,7 +341,11 @@ impl Service for TorrentService {
     }
 
     fn dependencies(&self) -> Vec<String> {
-        vec!["database".to_string(), "graphql".to_string()]
+        vec![
+            "database".to_string(),
+            "graphql".to_string(),
+            "library_scan".to_string(),
+        ]
     }
 
     async fn start(&self) -> Result<()> {
@@ -336,6 +353,22 @@ impl Service for TorrentService {
             service = "torrent",
             "Torrent service starting: loading settings, initializing session, and restoring torrents"
         );
+        let previous = self.inner.write().await.take();
+        if let Some(arc_r) = previous {
+            warn!(
+                service = "torrent",
+                "Torrent service start requested while already running; shutting down previous runtime first"
+            );
+            arc_r.cancel_token.cancel();
+            if let Ok(runtime) = Arc::try_unwrap(arc_r) {
+                runtime.shutdown().await;
+            } else {
+                warn!(
+                    service = "torrent",
+                    "Previous torrent runtime still had active references; waiting for cancellation by drop"
+                );
+            }
+        }
 
         let db_svc = self
             .manager
@@ -370,6 +403,12 @@ impl Service for TorrentService {
         }
         if let Ok(Some(v)) = database::get_setting::<usize>(&db, "torrent.max_concurrent").await {
             config.max_concurrent = v;
+        }
+        if let Ok(Some(v)) = database::get_setting::<u32>(&db, "torrent.upload_limit").await {
+            config.upload_limit = v;
+        }
+        if let Ok(Some(v)) = database::get_setting::<u32>(&db, "torrent.download_limit").await {
+            config.download_limit = v;
         }
 
         info!(
@@ -426,6 +465,10 @@ impl Service for TorrentService {
             persistence: Some(librqbit::SessionPersistenceConfig::Json {
                 folder: Some(effective_session_dir.clone()),
             }),
+            ratelimits: LimitsConfig {
+                upload_bps: NonZeroU32::new(config.upload_limit),
+                download_bps: NonZeroU32::new(config.download_limit),
+            },
             listen_port_range: if config.listen_port > 0 {
                 Some(config.listen_port..config.listen_port + 1)
             } else {
@@ -439,7 +482,6 @@ impl Service for TorrentService {
             .context("Failed to create torrent session")?;
 
         let (event_tx, _) = broadcast::channel(1024);
-        let completed = Arc::new(RwLock::new(std::collections::HashSet::new()));
         let upnp_result = Arc::new(RwLock::new(None));
 
         config.download_dir = effective_download_dir;
@@ -455,22 +497,47 @@ impl Service for TorrentService {
                 role: None,
             });
 
-        // Sync session -> DB and restore from DB (best-effort)
+        // Initial session -> DB sync can be expensive when many torrent files exist.
+        // Run it in the background so service startup (and TUI boot) is not blocked.
         if let Some(ref user) = auth_user {
-            if let Err(e) =
-                database::sync_session_to_database(&session, &db, &schema, user, &config).await
-            {
-                warn!(
-                    error = %e,
-                    "Failed to sync existing session torrents to database during startup: error={}",
-                    e
-                );
-            }
+            let session_sync = session.clone();
+            let db_sync = db.clone();
+            let schema_sync = schema.clone();
+            let user_sync = user.clone();
+            let config_sync = config.clone();
+            tokio::spawn(async move {
+                tracing::info!("Starting background initial torrent session-to-DB sync");
+                if let Err(e) = database::sync_session_to_database(
+                    &session_sync,
+                    &db_sync,
+                    &schema_sync,
+                    &user_sync,
+                    &config_sync,
+                )
+                .await
+                {
+                    warn!(
+                        error = %e,
+                        "Failed to sync existing session torrents to database during startup: error={}",
+                        e
+                    );
+                } else {
+                    tracing::info!("Finished background initial torrent session-to-DB sync");
+                }
+            });
         } else {
             warn!("No default user found in database; skipping initial torrent session-to-DB sync");
         }
-        if let Err(e) =
-            database::restore_from_database(&session, &db, &schema, auth_user.as_ref()).await
+        let active_downloads = count_active_downloads(session.as_ref());
+        if let Err(e) = database::restore_from_database(
+            &session,
+            &db,
+            &schema,
+            auth_user.as_ref(),
+            config.max_concurrent,
+            active_downloads,
+        )
+        .await
         {
             warn!(
                 error = %e,
@@ -478,6 +545,22 @@ impl Service for TorrentService {
                 e
             );
         }
+
+        // Seed already-completed torrents so startup doesn't emit Completed events
+        // for torrents that were complete before this process started.
+        let completed_hashes: std::collections::HashSet<String> = session.with_torrents(|iter| {
+            iter.filter_map(|(_, handle)| {
+                let stats = handle.stats();
+                let progress = stats.progress_bytes as f64 / stats.total_bytes.max(1) as f64;
+                if progress >= 1.0 {
+                    Some(get_info_hash_hex(handle))
+                } else {
+                    None
+                }
+            })
+            .collect()
+        });
+        let completed = Arc::new(RwLock::new(completed_hashes));
 
         let cancel_token = CancellationToken::new();
         let token_clone = cancel_token.clone();
@@ -503,6 +586,25 @@ impl Service for TorrentService {
                 download_dir_db,
                 schema_db,
                 token_db,
+            )
+            .await;
+        });
+
+        // Completion handler: process torrent files when a torrent finishes
+        let token_compl = cancel_token.clone();
+        let session_compl = session.clone();
+        let db_compl = db.clone();
+        let schema_compl = schema.clone();
+        let download_dir_compl = config.download_dir.clone();
+        let event_rx_compl = event_tx.subscribe();
+        let completion_handle = tokio::spawn(async move {
+            completion_handler_loop(
+                session_compl,
+                db_compl,
+                schema_compl,
+                download_dir_compl,
+                event_rx_compl,
+                token_compl,
             )
             .await;
         });
@@ -553,6 +655,7 @@ impl Service for TorrentService {
             cancel_token,
             progress_handle,
             db_sync_handle,
+            completion_handle,
         });
 
         *self.inner.write().await = Some(runtime);
@@ -721,6 +824,106 @@ async fn db_sync_loop(
     let _ = completed;
 }
 
+/// Listens for `TorrentEvent::Completed` and processes the finished torrent's
+/// files (creates media file records and queues ffprobe analysis).
+/// This runs once per torrent completion rather than polling every 10 seconds.
+async fn completion_handler_loop(
+    session: Arc<Session>,
+    db: Database,
+    schema: LibrarianSchema,
+    download_dir: PathBuf,
+    mut event_rx: broadcast::Receiver<TorrentEvent>,
+    cancel: CancellationToken,
+) {
+    let mut auth_user: Option<AuthUser> = database::get_default_user_id(&db)
+        .await
+        .ok()
+        .flatten()
+        .map(|uid| AuthUser {
+            user_id: uid.to_string(),
+            email: None,
+            role: None,
+        });
+
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            result = event_rx.recv() => {
+                let event = match result {
+                    Ok(e) => e,
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(
+                            skipped = n,
+                            "Completion handler lagged behind event stream; skipped {} events",
+                            n
+                        );
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                };
+
+                let (info_hash, name) = match event {
+                    TorrentEvent::Completed { info_hash, name, .. } => (info_hash, name),
+                    _ => continue,
+                };
+
+                // Ensure we have an auth user
+                if auth_user.is_none() {
+                    auth_user = database::get_default_user_id(&db)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|uid| AuthUser {
+                            user_id: uid.to_string(),
+                            email: None,
+                            role: None,
+                        });
+                }
+
+                let Some(ref user) = auth_user else {
+                    warn!(
+                        info_hash = %info_hash,
+                        torrent_name = %name,
+                        "Skipping completed-file processing: no default user available for info_hash={}, name='{}'",
+                        info_hash,
+                        name
+                    );
+                    continue;
+                };
+
+                info!(
+                    info_hash = %info_hash,
+                    torrent_name = %name,
+                    "Torrent completed, processing files for analysis: info_hash={}, name='{}'",
+                    info_hash,
+                    name
+                );
+
+                if let Err(e) = database::process_completed_torrent_files(
+                    &session,
+                    &db,
+                    &schema,
+                    user,
+                    &info_hash,
+                    &download_dir,
+                )
+                .await
+                {
+                    warn!(
+                        error = %e,
+                        info_hash = %info_hash,
+                        torrent_name = %name,
+                        "Failed to process completed torrent files: info_hash={}, name='{}', error={}",
+                        info_hash,
+                        name,
+                        e
+                    );
+                }
+            }
+        }
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Helpers used by runtime and public API
 // -----------------------------------------------------------------------------
@@ -772,6 +975,22 @@ async fn get_torrent_info_impl(
         seeds: 0,
         save_path: config.download_dir.to_string_lossy().to_string(),
         files,
+    })
+}
+
+fn count_active_downloads(session: &Session) -> usize {
+    use librqbit::TorrentStatsState;
+
+    session.with_torrents(|iter| {
+        iter.filter(|(_, handle)| {
+            let stats = handle.stats();
+            match stats.state {
+                TorrentStatsState::Initializing => true,
+                TorrentStatsState::Live => stats.progress_bytes < stats.total_bytes,
+                TorrentStatsState::Paused | TorrentStatsState::Error => false,
+            }
+        })
+        .count()
     })
 }
 

@@ -13,7 +13,11 @@ type ChipColor =
  * Derived status based on mediaFileId presence.
  * Uses lowercase for consistency across media types.
  */
-export type DerivedMediaStatus = "downloaded" | "downloading" | "wanted";
+export type DerivedMediaStatus =
+  | "downloaded"
+  | "downloading"
+  | "wanted"
+  | "missing";
 
 interface StatusConfig {
   color: ChipColor;
@@ -24,6 +28,7 @@ const STATUS_CONFIG: Record<DerivedMediaStatus, StatusConfig> = {
   downloaded: { color: "success", label: "Downloaded" },
   downloading: { color: "primary", label: "Downloading" },
   wanted: { color: "warning", label: "Wanted" },
+  missing: { color: "danger", label: "Missing" },
 };
 
 /**
@@ -35,11 +40,12 @@ const STATUS_CONFIG: Record<DerivedMediaStatus, StatusConfig> = {
  */
 export function deriveMediaStatus(
   mediaFileId: string | null | undefined,
-  downloadProgress?: number | null
+  downloadProgress?: number | null,
+  wanted: boolean = true
 ): DerivedMediaStatus {
   if (mediaFileId) return "downloaded";
   if (downloadProgress != null && downloadProgress > 0) return "downloading";
-  return "wanted";
+  return wanted ? "wanted" : "missing";
 }
 
 /**
@@ -63,6 +69,8 @@ interface MediaItemStatusChipProps {
   size?: "sm" | "md" | "lg";
   /** Download progress (0.0 to 1.0) when downloading */
   downloadProgress?: number | null;
+  /** Wanted flag - used to distinguish wanted vs missing when no file is present */
+  wanted?: boolean;
 }
 
 /**
@@ -76,8 +84,9 @@ export function MediaItemStatusChip({
   mediaFileId,
   size = "sm",
   downloadProgress,
+  wanted = true,
 }: MediaItemStatusChipProps) {
-  const status = deriveMediaStatus(mediaFileId, downloadProgress);
+  const status = deriveMediaStatus(mediaFileId, downloadProgress, wanted);
   const config = STATUS_CONFIG[status];
 
   // Show progress bar when downloading with progress info

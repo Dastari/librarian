@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Modal,
   ModalContent,
@@ -7,6 +7,12 @@ import {
   ModalFooter,
 } from "@heroui/modal";
 import { Button } from "@heroui/button";
+import {
+  Dropdown,
+  DropdownItem,
+  DropdownMenu,
+  DropdownTrigger,
+} from "@heroui/dropdown";
 import { Spinner } from "@heroui/spinner";
 import { Progress } from "@heroui/progress";
 import { Chip } from "@heroui/chip";
@@ -25,8 +31,10 @@ import {
 } from "../../lib/graphql";
 import { formatBytes, sanitizeError } from "../../lib/format";
 import { TORRENT_STATE_INFO } from "./TorrentCard";
+import { MediaFilesMatchDialog } from "./MediaFilesMatchDialog";
 import { DataTable, type DataTableColumn } from "../data-table";
 import { ErrorState } from "../shared";
+import { FilePropertiesModal } from "../FilePropertiesModal";
 import {
   IconCheck,
   IconArrowDown,
@@ -38,16 +46,32 @@ import {
   IconCopy,
   IconBolt,
   IconUsers,
+  IconDotsVertical,
+  IconInfoCircle,
 } from "@tabler/icons-react";
 import { getFileIcon } from "../../lib/fileIcons";
 import {
+  AnalyzeMediaFileForTorrentDocument,
+  CreateUnmatchedMediaFileFromTorrentDocument,
   PendingFileMatchesBySourceDocument,
+  TorrentModalMediaFilesByPathsDocument,
   TorrentByInfoHashWithFilesDocument,
-  TorrentChangedDocument,
+  type AnalyzeMediaFileForTorrentMutation,
+  type AnalyzeMediaFileForTorrentMutationVariables,
+  type CreateUnmatchedMediaFileFromTorrentMutation,
+  type CreateUnmatchedMediaFileFromTorrentMutationVariables,
   type PendingFileMatchesBySourceQuery,
+  type TorrentModalMediaFilesByPathsQuery,
+  type TorrentByInfoHashWithFilesQueryVariables,
   type TorrentByInfoHashWithFilesQuery,
 } from "../../lib/graphql/generated/graphql";
-import { apolloClient } from "../../lib/graphql/client";
+import {
+  apolloClient,
+  gql,
+  useMutation,
+  useQuery,
+  useSubscription,
+} from "../../lib/graphql/client";
 
 interface TorrentInfoModalProps {
   /** Legacy numeric id (session handle). Prefer torrentInfoHash when using entity list. */
@@ -56,6 +80,157 @@ interface TorrentInfoModalProps {
   torrentInfoHash?: string | null;
   isOpen: boolean;
   onClose: () => void;
+}
+
+type TorrentUnmatchMediaFileMutationData = {
+  UnmatchMediaFile: {
+    Success: boolean;
+    Reason?: string | null;
+  };
+};
+
+type TorrentUnmatchMediaFileMutationVariables = {
+  MediaFileId: string;
+};
+
+const TORRENT_UNMATCH_MEDIA_FILE_MUTATION = gql(`
+  mutation TorrentInfoUnmatchMediaFile($MediaFileId: String!) {
+    UnmatchMediaFile(MediaFileId: $MediaFileId) {
+      Success
+      Reason
+    }
+  }
+`);
+
+const SUPPORTED_TORRENT_MEDIA_EXTENSIONS = new Set([
+  "mkv",
+  "mp4",
+  "avi",
+  "m4v",
+  "mov",
+  "wmv",
+  "flv",
+  "webm",
+  "mpeg",
+  "mpg",
+  "ts",
+  "m2ts",
+  "mp3",
+  "flac",
+  "m4a",
+  "m4b",
+  "aac",
+  "ogg",
+  "opus",
+  "wav",
+  "wma",
+  "aiff",
+  "alac",
+  "ape",
+  "dsf",
+  "dff",
+  "srt",
+  "ass",
+  "ssa",
+  "sub",
+  "vtt",
+  "ttml",
+  "smi",
+  "sami",
+  "idx",
+  "sup",
+]);
+const UNMATCHED_LIBRARY_ID = "__torrent_unmatched__";
+
+function normalizePathForLookup(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+/g, "/").toLowerCase();
+}
+
+function isAbsolutePath(path: string): boolean {
+  return (
+    path.startsWith("/") ||
+    path.startsWith("\\\\") ||
+    /^[A-Za-z]:[\\/]/.test(path)
+  );
+}
+
+function joinPath(base: string, segment: string): string {
+  const normalizedBase = base.replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalizedSegment = segment.replace(/\\/g, "/").replace(/^\/+/, "");
+  return `${normalizedBase}/${normalizedSegment}`;
+}
+
+function buildPathCandidates(
+  filePath: string,
+  savePath?: string | null,
+  torrentName?: string | null,
+): string[] {
+  const candidates = new Set<string>();
+  const normalizedFilePath = filePath.replace(/\\/g, "/");
+  candidates.add(filePath);
+  candidates.add(normalizedFilePath);
+
+  if (savePath && !isAbsolutePath(normalizedFilePath)) {
+    candidates.add(joinPath(savePath, normalizedFilePath));
+    if (torrentName) {
+      candidates.add(joinPath(joinPath(savePath, torrentName), normalizedFilePath));
+    }
+  }
+
+  return Array.from(candidates);
+}
+
+function getBestFilePath(
+  filePath: string,
+  savePath?: string | null,
+  torrentName?: string | null,
+): string {
+  if (isAbsolutePath(filePath)) {
+    return filePath.replace(/\\/g, "/");
+  }
+  const candidates = buildPathCandidates(filePath, savePath, torrentName);
+  return candidates[0] ?? filePath;
+}
+
+function getRelativePath(
+  filePath: string,
+  savePath?: string | null,
+  torrentName?: string | null,
+): string {
+  const normalized = filePath.replace(/\\/g, "/");
+  if (!isAbsolutePath(normalized)) {
+    return normalized;
+  }
+  if (!savePath) {
+    return normalized.split("/").pop() ?? normalized;
+  }
+
+  const savePrefix = `${savePath.replace(/\\/g, "/").replace(/\/+$/, "")}/`;
+  if (torrentName) {
+    const withTorrentPrefix = `${savePrefix}${torrentName}/`;
+    if (normalized.startsWith(withTorrentPrefix)) {
+      return normalized.slice(withTorrentPrefix.length);
+    }
+  }
+  if (normalized.startsWith(savePrefix)) {
+    return normalized.slice(savePrefix.length);
+  }
+  return normalized.split("/").pop() ?? normalized;
+}
+
+function hasFfprobeData(metadata: string | null | undefined): boolean {
+  if (!metadata) return false;
+  const trimmed = metadata.trim();
+  if (!trimmed) return false;
+  return trimmed !== "{}" && trimmed !== "null";
+}
+
+function isSupportedTorrentMediaPath(path: string): boolean {
+  const fileName = path.split("/").pop() ?? path;
+  const extension = fileName.includes(".")
+    ? fileName.split(".").pop()?.toLowerCase()
+    : undefined;
+  return Boolean(extension && SUPPORTED_TORRENT_MEDIA_EXTENSIONS.has(extension));
 }
 
 function FileProgressBar({
@@ -91,9 +266,107 @@ function FileProgressBar({
   );
 }
 
+interface FileActionContext {
+  mediaFileId: string | null;
+  hasAnalyzedMedia: boolean;
+  canProcess: boolean;
+  processFileKey: string;
+  isProcessing: boolean;
+  onOpenProperties: () => void;
+  onProcess: () => void;
+  matchLabel: "Match" | "Rematch";
+  onOpenMatch: () => void;
+  canUnmatch: boolean;
+  onUnmatch?: () => void;
+  removeMatchId?: string | null;
+  onRemoveMatch?: (matchId: string) => void;
+}
+
+function FileActionsMenu({
+  actionContext,
+}: {
+  actionContext: FileActionContext;
+}) {
+  const {
+    mediaFileId,
+    hasAnalyzedMedia,
+    canProcess,
+    processFileKey,
+    isProcessing,
+    onOpenProperties,
+    onProcess,
+    matchLabel,
+    onOpenMatch,
+    canUnmatch,
+    onUnmatch,
+    removeMatchId,
+    onRemoveMatch,
+  } = actionContext;
+
+  return (
+    <Dropdown placement="bottom-end">
+      <DropdownTrigger>
+        <Button isIconOnly size="sm" variant="light">
+          <IconDotsVertical size={14} />
+        </Button>
+      </DropdownTrigger>
+      <DropdownMenu aria-label={`Actions for ${processFileKey}`}>
+        <DropdownItem
+          key="properties"
+          startContent={<IconInfoCircle size={14} />}
+          isDisabled={!mediaFileId && !canProcess}
+          onPress={onOpenProperties}
+        >
+          Properties
+        </DropdownItem>
+        {canProcess && !hasAnalyzedMedia ? (
+          <DropdownItem
+            key="process"
+            startContent={<IconBolt size={14} />}
+            isDisabled={isProcessing}
+            onPress={onProcess}
+          >
+            {isProcessing ? "Processing..." : "Process file"}
+          </DropdownItem>
+        ) : null}
+        <DropdownItem
+          key="match"
+          startContent={<IconLink size={14} />}
+          onPress={onOpenMatch}
+        >
+          {matchLabel}
+        </DropdownItem>
+        {canUnmatch && onUnmatch ? (
+          <DropdownItem
+            key="unmatch"
+            className="text-warning"
+            color="warning"
+            startContent={<IconX size={14} />}
+            onPress={onUnmatch}
+          >
+            Unmatch
+          </DropdownItem>
+        ) : null}
+        {removeMatchId && onRemoveMatch ? (
+          <DropdownItem
+            key="remove-match"
+            className="text-danger"
+            color="danger"
+            startContent={<IconTrash size={14} />}
+            onPress={() => onRemoveMatch(removeMatchId)}
+          >
+            Remove match
+          </DropdownItem>
+        ) : null}
+      </DropdownMenu>
+    </Dropdown>
+  );
+}
+
 // Helper to create file columns with match info
 function createFileColumns(
   matchesByIndex: Map<number, PendingFileMatch>,
+  getFileActionContext: (file: TorrentFileInfo) => FileActionContext,
   onRemoveMatch?: (matchId: string) => void,
 ): DataTableColumn<TorrentFileInfo>[] {
   return [
@@ -264,25 +537,18 @@ function createFileColumns(
     {
       key: "actions",
       label: "",
-      width: 50,
+      width: 72,
       align: "center",
       render: (file) => {
         const match = matchesByIndex.get(file.index);
-        if (!match || !onRemoveMatch) {
-          return null;
-        }
         return (
-          <Tooltip content="Remove match">
-            <Button
-              isIconOnly
-              size="sm"
-              variant="light"
-              color="danger"
-              onPress={() => onRemoveMatch(match.id)}
-            >
-              <IconTrash size={14} />
-            </Button>
-          </Tooltip>
+          <FileActionsMenu
+            actionContext={{
+              ...getFileActionContext(file),
+              removeMatchId: match?.id ?? null,
+              onRemoveMatch,
+            }}
+          />
         );
       },
     },
@@ -297,149 +563,154 @@ export function TorrentInfoModal({
 }: TorrentInfoModalProps) {
   type EntityTorrentNode =
     TorrentByInfoHashWithFilesQuery["Torrents"]["Edges"][number]["Node"];
-  const [details, setDetails] = useState<TorrentDetails | null>(null);
-  const [entityTorrent, setEntityTorrent] = useState<EntityTorrentNode | null>(
-    null,
-  );
-  const [fileMatches, setFileMatches] = useState<PendingFileMatch[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  type LegacyTorrentDetailsQuery = { torrentDetails: TorrentDetails | null };
+  type LegacyTorrentDetailsQueryVariables = { id: number };
+  type RemoveMatchMutationData = { removeMatch: RemoveMatchResult };
+
   const [entityLiveStats, setEntityLiveStats] = useState<{
     downloadSpeed: number;
     uploadSpeed: number;
     peers: number;
   } | null>(null);
+  const [removedMatchIds, setRemovedMatchIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [propertiesMediaFileId, setPropertiesMediaFileId] = useState<string | null>(
+    null,
+  );
+  const [processingFileKey, setProcessingFileKey] = useState<string | null>(null);
+  const [isMatchDialogOpen, setIsMatchDialogOpen] = useState(false);
+  const [matchFileIndex, setMatchFileIndex] = useState<number | null>(null);
 
-  const fetchEntityTorrent = useCallback(
-    async (showLoading = false) => {
-      if (!torrentInfoHash) return;
-      if (showLoading) {
-        setIsLoading(true);
-      }
-
-      try {
-        const result = await apolloClient.query({
-          query: TorrentByInfoHashWithFilesDocument,
-          variables: {
-            Where: { InfoHash: { Eq: torrentInfoHash } },
-            Page: { Limit: 1, Offset: 0 },
-          },
-          fetchPolicy: "network-only",
-        });
-        const node = result.data?.Torrents?.Edges?.[0]?.Node;
-        if (node) {
-          setEntityTorrent(node);
-        } else if (showLoading) {
-          setError("Torrent not found");
-        }
-      } catch (e) {
-        if (showLoading) {
-          setError(e instanceof Error ? e.message : String(e));
-        }
-      } finally {
-        if (showLoading) {
-          setIsLoading(false);
-        }
-      }
-    },
+  const isEntityMode = Boolean(torrentInfoHash);
+  const entityTorrentQueryVariables = useMemo<TorrentByInfoHashWithFilesQueryVariables>(
+    () => ({
+      Where: { InfoHash: { Eq: torrentInfoHash ?? "" } },
+      Page: { Limit: 1, Offset: 0 },
+    }),
     [torrentInfoHash],
   );
 
-  const fetchLegacyDetails = useCallback(
-    async (showLoading = false, includeMatches = false) => {
-      if (torrentId == null) return;
-      if (showLoading) {
-        setIsLoading(true);
-      }
+  const {
+    data: entityData,
+    previousData: previousEntityData,
+    loading: entityLoading,
+    error: entityQueryError,
+  } = useQuery(TorrentByInfoHashWithFilesDocument, {
+    variables: entityTorrentQueryVariables,
+    skip: !isOpen || !torrentInfoHash,
+    fetchPolicy: "cache-and-network",
+    notifyOnNetworkStatusChange: true,
+  });
 
-      try {
-        const result = await queryPromise<{ torrentDetails: TorrentDetails }>(
-          TORRENT_DETAILS_QUERY,
-          {
-            id: torrentId,
-          },
-        );
-        if (result.data?.torrentDetails) {
-          const det = result.data.torrentDetails;
-          setDetails(det);
+  const entityTorrent = useMemo<EntityTorrentNode | null>(() => {
+    const edges =
+      entityData?.Torrents?.Edges ?? previousEntityData?.Torrents?.Edges ?? [];
+    return edges[0]?.Node ?? null;
+  }, [entityData?.Torrents?.Edges, previousEntityData?.Torrents?.Edges]);
 
-          if (includeMatches) {
-            try {
-              const matchResult = await apolloClient.query({
-                query: PendingFileMatchesBySourceDocument,
-                variables: {
-                  Where: {
-                    SourceType: { Eq: "torrent" },
-                    SourceId: { Eq: det.infoHash },
-                  },
-                  Page: { Limit: 500, Offset: 0 },
-                },
-                fetchPolicy: "network-only",
-              });
-
-              if (matchResult.data?.PendingFileMatches?.Edges) {
-                const mappedMatches: PendingFileMatch[] =
-                  matchResult.data.PendingFileMatches.Edges.map(
-                    (
-                      edge: PendingFileMatchesBySourceQuery["PendingFileMatches"]["Edges"][number],
-                    ) => ({
-                      id: edge.Node.Id,
-                      sourceType: edge.Node.SourceType,
-                      sourceId: edge.Node.SourceId ?? null,
-                      sourceFileIndex: edge.Node.SourceFileIndex ?? null,
-                      sourcePath: edge.Node.SourcePath,
-                      fileSize: edge.Node.FileSize,
-                      episodeId: edge.Node.EpisodeId ?? null,
-                      movieId: edge.Node.MovieId ?? null,
-                      trackId: edge.Node.TrackId ?? null,
-                      chapterId: edge.Node.ChapterId ?? null,
-                      matchType:
-                        edge.Node.MatchType === "manual" ? "manual" : "auto",
-                      matchConfidence: edge.Node.MatchConfidence ?? null,
-                      parsedResolution: edge.Node.ParsedResolution ?? null,
-                      parsedCodec: edge.Node.ParsedCodec ?? null,
-                      parsedSource: edge.Node.ParsedSource ?? null,
-                      parsedAudio: edge.Node.ParsedAudio ?? null,
-                      copied: Boolean(
-                        edge.Node.CopiedAt && !edge.Node.CopyError,
-                      ),
-                      copiedAt: edge.Node.CopiedAt ?? null,
-                      copyError: edge.Node.CopyError ?? null,
-                      createdAt: "",
-                    }),
-                  );
-                setFileMatches(mappedMatches);
-              }
-            } catch {
-              // File matches are optional, don't fail the whole modal
-              console.warn("Failed to fetch file matches");
-            }
-          }
-        } else if (showLoading && result.error) {
-          setError(sanitizeError(result.error));
-        } else if (showLoading) {
-          setError("Torrent not found");
-        }
-      } catch (err) {
-        if (showLoading) {
-          setError(sanitizeError(err));
-        }
-      } finally {
-        if (showLoading) {
-          setIsLoading(false);
-        }
-      }
+  const {
+    data: legacyData,
+    previousData: previousLegacyData,
+    loading: legacyLoading,
+    error: legacyQueryError,
+    refetch: refetchLegacyDetails,
+  } = useQuery<LegacyTorrentDetailsQuery, LegacyTorrentDetailsQueryVariables>(
+    gql(TORRENT_DETAILS_QUERY),
+    {
+      variables: { id: torrentId as number },
+      skip: !isOpen || Boolean(torrentInfoHash) || torrentId == null,
+      fetchPolicy: "cache-and-network",
+      notifyOnNetworkStatusChange: true,
     },
-    [torrentId],
   );
+
+  const details =
+    legacyData?.torrentDetails ?? previousLegacyData?.torrentDetails ?? null;
+
+  const {
+    data: fileMatchesData,
+    previousData: previousFileMatchesData,
+    refetch: refetchFileMatches,
+  } = useQuery(PendingFileMatchesBySourceDocument, {
+    variables: {
+      Where: {
+        SourceType: { Eq: "torrent" },
+        SourceId: { Eq: details?.infoHash ?? "" },
+      },
+      Page: { Limit: 500, Offset: 0 },
+    },
+    skip: !isOpen || !details?.infoHash,
+    fetchPolicy: "cache-and-network",
+    notifyOnNetworkStatusChange: true,
+  });
+
+  const [removeMatchMutation] = useMutation<
+    RemoveMatchMutationData,
+    { matchId: string }
+  >(gql(REMOVE_MATCH_MUTATION));
+  const [createUnmatchedMediaFile] = useMutation<
+    CreateUnmatchedMediaFileFromTorrentMutation,
+    CreateUnmatchedMediaFileFromTorrentMutationVariables
+  >(CreateUnmatchedMediaFileFromTorrentDocument);
+  const [analyzeMediaFile] = useMutation<
+    AnalyzeMediaFileForTorrentMutation,
+    AnalyzeMediaFileForTorrentMutationVariables
+  >(AnalyzeMediaFileForTorrentDocument);
+  const [unmatchMediaFile] = useMutation<
+    TorrentUnmatchMediaFileMutationData,
+    TorrentUnmatchMediaFileMutationVariables
+  >(TORRENT_UNMATCH_MEDIA_FILE_MUTATION);
+
+  const fileMatches = useMemo<PendingFileMatch[]>(() => {
+    const edges =
+      fileMatchesData?.PendingFileMatches?.Edges ??
+      previousFileMatchesData?.PendingFileMatches?.Edges ??
+      [];
+    return edges
+      .map(
+        (
+          edge: PendingFileMatchesBySourceQuery["PendingFileMatches"]["Edges"][number],
+        ) => ({
+          id: edge.Node.Id,
+          sourceType: edge.Node.SourceType,
+          sourceId: edge.Node.SourceId ?? null,
+          sourceFileIndex: edge.Node.SourceFileIndex ?? null,
+          sourcePath: edge.Node.SourcePath,
+          fileSize: edge.Node.FileSize,
+          episodeId: edge.Node.EpisodeId ?? null,
+          movieId: edge.Node.MovieId ?? null,
+          trackId: edge.Node.TrackId ?? null,
+          chapterId: edge.Node.ChapterId ?? null,
+          matchType: (
+            edge.Node.MatchType === "manual" ? "manual" : "auto"
+          ) as PendingFileMatch["matchType"],
+          matchConfidence: edge.Node.MatchConfidence ?? null,
+          parsedResolution: edge.Node.ParsedResolution ?? null,
+          parsedCodec: edge.Node.ParsedCodec ?? null,
+          parsedSource: edge.Node.ParsedSource ?? null,
+          parsedAudio: edge.Node.ParsedAudio ?? null,
+          copied: Boolean(edge.Node.CopiedAt && !edge.Node.CopyError),
+          copiedAt: edge.Node.CopiedAt ?? null,
+          copyError: edge.Node.CopyError ?? null,
+          createdAt: "",
+        }),
+      )
+      .filter((match) => !removedMatchIds.has(match.id));
+  }, [
+    fileMatchesData?.PendingFileMatches?.Edges,
+    previousFileMatchesData?.PendingFileMatches?.Edges,
+    removedMatchIds,
+  ]);
 
   // Handle removing a match
   const handleRemoveMatch = useCallback(async (matchId: string) => {
-    const result = await mutationPromise<{
-      removeMatch: RemoveMatchResult;
-    }>(REMOVE_MATCH_MUTATION, { matchId });
+    const result = await removeMatchMutation({
+      variables: { matchId },
+    });
     if (result.data?.removeMatch.success) {
-      setFileMatches((prev) => prev.filter((m) => m.id !== matchId));
+      setRemovedMatchIds((prev) => new Set(prev).add(matchId));
+      void refetchFileMatches();
       addToast({
         title: "Match Removed",
         description: "The file match has been removed",
@@ -452,189 +723,527 @@ export function TorrentInfoModal({
         color: "danger",
       });
     }
-  }, []);
+  }, [removeMatchMutation, refetchFileMatches]);
 
   // Create a map of file index to match for quick lookup
-  const matchesByIndex = new Map(
-    fileMatches
-      .filter((m) => m.sourceFileIndex !== null)
-      .map((m) => [m.sourceFileIndex as number, m]),
+  const matchesByIndex = useMemo(
+    () =>
+      new Map(
+        fileMatches
+          .filter((m) => m.sourceFileIndex !== null)
+          .map((m) => [m.sourceFileIndex as number, m]),
+      ),
+    [fileMatches],
   );
 
-  useEffect(() => {
-    if (!isOpen) return;
+  const currentSavePath = details?.savePath ?? entityTorrent?.SavePath ?? null;
+  const currentTorrentName = details?.name ?? entityTorrent?.Name ?? null;
 
-    setDetails(null);
-    setEntityTorrent(null);
-    setFileMatches([]);
-    setError(null);
-    setEntityLiveStats(null);
+  const visibleFileRows = useMemo(
+    () =>
+      isEntityMode
+        ? (entityTorrent?.Files?.Edges?.map((e) => e.Node) ?? []).map((file) => ({
+            key: `entity-${file.FileIndex}`,
+            filePath: file.FilePath,
+          }))
+        : (details?.files ?? []).map((file) => ({
+            key: `legacy-${file.index}`,
+            filePath: file.path,
+          })),
+    [isEntityMode, entityTorrent?.Files?.Edges, details?.files],
+  );
 
-    if (torrentInfoHash) {
-      fetchEntityTorrent(true);
-      return;
+  const mediaLookupPaths = useMemo(() => {
+    const candidates = new Set<string>();
+    for (const row of visibleFileRows) {
+      for (const candidate of buildPathCandidates(
+        row.filePath,
+        currentSavePath,
+        currentTorrentName,
+      )) {
+        candidates.add(candidate);
+      }
     }
+    return Array.from(candidates);
+  }, [visibleFileRows, currentSavePath, currentTorrentName]);
 
-    if (torrentId != null) {
-      fetchLegacyDetails(true, true);
+  const {
+    data: mediaByPathData,
+    previousData: previousMediaByPathData,
+    refetch: refetchMediaByPath,
+  } = useQuery(TorrentModalMediaFilesByPathsDocument, {
+    variables: { Paths: mediaLookupPaths },
+    skip: !isOpen || mediaLookupPaths.length === 0,
+    fetchPolicy: "cache-and-network",
+    notifyOnNetworkStatusChange: true,
+  });
+
+  type MediaLookupNode =
+    TorrentModalMediaFilesByPathsQuery["MediaFiles"]["Edges"][number]["Node"] & {
+      EpisodeId?: string | null;
+      MovieId?: string | null;
+      TrackId?: string | null;
+      ChapterId?: string | null;
+    };
+
+  const mediaByNormalizedPath = useMemo(() => {
+    const map = new Map<string, MediaLookupNode>();
+    const edges =
+      mediaByPathData?.MediaFiles?.Edges ??
+      previousMediaByPathData?.MediaFiles?.Edges ??
+      [];
+    for (const edge of edges) {
+      map.set(normalizePathForLookup(edge.Node.Path), edge.Node);
     }
-  }, [
-    isOpen,
-    torrentId,
-    torrentInfoHash,
-    fetchEntityTorrent,
-    fetchLegacyDetails,
-  ]);
+    return map;
+  }, [mediaByPathData?.MediaFiles?.Edges, previousMediaByPathData?.MediaFiles?.Edges]);
 
-  useEffect(() => {
-    if (!isOpen) return;
+  const resolveMediaForFile = useCallback(
+    (filePath: string) => {
+      const candidates = buildPathCandidates(filePath, currentSavePath, currentTorrentName);
+      for (const candidate of candidates) {
+        const media = mediaByNormalizedPath.get(normalizePathForLookup(candidate));
+        if (media) {
+          return media;
+        }
+      }
+      return null;
+    },
+    [currentSavePath, currentTorrentName, mediaByNormalizedPath],
+  );
 
-    const subscriptions: Array<{ unsubscribe?: () => void }> = [];
-
-    if (torrentInfoHash && entityTorrent?.Id) {
-      try {
-        const torrentSub = subscriptionStream(
-          TorrentChangedDocument,
-          {},
-        ).subscribe({
-          next: () => {
-            fetchEntityTorrent();
-          },
-          error: () => {},
+  const handleProcessFile = useCallback(
+    async (params: {
+      filePath: string;
+      fileSize: number;
+      processFileKey: string;
+    }) => {
+      const { filePath, fileSize, processFileKey } = params;
+      const currentMedia = resolveMediaForFile(filePath);
+      if (currentMedia && hasFfprobeData(currentMedia.Metadata)) {
+        return;
+      }
+      if (!isSupportedTorrentMediaPath(filePath)) {
+        addToast({
+          title: "Unsupported file type",
+          description: "This file type is not processed for media analysis.",
+          color: "warning",
         });
-        subscriptions.push(torrentSub);
-      } catch {
-        // Ignore subscription setup failures
+        return;
+      }
+
+      setProcessingFileKey(processFileKey);
+      try {
+        let mediaFileId = currentMedia?.Id ?? null;
+        let analyzePath = currentMedia?.Path ?? null;
+
+        if (!mediaFileId) {
+          const bestPath = getBestFilePath(filePath, currentSavePath, currentTorrentName);
+          const relativePath = getRelativePath(bestPath, currentSavePath, currentTorrentName);
+          const originalName = bestPath.split("/").pop() ?? bestPath;
+
+          const createResult = await createUnmatchedMediaFile({
+            variables: {
+              Input: {
+                AddedAt: new Date().toISOString(),
+                IsHdr: false,
+                LibraryId: UNMATCHED_LIBRARY_ID,
+                Metadata: JSON.stringify({
+                  SourceType: "torrent",
+                  UnmatchedReason: "Manually processed from torrent modal",
+                }),
+                OriginalName: originalName,
+                Path: bestPath,
+                RelativePath: relativePath,
+                Size: Math.max(0, Math.floor(fileSize)),
+              },
+            },
+          });
+
+          const createData = createResult.data?.CreateMediaFile;
+          if (!createData?.Success || !createData.MediaFile?.Id) {
+            throw new Error(createData?.Error || "Failed to create media file");
+          }
+
+          mediaFileId = createData.MediaFile.Id;
+          analyzePath = createData.MediaFile.Path;
+        }
+
+        if (!mediaFileId || !analyzePath) {
+          throw new Error("Missing media file information for analysis");
+        }
+
+        const analyzeResult = await analyzeMediaFile({
+          variables: {
+            MediaFileId: mediaFileId,
+            Path: analyzePath,
+          },
+        });
+        const analyzeData = analyzeResult.data?.AnalyzeMediaFile;
+        if (!analyzeData?.Success) {
+          throw new Error(analyzeData?.Message || "Failed to queue media analysis");
+        }
+
+        addToast({
+          title: "File queued",
+          description: "Media analysis has been queued for this file.",
+          color: "success",
+        });
+        void refetchMediaByPath();
+      } catch (error) {
+        addToast({
+          title: "Processing failed",
+          description: sanitizeError(error),
+          color: "danger",
+        });
+      } finally {
+        setProcessingFileKey((current) =>
+          current === processFileKey ? null : current,
+        );
+      }
+    },
+    [
+      resolveMediaForFile,
+      currentSavePath,
+      currentTorrentName,
+      createUnmatchedMediaFile,
+      analyzeMediaFile,
+      refetchMediaByPath,
+    ],
+  );
+
+  const handleOpenProperties = useCallback(
+    async (filePath: string) => {
+      const mediaFile = resolveMediaForFile(filePath);
+      if (mediaFile?.Id) {
+        setPropertiesMediaFileId(mediaFile.Id);
+        return;
+      }
+
+      if (!isSupportedTorrentMediaPath(filePath)) {
+        addToast({
+          title: "No properties available",
+          description: "This file type does not expose media properties.",
+          color: "default",
+        });
+        return;
       }
 
       try {
-        const fileSub = subscriptionStream<{
-          TorrentFileChanged: {
-            Action: "Created" | "Updated" | "Deleted";
-            Id: string;
-            TorrentFile?: {
-              TorrentId: string;
-              FileIndex: number;
-              FilePath: string;
-              FileSize: number;
-              DownloadedBytes: number;
-              Progress: number;
-            };
-          };
-        }>(TORRENT_FILE_CHANGED_SUBSCRIPTION, {}).subscribe({
-          next: (result: any) => {
-            const payload = result.data?.TorrentFileChanged;
-            const torrentFile = payload?.TorrentFile;
-            if (!torrentFile || torrentFile.TorrentId !== entityTorrent.Id) {
-              return;
+        const result = await apolloClient.query({
+          query: TorrentModalMediaFilesByPathsDocument,
+          variables: {
+            Paths: buildPathCandidates(filePath, currentSavePath, currentTorrentName),
+          },
+          fetchPolicy: "network-only",
+        });
+        const found = result.data?.MediaFiles?.Edges?.[0]?.Node;
+        if (found?.Id) {
+          setPropertiesMediaFileId(found.Id);
+          void refetchMediaByPath();
+          return;
+        }
+
+        addToast({
+          title: "No media file record",
+          description: "Process this file first to generate metadata.",
+          color: "warning",
+        });
+      } catch (error) {
+        addToast({
+          title: "Failed to load properties",
+          description: sanitizeError(error),
+          color: "danger",
+        });
+      }
+    },
+    [
+      resolveMediaForFile,
+      currentSavePath,
+      currentTorrentName,
+      refetchMediaByPath,
+    ],
+  );
+
+  const buildActionContext = useCallback(
+    (
+      filePath: string,
+      fileSize: number,
+      rowKey: string,
+      fileIndex: number,
+    ): FileActionContext => {
+      const mediaFile = resolveMediaForFile(filePath);
+      const analyzed = hasFfprobeData(mediaFile?.Metadata);
+      const canProcess = isSupportedTorrentMediaPath(filePath);
+      const existingMatchId =
+        mediaFile?.EpisodeId ??
+        mediaFile?.MovieId ??
+        mediaFile?.TrackId ??
+        mediaFile?.ChapterId ??
+        null;
+      const hasExistingMatch = Boolean(existingMatchId);
+
+      return {
+        mediaFileId: mediaFile?.Id ?? null,
+        hasAnalyzedMedia: analyzed,
+        canProcess,
+        processFileKey: rowKey,
+        isProcessing: processingFileKey === rowKey,
+        matchLabel: hasExistingMatch ? "Rematch" : "Match",
+        onOpenMatch: () => {
+          setMatchFileIndex(fileIndex);
+          setIsMatchDialogOpen(true);
+        },
+        canUnmatch: hasExistingMatch && Boolean(mediaFile?.Id),
+        onUnmatch: mediaFile?.Id
+          ? () => {
+              void (async () => {
+                try {
+                  const result = await unmatchMediaFile({
+                    variables: { MediaFileId: mediaFile.Id },
+                  });
+                  if (!result.data?.UnmatchMediaFile?.Success) {
+                    addToast({
+                      title: "Unmatch failed",
+                      description:
+                        result.data?.UnmatchMediaFile?.Reason ||
+                        "Failed to unmatch media file",
+                      color: "danger",
+                    });
+                    return;
+                  }
+                  addToast({
+                    title: "File unmatched",
+                    description: "The file has been unlinked from media.",
+                    color: "success",
+                  });
+                  void refetchMediaByPath();
+                } catch (error) {
+                  addToast({
+                    title: "Unmatch failed",
+                    description: sanitizeError(error),
+                    color: "danger",
+                  });
+                }
+              })();
             }
+          : undefined,
+        onOpenProperties: () => {
+          void handleOpenProperties(filePath);
+        },
+        onProcess: () => {
+          void handleProcessFile({
+            filePath,
+            fileSize,
+            processFileKey: rowKey,
+          });
+        },
+      };
+    },
+    [
+      resolveMediaForFile,
+      processingFileKey,
+      refetchMediaByPath,
+      handleOpenProperties,
+      handleProcessFile,
+      unmatchMediaFile,
+    ],
+  );
 
-            setEntityTorrent((prev) => {
-              if (!prev?.Files?.Edges) return prev;
-              if (torrentFile.TorrentId !== prev.Id) return prev;
+  useEffect(() => {
+    setEntityLiveStats(null);
+    setRemovedMatchIds(new Set());
+    setPropertiesMediaFileId(null);
+    setProcessingFileKey(null);
+    setIsMatchDialogOpen(false);
+    setMatchFileIndex(null);
+  }, [isOpen, torrentId, torrentInfoHash]);
 
-              const edges = prev.Files.Edges;
-              const existingIndex = edges.findIndex(
-                (edge) => edge.Node.FileIndex === torrentFile.FileIndex,
-              );
+  useSubscription<{
+    TorrentFileChanged: {
+      Action: "Created" | "Updated" | "Deleted";
+      Id: string;
+      TorrentFile?: {
+        TorrentId: string;
+        FileIndex: number;
+        FilePath: string;
+        FileSize: number;
+        DownloadedBytes: number;
+        Progress: number;
+      };
+    };
+  }>(gql(TORRENT_FILE_CHANGED_SUBSCRIPTION), {
+    skip: !isOpen || !torrentInfoHash || !entityTorrent?.Id,
+    onData: ({ data }) => {
+      const payload = data.data?.TorrentFileChanged;
+      const torrentFile = payload?.TorrentFile;
+      if (!torrentFile || torrentFile.TorrentId !== entityTorrent?.Id) {
+        return;
+      }
+      apolloClient.cache.updateQuery<TorrentByInfoHashWithFilesQuery>(
+        {
+          query: TorrentByInfoHashWithFilesDocument,
+          variables: entityTorrentQueryVariables,
+        },
+        (existing) => {
+          if (!existing?.Torrents?.Edges?.length) {
+            return existing;
+          }
+          const currentNode = existing.Torrents.Edges[0]?.Node;
+          if (!currentNode || currentNode.Id !== torrentFile.TorrentId) {
+            return existing;
+          }
 
-              if (payload.Action === "Deleted") {
-                if (existingIndex === -1) return prev;
-                const nextEdges = edges.filter(
-                  (_, index) => index !== existingIndex,
-                );
-                return {
-                  ...prev,
-                  Files: { ...prev.Files, Edges: nextEdges },
-                };
-              }
+          const currentEdges = currentNode.Files?.Edges ?? [];
+          const existingIndex = currentEdges.findIndex(
+            (edge) => edge.Node.FileIndex === torrentFile.FileIndex,
+          );
 
-              const nextNode = {
+          let nextFileEdges = currentEdges;
+          if (payload.Action === "Deleted") {
+            if (existingIndex === -1) return existing;
+            nextFileEdges = currentEdges.filter(
+              (edge) => edge.Node.FileIndex !== torrentFile.FileIndex,
+            );
+          } else if (existingIndex >= 0) {
+            nextFileEdges = [...currentEdges];
+            nextFileEdges[existingIndex] = {
+              ...nextFileEdges[existingIndex],
+              Node: {
+                ...nextFileEdges[existingIndex].Node,
                 FileIndex: torrentFile.FileIndex,
                 FilePath: torrentFile.FilePath,
                 FileSize: torrentFile.FileSize,
                 DownloadedBytes: torrentFile.DownloadedBytes,
                 Progress: torrentFile.Progress,
-              };
+              },
+            };
+          } else {
+            nextFileEdges = [
+              ...currentEdges,
+              {
+                Node: {
+                  FileIndex: torrentFile.FileIndex,
+                  FilePath: torrentFile.FilePath,
+                  FileSize: torrentFile.FileSize,
+                  DownloadedBytes: torrentFile.DownloadedBytes,
+                  Progress: torrentFile.Progress,
+                },
+              },
+            ];
+          }
 
-              if (existingIndex === -1) {
-                return {
-                  ...prev,
-                  Files: {
-                    ...prev.Files,
-                    Edges: [...edges, { Node: nextNode }],
-                  },
-                };
-              }
-
-              const nextEdges = edges.map((edge, index) =>
-                index === existingIndex ? { ...edge, Node: nextNode } : edge,
-              );
-
-              return { ...prev, Files: { ...prev.Files, Edges: nextEdges } };
-            });
-          },
-          error: () => {},
-        });
-        subscriptions.push(fileSub);
-      } catch {
-        // Ignore subscription setup failures
-      }
-
-      try {
-        const progressSub = subscriptionStream<{
-          TorrentProgress: {
-            InfoHash: string;
-            DownloadSpeed: number;
-            UploadSpeed: number;
-            Peers: number;
+          const nextEdges = [...existing.Torrents.Edges];
+          nextEdges[0] = {
+            ...nextEdges[0],
+            Node: {
+              ...currentNode,
+              Files: {
+                ...currentNode.Files,
+                Edges: nextFileEdges,
+              },
+            },
           };
-        }>(TORRENT_PROGRESS_SUBSCRIPTION).subscribe({
-          next: (result: any) => {
-            const progress = result.data?.TorrentProgress;
-            if (!progress || progress.InfoHash !== torrentInfoHash) return;
-            setEntityLiveStats({
-              downloadSpeed: progress.DownloadSpeed ?? 0,
-              uploadSpeed: progress.UploadSpeed ?? 0,
-              peers: progress.Peers ?? 0,
-            });
-          },
-          error: () => {},
-        });
-        subscriptions.push(progressSub);
-      } catch {
-        // Ignore subscription setup failures
-      }
-    }
 
-    if (torrentId != null) {
-      try {
-        const progressSub = subscriptionStream<{
-          TorrentProgress: { Id: number };
-        }>(TORRENT_PROGRESS_SUBSCRIPTION).subscribe({
-          next: (result: any) => {
-            if (result.data?.TorrentProgress?.Id === torrentId) {
-              fetchLegacyDetails(false, false);
-            }
-          },
-          error: () => {},
-        });
-        subscriptions.push(progressSub);
-      } catch {
-        // Ignore subscription setup failures
-      }
-    }
+          return {
+            ...existing,
+            Torrents: {
+              ...existing.Torrents,
+              Edges: nextEdges,
+            },
+          };
+        },
+      );
+    },
+  });
 
-    return () => {
-      subscriptions.forEach((sub) => sub.unsubscribe?.());
+  useSubscription<{
+    TorrentProgress: {
+      Id: number;
+      InfoHash: string;
+      Progress: number;
+      DownloadSpeed: number;
+      UploadSpeed: number;
+      Peers: number;
+      State: string;
     };
+  }>(gql(TORRENT_PROGRESS_SUBSCRIPTION), {
+    skip: !isOpen || (!torrentInfoHash && torrentId == null),
+    onData: ({ data }) => {
+      const progress = data.data?.TorrentProgress;
+      if (!progress) return;
+
+      if (torrentInfoHash) {
+        if (progress.InfoHash !== torrentInfoHash) return;
+        setEntityLiveStats({
+          downloadSpeed: progress.DownloadSpeed ?? 0,
+          uploadSpeed: progress.UploadSpeed ?? 0,
+          peers: progress.Peers ?? 0,
+        });
+        apolloClient.cache.updateQuery<TorrentByInfoHashWithFilesQuery>(
+          {
+            query: TorrentByInfoHashWithFilesDocument,
+            variables: entityTorrentQueryVariables,
+          },
+          (existing) => {
+            if (!existing?.Torrents?.Edges?.length) return existing;
+            const currentNode = existing.Torrents.Edges[0]?.Node;
+            if (!currentNode || currentNode.InfoHash !== progress.InfoHash) {
+              return existing;
+            }
+            const nextEdges = [...existing.Torrents.Edges];
+            nextEdges[0] = {
+              ...nextEdges[0],
+              Node: {
+                ...currentNode,
+                Progress: progress.Progress ?? currentNode.Progress,
+                State: progress.State ?? currentNode.State,
+              },
+            };
+            return {
+              ...existing,
+              Torrents: {
+                ...existing.Torrents,
+                Edges: nextEdges,
+              },
+            };
+          },
+        );
+        return;
+      }
+
+      if (torrentId != null && progress.Id === torrentId) {
+        void refetchLegacyDetails();
+      }
+    },
+  });
+
+  const hasEntityData = Boolean(entityTorrent);
+  const hasLegacyData = Boolean(details);
+  const showLoading = isEntityMode
+    ? entityLoading && !hasEntityData
+    : legacyLoading && !hasLegacyData;
+
+  const error = useMemo(() => {
+    if (!isOpen) return null;
+    if (isEntityMode) {
+      if (entityQueryError) return sanitizeError(entityQueryError);
+      if (!entityLoading && !entityTorrent) return "Torrent not found";
+      return null;
+    }
+    if (legacyQueryError) return sanitizeError(legacyQueryError);
+    if (!legacyLoading && torrentId != null && !details) return "Torrent not found";
+    return null;
   }, [
     isOpen,
-    torrentInfoHash,
+    isEntityMode,
+    entityQueryError,
+    entityLoading,
+    entityTorrent,
+    legacyQueryError,
+    legacyLoading,
     torrentId,
-    entityTorrent?.Id,
-    fetchEntityTorrent,
-    fetchLegacyDetails,
+    details,
   ]);
 
   return (
@@ -698,7 +1307,7 @@ export function TorrentInfoModal({
         </ModalHeader>
 
         <ModalBody className="py-6">
-          {isLoading && (
+          {showLoading && (
             <div className="flex flex-col items-center justify-center py-16 gap-3">
               <Spinner size="lg" />
               <span className="text-default-500 text-sm">
@@ -711,7 +1320,7 @@ export function TorrentInfoModal({
             <ErrorState title="Failed to Load Details" message={error} />
           )}
 
-          {entityTorrent && !isLoading && !details && (
+          {entityTorrent && !showLoading && !details && (
             <div className="space-y-6">
               <Card className="bg-content2/50">
                 <CardBody className="p-4">
@@ -826,6 +1435,22 @@ export function TorrentInfoModal({
                         ),
                         width: 300,
                       },
+                      {
+                        key: "actions",
+                        label: "",
+                        width: 72,
+                        align: "center",
+                        render: (n) => (
+                          <FileActionsMenu
+                            actionContext={buildActionContext(
+                              n.FilePath,
+                              n.FileSize,
+                              `entity-${n.FileIndex}`,
+                              n.FileIndex,
+                            )}
+                          />
+                        ),
+                      },
                     ]}
                     getRowKey={(n) => n.FileIndex.toString()}
                     isCompact
@@ -837,7 +1462,7 @@ export function TorrentInfoModal({
             </div>
           )}
 
-          {details && !isLoading && (
+          {details && !showLoading && (
             <div className="space-y-6">
               {/* Progress Section */}
               <Card className="bg-content2/50">
@@ -982,6 +1607,13 @@ export function TorrentInfoModal({
                     data={details.files}
                     columns={createFileColumns(
                       matchesByIndex,
+                      (file) =>
+                        buildActionContext(
+                          file.path,
+                          file.size,
+                          `legacy-${file.index}`,
+                          file.index,
+                        ),
                       handleRemoveMatch,
                     )}
                     getRowKey={(file) => file.index}
@@ -1012,6 +1644,24 @@ export function TorrentInfoModal({
           </Button>
         </ModalFooter>
       </ModalContent>
+      <FilePropertiesModal
+        isOpen={Boolean(propertiesMediaFileId)}
+        onClose={() => setPropertiesMediaFileId(null)}
+        mediaFileId={propertiesMediaFileId}
+      />
+      <MediaFilesMatchDialog
+        isOpen={isMatchDialogOpen}
+        onClose={() => {
+          setIsMatchDialogOpen(false);
+          setMatchFileIndex(null);
+        }}
+        torrentInfoHash={torrentInfoHash ?? details?.infoHash ?? null}
+        initialFileIndex={matchFileIndex}
+        onApplied={() => {
+          void refetchMediaByPath();
+          void refetchFileMatches();
+        }}
+      />
     </Modal>
   );
 }

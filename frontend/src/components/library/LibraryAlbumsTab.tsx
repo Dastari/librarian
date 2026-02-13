@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useEffect } from "react";
+import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useQueryState, parseAsString, parseAsStringLiteral } from "nuqs";
 import { Button } from "@heroui/button";
 import { Image } from "@heroui/image";
@@ -38,6 +38,8 @@ interface LibraryAlbumsTabProps {
   loading?: boolean;
   onDeleteAlbum?: (albumId: string, albumName: string) => void;
   onAddAlbum?: () => void;
+  /** Callback to provide refresh function to parent */
+  onRefreshReady?: (refreshFn: () => void) => void;
 }
 
 // ============================================================================
@@ -46,9 +48,10 @@ interface LibraryAlbumsTabProps {
 
 export function LibraryAlbumsTab({
   libraryId,
-  loading: parentLoading,
+  loading: _parentLoading,
   onDeleteAlbum,
   onAddAlbum,
+  onRefreshReady,
 }: LibraryAlbumsTabProps) {
   // URL-persisted state via nuqs
   const [selectedLetter, setSelectedLetter] = useQueryState(
@@ -79,87 +82,108 @@ export function LibraryAlbumsTab({
   );
 
   const [albums, setAlbums] = useState<Album[]>([]);
-  const [albumsLoading, setAlbumsLoading] = useState(true);
   const [artists, setArtists] = useState<Artist[]>([]);
-  const [artistsLoading, setArtistsLoading] = useState(true);
+  const [queryLoading, setQueryLoading] = useState(true);
+  const hasLoadedRef = useRef(false);
+  const inFlightRef = useRef<Promise<void> | null>(null);
 
-  // Check if we should skip queries (loading or template ID)
-  const shouldSkipQueries = parentLoading || libraryId.startsWith("template");
+  // Keep behavior consistent with movies/shows tabs.
+  const shouldSkipQueries = !libraryId || libraryId.startsWith("template");
 
-  // Fetch artists separately (still needed for name lookup)
+  const fetchAlbumsAndArtists = useCallback(
+    async (showLoading: boolean) => {
+      if (shouldSkipQueries) {
+        setQueryLoading(false);
+        return;
+      }
+
+      if (inFlightRef.current) {
+        return inFlightRef.current;
+      }
+
+      if (showLoading || !hasLoadedRef.current) {
+        setQueryLoading(true);
+      }
+
+      const request = (async () => {
+        try {
+          const [albumsResult, artistsResult] = await Promise.all([
+            apolloClient.query({
+              query: LibraryAlbumsTabDocument,
+              variables: { LibraryId: libraryId },
+              fetchPolicy: "network-only",
+            }),
+            apolloClient.query({
+              query: LibraryArtistsTabDocument,
+              variables: { LibraryId: libraryId },
+              fetchPolicy: "network-only",
+            }),
+          ]);
+
+          const albumEdges = albumsResult.data?.Albums?.Edges ?? [];
+          setAlbums(
+            albumEdges.map((e) => ({
+              id: e.Node.Id,
+              artistId: e.Node.ArtistId,
+              libraryId: e.Node.LibraryId,
+              name: e.Node.Name,
+              sortName: e.Node.SortName ?? null,
+              year: e.Node.Year ?? null,
+              musicbrainzId: e.Node.MusicbrainzId ?? null,
+              albumType: e.Node.AlbumType ?? null,
+              genres: e.Node.Genres,
+              label: e.Node.Label ?? null,
+              country: e.Node.Country ?? null,
+              releaseDate: e.Node.ReleaseDate ?? null,
+              coverUrl: e.Node.CoverUrl ?? null,
+              trackCount: e.Node.TrackCount ?? null,
+              discCount: e.Node.DiscCount ?? null,
+              totalDurationSecs: e.Node.TotalDurationSecs ?? null,
+              hasFiles: e.Node.HasFiles,
+              sizeBytes: e.Node.SizeBytes ?? null,
+              path: e.Node.Path ?? null,
+              downloadedTrackCount: null,
+            })),
+          );
+
+          const artistEdges = artistsResult.data?.Artists?.Edges ?? [];
+          setArtists(
+            artistEdges.map((e) => ({
+              id: e.Node.Id,
+              libraryId: e.Node.LibraryId,
+              name: e.Node.Name,
+              sortName: e.Node.SortName ?? null,
+              musicbrainzId: e.Node.MusicbrainzId ?? null,
+            })),
+          );
+        } catch (err) {
+          console.error("Failed to fetch albums/artists:", err);
+        } finally {
+          hasLoadedRef.current = true;
+          setQueryLoading(false);
+        }
+      })();
+
+      inFlightRef.current = request;
+      request.finally(() => {
+        inFlightRef.current = null;
+      });
+      return request;
+    },
+    [libraryId, shouldSkipQueries],
+  );
+
   useEffect(() => {
-    if (shouldSkipQueries) {
-      return;
+    void fetchAlbumsAndArtists(true);
+  }, [fetchAlbumsAndArtists]);
+
+  useEffect(() => {
+    if (onRefreshReady) {
+      onRefreshReady(() => {
+        void fetchAlbumsAndArtists(false);
+      });
     }
-    const fetchAlbums = async () => {
-      try {
-        const result = await apolloClient.query({
-          query: LibraryAlbumsTabDocument,
-          variables: { LibraryId: libraryId },
-          fetchPolicy: "network-only",
-        });
-
-        const edges = result.data?.Albums?.Edges ?? [];
-        setAlbums(
-          edges.map((e) => ({
-            id: e.Node.Id,
-            artistId: e.Node.ArtistId,
-            libraryId: e.Node.LibraryId,
-            name: e.Node.Name,
-            sortName: e.Node.SortName ?? null,
-            year: e.Node.Year ?? null,
-            musicbrainzId: e.Node.MusicbrainzId ?? null,
-            albumType: e.Node.AlbumType ?? null,
-            genres: e.Node.Genres,
-            label: e.Node.Label ?? null,
-            country: e.Node.Country ?? null,
-            releaseDate: e.Node.ReleaseDate ?? null,
-            coverUrl: e.Node.CoverUrl ?? null,
-            trackCount: e.Node.TrackCount ?? null,
-            discCount: e.Node.DiscCount ?? null,
-            totalDurationSecs: e.Node.TotalDurationSecs ?? null,
-            hasFiles: e.Node.HasFiles,
-            sizeBytes: e.Node.SizeBytes ?? null,
-            path: e.Node.Path ?? null,
-            downloadedTrackCount: null,
-          })),
-        );
-      } catch (err) {
-        console.error("Failed to fetch albums:", err);
-      } finally {
-        setAlbumsLoading(false);
-      }
-    };
-
-    const fetchArtists = async () => {
-      try {
-        const result = await apolloClient.query({
-          query: LibraryArtistsTabDocument,
-          variables: { LibraryId: libraryId },
-          fetchPolicy: "network-only",
-        });
-
-        const edges = result.data?.Artists?.Edges ?? [];
-        setArtists(
-          edges.map((e) => ({
-            id: e.Node.Id,
-            libraryId: e.Node.LibraryId,
-            name: e.Node.Name,
-            sortName: e.Node.SortName ?? null,
-            musicbrainzId: e.Node.MusicbrainzId ?? null,
-          })),
-        );
-      } catch (err) {
-        console.error("Failed to fetch artists:", err);
-      } finally {
-        setArtistsLoading(false);
-      }
-    };
-    fetchAlbums();
-    fetchArtists();
-  }, [libraryId, shouldSkipQueries]);
-
-  const isLoading = albumsLoading || artistsLoading;
+  }, [fetchAlbumsAndArtists, onRefreshReady]);
 
   // Create artist lookup map
   const artistMap = useMemo(() => {
@@ -401,7 +425,7 @@ export function LibraryAlbumsTab({
           fillHeight
           serverTotalCount={visibleAlbums.length}
           onSearchChange={handleSearchChange}
-          isLoading={parentLoading || isLoading}
+          isLoading={queryLoading && visibleAlbums.length === 0}
           headerContent={
             <AlphabetFilter
               selectedLetter={normalizedLetter}

@@ -1,56 +1,37 @@
-import { useState, useEffect, useCallback } from "react";
 import { Button } from "@heroui/button";
 import { Badge } from "@heroui/badge";
-import { Tooltip } from "@heroui/tooltip";
 import { IconBell } from "@tabler/icons-react";
 import {
   NotificationsDocument,
   NotificationChangedDocument,
 } from "../lib/graphql/generated/graphql";
-import { apolloClient } from "../lib/graphql/client";
+import { useQuery, useSubscription } from "../lib/graphql/client";
 import { NotificationPopover } from "./NotificationPopover";
 import { ErrorBoundary } from "./ErrorBoundary";
 
 const UNREAD_WHERE = { ReadAt: { IsNull: true } } as const;
 
 function useUnreadNotificationCount() {
-  const [count, setCount] = useState(0);
+  const { data, previousData, refetch } = useQuery(NotificationsDocument, {
+    variables: {
+      Where: UNREAD_WHERE,
+      Page: { Limit: 1, Offset: 0 },
+    },
+    fetchPolicy: "cache-and-network",
+  });
 
-  const fetchCount = useCallback(async () => {
-    try {
-      const { data } = await apolloClient.query({
-        query: NotificationsDocument,
-        variables: {
-          Where: UNREAD_WHERE,
-          Page: { Limit: 1, Offset: 0 },
-        },
-        fetchPolicy: "network-only",
-      });
-      const total = data?.Notifications?.PageInfo?.TotalCount;
-      setCount(total ?? 0);
-    } catch {
-      setCount(0);
-    }
-  }, []);
+  useSubscription(NotificationChangedDocument, {
+    variables: {},
+    onData: () => {
+      void refetch();
+    },
+  });
 
-  useEffect(() => {
-    fetchCount();
-  }, [fetchCount]);
-
-  useEffect(() => {
-    let sub: { unsubscribe: () => void } | null = null;
-    try {
-      sub = subscriptionStream(NotificationChangedDocument, {}).subscribe({
-        next: () => fetchCount(),
-        error: () => {},
-      });
-    } catch {
-      // subscription setup failed (e.g. client not ready)
-    }
-    return () => sub?.unsubscribe?.();
-  }, [fetchCount]);
-
-  return count;
+  return (
+    data?.Notifications?.PageInfo?.TotalCount ??
+    previousData?.Notifications?.PageInfo?.TotalCount ??
+    0
+  );
 }
 
 function NotificationIconInner() {
@@ -59,30 +40,27 @@ function NotificationIconInner() {
   return (
     <NotificationPopover
       trigger={
-        <Tooltip
-          content={
+        <Button
+          isIconOnly
+          variant="light"
+          size="sm"
+          aria-label={`${unreadCount} unread notifications`}
+          title={
             unreadCount > 0
               ? `${unreadCount} unread notification${unreadCount !== 1 ? "s" : ""}`
               : "No unread notifications"
           }
         >
-          <Button
-            isIconOnly
-            variant="light"
+          <Badge
+            content={unreadCount}
+            color="warning"
             size="sm"
-            aria-label={`${unreadCount} unread notifications`}
+            isInvisible={unreadCount === 0}
+            showOutline={false}
           >
-            <Badge
-              content={unreadCount}
-              color="warning"
-              size="sm"
-              isInvisible={unreadCount === 0}
-              showOutline={false}
-            >
-              <IconBell size={20} className="text-amber-400" />
-            </Badge>
-          </Button>
-        </Tooltip>
+            <IconBell size={20} className="text-amber-400" />
+          </Badge>
+        </Button>
       }
     />
   );

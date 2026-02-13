@@ -30,6 +30,7 @@ import { RouteError } from "../../components/RouteError";
 import { sanitizeError, formatBytes, formatDuration } from "../../lib/format";
 import { useQuery, useMutation } from "../../lib/graphql/client";
 import {
+  AlbumDetailSetTrackWantedDocument,
   AlbumDetailRouteDocument,
   DeleteAlbumRouteDocument,
   LibraryDetailRouteDocument,
@@ -50,6 +51,8 @@ import {
   IconInfoCircle,
   IconTrash,
   IconDotsVertical,
+  IconCheck,
+  IconX,
 } from "@tabler/icons-react";
 // Note: IconPlayerPause is used for artwork overlay
 import { FilePropertiesModal } from "../../components/FilePropertiesModal";
@@ -94,6 +97,7 @@ interface TrackWithStatus {
     mediaFileId: string | null;
     hasFile: boolean;
     status: TrackStatusView;
+    wanted: boolean;
     downloadProgress: number | null;
   };
   hasFile: boolean;
@@ -253,6 +257,7 @@ const trackColumns: DataTableColumn<TrackWithStatus>[] = [
       <TrackStatusChip
         mediaFileId={t.track.mediaFileId}
         downloadProgress={t.track.downloadProgress}
+        wanted={t.track.wanted}
       />
     ),
   },
@@ -428,18 +433,15 @@ function AlbumDetailPage() {
   });
 
   const toTrackStatus = useCallback(
-    (status: string): TrackWithStatus["track"]["status"] => {
-      const normalized = status.toLowerCase();
-      if (
-        normalized === "available" ||
-        normalized === "playing" ||
-        normalized === "paused"
-      )
-        return "downloaded";
-      if (normalized === "downloaded") return "downloaded";
+    (
+      mediaFileId: string | null | undefined,
+      wanted: boolean,
+      backendStatus: string,
+    ): TrackWithStatus["track"]["status"] => {
+      if (mediaFileId) return "downloaded";
+      const normalized = backendStatus.toLowerCase();
       if (normalized === "downloading") return "downloading";
-      if (normalized === "wanted") return "wanted";
-      return "missing";
+      return wanted ? "wanted" : "missing";
     },
     [],
   );
@@ -470,7 +472,12 @@ function AlbumDetailPage() {
           artistId: edge.Node.ArtistId ?? null,
           mediaFileId: edge.Node.MediaFileId ?? null,
           hasFile: Boolean(edge.Node.MediaFileId),
-          status: toTrackStatus(edge.Node.Status),
+          status: toTrackStatus(
+            edge.Node.MediaFileId,
+            edge.Node.Wanted,
+            edge.Node.Status,
+          ),
+          wanted: edge.Node.Wanted,
           downloadProgress: null,
         },
         hasFile: Boolean(edge.Node.MediaFileId),
@@ -542,6 +549,7 @@ function AlbumDetailPage() {
   const [deleteAlbum, { loading: isDeleting }] = useMutation(
     DeleteAlbumRouteDocument,
   );
+  const [setTracksWanted] = useMutation(AlbumDetailSetTrackWantedDocument);
 
   // Keep data fresh with periodic updates and torrent completion events
   // This ensures download progress is updated in real-time
@@ -625,6 +633,52 @@ function AlbumDetailPage() {
       onDeleteClose();
     }
   }, [albumData, deleteAlbum, navigate, onDeleteClose]);
+
+  const handleSetWantedForAllTracks = useCallback(
+    async (wanted: boolean) => {
+      if (!albumData || albumData.tracks.length === 0) {
+        addToast({
+          title: "No tracks",
+          description: "No tracks found to update",
+          color: "warning",
+        });
+        return;
+      }
+
+      try {
+        const { data } = await setTracksWanted({
+          variables: { AlbumId: albumData.album.id, Wanted: wanted },
+        });
+        if (!data?.UpdateTracks?.success) {
+          addToast({
+            title: "Error",
+            description:
+              data?.UpdateTracks?.error || "Failed to update wanted status for tracks",
+            color: "danger",
+          });
+          return;
+        }
+
+        addToast({
+          title: wanted ? "Marked as wanted" : "Removed wanted",
+          description: wanted
+            ? `${data.UpdateTracks.affectedCount} tracks marked as wanted`
+            : `${data.UpdateTracks.affectedCount} tracks removed from wanted`,
+          color: "success",
+        });
+
+        fetchAlbum();
+      } catch (err) {
+        console.error("Failed to update track wanted state:", err);
+        addToast({
+          title: "Error",
+          description: "Failed to update wanted status",
+          color: "danger",
+        });
+      }
+    },
+    [albumData, fetchAlbum, setTracksWanted],
+  );
 
   // Calculate totals from tracks if not available on album
   const totalDurationSecs = useMemo(() => {
@@ -781,6 +835,10 @@ function AlbumDetailPage() {
                     handleManualHunt();
                   } else if (key === "refresh") {
                     void fetchAlbum();
+                  } else if (key === "wanted-on") {
+                    void handleSetWantedForAllTracks(true);
+                  } else if (key === "wanted-off") {
+                    void handleSetWantedForAllTracks(false);
                   } else if (key === "properties") {
                     const firstPlayable = playableTracks[0];
                     if (firstPlayable) {
@@ -803,6 +861,24 @@ function AlbumDetailPage() {
                   startContent={<IconRefresh size={16} />}
                 >
                   Refresh
+                </DropdownItem>
+                <DropdownItem
+                  key="wanted-on"
+                  startContent={<IconCheck size={16} />}
+                  isDisabled={
+                    tracks.length === 0 || tracks.every((t) => t.track.wanted)
+                  }
+                >
+                  Mark as Wanted
+                </DropdownItem>
+                <DropdownItem
+                  key="wanted-off"
+                  startContent={<IconX size={16} />}
+                  isDisabled={
+                    tracks.length === 0 || tracks.every((t) => !t.track.wanted)
+                  }
+                >
+                  Remove as Wanted
                 </DropdownItem>
                 {playableTracks.length > 0 ? (
                   <DropdownItem

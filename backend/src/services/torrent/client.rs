@@ -7,9 +7,10 @@ use std::path::PathBuf;
 use librqbit::AddTorrentOptions;
 use serde::{Deserialize, Serialize};
 
-pub fn add_torrent_opts() -> AddTorrentOptions {
+pub fn add_torrent_opts(paused: bool) -> AddTorrentOptions {
     AddTorrentOptions {
         overwrite: true,
+        paused,
         ..Default::default()
     }
 }
@@ -184,6 +185,8 @@ pub struct TorrentServiceConfig {
     pub enable_dht: bool,
     pub listen_port: u16,
     pub max_concurrent: usize,
+    pub upload_limit: u32,
+    pub download_limit: u32,
 }
 
 impl Default for TorrentServiceConfig {
@@ -194,6 +197,8 @@ impl Default for TorrentServiceConfig {
             enable_dht: true,
             listen_port: 0,
             max_concurrent: 5,
+            upload_limit: 0,
+            download_limit: 0,
         }
     }
 }

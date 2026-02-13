@@ -7,6 +7,19 @@
 - `macros/`: internal Rust proc-macro crate used by the backend.
 - `docs/`: architecture, design, and workflow notes.
 
+## Rule Hierarchy (All Agents)
+
+- Primary architecture and product rules: `docs/design.md`
+- Repository workflow rules: `AGENTS.md` (this file)
+- Implementation rule packs: `.cursor/rules/*.mdc`
+
+All agents must consult `.cursor/rules/` before making changes. At minimum, review:
+- `.cursor/rules/frontend-ui.mdc` for frontend/UI work.
+- `.cursor/rules/entity-single-source-of-truth.mdc` for GraphQL/entity data access.
+- `.cursor/rules/graphql-naming-convention.mdc` for GraphQL naming and schema shape.
+- `.cursor/rules/media-pipeline.mdc` for matching/pipeline behavior.
+- `.cursor/rules/logging.mdc` for logging standards.
+
 ## Build, Test, and Development Commands
 
 - `make dev`: start backend and frontend dev servers.

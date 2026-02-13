@@ -18,6 +18,10 @@ export { MovieCard, type MovieCardProps } from "./MovieCard";
 export { MediaCardSkeleton, SquareCardSkeleton } from "./MediaCardSkeleton";
 export { AddShowModal, type AddShowModalProps } from "./AddShowModal";
 export { AddMovieModal, type AddMovieModalProps } from "./AddMovieModal";
+export {
+  AddCollectionModal,
+  type AddCollectionModalProps,
+} from "./AddCollectionModal";
 export { DeleteMovieModal } from "./DeleteMovieModal";
 
 // Shared form component

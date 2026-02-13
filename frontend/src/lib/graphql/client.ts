@@ -166,10 +166,42 @@ export {
 } from "@apollo/client/react";
 export { gql };
 
-// Reset Apollo cache after login/logout to clear any stale auth state
+// Reset Apollo cache after login/logout to clear stale auth state.
+// Use clearStore (no active query refetch) and serialize calls to avoid
+// "Store reset while query was in flight" invariant races.
+let cacheResetInFlight = false;
+let cacheResetPending = false;
+
+async function runCacheReset(): Promise<void> {
+  if (cacheResetInFlight) {
+    cacheResetPending = true;
+    return;
+  }
+  cacheResetInFlight = true;
+
+  try {
+    await apolloClient.clearStore();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // Apollo may throw this during auth transitions with active requests.
+    // It's safe to ignore because we immediately move to new auth state.
+    if (!message.includes("Store reset while query was in flight")) {
+      console.warn("[Apollo] Cache reset failed:", err);
+    }
+  } finally {
+    cacheResetInFlight = false;
+    if (cacheResetPending) {
+      cacheResetPending = false;
+      queueMicrotask(() => {
+        void runCacheReset();
+      });
+    }
+  }
+}
+
 export function resetApolloCache(): void {
-  apolloClient.resetStore().catch((err) => {
-    console.warn("[Apollo] Cache reset failed:", err);
+  queueMicrotask(() => {
+    void runCacheReset();
   });
 }
 

@@ -1,18 +1,20 @@
-//! System panel - displays CPU, memory, and uptime statistics
-//! Metrics/entity access commented out; panel shows placeholder for now.
+//! System panel - displays CPU, memory, and uptime statistics.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Sparkline};
+use sysinfo::System;
 
 use crate::tui::input::Action;
 use crate::tui::panels::Panel;
 use crate::tui::theme::{PanelKind, Theme};
 
-/// Stub snapshot when metrics service is disabled
+const HISTORY_LIMIT: usize = 120;
+
+/// Snapshot used by the system panel.
 #[derive(Clone, Default)]
-struct StubSnapshot {
+struct SystemSnapshot {
     cpu_percent: f64,
     memory_used: u64,
     memory_total: u64,
@@ -23,7 +25,7 @@ struct StubSnapshot {
     mem_history: Vec<u64>,
 }
 
-fn format_uptime_stub(secs: u64) -> String {
+fn format_uptime(secs: u64) -> String {
     let h = secs / 3600;
     let m = (secs % 3600) / 60;
     let s = secs % 60;
@@ -36,23 +38,56 @@ fn format_uptime_stub(secs: u64) -> String {
     }
 }
 
-/// System panel showing CPU, memory, uptime (or placeholder when disabled)
+/// System panel showing CPU, memory, uptime.
 pub struct SystemPanel {
-    snapshot: StubSnapshot,
+    sys: System,
+    snapshot: SystemSnapshot,
     port: u16,
 }
 
 impl SystemPanel {
-    /// Create panel with no metrics; shows placeholder/URLs only.
-    pub fn new_stub(port: u16) -> Self {
-        Self {
-            snapshot: StubSnapshot::default(),
+    /// Create a new system panel.
+    pub fn new(port: u16) -> Self {
+        let mut sys = System::new();
+        sys.refresh_memory();
+        sys.refresh_cpu_usage();
+
+        let mut panel = Self {
+            sys,
+            snapshot: SystemSnapshot::default(),
             port,
-        }
+        };
+        panel.refresh();
+        panel
     }
 
     fn refresh(&mut self) {
-        // No-op when using stub
+        self.sys.refresh_cpu_usage();
+        self.sys.refresh_memory();
+
+        let cpu_percent = self.sys.global_cpu_usage() as f64;
+        let memory_total = self.sys.total_memory();
+        let memory_used = self.sys.used_memory();
+        let mem_percent = if memory_total > 0 {
+            ((memory_used as f64 / memory_total as f64) * 100.0).round() as u64
+        } else {
+            0
+        };
+
+        self.snapshot.cpu_percent = cpu_percent;
+        self.snapshot.memory_total = memory_total;
+        self.snapshot.memory_used = memory_used;
+        self.snapshot.uptime_secs = System::uptime();
+
+        self.snapshot.cpu_history.push(cpu_percent.round() as u64);
+        if self.snapshot.cpu_history.len() > HISTORY_LIMIT {
+            self.snapshot.cpu_history.remove(0);
+        }
+
+        self.snapshot.mem_history.push(mem_percent);
+        if self.snapshot.mem_history.len() > HISTORY_LIMIT {
+            self.snapshot.mem_history.remove(0);
+        }
     }
 }
 
@@ -71,7 +106,6 @@ impl Panel for SystemPanel {
             Theme::border_dim()
         };
 
-        // Get local IP address
         let ip_addr = get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
 
         let title = Line::from(vec![
@@ -99,35 +133,33 @@ impl Panel for SystemPanel {
         let show_endpoints = inner.height >= 9;
         let chunks = if show_endpoints {
             Layout::vertical([
-                Constraint::Length(1), // CPU
-                Constraint::Length(1), // Memory
-                Constraint::Length(1), // Uptime
-                Constraint::Length(1), // Requests
-                Constraint::Length(1), // Frontend URL
-                Constraint::Length(1), // GraphQL URL
-                Constraint::Length(1), // API URL
-                Constraint::Length(1), // GraphQL WS URL
-                Constraint::Length(1), // Health URL
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
             ])
             .split(inner)
         } else {
             Layout::vertical([
-                Constraint::Length(1), // CPU
-                Constraint::Length(1), // Memory
-                Constraint::Length(1), // Uptime
-                Constraint::Length(1), // Requests
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
             ])
             .split(inner)
         };
 
-        // CPU line with sparkline (empty when stub)
-        let cpu_history: Vec<u64> = self.snapshot.cpu_history.clone();
-        let label_width = 14; // Reduced for more graph space
+        let label_width = 14;
         let sparkline_width = inner.width.saturating_sub(label_width + 1) as usize;
-        let cpu_data: Vec<u64> = if cpu_history.len() > sparkline_width {
-            cpu_history[cpu_history.len() - sparkline_width..].to_vec()
+        let cpu_data: Vec<u64> = if self.snapshot.cpu_history.len() > sparkline_width {
+            self.snapshot.cpu_history[self.snapshot.cpu_history.len() - sparkline_width..].to_vec()
         } else {
-            cpu_history
+            self.snapshot.cpu_history.clone()
         };
 
         let cpu_row = chunks[0];
@@ -147,19 +179,12 @@ impl Panel for SystemPanel {
             cpu_chunks[1],
         );
 
-        // Memory line with actual values
         let mem_used_gb = self.snapshot.memory_used as f64 / 1_073_741_824.0;
         let mem_total_gb = self.snapshot.memory_total as f64 / 1_073_741_824.0;
-        let mem_history: Vec<u64> = self
-            .snapshot
-            .mem_history
-            .iter()
-            .map(|v| *v as u64)
-            .collect();
-        let mem_data: Vec<u64> = if mem_history.len() > sparkline_width {
-            mem_history[mem_history.len() - sparkline_width..].to_vec()
+        let mem_data: Vec<u64> = if self.snapshot.mem_history.len() > sparkline_width {
+            self.snapshot.mem_history[self.snapshot.mem_history.len() - sparkline_width..].to_vec()
         } else {
-            mem_history
+            self.snapshot.mem_history.clone()
         };
 
         let mem_row = chunks[1];
@@ -182,8 +207,7 @@ impl Panel for SystemPanel {
             mem_chunks[1],
         );
 
-        // Uptime line
-        let uptime = format_uptime_stub(self.snapshot.uptime_secs);
+        let uptime = format_uptime(self.snapshot.uptime_secs);
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("UP  ", Theme::dim()),
@@ -192,7 +216,6 @@ impl Panel for SystemPanel {
             chunks[2],
         );
 
-        // Requests line
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("REQ ", Theme::dim()),
@@ -270,7 +293,6 @@ impl Panel for SystemPanel {
     }
 }
 
-/// Format a number with thousands separators
 fn format_number(n: u64) -> String {
     let s = n.to_string();
     let mut result = String::new();
@@ -283,22 +305,17 @@ fn format_number(n: u64) -> String {
     result
 }
 
-/// Get local IP address
 fn get_local_ip() -> Option<String> {
     use std::net::UdpSocket;
-    // Create a UDP socket and "connect" to a public IP to determine local interface
-    match UdpSocket::bind("0.0.0.0:0") {
-        Ok(socket) => {
-            if socket.connect("8.8.8.8:80").is_ok() {
-                if let Ok(addr) = socket.local_addr() {
-                    return Some(addr.ip().to_string());
-                }
+
+    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                return Some(addr.ip().to_string());
             }
         }
-        Err(_) => {}
     }
 
-    // Fallback: try to get any local IP from network interfaces
     if let Ok(hostname) = std::process::Command::new("hostname").arg("-I").output() {
         if hostname.status.success() {
             let output = String::from_utf8_lossy(&hostname.stdout);

@@ -26,6 +26,7 @@ import { Route as SettingsLogsRouteImport } from './routes/settings/logs'
 import { Route as SettingsCastingRouteImport } from './routes/settings/casting'
 import { Route as MoviesMovieIdRouteImport } from './routes/movies/$movieId'
 import { Route as LibrariesLibraryIdRouteImport } from './routes/libraries/$libraryId'
+import { Route as CollectionsCollectionIdRouteImport } from './routes/collections/$collectionId'
 import { Route as AuthLoginRouteImport } from './routes/auth/login'
 import { Route as AudiobooksAudiobookIdRouteImport } from './routes/audiobooks/$audiobookId'
 import { Route as AlbumsAlbumIdRouteImport } from './routes/albums/$albumId'
@@ -127,6 +128,11 @@ const LibrariesLibraryIdRoute = LibrariesLibraryIdRouteImport.update({
   path: '/libraries/$libraryId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CollectionsCollectionIdRoute = CollectionsCollectionIdRouteImport.update({
+  id: '/collections/$collectionId',
+  path: '/collections/$collectionId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthLoginRoute = AuthLoginRouteImport.update({
   id: '/auth/login',
   path: '/auth/login',
@@ -220,6 +226,7 @@ export interface FileRoutesByFullPath {
   '/albums/$albumId': typeof AlbumsAlbumIdRoute
   '/audiobooks/$audiobookId': typeof AudiobooksAudiobookIdRoute
   '/auth/login': typeof AuthLoginRoute
+  '/collections/$collectionId': typeof CollectionsCollectionIdRoute
   '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
   '/movies/$movieId': typeof MoviesMovieIdRoute
   '/settings/casting': typeof SettingsCastingRoute
@@ -253,6 +260,7 @@ export interface FileRoutesByTo {
   '/albums/$albumId': typeof AlbumsAlbumIdRoute
   '/audiobooks/$audiobookId': typeof AudiobooksAudiobookIdRoute
   '/auth/login': typeof AuthLoginRoute
+  '/collections/$collectionId': typeof CollectionsCollectionIdRoute
   '/movies/$movieId': typeof MoviesMovieIdRoute
   '/settings/casting': typeof SettingsCastingRoute
   '/settings/logs': typeof SettingsLogsRoute
@@ -287,6 +295,7 @@ export interface FileRoutesById {
   '/albums/$albumId': typeof AlbumsAlbumIdRoute
   '/audiobooks/$audiobookId': typeof AudiobooksAudiobookIdRoute
   '/auth/login': typeof AuthLoginRoute
+  '/collections/$collectionId': typeof CollectionsCollectionIdRoute
   '/libraries/$libraryId': typeof LibrariesLibraryIdRouteWithChildren
   '/movies/$movieId': typeof MoviesMovieIdRoute
   '/settings/casting': typeof SettingsCastingRoute
@@ -323,6 +332,7 @@ export interface FileRouteTypes {
     | '/albums/$albumId'
     | '/audiobooks/$audiobookId'
     | '/auth/login'
+    | '/collections/$collectionId'
     | '/libraries/$libraryId'
     | '/movies/$movieId'
     | '/settings/casting'
@@ -356,6 +366,7 @@ export interface FileRouteTypes {
     | '/albums/$albumId'
     | '/audiobooks/$audiobookId'
     | '/auth/login'
+    | '/collections/$collectionId'
     | '/movies/$movieId'
     | '/settings/casting'
     | '/settings/logs'
@@ -389,6 +400,7 @@ export interface FileRouteTypes {
     | '/albums/$albumId'
     | '/audiobooks/$audiobookId'
     | '/auth/login'
+    | '/collections/$collectionId'
     | '/libraries/$libraryId'
     | '/movies/$movieId'
     | '/settings/casting'
@@ -424,6 +436,7 @@ export interface RootRouteChildren {
   AlbumsAlbumIdRoute: typeof AlbumsAlbumIdRoute
   AudiobooksAudiobookIdRoute: typeof AudiobooksAudiobookIdRoute
   AuthLoginRoute: typeof AuthLoginRoute
+  CollectionsCollectionIdRoute: typeof CollectionsCollectionIdRoute
   LibrariesLibraryIdRoute: typeof LibrariesLibraryIdRouteWithChildren
   MoviesMovieIdRoute: typeof MoviesMovieIdRoute
   ShowsShowIdRoute: typeof ShowsShowIdRoute
@@ -550,6 +563,13 @@ declare module '@tanstack/react-router' {
       path: '/libraries/$libraryId'
       fullPath: '/libraries/$libraryId'
       preLoaderRoute: typeof LibrariesLibraryIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/collections/$collectionId': {
+      id: '/collections/$collectionId'
+      path: '/collections/$collectionId'
+      fullPath: '/collections/$collectionId'
+      preLoaderRoute: typeof CollectionsCollectionIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth/login': {
@@ -727,6 +747,7 @@ const rootRouteChildren: RootRouteChildren = {
   AlbumsAlbumIdRoute: AlbumsAlbumIdRoute,
   AudiobooksAudiobookIdRoute: AudiobooksAudiobookIdRoute,
   AuthLoginRoute: AuthLoginRoute,
+  CollectionsCollectionIdRoute: CollectionsCollectionIdRoute,
   LibrariesLibraryIdRoute: LibrariesLibraryIdRouteWithChildren,
   MoviesMovieIdRoute: MoviesMovieIdRoute,
   ShowsShowIdRoute: ShowsShowIdRoute,

@@ -639,6 +639,7 @@ export const MOVIES_CONNECTION_QUERY = `
           BackdropUrl
           Monitored
           MediaFileId
+          Wanted
           TmdbRating
           ReleaseDate
         }

@@ -286,8 +286,8 @@ where
                     warn!(
                         operation = %operation_name,
                         attempts = attempts,
-                        error = %e,
-                        "Operation failed after max retries: operation='{}', attempts={}, error={}",
+                        error = %format!("{:#}", e),
+                        "Operation failed after max retries: operation='{}', attempts={}, error={:#}",
                         operation_name,
                         attempts,
                         e
@@ -300,9 +300,9 @@ where
                     warn!(
                         operation = %operation_name,
                         attempt = attempts,
-                        error = %e,
+                        error = %format!("{:#}", e),
                         retry_in_ms = retry_ms,
-                        "Operation failed, retrying: operation='{}', attempt={}, retry_in_ms={}, error={}",
+                        "Operation failed, retrying: operation='{}', attempt={}, retry_in_ms={}, error={:#}",
                         operation_name,
                         attempts,
                         retry_ms,

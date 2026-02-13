@@ -4,8 +4,8 @@ import {
   redirect,
   useNavigate,
 } from "@tanstack/react-router";
-import { useEffect, useCallback } from "react";
-import { useQuery, useMutation } from "../../lib/graphql/client";
+import { useEffect, useCallback, useMemo } from "react";
+import { useQuery, useMutation, gql } from "../../lib/graphql/client";
 import { Button } from "@heroui/button";
 import {
   Dropdown,
@@ -25,6 +25,7 @@ import { sanitizeError, formatBytes } from "../../lib/format";
 import {
   LibraryDetailRouteDocument,
   MeDocument,
+  MovieDetailSetWantedDocument,
   MovieDetailRouteDocument,
   RefreshMovieRouteDocument,
   ShowPlaybackProgressByMediaDocument,
@@ -48,6 +49,7 @@ import {
 import { DeleteMovieModal } from "../../components/library";
 import { FilePropertiesModal } from "../../components/FilePropertiesModal";
 import { usePlaybackContext } from "../../contexts/PlaybackContext";
+import { DataTable, type DataTableColumn } from "../../components/data-table";
 
 export const Route = createFileRoute("/movies/$movieId")({
   beforeLoad: ({ context, location }) => {
@@ -66,6 +68,38 @@ export const Route = createFileRoute("/movies/$movieId")({
 });
 
 type MovieNode = NonNullable<MovieDetailRouteQuery["Movie"]>;
+
+interface RelatedCollectionMovie {
+  TmdbId: number;
+  Title: string;
+  Year: number | null;
+  PosterUrl: string | null;
+  LibraryMovieId: string | null;
+  MediaFileId: string | null;
+  Wanted: boolean;
+}
+
+interface MovieCollectionPeersQueryData {
+  MovieCollectionDetails: {
+    Movies: RelatedCollectionMovie[];
+  } | null;
+}
+
+const MOVIE_COLLECTION_PEERS_QUERY = gql`
+  query MovieCollectionPeersRoute($LibraryId: String!, $CollectionId: Int!) {
+    MovieCollectionDetails(LibraryId: $LibraryId, CollectionId: $CollectionId) {
+      Movies {
+        TmdbId
+        Title
+        Year
+        PosterUrl
+        LibraryMovieId
+        MediaFileId
+        Wanted
+      }
+    }
+  }
+`;
 
 function MovieDetailPage() {
   const { movieId } = Route.useParams();
@@ -124,8 +158,37 @@ function MovieDetailPage() {
   const hasResumeProgress =
     !movieProgressNode?.IsWatched && movieWatchPosition > 0;
 
+  const {
+    data: collectionPeersData,
+    previousData: previousCollectionPeersData,
+  } = useQuery<MovieCollectionPeersQueryData>(MOVIE_COLLECTION_PEERS_QUERY, {
+    variables: {
+      LibraryId: movie?.LibraryId ?? "",
+      CollectionId: movie?.CollectionId ?? -1,
+    },
+    skip: !movie?.LibraryId || !movie?.CollectionId,
+    fetchPolicy: "cache-and-network",
+  });
+  const collectionMovies = useMemo(
+    () =>
+      collectionPeersData?.MovieCollectionDetails?.Movies ??
+      previousCollectionPeersData?.MovieCollectionDetails?.Movies ??
+      [],
+    [collectionPeersData?.MovieCollectionDetails?.Movies, previousCollectionPeersData?.MovieCollectionDetails?.Movies],
+  );
+  const otherCollectionMovies = useMemo(
+    () =>
+      collectionMovies.filter((relatedMovie) => {
+        if (relatedMovie.LibraryMovieId && relatedMovie.LibraryMovieId === movieId) return false;
+        if (movie?.TmdbId != null && relatedMovie.TmdbId === movie.TmdbId) return false;
+        return true;
+      }),
+    [collectionMovies, movie?.TmdbId, movieId],
+  );
+
   // Mutations
   const [refreshMovie] = useMutation(RefreshMovieRouteDocument);
+  const [setMovieWanted] = useMutation(MovieDetailSetWantedDocument);
 
   // Update page title
   useEffect(() => {
@@ -199,6 +262,42 @@ function MovieDetailPage() {
     }
   };
 
+  const handleSetWanted = useCallback(
+    async (wanted: boolean) => {
+      try {
+        const { data } = await setMovieWanted({
+          variables: { Id: movieId, Wanted: wanted },
+        });
+        if (!data?.UpdateMovie?.Success) {
+          addToast({
+            title: "Error",
+            description: sanitizeError(
+              data?.UpdateMovie?.Error || "Failed to update wanted status",
+            ),
+            color: "danger",
+          });
+          return;
+        }
+        addToast({
+          title: wanted ? "Marked as wanted" : "Removed wanted",
+          description: wanted
+            ? "Movie marked as wanted"
+            : "Movie removed from wanted",
+          color: "success",
+        });
+        await refetch();
+      } catch (err) {
+        console.error("Failed to update movie wanted state:", err);
+        addToast({
+          title: "Error",
+          description: "Failed to update wanted status",
+          color: "danger",
+        });
+      }
+    },
+    [movieId, refetch, setMovieWanted],
+  );
+
   const handleDeleted = () => {
     // Navigate back to library after deletion
     navigate({
@@ -214,6 +313,72 @@ function MovieDetailPage() {
 
   const isThisMoviePlaying =
     session?.movieId === movieId && !!session?.isPlaying;
+
+  const collectionMovieColumns: DataTableColumn<RelatedCollectionMovie>[] = [
+    {
+      key: "title",
+      label: "Movie",
+      sortable: true,
+      render: (relatedMovie) => (
+        <div className="flex items-center gap-3">
+          {relatedMovie.PosterUrl ? (
+            <Image
+              src={relatedMovie.PosterUrl}
+              alt={relatedMovie.Title}
+              className="w-10 h-14 object-cover rounded"
+              loading="lazy"
+            />
+          ) : (
+            <div className="w-10 h-14 bg-default-200 rounded flex items-center justify-center">
+              <IconMovie size={18} className="text-purple-400" />
+            </div>
+          )}
+          {relatedMovie.LibraryMovieId ? (
+            <Link
+              to="/movies/$movieId"
+              params={{ movieId: relatedMovie.LibraryMovieId }}
+              className="font-medium hover:opacity-80"
+            >
+              {relatedMovie.Title}
+            </Link>
+          ) : (
+            <span className="font-medium">{relatedMovie.Title}</span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "year",
+      label: "Year",
+      width: 90,
+      sortable: true,
+      render: (relatedMovie) => <span>{relatedMovie.Year ?? "—"}</span>,
+    },
+    {
+      key: "status",
+      label: "Status",
+      width: 130,
+      render: (relatedMovie) => (
+        <Chip
+          size="sm"
+          variant="flat"
+          color={
+            relatedMovie.MediaFileId
+              ? "success"
+              : relatedMovie.Wanted
+                ? "warning"
+                : "danger"
+          }
+        >
+          {relatedMovie.MediaFileId
+            ? "Downloaded"
+            : relatedMovie.Wanted
+              ? "Wanted"
+              : "Missing"}
+        </Chip>
+      ),
+    },
+  ];
 
   // Loading state
   if (movieLoading && !movie) {
@@ -354,6 +519,10 @@ function MovieDetailPage() {
                       handleSearchMovie();
                     } else if (key === "refresh") {
                       void handleRefresh();
+                    } else if (key === "wanted-on") {
+                      void handleSetWanted(true);
+                    } else if (key === "wanted-off") {
+                      void handleSetWanted(false);
                     } else if (key === "properties") {
                       onPropertiesOpen();
                     } else if (key === "delete") {
@@ -372,6 +541,20 @@ function MovieDetailPage() {
                     startContent={<IconRefresh size={16} />}
                   >
                     Refresh
+                  </DropdownItem>
+                  <DropdownItem
+                    key="wanted-on"
+                    startContent={<IconCheck size={16} />}
+                    isDisabled={movie.Wanted}
+                  >
+                    Mark as Wanted
+                  </DropdownItem>
+                  <DropdownItem
+                    key="wanted-off"
+                    startContent={<IconX size={16} />}
+                    isDisabled={!movie.Wanted}
+                  >
+                    Remove as Wanted
                   </DropdownItem>
                   {movie.MediaFileId ? (
                     <DropdownItem
@@ -406,7 +589,9 @@ function MovieDetailPage() {
             {/* File status */}
             <Chip
               size="sm"
-              color={movie.MediaFileId ? "success" : "warning"}
+              color={
+                movie.MediaFileId ? "success" : movie.Wanted ? "warning" : "danger"
+              }
               variant="flat"
               startContent={
                 movie.MediaFileId ? (
@@ -416,7 +601,11 @@ function MovieDetailPage() {
                 )
               }
             >
-              {movie.MediaFileId ? "Downloaded" : "Missing"}
+              {movie.MediaFileId
+                ? "Downloaded"
+                : movie.Wanted
+                  ? "Wanted"
+                  : "Missing"}
             </Chip>
 
             {/* Rating */}
@@ -532,29 +721,69 @@ function MovieDetailPage() {
         </div>
       </div>
 
-      {/* Collection info */}
+      {/* Collection peers */}
       {movie.CollectionName && (
-        <Card className="bg-content1 mb-8">
-          <CardBody>
-            <div className="flex items-center gap-4">
-              {movie.CollectionPosterUrl && (
-                <Image
-                  src={movie.CollectionPosterUrl}
-                  alt={movie.CollectionName}
-                  className="w-16 h-24 object-cover rounded"
-                />
+        <>
+          {otherCollectionMovies.length > 0 && (
+            <DataTable
+              stateKey={`movie-collection-peers-${movie.Id}`}
+              data={otherCollectionMovies}
+              columns={collectionMovieColumns}
+              getRowKey={(relatedMovie) => String(relatedMovie.TmdbId)}
+              ariaLabel="Also in this collection"
+              searchPlaceholder="Search collection movies..."
+              showItemCount
+              showViewModeToggle
+              cardGridClassName="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"
+              cardRenderer={({ item }) => (
+                <Card className="bg-content1 border border-default-200">
+                  <CardBody className="p-3">
+                    <div className="flex gap-3">
+                      {item.PosterUrl ? (
+                        <Image
+                          src={item.PosterUrl}
+                          alt={item.Title}
+                          className="w-14 h-20 object-cover rounded-md shrink-0"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="w-14 h-20 bg-default-200 rounded-md shrink-0 flex items-center justify-center">
+                          <IconMovie size={16} className="text-purple-400" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1 space-y-2">
+                        {item.LibraryMovieId ? (
+                          <Link
+                            to="/movies/$movieId"
+                            params={{ movieId: item.LibraryMovieId }}
+                            className="block font-medium truncate hover:opacity-80"
+                          >
+                            {item.Title}
+                          </Link>
+                        ) : (
+                          <p className="font-medium truncate">{item.Title}</p>
+                        )}
+                        <p className="text-xs text-default-500">{item.Year ?? "Unknown year"}</p>
+                        <Chip
+                          size="sm"
+                          variant="flat"
+                          color={item.MediaFileId ? "success" : item.Wanted ? "warning" : "danger"}
+                        >
+                          {item.MediaFileId ? "Downloaded" : item.Wanted ? "Wanted" : "Missing"}
+                        </Chip>
+                      </div>
+                    </div>
+                  </CardBody>
+                </Card>
               )}
-              <div>
-                <h3 className="font-semibold">
-                  Part of {movie.CollectionName}
-                </h3>
-                <p className="text-sm text-default-500">
-                  View all movies in this collection
-                </p>
-              </div>
-            </div>
-          </CardBody>
-        </Card>
+              headerContent={
+                <div className="px-2 py-1 text-sm text-default-600">
+                  Also in {movie.CollectionName}
+                </div>
+              }
+            />
+          )}
+        </>
       )}
 
       {/* Delete Movie Modal */}

@@ -1,5 +1,5 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { getAccessToken } from "../../lib/auth";
 import { useDisclosure } from "@heroui/modal";
 import { addToast } from "@heroui/toast";
@@ -14,22 +14,24 @@ import {
 import {
   useSubscription,
   gql,
-  apolloClient,
+  useQuery,
   useMutation,
+  apolloClient,
 } from "../../lib/graphql/client";
 import {
   AddTorrentDocument,
   DownloadsTorrentsDocument,
   PauseTorrentByInfoHashDocument,
   ProcessSourceDocument,
-  RematchSourceDocument,
   RemoveTorrentByInfoHashDocument,
   ResumeTorrentByInfoHashDocument,
+  TorrentByInfoHashWithFilesDocument,
   type DownloadsTorrentsQuery,
+  type DownloadsTorrentsQueryVariables,
   type ProcessSourceMutation,
   type ProcessSourceMutationVariables,
-  type RematchSourceMutation,
-  type RematchSourceMutationVariables,
+  type TorrentByInfoHashWithFilesQuery,
+  type TorrentByInfoHashWithFilesQueryVariables,
 } from "../../lib/graphql/generated/graphql";
 import type { DownloadTorrent } from "../../components/downloads/types";
 import {
@@ -37,6 +39,8 @@ import {
   AddTorrentModal,
   TorrentInfoModal,
   LinkToLibraryModal,
+  MediaFilesMatchDialog,
+  type MediaFileMatchInput,
 } from "../../components/downloads";
 import { sanitizeError } from "../../lib/format";
 import { RouteError } from "../../components/RouteError";
@@ -58,15 +62,41 @@ export const Route = createFileRoute("/downloads/")({
 });
 
 function DownloadsPage() {
-  const [torrents, setTorrents] = useState<DownloadTorrent[]>([]);
+  const downloadsQueryVariables = useMemo<DownloadsTorrentsQueryVariables>(
+    () => ({ Page: { Limit: 500, Offset: 0 } }),
+    [],
+  );
+  const {
+    data,
+    previousData,
+    loading,
+    refetch: refetchTorrents,
+  } = useQuery(DownloadsTorrentsDocument, {
+    variables: downloadsQueryVariables,
+    fetchPolicy: "cache-and-network",
+    notifyOnNetworkStatusChange: true,
+  });
+
+  const baseTorrents = useMemo<DownloadTorrent[]>(
+    () =>
+      (
+        data?.Torrents?.Edges ??
+        previousData?.Torrents?.Edges ??
+        []
+      ).map(({ Node }) => Node),
+    [data?.Torrents?.Edges, previousData?.Torrents?.Edges],
+  );
+
   const [liveStatsByInfoHash, setLiveStatsByInfoHash] = useState<
     Record<
       string,
       { downloadSpeed: number; uploadSpeed: number; peers: number }
     >
   >({});
+  const [progressByInfoHash, setProgressByInfoHash] = useState<
+    Record<string, { Progress: number; State: string }>
+  >({});
   const [isAdding, setIsAdding] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
   const { isOpen, onOpen, onClose } = useDisclosure();
   const {
     isOpen: isInfoOpen,
@@ -78,12 +108,23 @@ function DownloadsPage() {
     onOpen: onLinkOpen,
     onClose: onLinkClose,
   } = useDisclosure();
+  const {
+    isOpen: isMatchOpen,
+    onOpen: onMatchOpen,
+    onClose: onMatchClose,
+  } = useDisclosure();
   const [selectedTorrentInfoHash, setSelectedTorrentInfoHash] = useState<
     string | null
   >(null);
   const [torrentToLink, setTorrentToLink] = useState<DownloadTorrent | null>(
     null,
   );
+  const [matchTorrentInfoHash, setMatchTorrentInfoHash] =
+    useState<string | null>(null);
+  const [matchMediaFiles, setMatchMediaFiles] = useState<MediaFileMatchInput[]>(
+    [],
+  );
+  const [matchContextName, setMatchContextName] = useState<string | null>(null);
   const [addTorrentMutation] = useMutation(AddTorrentDocument);
   const [pauseTorrentByHash] = useMutation(PauseTorrentByInfoHashDocument);
   const [resumeTorrentByHash] = useMutation(ResumeTorrentByInfoHashDocument);
@@ -92,52 +133,112 @@ function DownloadsPage() {
     ProcessSourceMutation,
     ProcessSourceMutationVariables
   >(ProcessSourceDocument);
-  const [rematchSource] = useMutation<
-    RematchSourceMutation,
-    RematchSourceMutationVariables
-  >(RematchSourceDocument);
 
-  const fetchTorrents = useCallback(async () => {
-    try {
-      const result = await apolloClient.query<DownloadsTorrentsQuery>({
-        query: DownloadsTorrentsDocument,
-        fetchPolicy: "network-only",
-        variables: { Page: { Limit: 500, Offset: 0 } },
-      });
-      if (result.data?.Torrents?.Edges) {
-        const torrentNodes = result.data.Torrents.Edges.map(({ Node }) => Node);
-        setTorrents(torrentNodes);
-      }
-      if (result.error) {
-        const isAuthError = result.error.message
-          ?.toLowerCase()
-          .includes("authentication");
-        if (!isAuthError) {
-          addToast({
-            title: "Error",
-            description: sanitizeError(result.error),
-            color: "danger",
-          });
-        }
-      }
-    } catch (e) {
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      if (!errorMsg.toLowerCase().includes("authentication")) {
-        addToast({
-          title: "Error",
-          description: sanitizeError(e),
-          color: "danger",
-        });
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+  const torrents = useMemo(
+    () =>
+      baseTorrents.map((torrent) => {
+        const override = progressByInfoHash[torrent.InfoHash];
+        if (!override) return torrent;
+        return {
+          ...torrent,
+          Progress: override.Progress,
+          State: override.State,
+        };
+      }),
+    [baseTorrents, progressByInfoHash],
+  );
 
-  // Fetch torrents
-  useEffect(() => {
-    fetchTorrents();
-  }, [fetchTorrents]);
+  const upsertTorrentInCache = useCallback(
+    (torrent: {
+      Id: string;
+      InfoHash: string;
+      Name: string;
+      State: string;
+      Progress: number;
+      TotalBytes: number;
+      DownloadedBytes: number;
+      UploadedBytes: number;
+      SavePath: string;
+      AddedAt: string;
+    }) => {
+      apolloClient.cache.updateQuery<DownloadsTorrentsQuery, DownloadsTorrentsQueryVariables>(
+        { query: DownloadsTorrentsDocument, variables: downloadsQueryVariables },
+        (existing) => {
+          if (!existing?.Torrents) {
+            return {
+              Torrents: {
+                Edges: [{ Node: torrent }],
+                PageInfo: { TotalCount: 1, HasNextPage: false },
+              },
+            };
+          }
+
+          const edges = existing.Torrents.Edges ?? [];
+          const idx = edges.findIndex((edge) => edge.Node.InfoHash === torrent.InfoHash);
+
+          if (idx >= 0) {
+            const nextEdges = [...edges];
+            nextEdges[idx] = {
+              ...nextEdges[idx],
+              Node: {
+                ...nextEdges[idx].Node,
+                ...torrent,
+              },
+            };
+            return {
+              ...existing,
+              Torrents: {
+                ...existing.Torrents,
+                Edges: nextEdges,
+              },
+            };
+          }
+
+          return {
+            ...existing,
+            Torrents: {
+              ...existing.Torrents,
+              Edges: [{ Node: torrent }, ...edges],
+              PageInfo: {
+                ...existing.Torrents.PageInfo,
+                TotalCount: (existing.Torrents.PageInfo.TotalCount ?? edges.length) + 1,
+              },
+            },
+          };
+        },
+      );
+    },
+    [downloadsQueryVariables],
+  );
+
+  const removeTorrentFromCache = useCallback(
+    (infoHash: string) => {
+      apolloClient.cache.updateQuery<DownloadsTorrentsQuery, DownloadsTorrentsQueryVariables>(
+        { query: DownloadsTorrentsDocument, variables: downloadsQueryVariables },
+        (existing) => {
+          if (!existing?.Torrents) return existing;
+          const edges = existing.Torrents.Edges ?? [];
+          const nextEdges = edges.filter((edge) => edge.Node.InfoHash !== infoHash);
+          if (nextEdges.length === edges.length) return existing;
+          return {
+            ...existing,
+            Torrents: {
+              ...existing.Torrents,
+              Edges: nextEdges,
+              PageInfo: {
+                ...existing.Torrents.PageInfo,
+                TotalCount: Math.max(
+                  0,
+                  (existing.Torrents.PageInfo.TotalCount ?? edges.length) - 1,
+                ),
+              },
+            },
+          };
+        },
+      );
+    },
+    [downloadsQueryVariables],
+  );
 
   // Realtime updates (torrent client events)
   useSubscription<{
@@ -164,25 +265,34 @@ function DownloadsPage() {
           peers: event.Peers ?? 0,
         },
       }));
-      setTorrents((prev) =>
-        prev.map((torrent) =>
-          torrent.InfoHash === event.InfoHash
-            ? {
-                ...torrent,
-                Progress: event.Progress,
-                State: event.State,
-              }
-            : torrent,
-        ),
-      );
+      setProgressByInfoHash((prev) => ({
+        ...prev,
+        [event.InfoHash]: {
+          Progress: event.Progress,
+          State: event.State,
+        },
+      }));
     },
   });
 
   useSubscription<{
     TorrentAdded: { Id: number; Name: string; InfoHash: string };
   }>(gql(TORRENT_ADDED_SUBSCRIPTION), {
-    onData: () => {
-      fetchTorrents();
+    onData: ({ data }) => {
+      const event = data.data?.TorrentAdded;
+      if (!event) return;
+      upsertTorrentInCache({
+        Id: event.InfoHash,
+        InfoHash: event.InfoHash,
+        Name: event.Name,
+        State: "queued",
+        Progress: 0,
+        TotalBytes: 0,
+        DownloadedBytes: 0,
+        UploadedBytes: 0,
+        SavePath: "",
+        AddedAt: new Date().toISOString(),
+      });
     },
   });
 
@@ -199,9 +309,12 @@ function DownloadsPage() {
           delete next[event.InfoHash];
           return next;
         });
-        setTorrents((prev) =>
-          prev.filter((torrent) => torrent.InfoHash !== event.InfoHash),
-        );
+        setProgressByInfoHash((prev) => {
+          const next = { ...prev };
+          delete next[event.InfoHash];
+          return next;
+        });
+        removeTorrentFromCache(event.InfoHash);
       },
     },
   );
@@ -214,13 +327,20 @@ function DownloadsPage() {
         if (!event) {
           return;
         }
-        setTorrents((prev) =>
-          prev.map((torrent) =>
-            torrent.InfoHash === event.InfoHash
-              ? { ...torrent, State: "seeding", Progress: 1 }
-              : torrent,
-          ),
+        setProgressByInfoHash((prev) => ({
+          ...prev,
+          [event.InfoHash]: { State: "seeding", Progress: 1 },
+        }));
+        const existingTorrent = baseTorrents.find(
+          (torrent) => torrent.InfoHash === event.InfoHash,
         );
+        if (existingTorrent) {
+          upsertTorrentInCache({
+            ...existingTorrent,
+            State: "seeding",
+            Progress: 1,
+          });
+        }
       },
     },
   );
@@ -245,7 +365,7 @@ function DownloadsPage() {
           description: `Started downloading: ${name}`,
           color: "success",
         });
-        fetchTorrents();
+        void refetchTorrents();
       } else {
         addToast({
           title: "Error",
@@ -283,7 +403,7 @@ function DownloadsPage() {
           description: `Started downloading: ${name}`,
           color: "success",
         });
-        fetchTorrents();
+        void refetchTorrents();
       } else {
         addToast({
           title: "Error",
@@ -323,7 +443,7 @@ function DownloadsPage() {
       const data = await response.json();
 
       if (data.success && data.torrent) {
-        fetchTorrents();
+        void refetchTorrents();
         addToast({
           title: "Torrent Added",
           description: `Started downloading: ${data.torrent.name}`,
@@ -357,11 +477,14 @@ function DownloadsPage() {
     });
     const data = result.data?.PauseTorrentByInfoHash;
     if (data?.Success) {
-      setTorrents((prev) =>
-        prev.map((t) =>
-          t.InfoHash === infoHash ? { ...t, State: "paused" } : t,
-        ),
-      );
+      setProgressByInfoHash((prev) => ({
+        ...prev,
+        [infoHash]: {
+          Progress: prev[infoHash]?.Progress ?? 0,
+          State: "paused",
+        },
+      }));
+      void refetchTorrents();
     }
   };
 
@@ -373,11 +496,14 @@ function DownloadsPage() {
     });
     const data = result.data?.ResumeTorrentByInfoHash;
     if (data?.Success) {
-      setTorrents((prev) =>
-        prev.map((t) =>
-          t.InfoHash === infoHash ? { ...t, State: "downloading" } : t,
-        ),
-      );
+      setProgressByInfoHash((prev) => ({
+        ...prev,
+        [infoHash]: {
+          Progress: prev[infoHash]?.Progress ?? 0,
+          State: "downloading",
+        },
+      }));
+      void refetchTorrents();
     }
   };
 
@@ -390,7 +516,17 @@ function DownloadsPage() {
     });
     const data = result.data?.RemoveTorrentByInfoHash;
     if (data?.Success) {
-      setTorrents((prev) => prev.filter((t) => t.InfoHash !== infoHash));
+      setLiveStatsByInfoHash((prev) => {
+        const next = { ...prev };
+        delete next[infoHash];
+        return next;
+      });
+      setProgressByInfoHash((prev) => {
+        const next = { ...prev };
+        delete next[infoHash];
+        return next;
+      });
+      void refetchTorrents();
       addToast({
         title: "Torrent Removed",
         description: "The torrent has been removed.",
@@ -402,14 +538,6 @@ function DownloadsPage() {
   const handleInfo = (infoHash: string) => {
     setSelectedTorrentInfoHash(infoHash);
     onInfoOpen();
-  };
-
-  const handleOrganize = async (_infoHash: string) => {
-    addToast({
-      title: "Organize",
-      description: "Organize by info hash is not yet available from this view.",
-      color: "default",
-    });
   };
 
   // Process pending file matches (copy files to library)
@@ -445,37 +573,33 @@ function DownloadsPage() {
     }
   };
 
-  // Re-match files against library items
-  const handleRematch = async (torrent: DownloadTorrent) => {
-    const result = await rematchSource({
-      variables: {
-        SourceType: "torrent",
-        SourceId: torrent.InfoHash,
-        LibraryId: null, // Match against all libraries
-      },
-    });
-    if (result.data?.RematchSource) {
-      const match = result.data.RematchSource;
-      if (match.Success) {
-        addToast({
-          title: "Files Rematched",
-          description: `Found ${match.MatchCount} match(es)`,
-          color: "success",
-        });
-      } else {
-        addToast({
-          title: "Rematch Failed",
-          description: match.Error || "Failed to rematch files",
-          color: "danger",
-        });
-      }
-    } else if (result.error) {
-      addToast({
-        title: "Error",
-        description: sanitizeError(result.error),
-        color: "danger",
+  const handleOpenMatchDialog = async (torrent: DownloadTorrent) => {
+    setMatchTorrentInfoHash(torrent.InfoHash);
+    setMatchContextName(torrent.Name);
+    try {
+      const result = await apolloClient.query<
+        TorrentByInfoHashWithFilesQuery,
+        TorrentByInfoHashWithFilesQueryVariables
+      >({
+        query: TorrentByInfoHashWithFilesDocument,
+        variables: {
+          Where: { InfoHash: { Eq: torrent.InfoHash } },
+          Page: { Limit: 1, Offset: 0 },
+        },
+        fetchPolicy: "network-only",
       });
+      const files =
+        result.data?.Torrents?.Edges?.[0]?.Node?.Files?.Edges?.map((edge) => ({
+          RowId: `torrent:${torrent.InfoHash}:${edge.Node.FileIndex}`,
+          FileIndex: edge.Node.FileIndex,
+          FilePath: edge.Node.FilePath,
+          FileSize: edge.Node.FileSize,
+        })) ?? [];
+      setMatchMediaFiles(files);
+    } catch {
+      setMatchMediaFiles([]);
     }
+    onMatchOpen();
   };
 
   // Bulk actions (by infoHash)
@@ -489,13 +613,9 @@ function DownloadsPage() {
       });
       if (result.data?.PauseTorrentByInfoHash?.Success) {
         successCount++;
-        setTorrents((prev) =>
-          prev.map((t) =>
-            t.InfoHash === infoHash ? { ...t, State: "paused" } : t,
-          ),
-        );
       }
     }
+    void refetchTorrents();
     addToast({
       title: "Paused Torrents",
       description: `Paused ${successCount} of ${infoHashes.length} torrent(s)`,
@@ -513,13 +633,9 @@ function DownloadsPage() {
       });
       if (result.data?.ResumeTorrentByInfoHash?.Success) {
         successCount++;
-        setTorrents((prev) =>
-          prev.map((t) =>
-            t.InfoHash === infoHash ? { ...t, State: "downloading" } : t,
-          ),
-        );
       }
     }
+    void refetchTorrents();
     addToast({
       title: "Resumed Torrents",
       description: `Resumed ${successCount} of ${infoHashes.length} torrent(s)`,
@@ -538,9 +654,19 @@ function DownloadsPage() {
       });
       if (result.data?.RemoveTorrentByInfoHash?.Success) {
         successCount++;
-        setTorrents((prev) => prev.filter((t) => t.InfoHash !== infoHash));
+        setLiveStatsByInfoHash((prev) => {
+          const next = { ...prev };
+          delete next[infoHash];
+          return next;
+        });
+        setProgressByInfoHash((prev) => {
+          const next = { ...prev };
+          delete next[infoHash];
+          return next;
+        });
       }
     }
+    void refetchTorrents();
     addToast({
       title: "Removed Torrents",
       description: `Removed ${successCount} of ${infoHashes.length} torrent(s)`,
@@ -559,8 +685,8 @@ function DownloadsPage() {
           size="sm"
           variant="flat"
           startContent={<IconRefresh size={16} />}
-          onPress={fetchTorrents}
-          isLoading={isLoading}
+          onPress={() => void refetchTorrents()}
+          isLoading={loading}
         >
           Refresh
         </Button>
@@ -568,14 +694,13 @@ function DownloadsPage() {
 
       <TorrentTable
         torrents={torrents}
-        isLoading={isLoading}
+        isLoading={loading && torrents.length === 0}
         onPause={handlePause}
         onResume={handleResume}
         onRemove={handleRemove}
         onInfo={handleInfo}
-        onOrganize={handleOrganize}
         onProcess={handleProcess}
-        onRematch={handleRematch}
+        onMatch={handleOpenMatchDialog}
         onLinkToLibrary={(torrent) => {
           setTorrentToLink(torrent);
           onLinkOpen();
@@ -609,7 +734,20 @@ function DownloadsPage() {
         isOpen={isLinkOpen}
         onClose={onLinkClose}
         torrent={torrentToLink}
-        onLinked={fetchTorrents}
+        onLinked={() => void refetchTorrents()}
+      />
+
+      <MediaFilesMatchDialog
+        isOpen={isMatchOpen}
+        onClose={() => {
+          setMatchMediaFiles([]);
+          setMatchContextName(null);
+          onMatchClose();
+        }}
+        mediaFiles={matchMediaFiles}
+        contextName={matchContextName}
+        torrentInfoHash={matchTorrentInfoHash}
+        onApplied={() => void refetchTorrents()}
       />
     </div>
   );

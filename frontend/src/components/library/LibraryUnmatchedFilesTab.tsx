@@ -11,7 +11,6 @@ import {
   IconTrash,
   IconLink,
 } from "@tabler/icons-react";
-import { type MediaFile } from "../../lib/graphql";
 import { apolloClient } from "../../lib/graphql/client";
 import {
   LibraryUnmatchedMediaFilesTabDocument,
@@ -39,11 +38,11 @@ export function LibraryUnmatchedFilesTab({
   libraryType,
   loading: parentLoading,
 }: LibraryUnmatchedFilesTabProps) {
-  const [files, setFiles] = useState<MediaFile[]>([]);
+  const [files, setFiles] = useState<MediaFileNode[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [matchModalOpen, setMatchModalOpen] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<MediaFile | null>(null);
+  const [selectedFile, setSelectedFile] = useState<MediaFileNode | null>(null);
 
   const fetchUnmatchedFiles = async () => {
     setIsLoading(true);
@@ -56,48 +55,13 @@ export function LibraryUnmatchedFilesTab({
       });
 
       const edges = result.data?.MediaFiles?.Edges ?? [];
-      setFiles(edges.map((edge) => mapNodeToMediaFile(edge.Node)));
+      setFiles(edges.map((edge) => edge.Node));
     } catch (err) {
       setError(sanitizeError(err));
     } finally {
       setIsLoading(false);
     }
   };
-
-  const mapNodeToMediaFile = (node: MediaFileNode): MediaFile => ({
-    id: node.Id,
-    libraryId: node.LibraryId,
-    path: node.Path,
-    relativePath: node.RelativePath ?? null,
-    originalName: node.OriginalName ?? null,
-    sizeBytes: node.Size,
-    sizeFormatted: formatBytes(node.Size),
-    container: node.Container ?? null,
-    videoCodec: node.VideoCodec ?? null,
-    audioCodec: node.AudioCodec ?? null,
-    resolution: node.Resolution ?? null,
-    isHdr: node.IsHdr,
-    hdrType: node.HdrType ?? null,
-    width: node.Width ?? null,
-    height: node.Height ?? null,
-    duration: node.Duration ?? null,
-    bitrate: null,
-    episodeId: node.EpisodeId ?? null,
-    movieId: null,
-    trackId: null,
-    albumId: null,
-    audiobookId: null,
-    chapterId: null,
-    contentType: null,
-    organized: false,
-    organizeStatus: null,
-    organizeError: null,
-    qualityStatus: "UNKNOWN",
-    matchType: null,
-    addedAt: node.AddedAt,
-    matchedAt: null,
-    isManualMatch: false,
-  });
 
   useEffect(() => {
     fetchUnmatchedFiles();
@@ -108,13 +72,13 @@ export function LibraryUnmatchedFilesTab({
     return parts[parts.length - 1];
   };
 
-  const getRelativePath = (file: MediaFile) => {
-    if (file.relativePath) return file.relativePath;
+  const getRelativePath = (file: MediaFileNode) => {
+    if (file.RelativePath) return file.RelativePath;
     // Try to extract relative path from full path
-    if (file.path.startsWith(libraryPath)) {
-      return file.path.slice(libraryPath.length + 1);
+    if (file.Path.startsWith(libraryPath)) {
+      return file.Path.slice(libraryPath.length + 1);
     }
-    return file.path;
+    return file.Path;
   };
 
   if (isLoading) {
@@ -179,7 +143,7 @@ export function LibraryUnmatchedFilesTab({
       ) : (
         <div className="space-y-2">
           {files.map((file) => (
-            <Card key={file.id} className="bg-content2">
+            <Card key={file.Id} className="bg-content2">
               <CardBody className="py-3">
                 <div className="flex items-start gap-3">
                   <div className="p-2 bg-content3 rounded-lg">
@@ -189,39 +153,39 @@ export function LibraryUnmatchedFilesTab({
                     <div className="flex items-center gap-2 mb-1">
                       <p
                         className="font-medium truncate"
-                        title={getFileName(file.path)}
+                        title={getFileName(file.Path)}
                       >
-                        {file.originalName || getFileName(file.path)}
+                        {file.OriginalName || getFileName(file.Path)}
                       </p>
-                      {file.resolution && (
+                      {file.Resolution && (
                         <Chip size="sm" variant="flat" color="primary">
-                          {file.resolution}
+                          {file.Resolution}
                         </Chip>
                       )}
-                      {file.isHdr && (
+                      {file.IsHdr && (
                         <Chip size="sm" variant="flat" color="warning">
-                          {file.hdrType || "HDR"}
+                          {file.HdrType || "HDR"}
                         </Chip>
                       )}
-                      {file.videoCodec && (
+                      {file.VideoCodec && (
                         <Chip size="sm" variant="flat" color="default">
-                          {file.videoCodec}
+                          {file.VideoCodec}
                         </Chip>
                       )}
                     </div>
                     <p
                       className="text-xs text-default-400 truncate"
-                      title={file.path}
+                      title={file.Path}
                     >
                       {getRelativePath(file)}
                     </p>
                     <div className="flex items-center gap-4 mt-2 text-xs text-default-500">
-                      <span>{file.sizeFormatted}</span>
-                      {file.container && <span>.{file.container}</span>}
-                      {file.audioCodec && <span>{file.audioCodec}</span>}
-                      {file.duration && (
+                      <span>{formatBytes(file.Size)}</span>
+                      {file.Container && <span>.{file.Container}</span>}
+                      {file.AudioCodec && <span>{file.AudioCodec}</span>}
+                      {file.Duration && (
                         <span>
-                          {Math.floor(file.duration / 60)}m {file.duration % 60}
+                          {Math.floor(file.Duration / 60)}m {file.Duration % 60}
                           s
                         </span>
                       )}

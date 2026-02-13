@@ -38,6 +38,8 @@ pub enum Action {
     FocusPanel(usize),
     /// Toggle help overlay
     ToggleHelp,
+    /// Toggle terminal mouse capture (selection mode)
+    ToggleMouseCapture,
     /// Filter by warn level
     FilterWarn,
     /// Filter by info level
@@ -123,6 +125,7 @@ impl InputHandler {
             KeyCode::Char('c') => Action::Clear,
             KeyCode::Char('r') => Action::Refresh,
             KeyCode::Char('?') | KeyCode::F(1) => Action::ToggleHelp,
+            KeyCode::Char('m') => Action::ToggleMouseCapture,
 
             // Log level filters
             KeyCode::Char('w') => Action::FilterWarn,

@@ -111,3 +111,11 @@ mutation RefreshShowRoute($Id: String!) {
     Error
   }
 }
+
+mutation ShowDetailSetEpisodeWanted($ShowId: String!, $Wanted: Boolean!) {
+  UpdateEpisodes(Where: { ShowId: { Eq: $ShowId } }, Input: { Wanted: $Wanted }) {
+    success
+    error
+    affectedCount
+  }
+}

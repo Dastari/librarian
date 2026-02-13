@@ -109,7 +109,7 @@ export function LibraryMoviesTab({
   const normalizedLetter = selectedLetter === "" ? null : selectedLetter;
 
   // Check if we should skip queries (loading or template ID)
-  const shouldSkipQueries = libraryId.startsWith("template");
+  const shouldSkipQueries = !libraryId || libraryId.startsWith("template");
 
   // Handle sort change from DataTable
   const handleSortChange = useCallback(
@@ -295,10 +295,10 @@ export function LibraryMoviesTab({
         render: (movie) => (
           <Chip
             size="sm"
-            color={movie.MediaFileId ? "success" : "warning"}
+            color={movie.MediaFileId ? "success" : movie.Wanted ? "warning" : "danger"}
             variant="flat"
           >
-            {movie.MediaFileId ? "Downloaded" : "Missing"}
+            {movie.MediaFileId ? "Downloaded" : movie.Wanted ? "Wanted" : "Missing"}
           </Chip>
         ),
       },

@@ -1,4 +1,4 @@
-import { Outlet, createRootRouteWithContext, useRouter, type ErrorComponentProps } from '@tanstack/react-router'
+import { Outlet, createRootRouteWithContext, redirect, useRouter, type ErrorComponentProps } from '@tanstack/react-router'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
 import { Button } from '@heroui/button'
@@ -13,12 +13,30 @@ import { PersistentAudioPlayer } from '../components/PersistentAudioPlayer'
 import { CastControlBar } from '../components/cast'
 import { PlaybackProvider, usePlaybackContext } from '../contexts/PlaybackContext'
 import type { AuthContext } from '../lib/auth-context'
+import { ensureAuthenticated } from '../lib/route-auth'
 
 interface RouterContext {
   auth: AuthContext
 }
 
 export const Route = createRootRouteWithContext<RouterContext>()({
+  beforeLoad: async ({ context, location }) => {
+    const path = location.pathname
+    if (path === '/' || path.startsWith('/auth/login')) {
+      return
+    }
+
+    const ok = await ensureAuthenticated(context.auth)
+    if (!ok) {
+      throw redirect({
+        to: '/',
+        search: {
+          signin: true,
+          redirect: location.href,
+        },
+      })
+    }
+  },
   component: RootLayout,
   notFoundComponent: NotFound,
   errorComponent: RootErrorComponent,

@@ -15,18 +15,23 @@ import {
   IconRefresh,
 } from "@tabler/icons-react";
 import {
-  NOTIFICATIONS_QUERY,
-  MARK_NOTIFICATION_READ_MUTATION,
-  MARK_ALL_NOTIFICATIONS_READ_MUTATION,
-  RESOLVE_NOTIFICATION_MUTATION,
-  DELETE_NOTIFICATION_MUTATION,
-  type Notification,
-  type NotificationType,
-  type NotificationCategory,
-  type NotificationResolution,
-  type PaginatedNotifications,
-} from "../lib/graphql";
-import { useQuery, useMutation, gql } from "../lib/graphql/client";
+  NotificationsDocument,
+  NotificationChangedDocument,
+  UpdateNotificationDocument,
+  DeleteNotificationDocument,
+  SortDirection,
+  type NotificationsQuery,
+  type UpdateNotificationMutation,
+  type UpdateNotificationMutationVariables,
+  type DeleteNotificationMutation,
+  type DeleteNotificationMutationVariables,
+} from "../lib/graphql/generated/graphql";
+import {
+  apolloClient,
+  useMutation,
+  useQuery,
+  useSubscription,
+} from "../lib/graphql/client";
 import {
   DataTable,
   type DataTableColumn,
@@ -37,6 +42,78 @@ import { NotificationDetailModal } from "../components/NotificationDetailModal";
 export const Route = createFileRoute("/notifications")({
   component: NotificationsPage,
 });
+
+type NotificationType = "INFO" | "WARNING" | "ERROR" | "ACTION_REQUIRED";
+type NotificationCategory =
+  | "MATCHING"
+  | "PROCESSING"
+  | "QUALITY"
+  | "STORAGE"
+  | "EXTRACTION"
+  | "CONFIGURATION";
+type NotificationResolution =
+  | "ACCEPTED"
+  | "REJECTED"
+  | "DISMISSED"
+  | "AUTO_RESOLVED";
+
+interface NotificationItem {
+  id: string;
+  title: string;
+  message: string;
+  notificationType: NotificationType;
+  category: NotificationCategory;
+  libraryId: string | null;
+  torrentId: string | null;
+  mediaFileId: string | null;
+  pendingMatchId: string | null;
+  actionType: string | null;
+  actionData: Record<string, unknown> | null;
+  readAt: string | null;
+  resolvedAt: string | null;
+  resolution: NotificationResolution | null;
+  createdAt: string;
+}
+
+type NotificationNode = NotificationsQuery["Notifications"]["Edges"][number]["Node"];
+
+function nodeToNotification(node: NotificationNode): NotificationItem {
+  let actionData: Record<string, unknown> | null = null;
+  if (node.ActionData) {
+    try {
+      actionData = JSON.parse(node.ActionData) as Record<string, unknown>;
+    } catch {
+      actionData = null;
+    }
+  }
+
+  return {
+    id: node.Id,
+    title: node.Title,
+    message: node.Message,
+    notificationType: node.NotificationType as NotificationType,
+    category: node.Category as NotificationCategory,
+    libraryId: node.LibraryId ?? null,
+    torrentId: node.TorrentId ?? null,
+    mediaFileId: node.MediaFileId ?? null,
+    pendingMatchId: node.PendingMatchId ?? null,
+    actionType: node.ActionType ?? null,
+    actionData,
+    readAt: node.ReadAt ?? null,
+    resolvedAt: node.ResolvedAt ?? null,
+    resolution: (node.Resolution as NotificationResolution) ?? null,
+    createdAt: node.CreatedAt,
+  };
+}
+
+const UNREAD_WHERE = { ReadAt: { IsNull: true } } as const;
+const ACTION_REQUIRED_WHERE = {
+  NotificationType: { Eq: "ACTION_REQUIRED" },
+  ResolvedAt: { IsNull: true },
+} as const;
+const ORDER_BY_RECENT = [{ CreatedAt: SortDirection.Desc }];
+const NOTIFICATIONS_PAGE_SIZE = 50;
+const BATCH_PAGE_SIZE = 100;
 
 // Notification type info for display
 const NOTIFICATION_TYPE_INFO: Record<
@@ -106,7 +183,7 @@ type TabKey = "all" | "unread" | "action_required";
 
 function NotificationsPage() {
   const [selectedNotification, setSelectedNotification] =
-    useState<Notification | null>(null);
+    useState<NotificationItem | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -118,50 +195,104 @@ function NotificationsPage() {
 
   const notificationsFilter = useMemo(() => {
     if (activeTab === "unread") {
-      return { unreadOnly: true };
+      return UNREAD_WHERE;
     }
     if (activeTab === "action_required") {
-      return { unresolvedOnly: true };
+      return ACTION_REQUIRED_WHERE;
     }
     return undefined;
   }, [activeTab]);
 
-  const notificationsQuery = useQuery<{ notifications: PaginatedNotifications }>(
-    gql`${NOTIFICATIONS_QUERY}`,
-    {
-      variables: {
-        filter: notificationsFilter,
-        limit: 50,
-        offset: 0,
-      },
-      fetchPolicy: "cache-and-network",
+  const notificationsQuery = useQuery(NotificationsDocument, {
+    variables: {
+      Where: notificationsFilter,
+      OrderBy: ORDER_BY_RECENT,
+      Page: { Limit: NOTIFICATIONS_PAGE_SIZE, Offset: 0 },
     },
-  );
+    fetchPolicy: "cache-and-network",
+  });
 
-  const notifications =
-    notificationsQuery.data?.notifications?.notifications ??
-    notificationsQuery.previousData?.notifications?.notifications ??
-    [];
+  useSubscription(NotificationChangedDocument, {
+    variables: {},
+    onData: () => {
+      void notificationsQuery.refetch();
+    },
+  });
+
+  const notifications = useMemo(() => {
+    const edges =
+      notificationsQuery.data?.Notifications?.Edges ??
+      notificationsQuery.previousData?.Notifications?.Edges ??
+      [];
+    return edges
+      .map((edge) => edge?.Node)
+      .filter((node): node is NotificationNode => Boolean(node))
+      .map((node) => nodeToNotification(node));
+  }, [notificationsQuery.data, notificationsQuery.previousData]);
   const totalCount =
-    notificationsQuery.data?.notifications?.totalCount ??
-    notificationsQuery.previousData?.notifications?.totalCount ??
+    notificationsQuery.data?.Notifications?.PageInfo?.TotalCount ??
+    notificationsQuery.previousData?.Notifications?.PageInfo?.TotalCount ??
     0;
   const isLoading = notificationsQuery.loading;
 
-  const [markNotificationRead] = useMutation(gql`${MARK_NOTIFICATION_READ_MUTATION}`);
-  const [markAllNotificationsRead] = useMutation(
-    gql`${MARK_ALL_NOTIFICATIONS_READ_MUTATION}`,
-  );
-  const [resolveNotification] = useMutation(gql`${RESOLVE_NOTIFICATION_MUTATION}`);
-  const [deleteNotification] = useMutation(gql`${DELETE_NOTIFICATION_MUTATION}`);
+  const [updateNotification] = useMutation<
+    UpdateNotificationMutation,
+    UpdateNotificationMutationVariables
+  >(UpdateNotificationDocument);
+  const [deleteNotification] = useMutation<
+    DeleteNotificationMutation,
+    DeleteNotificationMutationVariables
+  >(DeleteNotificationDocument);
 
   const fetchNotifications = useCallback(() => {
     void notificationsQuery.refetch();
   }, [notificationsQuery]);
 
+  const fetchAllUnreadNotificationIds = useCallback(async (): Promise<string[]> => {
+    const ids: string[] = [];
+    let offset = 0;
+
+    while (true) {
+      const result = await apolloClient.query({
+        query: NotificationsDocument,
+        variables: {
+          Where: UNREAD_WHERE,
+          OrderBy: ORDER_BY_RECENT,
+          Page: { Limit: BATCH_PAGE_SIZE, Offset: offset },
+        },
+        fetchPolicy: "network-only",
+      });
+
+      const edges = result.data?.Notifications?.Edges ?? [];
+      if (edges.length === 0) {
+        break;
+      }
+
+      ids.push(...edges.map((edge) => edge.Node.Id));
+
+      const hasNextPage = result.data?.Notifications?.PageInfo?.HasNextPage;
+      if (!hasNextPage) {
+        break;
+      }
+      offset += BATCH_PAGE_SIZE;
+    }
+
+    return ids;
+  }, []);
+
   const handleMarkRead = async (id: string) => {
     try {
-      await markNotificationRead({ variables: { id } });
+      const result = await updateNotification({
+        variables: {
+          Id: id,
+          Input: { ReadAt: new Date().toISOString() },
+        },
+      });
+
+      if (!result.data?.UpdateNotification.Success) {
+        throw new Error(result.data?.UpdateNotification.Error ?? "Mutation failed");
+      }
+
       fetchNotifications();
     } catch (error) {
       addToast({
@@ -174,24 +305,28 @@ function NotificationsPage() {
 
   const handleMarkAllRead = async () => {
     try {
-      const result = await markAllNotificationsRead({
-        variables: {},
-      });
+      const unreadIds = await fetchAllUnreadNotificationIds();
 
-      const data = result.data as
-        | {
-          markAllNotificationsRead: { success: boolean; count: number };
-        }
-        | undefined;
-
-      if (data?.markAllNotificationsRead.success) {
-        fetchNotifications();
-        addToast({
-          title: "Success",
-          description: `Marked ${data.markAllNotificationsRead.count} notifications as read`,
-          color: "success",
-        });
+      if (unreadIds.length === 0) {
+        return;
       }
+
+      const now = new Date().toISOString();
+      for (const id of unreadIds) {
+        const result = await updateNotification({
+          variables: { Id: id, Input: { ReadAt: now } },
+        });
+        if (!result.data?.UpdateNotification.Success) {
+          throw new Error(result.data?.UpdateNotification.Error ?? "Mutation failed");
+        }
+      }
+
+      fetchNotifications();
+      addToast({
+        title: "Success",
+        description: `Marked ${unreadIds.length} notifications as read`,
+        color: "success",
+      });
     } catch (error) {
       addToast({
         title: "Error",
@@ -206,7 +341,22 @@ function NotificationsPage() {
     resolution: NotificationResolution,
   ) => {
     try {
-      await resolveNotification({ variables: { input: { id, resolution } } });
+      const now = new Date().toISOString();
+      const result = await updateNotification({
+        variables: {
+          Id: id,
+          Input: {
+            ResolvedAt: now,
+            Resolution: resolution,
+            ReadAt: now,
+          },
+        },
+      });
+
+      if (!result.data?.UpdateNotification.Success) {
+        throw new Error(result.data?.UpdateNotification.Error ?? "Mutation failed");
+      }
+
       fetchNotifications();
 
       onDetailClose();
@@ -227,7 +377,10 @@ function NotificationsPage() {
 
   const handleDelete = async (id: string) => {
     try {
-      await deleteNotification({ variables: { id } });
+      const result = await deleteNotification({ variables: { Id: id } });
+      if (!result.data?.DeleteNotification.Success) {
+        throw new Error(result.data?.DeleteNotification.Error ?? "Mutation failed");
+      }
       fetchNotifications();
 
       addToast({ title: "Notification deleted", color: "success" });
@@ -240,11 +393,11 @@ function NotificationsPage() {
     }
   };
 
-  const handleViewDetails = (notification: Notification) => {
+  const handleViewDetails = (notification: NotificationItem) => {
     setSelectedNotification(notification);
     // Mark as read when viewing
     if (!notification.readAt) {
-      handleMarkRead(notification.id);
+      void handleMarkRead(notification.id);
     }
     onDetailOpen();
   };
@@ -255,8 +408,10 @@ function NotificationsPage() {
     let deletedCount = 0;
     for (const id of selectedIds) {
       try {
-        await deleteNotification({ variables: { id } });
-        deletedCount++;
+        const result = await deleteNotification({ variables: { Id: id } });
+        if (result.data?.DeleteNotification.Success) {
+          deletedCount++;
+        }
       } catch {
         // Continue deleting others
       }
@@ -292,7 +447,7 @@ function NotificationsPage() {
     });
   };
 
-  const columns: DataTableColumn<Notification>[] = [
+  const columns: DataTableColumn<NotificationItem>[] = [
     {
       key: "select",
       label: (
@@ -403,7 +558,7 @@ function NotificationsPage() {
     },
   ];
 
-  const rowActions: RowAction<Notification>[] = [
+  const rowActions: RowAction<NotificationItem>[] = [
     {
       key: "view",
       label: "View Details",
@@ -412,14 +567,14 @@ function NotificationsPage() {
     {
       key: "markRead",
       label: "Mark as Read",
-      onAction: (notification: Notification) => handleMarkRead(notification.id),
-      isDisabled: (notification: Notification) => !!notification.readAt,
+      onAction: (notification: NotificationItem) => handleMarkRead(notification.id),
+      isDisabled: (notification: NotificationItem) => !!notification.readAt,
     },
     {
       key: "delete",
       label: "Delete",
       color: "danger",
-      onAction: (notification: Notification) => handleDelete(notification.id),
+      onAction: (notification: NotificationItem) => handleDelete(notification.id),
     },
   ];
 

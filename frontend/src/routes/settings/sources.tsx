@@ -30,13 +30,14 @@ import {
   IconAlertTriangle,
 } from "@tabler/icons-react";
 import { DataTable } from "../../components/data-table/DataTable";
-import type { DataTableColumn } from "../../components/data-table/types";
+import type { DataTableColumn, RowAction } from "../../components/data-table/types";
 
 import {
   SourcesDocument,
   AvailableSourceDefinitionsDocument,
   SourceSettingDefinitionsDocument,
   SearchSourcesDocument,
+  AddTorrentDocument,
   CreateSourceDocument,
   UpdateSourceDocument,
   DeleteSourceDocument,
@@ -48,6 +49,8 @@ import {
   type SearchSourcesQuery,
 } from "../../lib/graphql/generated/graphql";
 import { apolloClient, useMutation, useQuery } from "../../lib/graphql/client";
+import { addToast } from "@heroui/toast";
+import { sanitizeError } from "../../lib/format";
 
 type SourceNode = SourcesQuery["Sources"]["Edges"][number]["Node"];
 type SourceDefinitionInfo =
@@ -135,6 +138,10 @@ function SourcesSettingsPage() {
     const d = data ?? previousData;
     return d?.Sources?.Edges?.map((e) => e.Node) ?? [];
   }, [data, previousData]);
+  const sourceRows = useMemo(
+    () => sources.map((source, index) => ({ source, index })),
+    [sources],
+  );
 
   // Modals
   const addModal = useDisclosure();
@@ -253,6 +260,126 @@ function SourcesSettingsPage() {
     [editModal],
   );
 
+  const sourceColumns = useMemo<DataTableColumn<(typeof sourceRows)[number]>[]>(
+    () => [
+      {
+        key: "priority",
+        label: "#",
+        sortable: false,
+        width: 80,
+        render: ({ source, index }) => (
+          <div className="flex flex-col gap-0.5">
+            <Button
+              isIconOnly
+              size="sm"
+              variant="light"
+              isDisabled={index === 0}
+              onPress={() => handleMovePriority(source.Id, "up")}
+            >
+              <IconArrowUp size={14} />
+            </Button>
+            <Button
+              isIconOnly
+              size="sm"
+              variant="light"
+              isDisabled={index === sources.length - 1}
+              onPress={() => handleMovePriority(source.Id, "down")}
+            >
+              <IconArrowDown size={14} />
+            </Button>
+          </div>
+        ),
+      },
+      {
+        key: "name",
+        label: "Name",
+        sortable: true,
+        render: ({ source }) => (
+          <div className="flex flex-col">
+            <span className="font-medium">{source.Name}</span>
+            <span className="text-xs text-default-400">{source.DefinitionId}</span>
+          </div>
+        ),
+      },
+      {
+        key: "sourceType",
+        label: "Type",
+        sortable: true,
+        width: 180,
+        render: ({ source }) => <SourceTypeChip type={source.SourceType} />,
+      },
+      {
+        key: "mediaTypes",
+        label: "Media",
+        sortable: true,
+        width: 140,
+        render: ({ source }) => (
+          <Chip size="sm" variant="flat">
+            {source.MediaTypes}
+          </Chip>
+        ),
+      },
+      {
+        key: "status",
+        label: "Status",
+        width: 320,
+        render: ({ source }) => (
+          <div className="flex items-center gap-2">
+            <StatusChip source={source} />
+            {testResult?.id === source.Id ? (
+              <Chip size="sm" variant="flat" color={testResult.success ? "success" : "danger"}>
+                {testResult.message}
+              </Chip>
+            ) : null}
+          </div>
+        ),
+      },
+      {
+        key: "enabled",
+        label: "Enabled",
+        width: 120,
+        align: "center",
+        render: ({ source }) => (
+          <Switch
+            size="sm"
+            isSelected={source.Enabled}
+            onValueChange={() => void handleToggleEnabled(source)}
+          />
+        ),
+      },
+    ],
+    [handleMovePriority, handleToggleEnabled, sources.length, testResult],
+  );
+
+  const sourceActions = useMemo<RowAction<(typeof sourceRows)[number]>[]>(
+    () => [
+      {
+        key: "test",
+        label: "Test connection",
+        icon: <IconPlugConnected size={16} className="text-blue-400" />,
+        inDropdown: false,
+        isDisabled: ({ source }) => testingId === source.Id,
+        onAction: ({ source }) => void handleTest(source.Id),
+      },
+      {
+        key: "edit",
+        label: "Edit",
+        icon: <IconPencil size={16} className="text-default-400" />,
+        inDropdown: false,
+        onAction: ({ source }) => handleEdit(source),
+      },
+      {
+        key: "delete",
+        label: "Delete",
+        icon: <IconTrash size={16} className="text-red-400" />,
+        isDestructive: true,
+        inDropdown: false,
+        onAction: ({ source }) => void handleDelete(source.Id),
+      },
+    ],
+    [handleDelete, handleEdit, handleTest, testingId],
+  );
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -285,157 +412,37 @@ function SourcesSettingsPage() {
       {/* Sources Table */}
       <Card>
         <CardBody className="p-0">
-          {loading && sources.length === 0 ? (
-            <div className="flex items-center justify-center py-12">
-              <Spinner label="Loading sources..." />
-            </div>
-          ) : sources.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <IconWorldSearch size={48} className="text-default-300 mb-4" />
-              <p className="text-default-500 text-lg font-medium">
-                No sources configured
-              </p>
-              <p className="text-default-400 text-sm mt-1">
-                Add a torrent indexer, usenet indexer, or RSS feed to get
-                started
-              </p>
-              <Button
-                color="primary"
-                className="mt-4"
-                startContent={<IconPlus size={16} />}
-                onPress={addModal.onOpen}
-              >
-                Add Source
-              </Button>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[700px]">
-                <thead>
-                  <tr className="bg-default-100 text-default-600 text-xs uppercase tracking-wide">
-                    <th className="px-4 py-3 text-left w-12">#</th>
-                    <th className="px-4 py-3 text-left">Name</th>
-                    <th className="px-4 py-3 text-left">Type</th>
-                    <th className="px-4 py-3 text-left">Media</th>
-                    <th className="px-4 py-3 text-left">Status</th>
-                    <th className="px-4 py-3 text-center">Enabled</th>
-                    <th className="px-4 py-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-default-100">
-                  {sources.map((source, idx) => (
-                    <tr
-                      key={source.Id}
-                      className="hover:bg-content2 transition-colors"
-                    >
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col gap-0.5">
-                          <Button
-                            isIconOnly
-                            size="sm"
-                            variant="light"
-                            isDisabled={idx === 0}
-                            onPress={() => handleMovePriority(source.Id, "up")}
-                          >
-                            <IconArrowUp size={14} />
-                          </Button>
-                          <Button
-                            isIconOnly
-                            size="sm"
-                            variant="light"
-                            isDisabled={idx === sources.length - 1}
-                            onPress={() =>
-                              handleMovePriority(source.Id, "down")
-                            }
-                          >
-                            <IconArrowDown size={14} />
-                          </Button>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col">
-                          <span className="font-medium">{source.Name}</span>
-                          <span className="text-xs text-default-400">
-                            {source.DefinitionId}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <SourceTypeChip type={source.SourceType} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <Chip size="sm" variant="flat">
-                          {source.MediaTypes}
-                        </Chip>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <StatusChip source={source} />
-                          {testResult?.id === source.Id && (
-                            <Chip
-                              size="sm"
-                              variant="flat"
-                              color={testResult.success ? "success" : "danger"}
-                            >
-                              {testResult.message}
-                            </Chip>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <Switch
-                          size="sm"
-                          isSelected={source.Enabled}
-                          onValueChange={() => handleToggleEnabled(source)}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-1">
-                          <Tooltip content="Test connection">
-                            <Button
-                              isIconOnly
-                              size="sm"
-                              variant="light"
-                              isLoading={testingId === source.Id}
-                              onPress={() => handleTest(source.Id)}
-                            >
-                              <IconPlugConnected
-                                size={16}
-                                className="text-blue-400"
-                              />
-                            </Button>
-                          </Tooltip>
-                          <Tooltip content="Edit">
-                            <Button
-                              isIconOnly
-                              size="sm"
-                              variant="light"
-                              onPress={() => handleEdit(source)}
-                            >
-                              <IconPencil
-                                size={16}
-                                className="text-default-400"
-                              />
-                            </Button>
-                          </Tooltip>
-                          <Tooltip content="Delete">
-                            <Button
-                              isIconOnly
-                              size="sm"
-                              variant="light"
-                              onPress={() => handleDelete(source.Id)}
-                            >
-                              <IconTrash size={16} className="text-red-400" />
-                            </Button>
-                          </Tooltip>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <DataTable
+            stateKey="settings-sources-table"
+            data={sourceRows}
+            columns={sourceColumns}
+            rowActions={sourceActions}
+            getRowKey={(row) => row.source.Id}
+            ariaLabel="Sources table"
+            searchPlaceholder="Search sources..."
+            showItemCount
+            isLoading={loading && sourceRows.length === 0}
+            emptyContent={
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <IconWorldSearch size={48} className="text-default-300 mb-4" />
+                <p className="text-default-500 text-lg font-medium">
+                  No sources configured
+                </p>
+                <p className="text-default-400 text-sm mt-1">
+                  Add a torrent indexer, usenet indexer, or RSS feed to get
+                  started
+                </p>
+                <Button
+                  color="primary"
+                  className="mt-4"
+                  startContent={<IconPlus size={16} />}
+                  onPress={addModal.onOpen}
+                >
+                  Add Source
+                </Button>
+              </div>
+            }
+          />
         </CardBody>
       </Card>
 
@@ -1138,6 +1145,73 @@ function SearchSourcesModal({
   searching: boolean;
   onSearch: () => void;
 }) {
+  const [addTorrent] = useMutation(AddTorrentDocument);
+  const [addingReleaseKey, setAddingReleaseKey] = useState<string | null>(null);
+
+  const getReleaseKey = useCallback(
+    (release: SourceReleaseInfo) =>
+      `${release.Guid}:${release.SourceId ?? release.SourceName ?? ""}:${release.Title}`,
+    [],
+  );
+
+  const handleAddToDownloads = useCallback(
+    async (release: SourceReleaseInfo) => {
+      const magnetUri = release.MagnetUri ?? undefined;
+      const torrentUrl = release.Link ?? undefined;
+
+      if (!magnetUri && !torrentUrl) {
+        addToast({
+          title: "No Download Link",
+          description: "This release does not include a magnet or torrent URL.",
+          color: "warning",
+        });
+        return;
+      }
+
+      const isMagnet = magnetUri?.startsWith("magnet:");
+      const releaseKey = getReleaseKey(release);
+      setAddingReleaseKey(releaseKey);
+
+      try {
+        const result = await addTorrent({
+          variables: {
+            Input: {
+              Magnet: isMagnet ? magnetUri : undefined,
+              Url: !isMagnet ? (magnetUri || torrentUrl) : undefined,
+            },
+          },
+        });
+
+        const data = result.data?.AddTorrent;
+        if (data?.Success && data.Torrent) {
+          addToast({
+            title: "Torrent Added",
+            description: `Started downloading: ${data.Torrent.Name}`,
+            color: "success",
+          });
+          return;
+        }
+
+        addToast({
+          title: "Failed to Add Torrent",
+          description: sanitizeError(
+            data?.Error ?? result.error?.message ?? "Unknown error",
+          ),
+          color: "danger",
+        });
+      } catch (error) {
+        addToast({
+          title: "Failed to Add Torrent",
+          description: sanitizeError(error),
+          color: "danger",
+        });
+      } finally {
+        setAddingReleaseKey(null);
+      }
+    },
+    [addTorrent, getReleaseKey],
+  );
+
   const columns = useMemo<DataTableColumn<SourceReleaseInfo>[]>(
     () => [
       {
@@ -1224,27 +1298,30 @@ function SearchSourcesModal({
         label: "Actions",
         sortable: false,
         align: "end",
-        render: (release) =>
-          release.Link ? (
-            <Tooltip content="Download torrent file">
+        render: (release) => {
+          const canDownload = Boolean(release.Link ?? release.MagnetUri);
+          const tooltipText = canDownload ? "Add to downloads" : null;
+          const releaseKey = getReleaseKey(release);
+
+          return canDownload && tooltipText ? (
+            <Tooltip content={tooltipText}>
               <Button
                 isIconOnly
                 size="sm"
                 variant="light"
-                as="a"
-                href={release.Link}
-                target="_blank"
-                rel="noopener noreferrer"
+                isLoading={addingReleaseKey === releaseKey}
+                onPress={() => void handleAddToDownloads(release)}
               >
                 <IconDownload size={14} className="text-blue-400" />
               </Button>
             </Tooltip>
           ) : (
             <span className="text-default-400">-</span>
-          ),
+          );
+        },
       },
     ],
-    [],
+    [addingReleaseKey, getReleaseKey, handleAddToDownloads],
   );
 
   return (
@@ -1282,7 +1359,7 @@ function SearchSourcesModal({
               isLoading={searching}
               columns={columns}
               getRowKey={(release) =>
-                `${release.Guid}:${release.SourceId ?? release.SourceName ?? ""}:${release.Title}`
+                getReleaseKey(release)
               }
               defaultSortColumn="Seeders"
               defaultSortDirection="desc"

@@ -1,6 +1,7 @@
 //! Main TUI application
 
 use std::io::{self, Stdout};
+use std::sync::Arc;
 
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
@@ -12,11 +13,15 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use tokio::sync::broadcast;
 
-use crate::services::LogEvent;
+type DbPool = crate::db::DbPool;
+
+use crate::services::graphql::LibrarianSchema;
+use crate::services::{LogEvent, TorrentService};
 use crate::tui::input::{Action, InputHandler};
 use crate::tui::panels::{
     DatabasePanel, LibrariesPanel, LogsPanel, Panel, SystemPanel, TorrentsPanel,
     create_shared_libraries, create_shared_table_counts, create_shared_torrents,
+    spawn_libraries_updater, spawn_table_counts_updater, spawn_torrent_updater,
 };
 use crate::tui::ui::{PanelId, UiLayout, render_panels};
 
@@ -52,12 +57,17 @@ pub struct TuiApp {
     database_panel: DatabasePanel,
     /// Whether the app should quit
     should_quit: bool,
+    /// Whether terminal mouse capture is enabled
+    mouse_capture_enabled: bool,
 }
 
 impl TuiApp {
-    /// Create a new TUI application (logs panel only has live data; other panels are empty/disabled)
+    /// Create a new TUI application.
     pub fn new(
         log_rx: broadcast::Receiver<LogEvent>,
+        graphql_schema: LibrarianSchema,
+        torrent_service: Arc<TorrentService>,
+        pool: DbPool,
         server_port: u16,
         config: TuiConfig,
     ) -> io::Result<Self> {
@@ -68,10 +78,17 @@ impl TuiApp {
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
 
-        // Shared state for panels; no updaters spawned (DB/entities/torrents commented out)
+        // Create shared torrent stats and spawn updater task
         let torrents = create_shared_torrents();
+        spawn_torrent_updater(torrent_service, torrents.clone());
+
+        // Create shared libraries list and spawn updater task
         let libraries = create_shared_libraries();
+        spawn_libraries_updater(graphql_schema, libraries.clone());
+
+        // Create shared table counts and spawn updater task
         let table_counts = create_shared_table_counts();
+        spawn_table_counts_updater(pool.clone(), table_counts.clone());
 
         Ok(Self {
             terminal,
@@ -79,10 +96,11 @@ impl TuiApp {
             layout: UiLayout::default(),
             logs_panel: LogsPanel::new(log_rx),
             torrents_panel: TorrentsPanel::new(torrents),
-            system_panel: SystemPanel::new_stub(server_port),
+            system_panel: SystemPanel::new(server_port),
             libraries_panel: LibrariesPanel::new(libraries),
-            database_panel: DatabasePanel::new_empty(table_counts),
+            database_panel: DatabasePanel::new(pool, table_counts),
             should_quit: false,
+            mouse_capture_enabled: true,
         })
     }
 
@@ -157,6 +175,15 @@ impl TuiApp {
                 // Focus panel based on click position
                 if let Some(panel) = self.panel_at_position(x, y) {
                     self.layout.focused = panel;
+                    if panel == PanelId::Logs {
+                        let size = match self.terminal.size() {
+                            Ok(size) => size,
+                            Err(_) => return,
+                        };
+                        let area = Rect::new(0, 0, size.width, size.height);
+                        let areas = self.layout.calculate_areas(area);
+                        self.logs_panel.select_at_screen_row(y, areas.logs);
+                    }
                 }
             }
             Action::MouseScroll(x, y, delta) => {
@@ -169,6 +196,12 @@ impl TuiApp {
                         Action::ScrollDown
                     };
                     self.delegate_action(&scroll_action);
+                }
+            }
+            Action::ToggleMouseCapture => {
+                let new_state = !self.mouse_capture_enabled;
+                if self.set_mouse_capture(new_state).is_ok() {
+                    self.mouse_capture_enabled = new_state;
                 }
             }
             // Delegate to focused panel
@@ -233,6 +266,16 @@ impl TuiApp {
             DisableMouseCapture
         )?;
         self.terminal.show_cursor()?;
+        Ok(())
+    }
+
+    /// Toggle crossterm mouse capture to allow terminal text selection when disabled
+    fn set_mouse_capture(&mut self, enabled: bool) -> io::Result<()> {
+        if enabled {
+            execute!(self.terminal.backend_mut(), EnableMouseCapture)?;
+        } else {
+            execute!(self.terminal.backend_mut(), DisableMouseCapture)?;
+        }
         Ok(())
     }
 }

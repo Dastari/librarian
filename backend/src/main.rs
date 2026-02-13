@@ -34,6 +34,7 @@ use crate::services::{
     torrent::TorrentServiceConfig,
 };
 use crate::tui::{TuiApp, TuiConfig, create_tui_layer, should_use_tui};
+use anyhow::Context;
 use std::path::PathBuf;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -46,6 +47,7 @@ pub async fn get_db_pool(services: &ServicesManager) -> Option<Database> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    raise_fd_limit();
     dotenvy::dotenv().ok();
     let cli = CliOptions::from_args();
     let config = Config::from_env()?;
@@ -111,6 +113,8 @@ async fn main() -> anyhow::Result<()> {
             enable_dht: config.torrent_enable_dht,
             listen_port: config.torrent_listen_port,
             max_concurrent: config.torrent_max_concurrent,
+            upload_limit: 0,
+            download_limit: 0,
         })
         .add_service(CastServiceConfig {
             media_base_url: cast_media_base_url,
@@ -130,16 +134,42 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     if let Some(db_service) = services.get_database().await {
-        crate::services::graphql::filesystem_network::reconnect_saved_network_paths(
-            db_service.pool(),
-            &services,
-        )
-        .await;
+        let db = db_service.pool().clone();
+        let services_for_reconnect = services.clone();
+        tokio::spawn(async move {
+            tracing::info!("Starting background reconnect for saved network paths");
+            crate::services::graphql::filesystem_network::reconnect_saved_network_paths(
+                &db,
+                &services_for_reconnect,
+            )
+            .await;
+            tracing::info!("Finished background reconnect for saved network paths");
+        });
     }
 
     if use_tui {
+        let torrent_service = services
+            .get_torrent()
+            .await
+            .context("torrent service unavailable for TUI")?;
+        let graphql_schema = services
+            .get_graphql()
+            .await
+            .context("graphql service unavailable for TUI")?
+            .schema()
+            .await
+            .context("graphql schema unavailable for TUI")?;
+        let db_pool = services
+            .get_database()
+            .await
+            .context("database service unavailable for TUI")?
+            .pool()
+            .clone();
         let tui = TuiApp::new(
             log_rx.expect("log_rx set when use_tui"),
+            graphql_schema,
+            torrent_service,
+            db_pool,
             config.port,
             TuiConfig::default(),
         )?;
@@ -158,5 +188,48 @@ fn install_rustls_crypto_provider() {
         .is_err()
     {
         tracing::debug!("Rustls crypto provider already configured");
+    }
+}
+
+/// Raise the process soft file-descriptor limit to the hard limit (or at least 65536).
+///
+/// librqbit creates per-peer sockets, each needing ~4 kernel FDs (socket + eventpoll
+/// + eventfd + timerfd). The default soft limit of 1024 on many Linux systems is
+/// easily exhausted by a handful of active torrents. Raising it early avoids
+/// "unable to open database file" (SQLITE_CANTOPEN) errors that appear once FDs run out.
+fn raise_fd_limit() {
+    #[cfg(unix)]
+    {
+        use libc::{RLIMIT_NOFILE, getrlimit, rlimit, setrlimit};
+
+        unsafe {
+            let mut rl = rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if getrlimit(RLIMIT_NOFILE, &mut rl) != 0 {
+                eprintln!("warning: getrlimit(RLIMIT_NOFILE) failed");
+                return;
+            }
+
+            let desired: u64 = 65_536;
+            let target = desired.min(rl.rlim_max).max(rl.rlim_cur);
+
+            if target > rl.rlim_cur {
+                let prev = rl.rlim_cur;
+                rl.rlim_cur = target;
+                if setrlimit(RLIMIT_NOFILE, &rl) != 0 {
+                    eprintln!(
+                        "warning: setrlimit(RLIMIT_NOFILE, {}) failed; current soft limit is {}",
+                        target, prev
+                    );
+                } else {
+                    eprintln!(
+                        "Raised file descriptor soft limit: {} -> {}",
+                        prev, target
+                    );
+                }
+            }
+        }
     }
 }

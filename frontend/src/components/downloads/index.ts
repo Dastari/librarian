@@ -3,3 +3,8 @@ export { TorrentTable, type TorrentTableProps } from './TorrentTable'
 export { AddTorrentModal, type AddTorrentModalProps } from './AddTorrentModal'
 export { TorrentInfoModal } from './TorrentInfoModal'
 export { LinkToLibraryModal, type LinkToLibraryModalProps } from './LinkToLibraryModal'
+export {
+  MediaFilesMatchDialog,
+  type MediaFilesMatchDialogProps,
+  type MediaFileMatchInput,
+} from './MediaFilesMatchDialog'

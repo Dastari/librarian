@@ -37,6 +37,14 @@ export type AddAudiobookInput = {
   OpenlibraryId: Scalars["String"]["input"];
 };
 
+/** Input for adding/importing a movie collection from TMDB */
+export type AddMovieCollectionInput = {
+  /** TMDB collection ID */
+  CollectionId: Scalars["Int"]["input"];
+  /** Mark missing imported movies as wanted */
+  WantedMissing?: InputMaybe<Scalars["Boolean"]["input"]>;
+};
+
 /** Input for adding a movie from TMDB */
 export type AddMovieInput = {
   /** Whether to monitor for releases (enables auto-download) */
@@ -1012,12 +1020,6 @@ export type CastSettingWhereInput = {
   UpdatedAt?: InputMaybe<DateFilter>;
 };
 
-export type CastSettingsOperationResult = {
-  error?: Maybe<Scalars["String"]["output"]>;
-  settings?: Maybe<LegacyCastSettings>;
-  success: Scalars["Boolean"]["output"];
-};
-
 /** Type of change for subscription events. */
 export const ChangeAction = {
   Created: "Created",
@@ -1101,6 +1103,94 @@ export type ChapterWhereInput = {
   Title?: InputMaybe<StringFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   Wanted?: InputMaybe<BoolFilter>;
+};
+
+export type Collection = {
+  BackdropUrl?: Maybe<Scalars["String"]["output"]>;
+  CreatedAt: Scalars["String"]["output"];
+  Id: Scalars["String"]["output"];
+  LastSyncedAt?: Maybe<Scalars["String"]["output"]>;
+  /** Get related #graphql_name */
+  Library?: Maybe<Library>;
+  LibraryId: Scalars["String"]["output"];
+  MovieCount: Scalars["Int"]["output"];
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  Movies: MovieConnection;
+  Name: Scalars["String"]["output"];
+  Overview?: Maybe<Scalars["String"]["output"]>;
+  PosterUrl?: Maybe<Scalars["String"]["output"]>;
+  TmdbCollectionId: Scalars["Int"]["output"];
+  UpdatedAt: Scalars["String"]["output"];
+  UserId: Scalars["String"]["output"];
+};
+
+export type CollectionMoviesArgs = {
+  OrderBy?: InputMaybe<MovieOrderByInput>;
+  Page?: InputMaybe<PageInput>;
+  Where?: InputMaybe<MovieWhereInput>;
+};
+
+/** Event for #struct_name changes (subscriptions) */
+export type CollectionChangedEvent = {
+  Action: ChangeAction;
+  Collection?: Maybe<Collection>;
+  Id: Scalars["String"]["output"];
+};
+
+/** Connection containing edges and page info */
+export type CollectionConnection = {
+  /** The edges in this connection */
+  Edges: Array<CollectionEdge>;
+  /** Pagination information */
+  PageInfo: PageInfo;
+};
+
+/** Edge containing a node and cursor */
+export type CollectionEdge = {
+  /** A cursor for pagination */
+  Cursor: Scalars["String"]["output"];
+  /** The item at the end of the edge */
+  Node: Collection;
+};
+
+export type CollectionOrderByInput = {
+  CreatedAt?: InputMaybe<SortDirection>;
+  LastSyncedAt?: InputMaybe<SortDirection>;
+  MovieCount?: InputMaybe<SortDirection>;
+  Name?: InputMaybe<SortDirection>;
+  UpdatedAt?: InputMaybe<SortDirection>;
+};
+
+/** Result type for #struct_name mutations */
+export type CollectionResult = {
+  Collection?: Maybe<Collection>;
+  Error?: Maybe<Scalars["String"]["output"]>;
+  Success: Scalars["Boolean"]["output"];
+};
+
+export type CollectionWhereInput = {
+  /** Logical AND of conditions */
+  And?: InputMaybe<Array<CollectionWhereInput>>;
+  CreatedAt?: InputMaybe<DateFilter>;
+  Id?: InputMaybe<StringFilter>;
+  LastSyncedAt?: InputMaybe<DateFilter>;
+  LibraryId?: InputMaybe<StringFilter>;
+  MovieCount?: InputMaybe<IntFilter>;
+  Name?: InputMaybe<StringFilter>;
+  /** Logical NOT of condition */
+  Not?: InputMaybe<CollectionWhereInput>;
+  /** Logical OR of conditions */
+  Or?: InputMaybe<Array<CollectionWhereInput>>;
+  TmdbCollectionId?: InputMaybe<IntFilter>;
+  UpdatedAt?: InputMaybe<DateFilter>;
+  UserId?: InputMaybe<StringFilter>;
 };
 
 export type ConfigureNetworkPathInput = {
@@ -1301,6 +1391,19 @@ export type CreateChapterInput = {
   Wanted: Scalars["Boolean"]["input"];
 };
 
+/** Input for creating a new #struct_name */
+export type CreateCollectionInput = {
+  BackdropUrl?: InputMaybe<Scalars["String"]["input"]>;
+  LastSyncedAt?: InputMaybe<Scalars["String"]["input"]>;
+  LibraryId: Scalars["String"]["input"];
+  MovieCount: Scalars["Int"]["input"];
+  Name: Scalars["String"]["input"];
+  Overview?: InputMaybe<Scalars["String"]["input"]>;
+  PosterUrl?: InputMaybe<Scalars["String"]["input"]>;
+  TmdbCollectionId: Scalars["Int"]["input"];
+  UserId: Scalars["String"]["input"];
+};
+
 export type CreateDirectoryInput = {
   Path: Scalars["String"]["input"];
 };
@@ -1366,9 +1469,11 @@ export type CreateMediaChapterInput = {
 /** Input for creating a new #struct_name */
 export type CreateMediaFileInput = {
   AddedAt: Scalars["String"]["input"];
+  AnalyzedAt?: InputMaybe<Scalars["String"]["input"]>;
   AudioChannels?: InputMaybe<Scalars["String"]["input"]>;
   AudioCodec?: InputMaybe<Scalars["String"]["input"]>;
   Bitrate?: InputMaybe<Scalars["Int"]["input"]>;
+  ChapterId?: InputMaybe<Scalars["String"]["input"]>;
   Container?: InputMaybe<Scalars["String"]["input"]>;
   ContentType?: InputMaybe<Scalars["String"]["input"]>;
   Duration?: InputMaybe<Scalars["Int"]["input"]>;
@@ -1376,7 +1481,7 @@ export type CreateMediaFileInput = {
   HdrType?: InputMaybe<Scalars["String"]["input"]>;
   Height?: InputMaybe<Scalars["Int"]["input"]>;
   IsHdr: Scalars["Boolean"]["input"];
-  LibraryId: Scalars["String"]["input"];
+  LibraryId?: InputMaybe<Scalars["String"]["input"]>;
   Metadata?: InputMaybe<Scalars["String"]["input"]>;
   MovieId?: InputMaybe<Scalars["String"]["input"]>;
   OriginalName?: InputMaybe<Scalars["String"]["input"]>;
@@ -1387,6 +1492,14 @@ export type CreateMediaFileInput = {
   TrackId?: InputMaybe<Scalars["String"]["input"]>;
   VideoCodec?: InputMaybe<Scalars["String"]["input"]>;
   Width?: InputMaybe<Scalars["Int"]["input"]>;
+};
+
+/** Input for creating a new #struct_name */
+export type CreateMovieCastCreditInput = {
+  CastOrder?: InputMaybe<Scalars["Int"]["input"]>;
+  CharacterName?: InputMaybe<Scalars["String"]["input"]>;
+  MovieId: Scalars["String"]["input"];
+  PersonId: Scalars["String"]["input"];
 };
 
 /** Input for creating a new #struct_name */
@@ -1476,6 +1589,13 @@ export type CreatePendingFileMatchInput = {
   UserId: Scalars["String"]["input"];
   VerificationReason?: InputMaybe<Scalars["String"]["input"]>;
   VerificationStatus?: InputMaybe<Scalars["String"]["input"]>;
+};
+
+/** Input for creating a new #struct_name */
+export type CreatePersonInput = {
+  Name: Scalars["String"]["input"];
+  ProfileUrl?: InputMaybe<Scalars["String"]["input"]>;
+  TmdbPersonId: Scalars["Int"]["input"];
 };
 
 /** Input for creating a new #struct_name */
@@ -1923,6 +2043,13 @@ export type DeleteChaptersResult = {
 };
 
 /** Result of bulk delete by Where filter */
+export type DeleteCollectionsResult = {
+  DeletedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
+/** Result of bulk delete by Where filter */
 export type DeleteEpisodesResult = {
   DeletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
@@ -1963,6 +2090,13 @@ export type DeleteMediaFilesResult = {
 };
 
 /** Result of bulk delete by Where filter */
+export type DeleteMovieCastCreditsResult = {
+  DeletedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
+/** Result of bulk delete by Where filter */
 export type DeleteMoviesResult = {
   DeletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
@@ -1985,6 +2119,13 @@ export type DeleteNotificationsResult = {
 
 /** Result of bulk delete by Where filter */
 export type DeletePendingFileMatchesResult = {
+  DeletedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
+/** Result of bulk delete by Where filter */
+export type DeletePeopleResult = {
   DeletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
@@ -2363,22 +2504,6 @@ export type LegacyCastSession = {
   volume: Scalars["Float"]["output"];
 };
 
-export type LegacyCastSettings = {
-  autoDiscoveryEnabled: Scalars["Boolean"]["output"];
-  defaultVolume: Scalars["Float"]["output"];
-  discoveryIntervalSeconds: Scalars["Int"]["output"];
-  preferredQuality?: Maybe<Scalars["String"]["output"]>;
-  transcodeIncompatible: Scalars["Boolean"]["output"];
-};
-
-export type LegacyUpdateCastSettingsInput = {
-  autoDiscoveryEnabled?: InputMaybe<Scalars["Boolean"]["input"]>;
-  defaultVolume?: InputMaybe<Scalars["Float"]["input"]>;
-  discoveryIntervalSeconds?: InputMaybe<Scalars["Int"]["input"]>;
-  preferredQuality?: InputMaybe<Scalars["String"]["input"]>;
-  transcodeIncompatible?: InputMaybe<Scalars["Boolean"]["input"]>;
-};
-
 /**
  * Library entity representing a media library.
  *
@@ -2406,6 +2531,15 @@ export type Library = {
   Audiobooks: AudiobookConnection;
   AutoOrganize: Scalars["Boolean"]["output"];
   AutoScan: Scalars["Boolean"]["output"];
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  Collections: CollectionConnection;
   Color?: Maybe<Scalars["String"]["output"]>;
   CreatedAt: Scalars["String"]["output"];
   Icon?: Maybe<Scalars["String"]["output"]>;
@@ -2471,6 +2605,18 @@ export type LibraryAudiobooksArgs = {
   OrderBy?: InputMaybe<AudiobookOrderByInput>;
   Page?: InputMaybe<PageInput>;
   Where?: InputMaybe<AudiobookWhereInput>;
+};
+
+/**
+ * Library entity representing a media library.
+ *
+ * Relations (Shows, Movies, Artists, etc.) are automatically generated
+ * by the GraphQLRelations macro and use DataLoader for N+1 prevention.
+ */
+export type LibraryCollectionsArgs = {
+  OrderBy?: InputMaybe<CollectionOrderByInput>;
+  Page?: InputMaybe<PageInput>;
+  Where?: InputMaybe<CollectionWhereInput>;
 };
 
 /**
@@ -2628,17 +2774,34 @@ export type LogoutPayload = {
   Success: Scalars["Boolean"]["output"];
 };
 
+export type MatchCandidate = {
+  Reason?: Maybe<Scalars["String"]["output"]>;
+  Score: Scalars["Float"]["output"];
+  TargetId: Scalars["String"]["output"];
+  TargetName?: Maybe<Scalars["String"]["output"]>;
+  TargetType: Scalars["String"]["output"];
+  Wanted?: Maybe<Scalars["Boolean"]["output"]>;
+};
+
 export type MatchMediaFileInput = {
+  AllowProviderFallback?: InputMaybe<Scalars["Boolean"]["input"]>;
+  AutoMatch?: InputMaybe<Scalars["Boolean"]["input"]>;
+  CandidateLimit?: InputMaybe<Scalars["Int"]["input"]>;
   ChapterId?: InputMaybe<Scalars["String"]["input"]>;
   EpisodeId?: InputMaybe<Scalars["String"]["input"]>;
+  Force?: InputMaybe<Scalars["Boolean"]["input"]>;
   LibraryId?: InputMaybe<Scalars["String"]["input"]>;
   MediaFileId: Scalars["String"]["input"];
   Methods?: InputMaybe<Array<MatchMethod>>;
   MovieId?: InputMaybe<Scalars["String"]["input"]>;
   TrackId?: InputMaybe<Scalars["String"]["input"]>;
+  WantedPolicy?: InputMaybe<MatchWantedPolicy>;
 };
 
 export type MatchMediaFileResult = {
+  AlreadyMatched: Scalars["Boolean"]["output"];
+  AutoMatched: Scalars["Boolean"]["output"];
+  Candidates: Array<MatchCandidate>;
   Confidence: Scalars["Float"]["output"];
   MatchedId?: Maybe<Scalars["String"]["output"]>;
   MatchedType?: Maybe<Scalars["String"]["output"]>;
@@ -2653,6 +2816,14 @@ export const MatchMethod = {
 } as const;
 
 export type MatchMethod = (typeof MatchMethod)[keyof typeof MatchMethod];
+export const MatchWantedPolicy = {
+  ALL: "ALL",
+  PREFER_WANTED: "PREFER_WANTED",
+  WANTED_ONLY: "WANTED_ONLY",
+} as const;
+
+export type MatchWantedPolicy =
+  (typeof MatchWantedPolicy)[keyof typeof MatchWantedPolicy];
 /** Current user info returned by Me query (PascalCase). */
 export type MeUser = {
   DisplayName?: Maybe<Scalars["String"]["output"]>;
@@ -2725,9 +2896,11 @@ export type MediaChapterWhereInput = {
 
 export type MediaFile = {
   AddedAt: Scalars["String"]["output"];
+  AnalyzedAt?: Maybe<Scalars["String"]["output"]>;
   AudioChannels?: Maybe<Scalars["String"]["output"]>;
   AudioCodec?: Maybe<Scalars["String"]["output"]>;
   Bitrate?: Maybe<Scalars["Int"]["output"]>;
+  ChapterId?: Maybe<Scalars["String"]["output"]>;
   Container?: Maybe<Scalars["String"]["output"]>;
   ContentType?: Maybe<Scalars["String"]["output"]>;
   Duration?: Maybe<Scalars["Int"]["output"]>;
@@ -2736,7 +2909,7 @@ export type MediaFile = {
   Height?: Maybe<Scalars["Int"]["output"]>;
   Id: Scalars["String"]["output"];
   IsHdr: Scalars["Boolean"]["output"];
-  LibraryId: Scalars["String"]["output"];
+  LibraryId?: Maybe<Scalars["String"]["output"]>;
   Metadata?: Maybe<Scalars["String"]["output"]>;
   MovieId?: Maybe<Scalars["String"]["output"]>;
   OriginalName?: Maybe<Scalars["String"]["output"]>;
@@ -2774,6 +2947,7 @@ export type MediaFileEdge = {
 
 export type MediaFileOrderByInput = {
   AddedAt?: InputMaybe<SortDirection>;
+  AnalyzedAt?: InputMaybe<SortDirection>;
   Duration?: InputMaybe<SortDirection>;
   Path?: InputMaybe<SortDirection>;
   Resolution?: InputMaybe<SortDirection>;
@@ -2789,11 +2963,13 @@ export type MediaFileResult = {
 
 export type MediaFileWhereInput = {
   AddedAt?: InputMaybe<DateFilter>;
+  AnalyzedAt?: InputMaybe<DateFilter>;
   /** Logical AND of conditions */
   And?: InputMaybe<Array<MediaFileWhereInput>>;
   AudioChannels?: InputMaybe<StringFilter>;
   AudioCodec?: InputMaybe<StringFilter>;
   Bitrate?: InputMaybe<IntFilter>;
+  ChapterId?: InputMaybe<StringFilter>;
   Container?: InputMaybe<StringFilter>;
   ContentType?: InputMaybe<StringFilter>;
   Duration?: InputMaybe<IntFilter>;
@@ -2868,11 +3044,117 @@ export type Movie = {
   Year?: Maybe<Scalars["Int"]["output"]>;
 };
 
+export type MovieCastCredit = {
+  CastOrder?: Maybe<Scalars["Int"]["output"]>;
+  CharacterName?: Maybe<Scalars["String"]["output"]>;
+  CreatedAt: Scalars["String"]["output"];
+  Id: Scalars["String"]["output"];
+  Movie?: Maybe<Movie>;
+  MovieId: Scalars["String"]["output"];
+  Person?: Maybe<Person>;
+  PersonId: Scalars["String"]["output"];
+  UpdatedAt: Scalars["String"]["output"];
+};
+
+/** Event for #struct_name changes (subscriptions) */
+export type MovieCastCreditChangedEvent = {
+  Action: ChangeAction;
+  Id: Scalars["String"]["output"];
+  MovieCastCredit?: Maybe<MovieCastCredit>;
+};
+
+/** Connection containing edges and page info */
+export type MovieCastCreditConnection = {
+  /** The edges in this connection */
+  Edges: Array<MovieCastCreditEdge>;
+  /** Pagination information */
+  PageInfo: PageInfo;
+};
+
+/** Edge containing a node and cursor */
+export type MovieCastCreditEdge = {
+  /** A cursor for pagination */
+  Cursor: Scalars["String"]["output"];
+  /** The item at the end of the edge */
+  Node: MovieCastCredit;
+};
+
+export type MovieCastCreditOrderByInput = {
+  CastOrder?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<SortDirection>;
+  UpdatedAt?: InputMaybe<SortDirection>;
+};
+
+/** Result type for #struct_name mutations */
+export type MovieCastCreditResult = {
+  Error?: Maybe<Scalars["String"]["output"]>;
+  MovieCastCredit?: Maybe<MovieCastCredit>;
+  Success: Scalars["Boolean"]["output"];
+};
+
+export type MovieCastCreditWhereInput = {
+  /** Logical AND of conditions */
+  And?: InputMaybe<Array<MovieCastCreditWhereInput>>;
+  CastOrder?: InputMaybe<IntFilter>;
+  CharacterName?: InputMaybe<StringFilter>;
+  CreatedAt?: InputMaybe<DateFilter>;
+  Id?: InputMaybe<StringFilter>;
+  MovieId?: InputMaybe<StringFilter>;
+  /** Logical NOT of condition */
+  Not?: InputMaybe<MovieCastCreditWhereInput>;
+  /** Logical OR of conditions */
+  Or?: InputMaybe<Array<MovieCastCreditWhereInput>>;
+  PersonId?: InputMaybe<StringFilter>;
+  UpdatedAt?: InputMaybe<DateFilter>;
+};
+
 /** Event for #struct_name changes (subscriptions) */
 export type MovieChangedEvent = {
   Action: ChangeAction;
   Id: Scalars["String"]["output"];
   Movie?: Maybe<Movie>;
+};
+
+/** Full TMDB collection details with local overlay */
+export type MovieCollectionDetails = {
+  BackdropUrl?: Maybe<Scalars["String"]["output"]>;
+  CollectionId: Scalars["Int"]["output"];
+  Movies: Array<MovieCollectionMovieDetails>;
+  Name: Scalars["String"]["output"];
+  Overview?: Maybe<Scalars["String"]["output"]>;
+  PosterUrl?: Maybe<Scalars["String"]["output"]>;
+};
+
+/** Movie row in a collection detail response */
+export type MovieCollectionMovieDetails = {
+  LibraryMovieId?: Maybe<Scalars["String"]["output"]>;
+  MediaFileId?: Maybe<Scalars["String"]["output"]>;
+  PosterUrl?: Maybe<Scalars["String"]["output"]>;
+  Title: Scalars["String"]["output"];
+  TmdbId: Scalars["Int"]["output"];
+  Wanted: Scalars["Boolean"]["output"];
+  Year?: Maybe<Scalars["Int"]["output"]>;
+};
+
+/** Result of importing a movie collection */
+export type MovieCollectionOperationResult = {
+  CollectionId?: Maybe<Scalars["Int"]["output"]>;
+  CollectionName?: Maybe<Scalars["String"]["output"]>;
+  Error?: Maybe<Scalars["String"]["output"]>;
+  ExistingCount: Scalars["Int"]["output"];
+  ImportedCount: Scalars["Int"]["output"];
+  Success: Scalars["Boolean"]["output"];
+  WantedUpdatedCount: Scalars["Int"]["output"];
+};
+
+/** Movie collection search result from TMDB */
+export type MovieCollectionSearchResult = {
+  BackdropUrl?: Maybe<Scalars["String"]["output"]>;
+  CollectionId: Scalars["Int"]["output"];
+  Name: Scalars["String"]["output"];
+  Overview?: Maybe<Scalars["String"]["output"]>;
+  PosterUrl?: Maybe<Scalars["String"]["output"]>;
+  Provider: Scalars["String"]["output"];
 };
 
 /** Connection containing edges and page info */
@@ -2969,6 +3251,8 @@ export type MutationRoot = {
   AddCastDevice: CastDeviceOperationResult;
   /** Add a movie to a library by fetching metadata from TMDB */
   AddMovie: MovieOperationResult;
+  /** Add/import all movies from a TMDB collection into a library. */
+  AddMovieCollection: MovieCollectionOperationResult;
   /** Add a torrent from a magnet link or URL */
   AddTorrent: AddTorrentResult;
   /** Add a TV show to a library by fetching metadata from TVMaze */
@@ -3005,6 +3289,8 @@ export type MutationRoot = {
   CreateCastSetting: CastSettingResult;
   /** Create a new #struct_name_str */
   CreateChapter: ChapterResult;
+  /** Create a new #struct_name_str */
+  CreateCollection: CollectionResult;
   CreateDirectory: FileOperationPayload;
   /** Create a new #struct_name_str */
   CreateEpisode: EpisodeResult;
@@ -3019,11 +3305,15 @@ export type MutationRoot = {
   /** Create a new #struct_name_str */
   CreateMovie: MovieResult;
   /** Create a new #struct_name_str */
+  CreateMovieCastCredit: MovieCastCreditResult;
+  /** Create a new #struct_name_str */
   CreateNamingPattern: NamingPatternResult;
   /** Create a new #struct_name_str */
   CreateNotification: NotificationResult;
   /** Create a new #struct_name_str */
   CreatePendingFileMatch: PendingFileMatchResult;
+  /** Create a new #struct_name_str */
+  CreatePerson: PersonResult;
   /** Create a new #struct_name_str */
   CreatePlaybackProgress: PlaybackProgressResult;
   /** Create a new #struct_name_str */
@@ -3107,6 +3397,10 @@ export type MutationRoot = {
   /** Delete multiple #plural_name matching the given Where filter */
   DeleteChapters: DeleteChaptersResult;
   /** Delete a #struct_name_str */
+  DeleteCollection: CollectionResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  DeleteCollections: DeleteCollectionsResult;
+  /** Delete a #struct_name_str */
   DeleteEpisode: EpisodeResult;
   /** Delete multiple #plural_name matching the given Where filter */
   DeleteEpisodes: DeleteEpisodesResult;
@@ -3129,6 +3423,10 @@ export type MutationRoot = {
   DeleteMediaFiles: DeleteMediaFilesResult;
   /** Delete a #struct_name_str */
   DeleteMovie: MovieResult;
+  /** Delete a #struct_name_str */
+  DeleteMovieCastCredit: MovieCastCreditResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  DeleteMovieCastCredits: DeleteMovieCastCreditsResult;
   /** Delete multiple #plural_name matching the given Where filter */
   DeleteMovies: DeleteMoviesResult;
   /** Delete a #struct_name_str */
@@ -3143,6 +3441,10 @@ export type MutationRoot = {
   DeletePendingFileMatch: PendingFileMatchResult;
   /** Delete multiple #plural_name matching the given Where filter */
   DeletePendingFileMatches: DeletePendingFileMatchesResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  DeletePeople: DeletePeopleResult;
+  /** Delete a #struct_name_str */
+  DeletePerson: PersonResult;
   /** Delete a #struct_name_str */
   DeletePlaybackProgress: PlaybackProgressResult;
   /** Delete multiple #plural_name matching the given Where filter */
@@ -3260,87 +3562,177 @@ export type MutationRoot = {
   ScanLibrary: ScanLibraryResult;
   /** Test a source connection */
   TestSource: SourceTestConnectionResult;
+  UnmatchMediaFile: UnmatchMediaFileResult;
   /** Update an existing #struct_name_str */
   UpdateAlbum: AlbumResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateAlbums: UpdateAlbumsResult;
   /** Update an existing #struct_name_str */
   UpdateAppLog: AppLogResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateAppLogs: UpdateAppLogsResult;
   /** Update an existing #struct_name_str */
   UpdateAppSetting: AppSettingResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateAppSettings: UpdateAppSettingsResult;
   /** Update an existing #struct_name_str */
   UpdateArtist: ArtistResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateArtists: UpdateArtistsResult;
   /** Update an existing #struct_name_str */
   UpdateArtworkCache: ArtworkCacheResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateArtworkCaches: UpdateArtworkCachesResult;
   /** Update an existing #struct_name_str */
   UpdateAudioStream: AudioStreamResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateAudioStreams: UpdateAudioStreamsResult;
   /** Update an existing #struct_name_str */
   UpdateAudiobook: AudiobookResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateAudiobooks: UpdateAudiobooksResult;
   /** Update an existing #struct_name_str */
   UpdateCastDevice: CastDeviceResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateCastDevices: UpdateCastDevicesResult;
   /** Update an existing #struct_name_str */
   UpdateCastSession: CastSessionResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateCastSessions: UpdateCastSessionsResult;
   /** Update an existing #struct_name_str */
   UpdateCastSetting: CastSettingResult;
-  UpdateCastSettings: CastSettingsOperationResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateCastSettings: UpdateCastSettingsResult;
   /** Update an existing #struct_name_str */
   UpdateChapter: ChapterResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateChapters: UpdateChaptersResult;
+  /** Update an existing #struct_name_str */
+  UpdateCollection: CollectionResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateCollections: UpdateCollectionsResult;
   /** Update an existing #struct_name_str */
   UpdateEpisode: EpisodeResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateEpisodes: UpdateEpisodesResult;
   /** Update an existing #struct_name_str */
   UpdateInviteToken: InviteTokenResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateInviteTokens: UpdateInviteTokensResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateLibraries: UpdateLibrariesResult;
   /** Update an existing #struct_name_str */
   UpdateLibrary: LibraryResult;
   /** Update an existing #struct_name_str */
   UpdateMediaChapter: MediaChapterResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateMediaChapters: UpdateMediaChaptersResult;
   /** Update an existing #struct_name_str */
   UpdateMediaFile: MediaFileResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateMediaFiles: UpdateMediaFilesResult;
   /** Update an existing #struct_name_str */
   UpdateMovie: MovieResult;
   /** Update an existing #struct_name_str */
+  UpdateMovieCastCredit: MovieCastCreditResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateMovieCastCredits: UpdateMovieCastCreditsResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateMovies: UpdateMoviesResult;
+  /** Update an existing #struct_name_str */
   UpdateNamingPattern: NamingPatternResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateNamingPatterns: UpdateNamingPatternsResult;
   /** Update an existing #struct_name_str */
   UpdateNotification: NotificationResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateNotifications: UpdateNotificationsResult;
   /** Update an existing #struct_name_str */
   UpdatePendingFileMatch: PendingFileMatchResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdatePendingFileMatches: UpdatePendingFileMatchesResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdatePeople: UpdatePeopleResult;
+  /** Update an existing #struct_name_str */
+  UpdatePerson: PersonResult;
   /** Update an existing #struct_name_str */
   UpdatePlaybackProgress: PlaybackProgressResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdatePlaybackProgresses: UpdatePlaybackProgressesResult;
   /** Update an existing #struct_name_str */
   UpdatePlaybackSession: PlaybackSessionResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdatePlaybackSessions: UpdatePlaybackSessionsResult;
   /** Update an existing #struct_name_str */
   UpdateRefreshToken: RefreshTokenResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateRefreshTokens: UpdateRefreshTokensResult;
   /** Update an existing #struct_name_str */
   UpdateRssFeed: RssFeedResult;
   /** Update an existing #struct_name_str */
   UpdateRssFeedItem: RssFeedItemResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateRssFeedItems: UpdateRssFeedItemsResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateRssFeeds: UpdateRssFeedsResult;
   /** Update an existing #struct_name_str */
   UpdateScheduleCache: ScheduleCacheResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateScheduleCaches: UpdateScheduleCachesResult;
   /** Update an existing #struct_name_str */
   UpdateScheduleSyncState: ScheduleSyncStateResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateScheduleSyncStates: UpdateScheduleSyncStatesResult;
   /** Update an existing #struct_name_str */
   UpdateShow: ShowResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateShows: UpdateShowsResult;
   /** Update an existing #struct_name_str */
   UpdateSource: SourceResult;
   /** Update source priorities (reorder) */
   UpdateSourcePriorities: SourceMutationResult;
   /** Update an existing #struct_name_str */
   UpdateSourcePriorityRule: SourcePriorityRuleResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateSourcePriorityRules: UpdateSourcePriorityRulesResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateSources: UpdateSourcesResult;
   /** Update an existing #struct_name_str */
   UpdateSubtitle: SubtitleResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateSubtitles: UpdateSubtitlesResult;
   /** Update an existing #struct_name_str */
   UpdateTorrent: TorrentResult;
   /** Update an existing #struct_name_str */
   UpdateTorrentFile: TorrentFileResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateTorrentFiles: UpdateTorrentFilesResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateTorrents: UpdateTorrentsResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateTorznabCategories: UpdateTorznabCategoriesResult;
   /** Update an existing #struct_name_str */
   UpdateTorznabCategory: TorznabCategoryResult;
   /** Update an existing #struct_name_str */
   UpdateTrack: TrackResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateTracks: UpdateTracksResult;
   /** Update an existing #struct_name_str */
   UpdateUsenetDownload: UsenetDownloadResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateUsenetDownloads: UpdateUsenetDownloadsResult;
   /** Update an existing #struct_name_str */
   UpdateUsenetServer: UsenetServerResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateUsenetServers: UpdateUsenetServersResult;
   /** Update an existing #struct_name_str */
   UpdateUser: UserResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateUsers: UpdateUsersResult;
   /** Update an existing #struct_name_str */
   UpdateVideoStream: VideoStreamResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateVideoStreams: UpdateVideoStreamsResult;
 };
 
 export type MutationRootAddAlbumArgs = {
@@ -3357,6 +3749,11 @@ export type MutationRootAddCastDeviceArgs = {
 
 export type MutationRootAddMovieArgs = {
   Input: AddMovieInput;
+  LibraryId: Scalars["String"]["input"];
+};
+
+export type MutationRootAddMovieCollectionArgs = {
+  Input: AddMovieCollectionInput;
   LibraryId: Scalars["String"]["input"];
 };
 
@@ -3457,6 +3854,10 @@ export type MutationRootCreateChapterArgs = {
   Input: CreateChapterInput;
 };
 
+export type MutationRootCreateCollectionArgs = {
+  Input: CreateCollectionInput;
+};
+
 export type MutationRootCreateDirectoryArgs = {
   Input: CreateDirectoryInput;
 };
@@ -3485,6 +3886,10 @@ export type MutationRootCreateMovieArgs = {
   Input: CreateMovieInput;
 };
 
+export type MutationRootCreateMovieCastCreditArgs = {
+  Input: CreateMovieCastCreditInput;
+};
+
 export type MutationRootCreateNamingPatternArgs = {
   Input: CreateNamingPatternInput;
 };
@@ -3495,6 +3900,10 @@ export type MutationRootCreateNotificationArgs = {
 
 export type MutationRootCreatePendingFileMatchArgs = {
   Input: CreatePendingFileMatchInput;
+};
+
+export type MutationRootCreatePersonArgs = {
+  Input: CreatePersonInput;
 };
 
 export type MutationRootCreatePlaybackProgressArgs = {
@@ -3661,6 +4070,14 @@ export type MutationRootDeleteChaptersArgs = {
   Where?: InputMaybe<ChapterWhereInput>;
 };
 
+export type MutationRootDeleteCollectionArgs = {
+  Id: Scalars["String"]["input"];
+};
+
+export type MutationRootDeleteCollectionsArgs = {
+  Where?: InputMaybe<CollectionWhereInput>;
+};
+
 export type MutationRootDeleteEpisodeArgs = {
   Id: Scalars["String"]["input"];
 };
@@ -3709,6 +4126,14 @@ export type MutationRootDeleteMovieArgs = {
   Id: Scalars["String"]["input"];
 };
 
+export type MutationRootDeleteMovieCastCreditArgs = {
+  Id: Scalars["String"]["input"];
+};
+
+export type MutationRootDeleteMovieCastCreditsArgs = {
+  Where?: InputMaybe<MovieCastCreditWhereInput>;
+};
+
 export type MutationRootDeleteMoviesArgs = {
   Where?: InputMaybe<MovieWhereInput>;
 };
@@ -3735,6 +4160,14 @@ export type MutationRootDeletePendingFileMatchArgs = {
 
 export type MutationRootDeletePendingFileMatchesArgs = {
   Where?: InputMaybe<PendingFileMatchWhereInput>;
+};
+
+export type MutationRootDeletePeopleArgs = {
+  Where?: InputMaybe<PersonWhereInput>;
+};
+
+export type MutationRootDeletePersonArgs = {
+  Id: Scalars["String"]["input"];
 };
 
 export type MutationRootDeletePlaybackProgressArgs = {
@@ -3986,9 +4419,18 @@ export type MutationRootTestSourceArgs = {
   Id: Scalars["String"]["input"];
 };
 
+export type MutationRootUnmatchMediaFileArgs = {
+  MediaFileId: Scalars["String"]["input"];
+};
+
 export type MutationRootUpdateAlbumArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateAlbumInput;
+};
+
+export type MutationRootUpdateAlbumsArgs = {
+  Input: UpdateAlbumInput;
+  Where?: InputMaybe<AlbumWhereInput>;
 };
 
 export type MutationRootUpdateAppLogArgs = {
@@ -3996,9 +4438,19 @@ export type MutationRootUpdateAppLogArgs = {
   Input: UpdateAppLogInput;
 };
 
+export type MutationRootUpdateAppLogsArgs = {
+  Input: UpdateAppLogInput;
+  Where?: InputMaybe<AppLogWhereInput>;
+};
+
 export type MutationRootUpdateAppSettingArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateAppSettingInput;
+};
+
+export type MutationRootUpdateAppSettingsArgs = {
+  Input: UpdateAppSettingInput;
+  Where?: InputMaybe<AppSettingWhereInput>;
 };
 
 export type MutationRootUpdateArtistArgs = {
@@ -4006,9 +4458,19 @@ export type MutationRootUpdateArtistArgs = {
   Input: UpdateArtistInput;
 };
 
+export type MutationRootUpdateArtistsArgs = {
+  Input: UpdateArtistInput;
+  Where?: InputMaybe<ArtistWhereInput>;
+};
+
 export type MutationRootUpdateArtworkCacheArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateArtworkCacheInput;
+};
+
+export type MutationRootUpdateArtworkCachesArgs = {
+  Input: UpdateArtworkCacheInput;
+  Where?: InputMaybe<ArtworkCacheWhereInput>;
 };
 
 export type MutationRootUpdateAudioStreamArgs = {
@@ -4016,9 +4478,19 @@ export type MutationRootUpdateAudioStreamArgs = {
   Input: UpdateAudioStreamInput;
 };
 
+export type MutationRootUpdateAudioStreamsArgs = {
+  Input: UpdateAudioStreamInput;
+  Where?: InputMaybe<AudioStreamWhereInput>;
+};
+
 export type MutationRootUpdateAudiobookArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateAudiobookInput;
+};
+
+export type MutationRootUpdateAudiobooksArgs = {
+  Input: UpdateAudiobookInput;
+  Where?: InputMaybe<AudiobookWhereInput>;
 };
 
 export type MutationRootUpdateCastDeviceArgs = {
@@ -4026,9 +4498,19 @@ export type MutationRootUpdateCastDeviceArgs = {
   Input: UpdateCastDeviceInput;
 };
 
+export type MutationRootUpdateCastDevicesArgs = {
+  Input: UpdateCastDeviceInput;
+  Where?: InputMaybe<CastDeviceWhereInput>;
+};
+
 export type MutationRootUpdateCastSessionArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateCastSessionInput;
+};
+
+export type MutationRootUpdateCastSessionsArgs = {
+  Input: UpdateCastSessionInput;
+  Where?: InputMaybe<CastSessionWhereInput>;
 };
 
 export type MutationRootUpdateCastSettingArgs = {
@@ -4037,7 +4519,8 @@ export type MutationRootUpdateCastSettingArgs = {
 };
 
 export type MutationRootUpdateCastSettingsArgs = {
-  input: LegacyUpdateCastSettingsInput;
+  Input: UpdateCastSettingInput;
+  Where?: InputMaybe<CastSettingWhereInput>;
 };
 
 export type MutationRootUpdateChapterArgs = {
@@ -4045,14 +4528,44 @@ export type MutationRootUpdateChapterArgs = {
   Input: UpdateChapterInput;
 };
 
+export type MutationRootUpdateChaptersArgs = {
+  Input: UpdateChapterInput;
+  Where?: InputMaybe<ChapterWhereInput>;
+};
+
+export type MutationRootUpdateCollectionArgs = {
+  Id: Scalars["String"]["input"];
+  Input: UpdateCollectionInput;
+};
+
+export type MutationRootUpdateCollectionsArgs = {
+  Input: UpdateCollectionInput;
+  Where?: InputMaybe<CollectionWhereInput>;
+};
+
 export type MutationRootUpdateEpisodeArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateEpisodeInput;
 };
 
+export type MutationRootUpdateEpisodesArgs = {
+  Input: UpdateEpisodeInput;
+  Where?: InputMaybe<EpisodeWhereInput>;
+};
+
 export type MutationRootUpdateInviteTokenArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateInviteTokenInput;
+};
+
+export type MutationRootUpdateInviteTokensArgs = {
+  Input: UpdateInviteTokenInput;
+  Where?: InputMaybe<InviteTokenWhereInput>;
+};
+
+export type MutationRootUpdateLibrariesArgs = {
+  Input: UpdateLibraryInput;
+  Where?: InputMaybe<LibraryWhereInput>;
 };
 
 export type MutationRootUpdateLibraryArgs = {
@@ -4065,9 +4578,19 @@ export type MutationRootUpdateMediaChapterArgs = {
   Input: UpdateMediaChapterInput;
 };
 
+export type MutationRootUpdateMediaChaptersArgs = {
+  Input: UpdateMediaChapterInput;
+  Where?: InputMaybe<MediaChapterWhereInput>;
+};
+
 export type MutationRootUpdateMediaFileArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateMediaFileInput;
+};
+
+export type MutationRootUpdateMediaFilesArgs = {
+  Input: UpdateMediaFileInput;
+  Where?: InputMaybe<MediaFileWhereInput>;
 };
 
 export type MutationRootUpdateMovieArgs = {
@@ -4075,9 +4598,29 @@ export type MutationRootUpdateMovieArgs = {
   Input: UpdateMovieInput;
 };
 
+export type MutationRootUpdateMovieCastCreditArgs = {
+  Id: Scalars["String"]["input"];
+  Input: UpdateMovieCastCreditInput;
+};
+
+export type MutationRootUpdateMovieCastCreditsArgs = {
+  Input: UpdateMovieCastCreditInput;
+  Where?: InputMaybe<MovieCastCreditWhereInput>;
+};
+
+export type MutationRootUpdateMoviesArgs = {
+  Input: UpdateMovieInput;
+  Where?: InputMaybe<MovieWhereInput>;
+};
+
 export type MutationRootUpdateNamingPatternArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateNamingPatternInput;
+};
+
+export type MutationRootUpdateNamingPatternsArgs = {
+  Input: UpdateNamingPatternInput;
+  Where?: InputMaybe<NamingPatternWhereInput>;
 };
 
 export type MutationRootUpdateNotificationArgs = {
@@ -4085,9 +4628,29 @@ export type MutationRootUpdateNotificationArgs = {
   Input: UpdateNotificationInput;
 };
 
+export type MutationRootUpdateNotificationsArgs = {
+  Input: UpdateNotificationInput;
+  Where?: InputMaybe<NotificationWhereInput>;
+};
+
 export type MutationRootUpdatePendingFileMatchArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdatePendingFileMatchInput;
+};
+
+export type MutationRootUpdatePendingFileMatchesArgs = {
+  Input: UpdatePendingFileMatchInput;
+  Where?: InputMaybe<PendingFileMatchWhereInput>;
+};
+
+export type MutationRootUpdatePeopleArgs = {
+  Input: UpdatePersonInput;
+  Where?: InputMaybe<PersonWhereInput>;
+};
+
+export type MutationRootUpdatePersonArgs = {
+  Id: Scalars["String"]["input"];
+  Input: UpdatePersonInput;
 };
 
 export type MutationRootUpdatePlaybackProgressArgs = {
@@ -4095,14 +4658,29 @@ export type MutationRootUpdatePlaybackProgressArgs = {
   Input: UpdatePlaybackProgressInput;
 };
 
+export type MutationRootUpdatePlaybackProgressesArgs = {
+  Input: UpdatePlaybackProgressInput;
+  Where?: InputMaybe<PlaybackProgressWhereInput>;
+};
+
 export type MutationRootUpdatePlaybackSessionArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdatePlaybackSessionInput;
 };
 
+export type MutationRootUpdatePlaybackSessionsArgs = {
+  Input: UpdatePlaybackSessionInput;
+  Where?: InputMaybe<PlaybackSessionWhereInput>;
+};
+
 export type MutationRootUpdateRefreshTokenArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateRefreshTokenInput;
+};
+
+export type MutationRootUpdateRefreshTokensArgs = {
+  Input: UpdateRefreshTokenInput;
+  Where?: InputMaybe<RefreshTokenWhereInput>;
 };
 
 export type MutationRootUpdateRssFeedArgs = {
@@ -4115,9 +4693,24 @@ export type MutationRootUpdateRssFeedItemArgs = {
   Input: UpdateRssFeedItemInput;
 };
 
+export type MutationRootUpdateRssFeedItemsArgs = {
+  Input: UpdateRssFeedItemInput;
+  Where?: InputMaybe<RssFeedItemWhereInput>;
+};
+
+export type MutationRootUpdateRssFeedsArgs = {
+  Input: UpdateRssFeedInput;
+  Where?: InputMaybe<RssFeedWhereInput>;
+};
+
 export type MutationRootUpdateScheduleCacheArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateScheduleCacheInput;
+};
+
+export type MutationRootUpdateScheduleCachesArgs = {
+  Input: UpdateScheduleCacheInput;
+  Where?: InputMaybe<ScheduleCacheWhereInput>;
 };
 
 export type MutationRootUpdateScheduleSyncStateArgs = {
@@ -4125,9 +4718,19 @@ export type MutationRootUpdateScheduleSyncStateArgs = {
   Input: UpdateScheduleSyncStateInput;
 };
 
+export type MutationRootUpdateScheduleSyncStatesArgs = {
+  Input: UpdateScheduleSyncStateInput;
+  Where?: InputMaybe<ScheduleSyncStateWhereInput>;
+};
+
 export type MutationRootUpdateShowArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateShowInput;
+};
+
+export type MutationRootUpdateShowsArgs = {
+  Input: UpdateShowInput;
+  Where?: InputMaybe<ShowWhereInput>;
 };
 
 export type MutationRootUpdateSourceArgs = {
@@ -4144,9 +4747,24 @@ export type MutationRootUpdateSourcePriorityRuleArgs = {
   Input: UpdateSourcePriorityRuleInput;
 };
 
+export type MutationRootUpdateSourcePriorityRulesArgs = {
+  Input: UpdateSourcePriorityRuleInput;
+  Where?: InputMaybe<SourcePriorityRuleWhereInput>;
+};
+
+export type MutationRootUpdateSourcesArgs = {
+  Input: UpdateSourceInput;
+  Where?: InputMaybe<SourceWhereInput>;
+};
+
 export type MutationRootUpdateSubtitleArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateSubtitleInput;
+};
+
+export type MutationRootUpdateSubtitlesArgs = {
+  Input: UpdateSubtitleInput;
+  Where?: InputMaybe<SubtitleWhereInput>;
 };
 
 export type MutationRootUpdateTorrentArgs = {
@@ -4159,6 +4777,21 @@ export type MutationRootUpdateTorrentFileArgs = {
   Input: UpdateTorrentFileInput;
 };
 
+export type MutationRootUpdateTorrentFilesArgs = {
+  Input: UpdateTorrentFileInput;
+  Where?: InputMaybe<TorrentFileWhereInput>;
+};
+
+export type MutationRootUpdateTorrentsArgs = {
+  Input: UpdateTorrentInput;
+  Where?: InputMaybe<TorrentWhereInput>;
+};
+
+export type MutationRootUpdateTorznabCategoriesArgs = {
+  Input: UpdateTorznabCategoryInput;
+  Where?: InputMaybe<TorznabCategoryWhereInput>;
+};
+
 export type MutationRootUpdateTorznabCategoryArgs = {
   Id: Scalars["Int"]["input"];
   Input: UpdateTorznabCategoryInput;
@@ -4169,9 +4802,19 @@ export type MutationRootUpdateTrackArgs = {
   Input: UpdateTrackInput;
 };
 
+export type MutationRootUpdateTracksArgs = {
+  Input: UpdateTrackInput;
+  Where?: InputMaybe<TrackWhereInput>;
+};
+
 export type MutationRootUpdateUsenetDownloadArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateUsenetDownloadInput;
+};
+
+export type MutationRootUpdateUsenetDownloadsArgs = {
+  Input: UpdateUsenetDownloadInput;
+  Where?: InputMaybe<UsenetDownloadWhereInput>;
 };
 
 export type MutationRootUpdateUsenetServerArgs = {
@@ -4179,14 +4822,29 @@ export type MutationRootUpdateUsenetServerArgs = {
   Input: UpdateUsenetServerInput;
 };
 
+export type MutationRootUpdateUsenetServersArgs = {
+  Input: UpdateUsenetServerInput;
+  Where?: InputMaybe<UsenetServerWhereInput>;
+};
+
 export type MutationRootUpdateUserArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateUserInput;
 };
 
+export type MutationRootUpdateUsersArgs = {
+  Input: UpdateUserInput;
+  Where?: InputMaybe<UserWhereInput>;
+};
+
 export type MutationRootUpdateVideoStreamArgs = {
   Id: Scalars["String"]["input"];
   Input: UpdateVideoStreamInput;
+};
+
+export type MutationRootUpdateVideoStreamsArgs = {
+  Input: UpdateVideoStreamInput;
+  Where?: InputMaybe<VideoStreamWhereInput>;
 };
 
 export type NamingPattern = {
@@ -4373,7 +5031,7 @@ export type PageInfo = {
 
 /** Pagination input for offset-based pagination. */
 export type PageInput = {
-  /** Maximum number of items to return (default: 25, max: 100) */
+  /** Maximum number of items to return (default: 25) */
   Limit?: InputMaybe<Scalars["Int"]["input"]>;
   /** Number of items to skip */
   Offset?: InputMaybe<Scalars["Int"]["input"]>;
@@ -4474,6 +5132,65 @@ export type PendingFileMatchWhereInput = {
   UpdatedAt?: InputMaybe<DateFilter>;
   UserId?: InputMaybe<StringFilter>;
   VerificationStatus?: InputMaybe<StringFilter>;
+};
+
+export type Person = {
+  CreatedAt: Scalars["String"]["output"];
+  Id: Scalars["String"]["output"];
+  Name: Scalars["String"]["output"];
+  ProfileUrl?: Maybe<Scalars["String"]["output"]>;
+  TmdbPersonId: Scalars["Int"]["output"];
+  UpdatedAt: Scalars["String"]["output"];
+};
+
+/** Event for #struct_name changes (subscriptions) */
+export type PersonChangedEvent = {
+  Action: ChangeAction;
+  Id: Scalars["String"]["output"];
+  Person?: Maybe<Person>;
+};
+
+/** Connection containing edges and page info */
+export type PersonConnection = {
+  /** The edges in this connection */
+  Edges: Array<PersonEdge>;
+  /** Pagination information */
+  PageInfo: PageInfo;
+};
+
+/** Edge containing a node and cursor */
+export type PersonEdge = {
+  /** A cursor for pagination */
+  Cursor: Scalars["String"]["output"];
+  /** The item at the end of the edge */
+  Node: Person;
+};
+
+export type PersonOrderByInput = {
+  CreatedAt?: InputMaybe<SortDirection>;
+  Name?: InputMaybe<SortDirection>;
+  UpdatedAt?: InputMaybe<SortDirection>;
+};
+
+/** Result type for #struct_name mutations */
+export type PersonResult = {
+  Error?: Maybe<Scalars["String"]["output"]>;
+  Person?: Maybe<Person>;
+  Success: Scalars["Boolean"]["output"];
+};
+
+export type PersonWhereInput = {
+  /** Logical AND of conditions */
+  And?: InputMaybe<Array<PersonWhereInput>>;
+  CreatedAt?: InputMaybe<DateFilter>;
+  Id?: InputMaybe<StringFilter>;
+  Name?: InputMaybe<StringFilter>;
+  /** Logical NOT of condition */
+  Not?: InputMaybe<PersonWhereInput>;
+  /** Logical OR of conditions */
+  Or?: InputMaybe<Array<PersonWhereInput>>;
+  TmdbPersonId?: InputMaybe<IntFilter>;
+  UpdatedAt?: InputMaybe<DateFilter>;
 };
 
 export type PlaybackProgress = {
@@ -4693,6 +5410,10 @@ export type QueryRoot = {
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
   Chapters: ChapterConnection;
   /** Get a single #struct_name_str by ID */
+  Collection?: Maybe<Collection>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  Collections: CollectionConnection;
+  /** Get a single #struct_name_str by ID */
   Episode?: Maybe<Episode>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
   Episodes: EpisodeConnection;
@@ -4722,6 +5443,12 @@ export type QueryRoot = {
   MediaFiles: MediaFileConnection;
   /** Get a single #struct_name_str by ID */
   Movie?: Maybe<Movie>;
+  /** Get a single #struct_name_str by ID */
+  MovieCastCredit?: Maybe<MovieCastCredit>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  MovieCastCredits: MovieCastCreditConnection;
+  /** Get full collection details from TMDB with library state overlay. */
+  MovieCollectionDetails: MovieCollectionDetails;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
   Movies: MovieConnection;
   /** Get a single #struct_name_str by ID */
@@ -4738,6 +5465,10 @@ export type QueryRoot = {
   PendingFileMatch?: Maybe<PendingFileMatch>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
   PendingFileMatches: PendingFileMatchConnection;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  People: PersonConnection;
+  /** Get a single #struct_name_str by ID */
+  Person?: Maybe<Person>;
   /** Get a single #struct_name_str by ID */
   PlaybackProgress?: Maybe<PlaybackProgress>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
@@ -4770,6 +5501,8 @@ export type QueryRoot = {
   SearchAlbums: Array<AlbumSearchResult>;
   /** Search audiobooks on OpenLibrary. */
   SearchAudiobooks: Array<AudiobookSearchResult>;
+  /** Search for movie collections on TMDB */
+  SearchMovieCollections: Array<MovieCollectionSearchResult>;
   /** Search for movies on TMDB */
   SearchMovies: Array<MovieSearchResult>;
   /** Search across all enabled sources */
@@ -4942,6 +5675,16 @@ export type QueryRootChaptersArgs = {
   Where?: InputMaybe<ChapterWhereInput>;
 };
 
+export type QueryRootCollectionArgs = {
+  Id: Scalars["String"]["input"];
+};
+
+export type QueryRootCollectionsArgs = {
+  OrderBy?: InputMaybe<Array<CollectionOrderByInput>>;
+  Page?: InputMaybe<PageInput>;
+  Where?: InputMaybe<CollectionWhereInput>;
+};
+
 export type QueryRootEpisodeArgs = {
   Id: Scalars["String"]["input"];
 };
@@ -5004,6 +5747,21 @@ export type QueryRootMovieArgs = {
   Id: Scalars["String"]["input"];
 };
 
+export type QueryRootMovieCastCreditArgs = {
+  Id: Scalars["String"]["input"];
+};
+
+export type QueryRootMovieCastCreditsArgs = {
+  OrderBy?: InputMaybe<Array<MovieCastCreditOrderByInput>>;
+  Page?: InputMaybe<PageInput>;
+  Where?: InputMaybe<MovieCastCreditWhereInput>;
+};
+
+export type QueryRootMovieCollectionDetailsArgs = {
+  CollectionId: Scalars["Int"]["input"];
+  LibraryId: Scalars["String"]["input"];
+};
+
 export type QueryRootMoviesArgs = {
   OrderBy?: InputMaybe<Array<MovieOrderByInput>>;
   Page?: InputMaybe<PageInput>;
@@ -5038,6 +5796,16 @@ export type QueryRootPendingFileMatchesArgs = {
   OrderBy?: InputMaybe<Array<PendingFileMatchOrderByInput>>;
   Page?: InputMaybe<PageInput>;
   Where?: InputMaybe<PendingFileMatchWhereInput>;
+};
+
+export type QueryRootPeopleArgs = {
+  OrderBy?: InputMaybe<Array<PersonOrderByInput>>;
+  Page?: InputMaybe<PageInput>;
+  Where?: InputMaybe<PersonWhereInput>;
+};
+
+export type QueryRootPersonArgs = {
+  Id: Scalars["String"]["input"];
 };
 
 export type QueryRootPlaybackProgressArgs = {
@@ -5120,6 +5888,10 @@ export type QueryRootSearchAlbumsArgs = {
 };
 
 export type QueryRootSearchAudiobooksArgs = {
+  Query: Scalars["String"]["input"];
+};
+
+export type QueryRootSearchMovieCollectionsArgs = {
   Query: Scalars["String"]["input"];
 };
 
@@ -6127,6 +6899,8 @@ export type SubscriptionRoot = {
   /** Subscribe to #struct_name_str changes */
   ChapterChanged: ChapterChangedEvent;
   /** Subscribe to #struct_name_str changes */
+  CollectionChanged: CollectionChangedEvent;
+  /** Subscribe to #struct_name_str changes */
   EpisodeChanged: EpisodeChangedEvent;
   /**
    * Subscribe to filesystem change events (create/delete/copy/move/rename).
@@ -6142,6 +6916,8 @@ export type SubscriptionRoot = {
   /** Subscribe to #struct_name_str changes */
   MediaFileChanged: MediaFileChangedEvent;
   /** Subscribe to #struct_name_str changes */
+  MovieCastCreditChanged: MovieCastCreditChangedEvent;
+  /** Subscribe to #struct_name_str changes */
   MovieChanged: MovieChangedEvent;
   /** Subscribe to #struct_name_str changes */
   NamingPatternChanged: NamingPatternChangedEvent;
@@ -6149,6 +6925,8 @@ export type SubscriptionRoot = {
   NotificationChanged: NotificationChangedEvent;
   /** Subscribe to #struct_name_str changes */
   PendingFileMatchChanged: PendingFileMatchChangedEvent;
+  /** Subscribe to #struct_name_str changes */
+  PersonChanged: PersonChangedEvent;
   /** Subscribe to #struct_name_str changes */
   PlaybackProgressChanged: PlaybackProgressChangedEvent;
   /** Subscribe to #struct_name_str changes */
@@ -6235,6 +7013,10 @@ export type SubscriptionRootChapterChangedArgs = {
   Filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
+export type SubscriptionRootCollectionChangedArgs = {
+  Filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
 export type SubscriptionRootEpisodeChangedArgs = {
   Filter?: InputMaybe<SubscriptionFilterInput>;
 };
@@ -6259,6 +7041,10 @@ export type SubscriptionRootMediaFileChangedArgs = {
   Filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
+export type SubscriptionRootMovieCastCreditChangedArgs = {
+  Filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
 export type SubscriptionRootMovieChangedArgs = {
   Filter?: InputMaybe<SubscriptionFilterInput>;
 };
@@ -6272,6 +7058,10 @@ export type SubscriptionRootNotificationChangedArgs = {
 };
 
 export type SubscriptionRootPendingFileMatchChangedArgs = {
+  Filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRootPersonChangedArgs = {
   Filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
@@ -6799,6 +7589,11 @@ export type TvShowSearchResult = {
   Year?: Maybe<Scalars["Int"]["output"]>;
 };
 
+export type UnmatchMediaFileResult = {
+  Reason?: Maybe<Scalars["String"]["output"]>;
+  Success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateAlbumInput = {
   AlbumType?: InputMaybe<Scalars["String"]["input"]>;
@@ -6824,6 +7619,13 @@ export type UpdateAlbumInput = {
   Year?: InputMaybe<Scalars["Int"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdateAlbumsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateAppLogInput = {
   Fields?: InputMaybe<Scalars["String"]["input"]>;
@@ -6835,12 +7637,26 @@ export type UpdateAppLogInput = {
   Timestamp?: InputMaybe<Scalars["String"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdateAppLogsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateAppSettingInput = {
   Category?: InputMaybe<Scalars["String"]["input"]>;
   Description?: InputMaybe<Scalars["String"]["input"]>;
   Key?: InputMaybe<Scalars["String"]["input"]>;
   Value?: InputMaybe<Scalars["String"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateAppSettingsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -6858,6 +7674,13 @@ export type UpdateArtistInput = {
   UserId?: InputMaybe<Scalars["String"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdateArtistsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateArtworkCacheInput = {
   ArtworkType?: InputMaybe<Scalars["String"]["input"]>;
@@ -6869,6 +7692,13 @@ export type UpdateArtworkCacheInput = {
   SizeBytes?: InputMaybe<Scalars["Int"]["input"]>;
   SourceUrl?: InputMaybe<Scalars["String"]["input"]>;
   Width?: InputMaybe<Scalars["Int"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateArtworkCachesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -6887,6 +7717,13 @@ export type UpdateAudioStreamInput = {
   SampleRate?: InputMaybe<Scalars["Int"]["input"]>;
   StreamIndex?: InputMaybe<Scalars["Int"]["input"]>;
   Title?: InputMaybe<Scalars["String"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateAudioStreamsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -6916,6 +7753,13 @@ export type UpdateAudiobookInput = {
   UserId?: InputMaybe<Scalars["String"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdateAudiobooksResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateCastDeviceInput = {
   Address?: InputMaybe<Scalars["String"]["input"]>;
@@ -6926,6 +7770,13 @@ export type UpdateCastDeviceInput = {
   Model?: InputMaybe<Scalars["String"]["input"]>;
   Name?: InputMaybe<Scalars["String"]["input"]>;
   Port?: InputMaybe<Scalars["Int"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateCastDevicesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -6944,6 +7795,13 @@ export type UpdateCastSessionInput = {
   Volume?: InputMaybe<Scalars["Float"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdateCastSessionsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateCastSettingInput = {
   AutoDiscoveryEnabled?: InputMaybe<Scalars["Boolean"]["input"]>;
@@ -6951,6 +7809,13 @@ export type UpdateCastSettingInput = {
   DiscoveryIntervalSeconds?: InputMaybe<Scalars["Int"]["input"]>;
   PreferredQuality?: InputMaybe<Scalars["String"]["input"]>;
   TranscodeIncompatible?: InputMaybe<Scalars["Boolean"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateCastSettingsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -6963,6 +7828,33 @@ export type UpdateChapterInput = {
   StartTimeSecs?: InputMaybe<Scalars["Float"]["input"]>;
   Title?: InputMaybe<Scalars["String"]["input"]>;
   Wanted?: InputMaybe<Scalars["Boolean"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateChaptersResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
+/** Input for updating an existing #struct_name */
+export type UpdateCollectionInput = {
+  BackdropUrl?: InputMaybe<Scalars["String"]["input"]>;
+  LastSyncedAt?: InputMaybe<Scalars["String"]["input"]>;
+  LibraryId?: InputMaybe<Scalars["String"]["input"]>;
+  MovieCount?: InputMaybe<Scalars["Int"]["input"]>;
+  Name?: InputMaybe<Scalars["String"]["input"]>;
+  Overview?: InputMaybe<Scalars["String"]["input"]>;
+  PosterUrl?: InputMaybe<Scalars["String"]["input"]>;
+  TmdbCollectionId?: InputMaybe<Scalars["Int"]["input"]>;
+  UserId?: InputMaybe<Scalars["String"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateCollectionsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -6982,6 +7874,13 @@ export type UpdateEpisodeInput = {
   Wanted?: InputMaybe<Scalars["Boolean"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdateEpisodesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateInviteTokenInput = {
   AccessLevel?: InputMaybe<Scalars["String"]["input"]>;
@@ -6995,6 +7894,20 @@ export type UpdateInviteTokenInput = {
   Role?: InputMaybe<Scalars["String"]["input"]>;
   Token?: InputMaybe<Scalars["String"]["input"]>;
   UseCount?: InputMaybe<Scalars["Int"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateInviteTokensResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateLibrariesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -7023,12 +7936,21 @@ export type UpdateMediaChapterInput = {
   Title?: InputMaybe<Scalars["String"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdateMediaChaptersResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateMediaFileInput = {
   AddedAt?: InputMaybe<Scalars["String"]["input"]>;
+  AnalyzedAt?: InputMaybe<Scalars["String"]["input"]>;
   AudioChannels?: InputMaybe<Scalars["String"]["input"]>;
   AudioCodec?: InputMaybe<Scalars["String"]["input"]>;
   Bitrate?: InputMaybe<Scalars["Int"]["input"]>;
+  ChapterId?: InputMaybe<Scalars["String"]["input"]>;
   Container?: InputMaybe<Scalars["String"]["input"]>;
   ContentType?: InputMaybe<Scalars["String"]["input"]>;
   Duration?: InputMaybe<Scalars["Int"]["input"]>;
@@ -7047,6 +7969,28 @@ export type UpdateMediaFileInput = {
   TrackId?: InputMaybe<Scalars["String"]["input"]>;
   VideoCodec?: InputMaybe<Scalars["String"]["input"]>;
   Width?: InputMaybe<Scalars["Int"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateMediaFilesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
+/** Input for updating an existing #struct_name */
+export type UpdateMovieCastCreditInput = {
+  CastOrder?: InputMaybe<Scalars["Int"]["input"]>;
+  CharacterName?: InputMaybe<Scalars["String"]["input"]>;
+  MovieId?: InputMaybe<Scalars["String"]["input"]>;
+  PersonId?: InputMaybe<Scalars["String"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateMovieCastCreditsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -7082,6 +8026,13 @@ export type UpdateMovieInput = {
   Year?: InputMaybe<Scalars["Int"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdateMoviesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateNamingPatternInput = {
   Description?: InputMaybe<Scalars["String"]["input"]>;
@@ -7091,6 +8042,13 @@ export type UpdateNamingPatternInput = {
   Name?: InputMaybe<Scalars["String"]["input"]>;
   Pattern?: InputMaybe<Scalars["String"]["input"]>;
   UserId?: InputMaybe<Scalars["String"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateNamingPatternsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -7109,6 +8067,13 @@ export type UpdateNotificationInput = {
   Title?: InputMaybe<Scalars["String"]["input"]>;
   TorrentId?: InputMaybe<Scalars["String"]["input"]>;
   UserId?: InputMaybe<Scalars["String"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateNotificationsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -7138,6 +8103,27 @@ export type UpdatePendingFileMatchInput = {
   VerificationStatus?: InputMaybe<Scalars["String"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdatePendingFileMatchesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
+/** Result of bulk update by Where filter */
+export type UpdatePeopleResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
+/** Input for updating an existing #struct_name */
+export type UpdatePersonInput = {
+  Name?: InputMaybe<Scalars["String"]["input"]>;
+  ProfileUrl?: InputMaybe<Scalars["String"]["input"]>;
+  TmdbPersonId?: InputMaybe<Scalars["Int"]["input"]>;
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdatePlaybackProgressInput = {
   CurrentPosition?: InputMaybe<Scalars["Float"]["input"]>;
@@ -7147,6 +8133,13 @@ export type UpdatePlaybackProgressInput = {
   ProgressPercent?: InputMaybe<Scalars["Float"]["input"]>;
   UserId?: InputMaybe<Scalars["String"]["input"]>;
   WatchedAt?: InputMaybe<Scalars["String"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdatePlaybackProgressesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -7170,6 +8163,13 @@ export type UpdatePlaybackSessionInput = {
   Volume?: InputMaybe<Scalars["Float"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdatePlaybackSessionsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateRefreshTokenInput = {
   DeviceInfo?: InputMaybe<Scalars["String"]["input"]>;
@@ -7178,6 +8178,13 @@ export type UpdateRefreshTokenInput = {
   LastUsedAt?: InputMaybe<Scalars["String"]["input"]>;
   TokenHash?: InputMaybe<Scalars["String"]["input"]>;
   UserId?: InputMaybe<Scalars["String"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateRefreshTokensResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -7219,6 +8226,20 @@ export type UpdateRssFeedItemInput = {
   TorrentId?: InputMaybe<Scalars["String"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdateRssFeedItemsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateRssFeedsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateScheduleCacheInput = {
   AirDate?: InputMaybe<Scalars["String"]["input"]>;
@@ -7240,12 +8261,26 @@ export type UpdateScheduleCacheInput = {
   TvmazeShowId?: InputMaybe<Scalars["Int"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdateScheduleCachesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateScheduleSyncStateInput = {
   CountryCode?: InputMaybe<Scalars["String"]["input"]>;
   LastSyncDays?: InputMaybe<Scalars["Int"]["input"]>;
   LastSyncedAt?: InputMaybe<Scalars["String"]["input"]>;
   SyncError?: InputMaybe<Scalars["String"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateScheduleSyncStatesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -7269,6 +8304,13 @@ export type UpdateShowInput = {
   TvmazeId?: InputMaybe<Scalars["Int"]["input"]>;
   UserId?: InputMaybe<Scalars["String"]["input"]>;
   Year?: InputMaybe<Scalars["Int"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateShowsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -7309,6 +8351,20 @@ export type UpdateSourcePriorityRuleInput = {
   UserId?: InputMaybe<Scalars["String"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdateSourcePriorityRulesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateSourcesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateSubtitleInput = {
   Codec?: InputMaybe<Scalars["String"]["input"]>;
@@ -7327,6 +8383,13 @@ export type UpdateSubtitleInput = {
   Title?: InputMaybe<Scalars["String"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdateSubtitlesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateTorrentFileInput = {
   DownloadedBytes?: InputMaybe<Scalars["Int"]["input"]>;
@@ -7338,6 +8401,13 @@ export type UpdateTorrentFileInput = {
   Progress?: InputMaybe<Scalars["Float"]["input"]>;
   RelativePath?: InputMaybe<Scalars["String"]["input"]>;
   TorrentId?: InputMaybe<Scalars["String"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateTorrentFilesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -7365,6 +8435,20 @@ export type UpdateTorrentInput = {
   UserId?: InputMaybe<Scalars["String"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdateTorrentsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateTorznabCategoriesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateTorznabCategoryInput = {
   Description?: InputMaybe<Scalars["String"]["input"]>;
@@ -7387,6 +8471,13 @@ export type UpdateTrackInput = {
   Title?: InputMaybe<Scalars["String"]["input"]>;
   TrackNumber?: InputMaybe<Scalars["Int"]["input"]>;
   Wanted?: InputMaybe<Scalars["Boolean"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateTracksResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -7415,6 +8506,13 @@ export type UpdateUsenetDownloadInput = {
   UserId?: InputMaybe<Scalars["String"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdateUsenetDownloadsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateUsenetServerInput = {
   Connections?: InputMaybe<Scalars["Int"]["input"]>;
@@ -7434,6 +8532,13 @@ export type UpdateUsenetServerInput = {
   Username?: InputMaybe<Scalars["String"]["input"]>;
 };
 
+/** Result of bulk update by Where filter */
+export type UpdateUsenetServersResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
 /** Input for updating an existing #struct_name */
 export type UpdateUserInput = {
   AvatarUrl?: InputMaybe<Scalars["String"]["input"]>;
@@ -7443,6 +8548,13 @@ export type UpdateUserInput = {
   LastLoginAt?: InputMaybe<Scalars["String"]["input"]>;
   Role?: InputMaybe<Scalars["String"]["input"]>;
   Username?: InputMaybe<Scalars["String"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateUsersResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Input for updating an existing #struct_name */
@@ -7467,6 +8579,13 @@ export type UpdateVideoStreamInput = {
   StreamIndex?: InputMaybe<Scalars["Int"]["input"]>;
   Title?: InputMaybe<Scalars["String"]["input"]>;
   Width?: InputMaybe<Scalars["Int"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateVideoStreamsResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type UsenetDownload = {
@@ -8309,7 +9428,7 @@ export type MediaFilePropertiesQueryVariables = Exact<{
 export type MediaFilePropertiesQuery = {
   MediaFile?: {
     Id: string;
-    LibraryId: string;
+    LibraryId?: string | null;
     Path: string;
     RelativePath?: string | null;
     OriginalName?: string | null;
@@ -8700,7 +9819,7 @@ export type LibraryUnmatchedMediaFilesTabQuery = {
     Edges: Array<{
       Node: {
         Id: string;
-        LibraryId: string;
+        LibraryId?: string | null;
         Path: string;
         RelativePath?: string | null;
         OriginalName?: string | null;
@@ -8715,6 +9834,7 @@ export type LibraryUnmatchedMediaFilesTabQuery = {
         Height?: number | null;
         Duration?: number | null;
         EpisodeId?: string | null;
+        ChapterId?: string | null;
         AddedAt: string;
       };
     }>;
@@ -9019,6 +10139,7 @@ export type AlbumDetailRouteQuery = {
         ArtistId?: string | null;
         MediaFileId?: string | null;
         Status: ContentStatus;
+        Wanted: boolean;
       };
     }>;
   };
@@ -9030,6 +10151,19 @@ export type DeleteAlbumRouteMutationVariables = Exact<{
 
 export type DeleteAlbumRouteMutation = {
   DeleteAlbum: { Success: boolean; Error?: string | null };
+};
+
+export type AlbumDetailSetTrackWantedMutationVariables = Exact<{
+  AlbumId: Scalars["String"]["input"];
+  Wanted: Scalars["Boolean"]["input"];
+}>;
+
+export type AlbumDetailSetTrackWantedMutation = {
+  UpdateTracks: {
+    success: boolean;
+    error?: string | null;
+    affectedCount: number;
+  };
 };
 
 export type AudiobookDetailRouteQueryVariables = Exact<{
@@ -9064,6 +10198,7 @@ export type AudiobookDetailRouteQuery = {
           DurationSecs?: number | null;
           MediaFileId?: string | null;
           Status: ContentStatus;
+          Wanted: boolean;
         };
       }>;
     };
@@ -9076,6 +10211,19 @@ export type DeleteAudiobookRouteMutationVariables = Exact<{
 
 export type DeleteAudiobookRouteMutation = {
   DeleteAudiobook: { Success: boolean; Error?: string | null };
+};
+
+export type AudiobookDetailSetChapterWantedMutationVariables = Exact<{
+  AudiobookId: Scalars["String"]["input"];
+  Wanted: Scalars["Boolean"]["input"];
+}>;
+
+export type AudiobookDetailSetChapterWantedMutation = {
+  UpdateChapters: {
+    success: boolean;
+    error?: string | null;
+    affectedCount: number;
+  };
 };
 
 export type SearchMoviesQueryVariables = Exact<{
@@ -9096,6 +10244,21 @@ export type SearchMoviesQuery = {
     ImdbId?: string | null;
     VoteAverage?: number | null;
     Popularity?: number | null;
+  }>;
+};
+
+export type SearchMovieCollectionsQueryVariables = Exact<{
+  Query: Scalars["String"]["input"];
+}>;
+
+export type SearchMovieCollectionsQuery = {
+  SearchMovieCollections: Array<{
+    Provider: string;
+    CollectionId: number;
+    Name: string;
+    Overview?: string | null;
+    PosterUrl?: string | null;
+    BackdropUrl?: string | null;
   }>;
 };
 
@@ -9121,6 +10284,23 @@ export type AddMovieMutation = {
       Monitored: boolean;
       MediaFileId?: string | null;
     } | null;
+  };
+};
+
+export type AddMovieCollectionMutationVariables = Exact<{
+  LibraryId: Scalars["String"]["input"];
+  Input: AddMovieCollectionInput;
+}>;
+
+export type AddMovieCollectionMutation = {
+  AddMovieCollection: {
+    Success: boolean;
+    CollectionId?: number | null;
+    CollectionName?: string | null;
+    ImportedCount: number;
+    ExistingCount: number;
+    WantedUpdatedCount: number;
+    Error?: string | null;
   };
 };
 
@@ -9170,8 +10350,22 @@ export type MovieDetailRouteQuery = {
     ReleaseDate?: string | null;
     ProductionCountries: Array<string>;
     SpokenLanguages: Array<string>;
+    Wanted: boolean;
     MediaFile?: { Id: string; Size: number; Duration?: number | null } | null;
   } | null;
+};
+
+export type MovieDetailSetWantedMutationVariables = Exact<{
+  Id: Scalars["String"]["input"];
+  Wanted: Scalars["Boolean"]["input"];
+}>;
+
+export type MovieDetailSetWantedMutation = {
+  UpdateMovie: {
+    Success: boolean;
+    Error?: string | null;
+    Movie?: { Id: string; Wanted: boolean } | null;
+  };
 };
 
 export type RefreshMovieRouteMutationVariables = Exact<{
@@ -9711,6 +10905,19 @@ export type RefreshShowRouteMutation = {
   };
 };
 
+export type ShowDetailSetEpisodeWantedMutationVariables = Exact<{
+  ShowId: Scalars["String"]["input"];
+  Wanted: Scalars["Boolean"]["input"];
+}>;
+
+export type ShowDetailSetEpisodeWantedMutation = {
+  UpdateEpisodes: {
+    success: boolean;
+    error?: string | null;
+    affectedCount: number;
+  };
+};
+
 export type SourcesQueryVariables = Exact<{
   Where?: InputMaybe<SourceWhereInput>;
   OrderBy?: InputMaybe<Array<SourceOrderByInput> | SourceOrderByInput>;
@@ -9869,13 +11076,20 @@ export type UpdateSourcePrioritiesMutation = {
   UpdateSourcePriorities: { Success: boolean; Error?: string | null };
 };
 
-export type ActiveDownloadCountQueryVariables = Exact<{
-  Where?: InputMaybe<TorrentWhereInput>;
-  Page?: InputMaybe<PageInput>;
+export type ActiveDownloadCountQueryVariables = Exact<{ [key: string]: never }>;
+
+export type ActiveDownloadCountQuery = { ActiveDownloadCount: number };
+
+export type TorrentModalMediaFilesByPathsQueryVariables = Exact<{
+  Paths: Array<Scalars["String"]["input"]> | Scalars["String"]["input"];
 }>;
 
-export type ActiveDownloadCountQuery = {
-  Torrents: { PageInfo: { TotalCount?: number | null } };
+export type TorrentModalMediaFilesByPathsQuery = {
+  MediaFiles: {
+    Edges: Array<{
+      Node: { Id: string; Path: string; Metadata?: string | null };
+    }>;
+  };
 };
 
 export type DownloadsTorrentsQueryVariables = Exact<{
@@ -10042,6 +11256,31 @@ export type TorrentChangedSubscriptionVariables = Exact<{
 }>;
 
 export type TorrentChangedSubscription = { TorrentChanged: { Id: number } };
+
+export type CreateUnmatchedMediaFileFromTorrentMutationVariables = Exact<{
+  Input: CreateMediaFileInput;
+}>;
+
+export type CreateUnmatchedMediaFileFromTorrentMutation = {
+  CreateMediaFile: {
+    Success: boolean;
+    Error?: string | null;
+    MediaFile?: { Id: string; Path: string; Metadata?: string | null } | null;
+  };
+};
+
+export type AnalyzeMediaFileForTorrentMutationVariables = Exact<{
+  MediaFileId: Scalars["String"]["input"];
+  Path: Scalars["String"]["input"];
+}>;
+
+export type AnalyzeMediaFileForTorrentMutation = {
+  AnalyzeMediaFile: {
+    Success: boolean;
+    Queued: boolean;
+    Message?: string | null;
+  };
+};
 
 export type SettingsUsenetServersQueryVariables = Exact<{
   OrderBy?: InputMaybe<

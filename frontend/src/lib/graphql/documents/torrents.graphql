@@ -1,7 +1,15 @@
-query ActiveDownloadCount($Where: TorrentWhereInput, $Page: PageInput) {
-  Torrents(Where: $Where, Page: $Page) {
-    PageInfo {
-      TotalCount
+query ActiveDownloadCount {
+  ActiveDownloadCount
+}
+
+query TorrentModalMediaFilesByPaths($Paths: [String!]!) {
+  MediaFiles(Where: { Path: { In: $Paths } }, Page: { Limit: 1000, Offset: 0 }) {
+    Edges {
+      Node {
+        Id
+        Path
+        Metadata
+      }
     }
   }
 }
@@ -150,5 +158,25 @@ mutation LinkTorrentToLibrary($Id: String!, $Input: UpdateTorrentInput!) {
 subscription TorrentChanged {
   TorrentChanged: torrentProgress {
     Id: id
+  }
+}
+
+mutation CreateUnmatchedMediaFileFromTorrent($Input: CreateMediaFileInput!) {
+  CreateMediaFile(Input: $Input) {
+    Success
+    Error
+    MediaFile {
+      Id
+      Path
+      Metadata
+    }
+  }
+}
+
+mutation AnalyzeMediaFileForTorrent($MediaFileId: String!, $Path: String!) {
+  AnalyzeMediaFile(MediaFileId: $MediaFileId, Path: $Path) {
+    Success
+    Queued
+    Message
   }
 }

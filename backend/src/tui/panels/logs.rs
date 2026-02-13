@@ -1,7 +1,9 @@
 //! Logs panel - displays live log stream with filtering
 
+use std::cell::Cell;
 use std::collections::VecDeque;
 
+use chrono::{DateTime, Local};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
@@ -27,14 +29,22 @@ struct LogLine {
 
 impl From<LogEvent> for LogLine {
     fn from(event: LogEvent) -> Self {
-        // Parse timestamp to short format (HH:MM:SS)
-        let timestamp = event
-            .timestamp
-            .split('T')
-            .nth(1)
-            .and_then(|t| t.split('.').next())
-            .unwrap_or(&event.timestamp)
-            .to_string();
+        // Convert RFC3339 UTC timestamps from the logging layer into local time for display.
+        let timestamp = DateTime::parse_from_rfc3339(&event.timestamp)
+            .map(|dt| {
+                dt.with_timezone(&Local)
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            })
+            .unwrap_or_else(|_| {
+                event
+                    .timestamp
+                    .split('T')
+                    .nth(1)
+                    .and_then(|t| t.split('.').next())
+                    .unwrap_or(&event.timestamp)
+                    .to_string()
+            });
 
         // Simplify target (keep last 2 parts)
         let target = {
@@ -61,6 +71,8 @@ pub struct LogsPanel {
     logs: VecDeque<LogLine>,
     /// List state for scrolling
     list_state: ListState,
+    /// Last rendered first visible item index (viewport offset).
+    last_render_offset: Cell<usize>,
     /// Whether auto-scroll is enabled (follow tail)
     auto_scroll: bool,
     /// Whether the log stream is paused
@@ -82,6 +94,7 @@ impl LogsPanel {
         Self {
             logs: VecDeque::with_capacity(MAX_LOGS),
             list_state,
+            last_render_offset: Cell::new(0),
             auto_scroll: true,
             paused: false,
             level_filter: None,
@@ -188,6 +201,61 @@ impl LogsPanel {
             self.scroll_to_bottom();
         }
     }
+
+    /// Select a log entry by a screen y-coordinate inside the logs panel area.
+    pub fn select_at_screen_row(&mut self, screen_y: u16, area: Rect) {
+        // List content is inside the block border.
+        let content_top = area.y.saturating_add(1);
+        let content_height = area.height.saturating_sub(2);
+        if content_height == 0 || screen_y < content_top || screen_y >= content_top + content_height
+        {
+            return;
+        }
+
+        let relative_row = (screen_y - content_top) as usize;
+        let filtered = self.filtered_logs();
+        if filtered.is_empty() {
+            return;
+        }
+
+        let selected = self.list_state.selected();
+        let content_width = area.width.saturating_sub(2) as usize;
+        let start_index = self.last_render_offset.get();
+        let previous_offset = start_index;
+
+        let mut cursor = 0usize;
+        for (idx, log) in filtered.iter().enumerate().skip(start_index) {
+            let height = self.rendered_item_height(log, idx, selected, content_width);
+            if relative_row < cursor + height {
+                self.list_state.select(Some(idx));
+                *self.list_state.offset_mut() = previous_offset;
+                self.auto_scroll = false;
+                return;
+            }
+            cursor += height;
+        }
+    }
+
+    /// Compute how many terminal rows a log entry occupies in the list.
+    fn rendered_item_height(
+        &self,
+        log: &LogLine,
+        idx: usize,
+        selected: Option<usize>,
+        content_width: usize,
+    ) -> usize {
+        let timestamp = log.timestamp.as_str();
+        let level = format!("{:5}", log.level);
+        let target = format!("{:20}", truncate_str(&log.target, 20));
+        let prefix = format!("{timestamp} {level} {target} ");
+        let message_width = content_width.saturating_sub(prefix.chars().count());
+
+        if selected == Some(idx) && message_width > 0 {
+            wrap_text(&log.message, message_width).len().max(1)
+        } else {
+            1
+        }
+    }
 }
 
 impl Panel for LogsPanel {
@@ -201,24 +269,67 @@ impl Panel for LogsPanel {
 
     fn render(&self, frame: &mut Frame, area: Rect, focused: bool) {
         let filtered = self.filtered_logs();
+        let selected = self.list_state.selected();
+        let content_width = area.width.saturating_sub(2) as usize;
 
         // Build list items
         let items: Vec<ListItem> = filtered
             .iter()
-            .map(|log| {
-                let spans = vec![
-                    Span::styled(&log.timestamp, Theme::dim()),
-                    Span::raw(" "),
-                    Span::styled(format!("{:5}", log.level), Theme::log_level(&log.level)),
-                    Span::raw(" "),
-                    Span::styled(
-                        format!("{:20}", truncate_str(&log.target, 20)),
-                        Theme::dim(),
-                    ),
-                    Span::raw(" "),
-                    Span::styled(&log.message, Theme::text()),
-                ];
-                ListItem::new(Line::from(spans))
+            .enumerate()
+            .map(|(idx, log)| {
+                let timestamp = log.timestamp.as_str();
+                let level = format!("{:5}", log.level);
+                let target = format!("{:20}", truncate_str(&log.target, 20));
+
+                let prefix = format!("{timestamp} {level} {target} ");
+                let message_width = content_width.saturating_sub(prefix.chars().count());
+
+                if selected == Some(idx) && message_width > 0 {
+                    let wrapped_message = wrap_text(&log.message, message_width);
+                    let mut lines = Vec::with_capacity(wrapped_message.len().max(1));
+
+                    if let Some(first_line) = wrapped_message.first() {
+                        lines.push(Line::from(vec![
+                            Span::styled(timestamp, Theme::dim()),
+                            Span::raw(" "),
+                            Span::styled(level.clone(), Theme::log_level(&log.level)),
+                            Span::raw(" "),
+                            Span::styled(target.clone(), Theme::dim()),
+                            Span::raw(" "),
+                            Span::styled(first_line.clone(), Theme::text()),
+                        ]));
+                    } else {
+                        lines.push(Line::from(vec![
+                            Span::styled(timestamp, Theme::dim()),
+                            Span::raw(" "),
+                            Span::styled(level.clone(), Theme::log_level(&log.level)),
+                            Span::raw(" "),
+                            Span::styled(target.clone(), Theme::dim()),
+                            Span::raw(" "),
+                        ]));
+                    }
+
+                    let continuation_prefix = " ".repeat(prefix.chars().count());
+                    for continuation in wrapped_message.iter().skip(1) {
+                        lines.push(Line::from(vec![
+                            Span::styled(continuation_prefix.clone(), Theme::dim()),
+                            Span::styled(continuation.clone(), Theme::text()),
+                        ]));
+                    }
+
+                    ListItem::new(lines)
+                } else {
+                    let spans = vec![
+                        Span::styled(timestamp, Theme::dim()),
+                        Span::raw(" "),
+                        Span::styled(level, Theme::log_level(&log.level)),
+                        Span::raw(" "),
+                        Span::styled(target, Theme::dim()),
+                        Span::raw(" "),
+                        Span::styled(&log.message, Theme::text()),
+                    ];
+                    ListItem::new(Line::from(spans))
+                }
             })
             .collect();
 
@@ -266,6 +377,9 @@ impl Panel for LogsPanel {
             Span::styled("┌─┐", border_style),
             Span::styled("e", Theme::keybind_key()),
             Span::styled("rror", Theme::keybind()),
+            Span::styled("┌─┐", border_style),
+            Span::styled("m", Theme::keybind_key()),
+            Span::styled("ouse", Theme::keybind()),
             Span::styled("┌", border_style),
         ]);
 
@@ -290,6 +404,7 @@ impl Panel for LogsPanel {
         // Clone state for rendering
         let mut state = self.list_state.clone();
         frame.render_stateful_widget(list, area, &mut state);
+        self.last_render_offset.set(state.offset());
     }
 
     fn handle_action(&mut self, action: &Action) {
@@ -376,4 +491,76 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     } else {
         s[..max_len].to_string()
     }
+}
+
+/// Wrap text to a maximum number of characters per line.
+fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![String::new()];
+    }
+
+    let mut lines = Vec::new();
+
+    for paragraph in text.split('\n') {
+        if paragraph.is_empty() {
+            lines.push(String::new());
+            continue;
+        }
+
+        let mut current = String::new();
+        for word in paragraph.split_whitespace() {
+            let word_len = word.chars().count();
+            let current_len = current.chars().count();
+
+            if current.is_empty() {
+                if word_len <= max_width {
+                    current.push_str(word);
+                } else {
+                    for chunk in chunk_by_chars(word, max_width) {
+                        lines.push(chunk);
+                    }
+                }
+                continue;
+            }
+
+            if current_len + 1 + word_len <= max_width {
+                current.push(' ');
+                current.push_str(word);
+            } else {
+                lines.push(current);
+                current = String::new();
+
+                if word_len <= max_width {
+                    current.push_str(word);
+                } else {
+                    for chunk in chunk_by_chars(word, max_width) {
+                        lines.push(chunk);
+                    }
+                }
+            }
+        }
+
+        if !current.is_empty() {
+            lines.push(current);
+        }
+    }
+
+    if lines.is_empty() {
+        vec![String::new()]
+    } else {
+        lines
+    }
+}
+
+/// Split a string into chunks by character count.
+fn chunk_by_chars(s: &str, chunk_size: usize) -> Vec<String> {
+    if chunk_size == 0 {
+        return vec![String::new()];
+    }
+
+    let chars: Vec<char> = s.chars().collect();
+    chars
+        .chunks(chunk_size)
+        .map(|chunk| chunk.iter().collect::<String>())
+        .collect()
 }

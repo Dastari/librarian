@@ -385,6 +385,95 @@ impl MovieCustomOperations {
             })
             .collect())
     }
+
+    /// Search for movie collections on TMDB
+    #[graphql(name = "SearchMovieCollections")]
+    async fn search_movie_collections(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "Query")] query: String,
+    ) -> async_graphql::Result<Vec<MovieCollectionSearchResultGql>> {
+        use crate::graphql::auth::AuthExt;
+
+        let _user = ctx.auth_user()?;
+        let metadata =
+            ctx.data_unchecked::<Arc<crate::services::metadata::providers::MetadataService>>();
+
+        if !metadata.has_tmdb().await {
+            return Err(async_graphql::Error::new(
+                "TMDB API key not configured. Add tmdb_api_key to settings.",
+            ));
+        }
+
+        let results = metadata
+            .search_movie_collections(&query)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(results
+            .into_iter()
+            .map(|c| MovieCollectionSearchResultGql {
+                provider: "tmdb".to_string(),
+                collection_id: c.collection_id,
+                name: c.name,
+                overview: c.overview,
+                poster_url: c.poster_url,
+                backdrop_url: c.backdrop_url,
+            })
+            .collect())
+    }
+
+    /// Get full collection details from TMDB with library state overlay.
+    #[graphql(name = "MovieCollectionDetails")]
+    async fn movie_collection_details(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "LibraryId")] library_id: String,
+        #[graphql(name = "CollectionId")] collection_id: i32,
+    ) -> async_graphql::Result<MovieCollectionDetailsGql> {
+        use crate::graphql::auth::AuthExt;
+        use crate::services::metadata::providers::MetadataService;
+
+        let user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        if !metadata.has_tmdb().await {
+            return Err(async_graphql::Error::new(
+                "TMDB API key not configured. Add tmdb_api_key to settings.",
+            ));
+        }
+
+        let lib_id = uuid::Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+        let user_id = uuid::Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        let details = metadata
+            .get_movie_collection_details(collection_id, lib_id, user_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+        Ok(MovieCollectionDetailsGql {
+            collection_id: details.collection_id,
+            name: details.name,
+            overview: details.overview,
+            poster_url: details.poster_url,
+            backdrop_url: details.backdrop_url,
+            movies: details
+                .movies
+                .into_iter()
+                .map(|m| MovieCollectionMovieDetailsGql {
+                    tmdb_id: m.tmdb_id,
+                    title: m.title,
+                    year: m.year,
+                    poster_url: m.poster_url,
+                    library_movie_id: m.library_movie_id,
+                    media_file_id: m.media_file_id,
+                    wanted: m.wanted,
+                })
+                .collect(),
+        })
+    }
 }
 
 // ============================================================================
@@ -411,6 +500,18 @@ pub struct AddMovieInput {
     /// Whether to monitor for releases (enables auto-download)
     #[graphql(name = "Monitored")]
     pub monitored: Option<bool>,
+}
+
+/// Input for adding/importing a movie collection from TMDB
+#[derive(Debug, InputObject)]
+#[graphql(name = "AddMovieCollectionInput")]
+pub struct AddMovieCollectionInput {
+    /// TMDB collection ID
+    #[graphql(name = "CollectionId")]
+    pub collection_id: i32,
+    /// Mark missing imported movies as wanted
+    #[graphql(name = "WantedMissing")]
+    pub wanted_missing: Option<bool>,
 }
 
 /// Movie search result from TMDB
@@ -441,6 +542,62 @@ pub struct MovieSearchResultGql {
     pub popularity: Option<f64>,
 }
 
+/// Movie collection search result from TMDB
+#[derive(Debug, Clone, async_graphql::SimpleObject)]
+#[graphql(name = "MovieCollectionSearchResult")]
+pub struct MovieCollectionSearchResultGql {
+    #[graphql(name = "Provider")]
+    pub provider: String,
+    #[graphql(name = "CollectionId")]
+    pub collection_id: i32,
+    #[graphql(name = "Name")]
+    pub name: String,
+    #[graphql(name = "Overview")]
+    pub overview: Option<String>,
+    #[graphql(name = "PosterUrl")]
+    pub poster_url: Option<String>,
+    #[graphql(name = "BackdropUrl")]
+    pub backdrop_url: Option<String>,
+}
+
+/// Movie row in a collection detail response
+#[derive(Debug, Clone, async_graphql::SimpleObject)]
+#[graphql(name = "MovieCollectionMovieDetails")]
+pub struct MovieCollectionMovieDetailsGql {
+    #[graphql(name = "TmdbId")]
+    pub tmdb_id: i32,
+    #[graphql(name = "Title")]
+    pub title: String,
+    #[graphql(name = "Year")]
+    pub year: Option<i32>,
+    #[graphql(name = "PosterUrl")]
+    pub poster_url: Option<String>,
+    #[graphql(name = "LibraryMovieId")]
+    pub library_movie_id: Option<String>,
+    #[graphql(name = "MediaFileId")]
+    pub media_file_id: Option<String>,
+    #[graphql(name = "Wanted")]
+    pub wanted: bool,
+}
+
+/// Full TMDB collection details with local overlay
+#[derive(Debug, Clone, async_graphql::SimpleObject)]
+#[graphql(name = "MovieCollectionDetails")]
+pub struct MovieCollectionDetailsGql {
+    #[graphql(name = "CollectionId")]
+    pub collection_id: i32,
+    #[graphql(name = "Name")]
+    pub name: String,
+    #[graphql(name = "Overview")]
+    pub overview: Option<String>,
+    #[graphql(name = "PosterUrl")]
+    pub poster_url: Option<String>,
+    #[graphql(name = "BackdropUrl")]
+    pub backdrop_url: Option<String>,
+    #[graphql(name = "Movies")]
+    pub movies: Vec<MovieCollectionMovieDetailsGql>,
+}
+
 /// Result of movie operations
 #[derive(Debug, async_graphql::SimpleObject)]
 #[graphql(name = "MovieOperationResult")]
@@ -449,6 +606,26 @@ pub struct MovieOperationResult {
     pub success: bool,
     #[graphql(name = "Movie")]
     pub movie: Option<Movie>,
+    #[graphql(name = "Error")]
+    pub error: Option<String>,
+}
+
+/// Result of importing a movie collection
+#[derive(Debug, async_graphql::SimpleObject)]
+#[graphql(name = "MovieCollectionOperationResult")]
+pub struct MovieCollectionOperationResult {
+    #[graphql(name = "Success")]
+    pub success: bool,
+    #[graphql(name = "CollectionId")]
+    pub collection_id: Option<i32>,
+    #[graphql(name = "CollectionName")]
+    pub collection_name: Option<String>,
+    #[graphql(name = "ImportedCount")]
+    pub imported_count: i32,
+    #[graphql(name = "ExistingCount")]
+    pub existing_count: i32,
+    #[graphql(name = "WantedUpdatedCount")]
+    pub wanted_updated_count: i32,
     #[graphql(name = "Error")]
     pub error: Option<String>,
 }
@@ -519,6 +696,71 @@ impl MovieMetadataMutations {
             Err(e) => Ok(MovieOperationResult {
                 success: false,
                 movie: None,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    /// Add/import all movies from a TMDB collection into a library.
+    #[graphql(name = "AddMovieCollection")]
+    async fn add_movie_collection(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "LibraryId")] library_id: String,
+        #[graphql(name = "Input")] input: AddMovieCollectionInput,
+    ) -> async_graphql::Result<MovieCollectionOperationResult> {
+        use crate::graphql::auth::AuthExt;
+        use crate::services::metadata::providers::{
+            AddMovieCollectionOptions, MetadataProvider, MetadataService,
+        };
+
+        let user = ctx.auth_user()?;
+        let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
+
+        let lib_id = uuid::Uuid::parse_str(&library_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid library ID: {}", e)))?;
+        let user_id = uuid::Uuid::parse_str(&user.user_id)
+            .map_err(|e| async_graphql::Error::new(format!("Invalid user ID: {}", e)))?;
+
+        if !metadata.has_tmdb().await {
+            return Ok(MovieCollectionOperationResult {
+                success: false,
+                collection_id: None,
+                collection_name: None,
+                imported_count: 0,
+                existing_count: 0,
+                wanted_updated_count: 0,
+                error: Some("TMDB API key not configured".to_string()),
+            });
+        }
+
+        let wanted_missing = input.wanted_missing.unwrap_or(true);
+        match metadata
+            .add_movie_collection_from_provider(AddMovieCollectionOptions {
+                provider: MetadataProvider::Tmdb,
+                collection_id: input.collection_id,
+                library_id: lib_id,
+                user_id,
+                wanted_missing,
+            })
+            .await
+        {
+            Ok(summary) => Ok(MovieCollectionOperationResult {
+                success: true,
+                collection_id: Some(summary.collection_id),
+                collection_name: Some(summary.collection_name),
+                imported_count: summary.imported_count,
+                existing_count: summary.existing_count,
+                wanted_updated_count: summary.wanted_updated_count,
+                error: None,
+            }),
+            Err(e) => Ok(MovieCollectionOperationResult {
+                success: false,
+                collection_id: Some(input.collection_id),
+                collection_name: None,
+                imported_count: 0,
+                existing_count: 0,
+                wanted_updated_count: 0,
                 error: Some(e.to_string()),
             }),
         }

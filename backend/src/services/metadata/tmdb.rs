@@ -33,6 +33,25 @@ pub struct TmdbMovieSearchResult {
     pub total_results: i32,
 }
 
+/// Collection search result from TMDB
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TmdbCollectionSearchResult {
+    pub page: i32,
+    pub results: Vec<TmdbCollectionSummary>,
+    pub total_pages: i32,
+    pub total_results: i32,
+}
+
+/// Collection summary returned by TMDB search endpoint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TmdbCollectionSummary {
+    pub id: i32,
+    pub name: String,
+    pub overview: Option<String>,
+    pub poster_path: Option<String>,
+    pub backdrop_path: Option<String>,
+}
+
 /// Movie details from TMDB
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TmdbMovie {
@@ -285,6 +304,72 @@ impl TmdbClient {
         .await?;
 
         debug!(count = result.len(), "TMDB search returned results");
+        Ok(result)
+    }
+
+    /// Search for collections by name
+    pub async fn search_collections(&self, query: &str) -> Result<Vec<TmdbCollectionSummary>> {
+        if !self.has_api_key() {
+            anyhow::bail!("TMDB API key not configured");
+        }
+
+        info!("Searching TMDB collections for query='{}'", query);
+
+        let url = format!("{}/search/collection", self.base_url);
+        let client = self.client.clone();
+        let api_key = self.api_key.clone();
+        let query_owned = query.to_string();
+        let retry_config = self.retry_config.clone();
+
+        let result = retry_async(
+            || {
+                let url = url.clone();
+                let client = client.clone();
+                let q = query_owned.clone();
+                let key = api_key.clone();
+                async move {
+                    let q_for_log = q.clone();
+                    let query_params: Vec<(&str, String)> = vec![
+                        ("api_key", key),
+                        ("query", q),
+                        ("include_adult", "false".to_string()),
+                    ];
+
+                    let response = client.get_with_query(&url, &query_params).await?;
+
+                    if response.status().as_u16() == 429 {
+                        warn!(
+                            "TMDB rate limit hit (HTTP 429) while searching collections for query='{}'; retrying",
+                            q_for_log
+                        );
+                        anyhow::bail!("Rate limited (429)");
+                    }
+
+                    if response.status().as_u16() == 401 {
+                        anyhow::bail!("TMDB API key is invalid");
+                    }
+
+                    if !response.status().is_success() {
+                        anyhow::bail!(
+                            "TMDB collection search failed with status: {}",
+                            response.status()
+                        );
+                    }
+
+                    let results: TmdbCollectionSearchResult = response
+                        .json()
+                        .await
+                        .context("Failed to parse TMDB collection search results")?;
+
+                    Ok(results.results)
+                }
+            },
+            &retry_config,
+            "tmdb_search_collections",
+        )
+        .await?;
+
+        debug!(count = result.len(), "TMDB collection search returned results");
         Ok(result)
     }
 

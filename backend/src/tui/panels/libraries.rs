@@ -1,14 +1,15 @@
-//! Libraries panel - displays library statistics
-//! DB/entity access commented out; panel shows empty for now.
+//! Libraries panel - displays library statistics.
 
 use std::sync::Arc;
 
+use async_graphql::{Request, Variables};
 use parking_lot::RwLock;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
+use crate::services::graphql::LibrarianSchema;
 use crate::tui::input::Action;
 use crate::tui::panels::Panel;
 use crate::tui::theme::{PanelKind, Theme};
@@ -32,21 +33,129 @@ pub fn create_shared_libraries() -> SharedLibraries {
     Arc::new(RwLock::new(Vec::new()))
 }
 
-/// Spawn a background task to update library stats (disabled: no DB access)
-#[allow(dead_code)]
-pub fn spawn_libraries_updater(_pool: crate::db::DbPool, _libraries: SharedLibraries) {
-    // Legacy: DB/entity access commented out; panel uses empty list.
-    // tokio::spawn(async move {
-    //     loop {
-    //         let stats = fetch_library_stats(&pool).await;
-    //         *libraries.write() = stats;
-    //         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-    //     }
-    // });
+/// Spawn a background task to update library stats.
+pub fn spawn_libraries_updater(schema: LibrarianSchema, libraries: SharedLibraries) {
+    tokio::spawn(async move {
+        loop {
+            let stats = fetch_library_stats(&schema).await;
+            *libraries.write() = stats;
+            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+        }
+    });
 }
 
-// /// Fetch library stats from database
-// async fn fetch_library_stats(pool: &crate::db::DbPool) -> Vec<LibraryStats> { ... }
+/// Fetch library stats from GraphQL entity queries.
+async fn fetch_library_stats(schema: &LibrarianSchema) -> Vec<LibraryStats> {
+    let query = r#"
+        query TuiLibraries {
+            Libraries(Page: { Limit: 1000, Offset: 0 }, OrderBy: [{ Name: Asc }]) {
+                Edges {
+                    Node {
+                        Name
+                        Path
+                        LibraryType
+                        Movies {
+                            PageInfo { TotalCount }
+                        }
+                        MoviesMissing: Movies(Where: { HasFile: { Eq: false } }) {
+                            PageInfo { TotalCount }
+                        }
+                        Shows {
+                            PageInfo { TotalCount }
+                        }
+                        Albums {
+                            PageInfo { TotalCount }
+                        }
+                        Audiobooks {
+                            PageInfo { TotalCount }
+                        }
+                    }
+                }
+            }
+        }
+    "#;
+
+    let response = schema
+        .execute(Request::new(query).variables(Variables::from_json(serde_json::json!({}))))
+        .await;
+    if !response.errors.is_empty() {
+        return Vec::new();
+    }
+
+    let data = match serde_json::to_value(response.data) {
+        Ok(data) => data,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut out = Vec::new();
+    let edges = data
+        .get("Libraries")
+        .and_then(|v| v.get("Edges"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    for edge in edges {
+        let node = match edge.get("Node") {
+            Some(node) => node,
+            None => continue,
+        };
+
+        let library_type = node
+            .get("LibraryType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("other")
+            .to_string();
+
+        let movies = total_count(node, "Movies");
+        let shows = total_count(node, "Shows");
+        let albums = total_count(node, "Albums");
+        let audiobooks = total_count(node, "Audiobooks");
+        let missing_movies = total_count(node, "MoviesMissing");
+
+        let item_count = match library_type.as_str() {
+            "movies" => movies,
+            "tv" => shows,
+            "music" => albums,
+            "audiobooks" => audiobooks,
+            _ => movies + shows + albums + audiobooks,
+        };
+
+        let missing_count = if library_type == "movies" {
+            missing_movies
+        } else {
+            0
+        };
+
+        out.push(LibraryStats {
+            name: node
+                .get("Name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            path: node
+                .get("Path")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            library_type,
+            item_count,
+            missing_count,
+            // Not exposed as a direct aggregate field on Library in current GraphQL schema.
+            total_size_bytes: 0,
+        });
+    }
+
+    out
+}
+
+fn total_count(node: &serde_json::Value, field: &str) -> i64 {
+    node.get(field)
+        .and_then(|v| v.get("PageInfo"))
+        .and_then(|v| v.get("TotalCount"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0)
+}
 
 /// Get icon for library type
 fn library_icon(library_type: &str) -> &'static str {
@@ -140,12 +249,11 @@ impl Panel for LibrariesPanel {
             return;
         }
 
-        // Calculate column widths
         let content_width = inner.width as usize;
         let icon_width = 2;
-        let count_width = 12; // "123 movies"
-        let missing_width = 9; // "45 miss"
-        let size_width = 10; // "14.8 GB"
+        let count_width = 12;
+        let missing_width = 9;
+        let size_width = 10;
         let name_width = content_width
             .saturating_sub(icon_width + count_width + missing_width + size_width + 4)
             .min(20);
@@ -258,16 +366,13 @@ fn format_size(bytes: i64) -> String {
     const KB: i64 = 1024;
     const MB: i64 = KB * 1024;
     const GB: i64 = MB * 1024;
-    const TB: i64 = GB * 1024;
 
-    if bytes >= TB {
-        format!("{:.1} TB", bytes as f64 / TB as f64)
-    } else if bytes >= GB {
+    if bytes >= GB {
         format!("{:.1} GB", bytes as f64 / GB as f64)
     } else if bytes >= MB {
-        format!("{:.0} MB", bytes as f64 / MB as f64)
+        format!("{:.1} MB", bytes as f64 / MB as f64)
     } else if bytes >= KB {
-        format!("{:.0} KB", bytes as f64 / KB as f64)
+        format!("{:.1} KB", bytes as f64 / KB as f64)
     } else {
         format!("{} B", bytes)
     }

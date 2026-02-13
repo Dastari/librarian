@@ -1800,9 +1800,13 @@ fn generate_graphql_operations(input: &DeriveInput) -> syn::Result<proc_macro2::
     let single_query_name = &struct_name_str;
     let create_mutation_name = format!("Create{}", struct_name);
     let update_mutation_name = format!("Update{}", struct_name);
+    let update_many_mutation_name = format!("Update{}", plural_name);
     let delete_mutation_name = format!("Delete{}", struct_name);
     let delete_many_mutation_name = format!("Delete{}", plural_name);
     let subscription_name = format!("{}Changed", struct_name);
+    let update_many_result_type =
+        syn::Ident::new(&format!("Update{}Result", plural_name), struct_name.span());
+    let update_many_result_type_str = format!("Update{}Result", plural_name);
     let delete_many_result_type =
         syn::Ident::new(&format!("Delete{}Result", plural_name), struct_name.span());
     let delete_many_result_type_str = format!("Delete{}Result", plural_name);
@@ -2207,6 +2211,24 @@ fn generate_graphql_operations(input: &DeriveInput) -> syn::Result<proc_macro2::
             }
         }
 
+        /// Result of bulk update by Where filter
+        #[derive(Debug, Clone, async_graphql::SimpleObject)]
+        #[graphql(name = #update_many_result_type_str)]
+        pub struct #update_many_result_type {
+            pub success: bool,
+            pub error: Option<String>,
+            pub affected_count: i64,
+        }
+
+        impl #update_many_result_type {
+            pub fn ok(affected_count: i64) -> Self {
+                Self { success: true, error: None, affected_count }
+            }
+            pub fn err(msg: impl Into<String>) -> Self {
+                Self { success: false, error: Some(msg.into()), affected_count: 0 }
+            }
+        }
+
         // ============================================================================
         // Query Struct
         // ============================================================================
@@ -2485,6 +2507,87 @@ fn generate_graphql_operations(input: &DeriveInput) -> syn::Result<proc_macro2::
                     },
                     Ok(_) => Ok(#result_type::err("Entity not found")),
                     Err(e) => Ok(#result_type::err(e.to_string())),
+                }
+            }
+
+            /// Update multiple #plural_name matching the given Where filter
+            #[graphql(name = #update_many_mutation_name)]
+            async fn update_many(
+                &self,
+                ctx: &async_graphql::Context<'_>,
+                #[graphql(name = "Where")] where_input: Option<#where_input>,
+                #[graphql(name = "Input")] input: #update_input,
+            ) -> async_graphql::Result<#update_many_result_type> {
+                use crate::graphql::auth::AuthExt;
+                use crate::graphql::orm::{DatabaseFilter, EntityQuery};
+
+                let _user = ctx.auth_user()?;
+                let db = ctx.data_unchecked::<crate::db::Database>();
+                let pool = db;
+
+                let filter = match where_input {
+                    Some(ref f) if !f.is_empty() => f,
+                    _ => return Ok(#update_many_result_type::err("Where filter is required for bulk update and must not be empty")),
+                };
+
+                // Build dynamic UPDATE SQL based on provided fields
+                let mut set_clauses: Vec<String> = Vec::new();
+                let mut values: Vec<crate::graphql::orm::SqlValue> = Vec::new();
+
+                #(#update_field_checks)*
+
+                // Update timestamp column when this entity defines one
+                if #has_updated_at_column {
+                    set_clauses.push("updated_at = datetime('now')".to_string());
+                }
+
+                if set_clauses.is_empty() {
+                    return Ok(#update_many_result_type::err("No fields to update"));
+                }
+
+                // Reuse EntityQuery WHERE SQL construction and bind values.
+                let query = EntityQuery::<#struct_name>::new().filter(filter);
+                let (delete_sql, filter_values) = query.build_delete_sql();
+                let where_clause = match delete_sql.split_once(" WHERE ") {
+                    Some((_, clause)) => {
+                        // EntityQuery filter SQL uses indexed SQLite placeholders (?1, ?2, ...).
+                        // For bulk UPDATE, we prepend SET bind values first, so re-indexed placeholders
+                        // can point at the wrong values (e.g. ?1 resolving to first SET value).
+                        // Normalize indexed placeholders back to positional '?' so bind order is
+                        // strictly values (SET...) then filter_values (WHERE...).
+                        let mut normalized = String::with_capacity(clause.len());
+                        let chars: Vec<char> = clause.chars().collect();
+                        let mut i = 0usize;
+                        while i < chars.len() {
+                            if chars[i] == '?' {
+                                normalized.push('?');
+                                i += 1;
+                                while i < chars.len() && chars[i].is_ascii_digit() {
+                                    i += 1;
+                                }
+                            } else {
+                                normalized.push(chars[i]);
+                                i += 1;
+                            }
+                        }
+                        normalized
+                    }
+                    None => return Ok(#update_many_result_type::err("Where filter produced empty SQL")),
+                };
+
+                let sql = format!(
+                    "UPDATE {} SET {} WHERE {}",
+                    #table_name,
+                    set_clauses.join(", "),
+                    where_clause
+                );
+
+                values.extend(filter_values);
+                let result = crate::graphql::orm::execute_with_binds(&sql, &values, pool).await;
+
+                match result {
+                    Ok(r) => Ok(#update_many_result_type::ok(r.rows_affected() as i64)),
+                    Err(e) => Ok(#update_many_result_type::err(e.to_string())),
                 }
             }
 

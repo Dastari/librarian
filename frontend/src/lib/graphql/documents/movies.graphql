@@ -16,6 +16,17 @@ query SearchMovies($Query: String!, $Year: Int) {
   }
 }
 
+query SearchMovieCollections($Query: String!) {
+  SearchMovieCollections(Query: $Query) {
+    Provider
+    CollectionId
+    Name
+    Overview
+    PosterUrl
+    BackdropUrl
+  }
+}
+
 mutation AddMovie($LibraryId: String!, $Input: AddMovieInput!) {
   AddMovie(LibraryId: $LibraryId, Input: $Input) {
     Success
@@ -32,6 +43,18 @@ mutation AddMovie($LibraryId: String!, $Input: AddMovieInput!) {
       Monitored
       MediaFileId
     }
+    Error
+  }
+}
+
+mutation AddMovieCollection($LibraryId: String!, $Input: AddMovieCollectionInput!) {
+  AddMovieCollection(LibraryId: $LibraryId, Input: $Input) {
+    Success
+    CollectionId
+    CollectionName
+    ImportedCount
+    ExistingCount
+    WantedUpdatedCount
     Error
   }
 }
@@ -76,10 +99,22 @@ query MovieDetailRoute($Id: String!) {
     ReleaseDate
     ProductionCountries
     SpokenLanguages
+    Wanted
     MediaFile {
       Id
       Size
       Duration
+    }
+  }
+}
+
+mutation MovieDetailSetWanted($Id: String!, $Wanted: Boolean!) {
+  UpdateMovie(Id: $Id, Input: { Wanted: $Wanted }) {
+    Success
+    Error
+    Movie {
+      Id
+      Wanted
     }
   }
 }

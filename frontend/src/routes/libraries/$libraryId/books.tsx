@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { useDisclosure } from '@heroui/modal'
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
 import { Button } from '@heroui/button'
@@ -24,7 +24,7 @@ const DELETE_AUDIOBOOK = gql`
 function AudiobooksPage() {
   const { library, loading } = useLibraryContext()
   const { isOpen, onOpen, onClose } = useDisclosure()
-  const [refreshKey, setRefreshKey] = useState(0)
+  const refreshAudiobooksRef = useRef<(() => void) | null>(null)
 
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null)
 
@@ -32,9 +32,13 @@ function AudiobooksPage() {
     DeleteAudiobook: { Success: boolean; Error?: string }
   }>(DELETE_AUDIOBOOK)
 
+  const handleAudiobooksRefreshReady = useCallback((refreshFn: () => void) => {
+    refreshAudiobooksRef.current = refreshFn
+  }, [])
+
   const handleAudiobookAdded = useCallback(() => {
     onClose()
-    setRefreshKey((k) => k + 1)
+    refreshAudiobooksRef.current?.()
   }, [onClose])
 
   const handleDeleteAudiobook = useCallback((audiobookId: string, title: string) => {
@@ -53,7 +57,7 @@ function AudiobooksPage() {
           description: `${deleteTarget.title} has been removed from the library.`,
           color: 'success',
         })
-        setRefreshKey((k) => k + 1)
+        refreshAudiobooksRef.current?.()
       } else {
         addToast({
           title: 'Delete failed',
@@ -76,11 +80,11 @@ function AudiobooksPage() {
   return (
     <>
       <LibraryAudiobooksTab
-        key={refreshKey}
         libraryId={library.Id}
         loading={loading}
         onAddAudiobook={onOpen}
         onDeleteAudiobook={handleDeleteAudiobook}
+        onRefreshReady={handleAudiobooksRefreshReady}
       />
       <AddAudiobookModal
         isOpen={isOpen}

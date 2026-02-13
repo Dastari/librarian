@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { useDisclosure } from '@heroui/modal'
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
 import { Button } from '@heroui/button'
@@ -24,7 +24,7 @@ const DELETE_ALBUM = gql`
 function AlbumsPage() {
   const { library, loading } = useLibraryContext()
   const { isOpen, onOpen, onClose } = useDisclosure()
-  const [refreshKey, setRefreshKey] = useState(0)
+  const refreshAlbumsRef = useRef<(() => void) | null>(null)
 
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
 
@@ -32,9 +32,13 @@ function AlbumsPage() {
     DeleteAlbum: { Success: boolean; Error?: string }
   }>(DELETE_ALBUM)
 
+  const handleAlbumsRefreshReady = useCallback((refreshFn: () => void) => {
+    refreshAlbumsRef.current = refreshFn
+  }, [])
+
   const handleAlbumAdded = useCallback(() => {
     onClose()
-    setRefreshKey((k) => k + 1)
+    refreshAlbumsRef.current?.()
   }, [onClose])
 
   const handleDeleteAlbum = useCallback((albumId: string, albumName: string) => {
@@ -53,7 +57,7 @@ function AlbumsPage() {
           description: `${deleteTarget.name} has been removed from the library.`,
           color: 'success',
         })
-        setRefreshKey((k) => k + 1)
+        refreshAlbumsRef.current?.()
       } else {
         addToast({
           title: 'Delete failed',
@@ -76,11 +80,11 @@ function AlbumsPage() {
   return (
     <>
       <LibraryAlbumsTab
-        key={refreshKey}
         libraryId={library.Id}
         loading={loading}
         onAddAlbum={onOpen}
         onDeleteAlbum={handleDeleteAlbum}
+        onRefreshReady={handleAlbumsRefreshReady}
       />
       <AddAlbumModal
         isOpen={isOpen}

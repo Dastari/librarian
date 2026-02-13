@@ -9,12 +9,14 @@ use sha2::{Digest, Sha256};
 use tokio::fs;
 use tokio::net::lookup_host;
 use tokio::process::Command;
+use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
 use crate::db::Database;
 use crate::services::manager::ServicesManager;
 
 const CONFIG_KEY_PREFIX: &str = "network_mount.";
+const NETWORK_COMMAND_TIMEOUT_SECS: u64 = 8;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredNetworkPathConfig {
@@ -312,11 +314,13 @@ async fn find_config_for_target(
 }
 
 async fn run_command(cmd: &str, args: &[String]) -> Result<String> {
-    let out = Command::new(cmd)
-        .args(args)
-        .output()
-        .await
-        .with_context(|| format!("Failed to execute '{}'", cmd))?;
+    let out = timeout(
+        Duration::from_secs(NETWORK_COMMAND_TIMEOUT_SECS),
+        Command::new(cmd).args(args).output(),
+    )
+    .await
+    .with_context(|| format!("Command '{}' timed out", cmd))?
+    .with_context(|| format!("Failed to execute '{}'", cmd))?;
 
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).to_string())

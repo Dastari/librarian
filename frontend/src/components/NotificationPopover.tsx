@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Popover, PopoverTrigger, PopoverContent } from "@heroui/popover";
 import { Button } from "@heroui/button";
@@ -14,17 +14,22 @@ import {
 } from "@tabler/icons-react";
 import {
   NotificationsDocument,
+  NotificationChangedDocument,
   UpdateNotificationDocument,
   DeleteNotificationDocument,
   SortDirection,
+  type NotificationsQuery,
   type UpdateNotificationMutation,
   type UpdateNotificationMutationVariables,
   type DeleteNotificationMutation,
   type DeleteNotificationMutationVariables,
 } from "../lib/graphql/generated/graphql";
-import { apolloClient, useMutation } from "../lib/graphql/client";
+import {
+  useMutation,
+  useQuery,
+  useSubscription,
+} from "../lib/graphql/client";
 import { NotificationDetailModal } from "./NotificationDetailModal";
-import type { NotificationsQuery } from "../lib/graphql/generated/graphql";
 
 interface NotificationPopoverProps {
   trigger: ReactNode;
@@ -125,9 +130,6 @@ const formatTimeAgo = (dateString: string): string => {
 
 export function NotificationPopover({ trigger }: NotificationPopoverProps) {
   const navigate = useNavigate();
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isOpen, setIsOpen] = useState(false);
   const [selectedNotification, setSelectedNotification] =
     useState<NotificationItem | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
@@ -140,43 +142,38 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
     DeleteNotificationMutationVariables
   >(DeleteNotificationDocument);
 
-  useEffect(() => {
-    if (!isOpen) return;
+  const notificationsQuery = useQuery(NotificationsDocument, {
+    variables: {
+      Where: UNREAD_WHERE,
+      OrderBy: RECENT_ORDER,
+      Page: RECENT_PAGE,
+    },
+    fetchPolicy: "cache-and-network",
+  });
 
-    setIsLoading(true);
-    apolloClient
-      .query({
-        query: NotificationsDocument,
-        variables: {
-          Where: UNREAD_WHERE,
-          OrderBy: RECENT_ORDER,
-          Page: RECENT_PAGE,
-        },
-        fetchPolicy: "network-only",
-      })
-      .then((result) => {
-        if (result.data?.Notifications?.Edges) {
-          const list = result.data.Notifications.Edges.map((e) =>
-            nodeToNotification(e.Node),
-          );
-          setNotifications(list);
-        }
-      })
-      .finally(() => setIsLoading(false));
-  }, [isOpen]);
+  useSubscription(NotificationChangedDocument, {
+    variables: {},
+    onData: () => {
+      void notificationsQuery.refetch();
+    },
+  });
+
+  const notifications = useMemo(() => {
+    const edges =
+      notificationsQuery.data?.Notifications?.Edges ??
+      notificationsQuery.previousData?.Notifications?.Edges ??
+      [];
+
+    return edges
+      .map((edge) => edge?.Node)
+      .filter((node): node is NotificationNode => Boolean(node))
+      .map((node) => nodeToNotification(node));
+  }, [notificationsQuery.data, notificationsQuery.previousData]);
+  const isLoading = notificationsQuery.loading;
 
   const handleMarkRead = async (id: string) => {
-    const now = new Date().toISOString();
-    await updateNotification({
-      variables: {
-        Id: id,
-        Input: { ReadAt: now },
-      },
-    });
-
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, readAt: now } : n)),
-    );
+    await updateNotification({ variables: { Id: id, Input: { ReadAt: new Date().toISOString() } } });
+    void notificationsQuery.refetch();
   };
 
   const handleMarkAllRead = async () => {
@@ -189,7 +186,7 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
         },
       });
     }
-    setNotifications((prev) => prev.map((n) => ({ ...n, readAt: now })));
+    void notificationsQuery.refetch();
   };
 
   const handleResolve = async (
@@ -207,53 +204,36 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
         },
       },
     });
-
-    setNotifications((prev) =>
-      prev.map((n) =>
-        n.id === id
-          ? {
-              ...n,
-              resolvedAt: now,
-              resolution,
-              readAt: n.readAt ?? now,
-            }
-          : n,
-      ),
-    );
+    void notificationsQuery.refetch();
   };
 
   const handleDelete = async (id: string) => {
     await deleteNotification({ variables: { Id: id } });
-
-    setNotifications((prev) => prev.filter((n) => n.id !== id));
+    void notificationsQuery.refetch();
   };
 
   const handleNotificationClick = (notification: NotificationItem) => {
     if (!notification.readAt) {
-      handleMarkRead(notification.id);
+      void handleMarkRead(notification.id);
     }
-    setIsOpen(false);
     setSelectedNotification(notification);
     setIsDetailOpen(true);
   };
 
   const handleViewAll = () => {
-    setIsOpen(false);
     navigate({ to: "/notifications" });
   };
 
-  const unreadCount = notifications.filter((n) => !n.readAt).length;
+  const unreadCount = notifications.length;
 
   return (
     <>
       <Popover
-        isOpen={isOpen}
-        onOpenChange={setIsOpen}
         placement="bottom-end"
         offset={10}
       >
         <PopoverTrigger>
-          <span className="inline-flex">{trigger}</span>
+          {trigger}
         </PopoverTrigger>
         <PopoverContent className="w-80 p-0">
           <div className="flex flex-col">

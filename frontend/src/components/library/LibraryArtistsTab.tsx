@@ -122,7 +122,8 @@ export function LibraryArtistsTab({
   const [artistsLoading, setArtistsLoading] = useState(true);
 
   // Check if we should skip queries (loading or template ID)
-  const shouldSkipQueries = parentLoading || libraryId.startsWith("template");
+  const shouldSkipQueries =
+    parentLoading || !libraryId || libraryId.startsWith("template");
 
   useEffect(() => {
     if (shouldSkipQueries) return;

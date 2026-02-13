@@ -1,57 +1,73 @@
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Button } from "@heroui/button";
 import { Badge } from "@heroui/badge";
 import { Tooltip } from "@heroui/tooltip";
 import { Link } from "@tanstack/react-router";
 import { IconDownload } from "@tabler/icons-react";
+import { ActiveDownloadCountDocument } from "../lib/graphql/generated/graphql";
+import { gql, useQuery, useSubscription } from "../lib/graphql/client";
 import {
-  ActiveDownloadCountDocument,
-  TorrentChangedDocument,
-} from "../lib/graphql/generated/graphql";
-import { apolloClient } from "../lib/graphql/client";
+  TORRENT_ADDED_SUBSCRIPTION,
+  TORRENT_COMPLETED_SUBSCRIPTION,
+  TORRENT_PROGRESS_SUBSCRIPTION,
+  TORRENT_REMOVED_SUBSCRIPTION,
+} from "../lib/graphql/subscriptions";
 import { ErrorBoundary } from "./ErrorBoundary";
 
-const DOWNLOADING_WHERE = { State: { Eq: "downloading" } } as const;
-const PAGE_ONE = { Limit: 1, Offset: 0 } as const;
+const PROGRESS_REFETCH_DEBOUNCE_MS = 500;
 
 function useActiveDownloadCount() {
-  const [count, setCount] = useState(0);
+  const { data, previousData, refetch } = useQuery(ActiveDownloadCountDocument, {
+    fetchPolicy: "cache-and-network",
+  });
 
-  const fetchCount = useCallback(async () => {
-    try {
-      const { data } = await apolloClient.query({
-        query: ActiveDownloadCountDocument,
-        variables: {
-          Where: DOWNLOADING_WHERE,
-          Page: PAGE_ONE,
-        },
-        fetchPolicy: "network-only",
-      });
-      const total = data?.Torrents?.PageInfo?.TotalCount;
-      setCount(total ?? 0);
-    } catch {
-      setCount(0);
+  const refetchDebounceTimerRef = useRef<number | null>(null);
+
+  const scheduleRefetch = useCallback(() => {
+    if (refetchDebounceTimerRef.current !== null) {
+      window.clearTimeout(refetchDebounceTimerRef.current);
     }
-  }, []);
+    refetchDebounceTimerRef.current = window.setTimeout(() => {
+      refetchDebounceTimerRef.current = null;
+      void refetch();
+    }, PROGRESS_REFETCH_DEBOUNCE_MS);
+  }, [refetch]);
 
-  useEffect(() => {
-    fetchCount();
-  }, [fetchCount]);
+  useEffect(
+    () => () => {
+      if (refetchDebounceTimerRef.current !== null) {
+        window.clearTimeout(refetchDebounceTimerRef.current);
+      }
+    },
+    [],
+  );
 
-  useEffect(() => {
-    let sub: { unsubscribe: () => void } | null = null;
-    try {
-      sub = subscriptionStream(TorrentChangedDocument, {}).subscribe({
-        next: () => fetchCount(),
-        error: () => {},
-      });
-    } catch {
-      // subscription setup failed (e.g. client not ready)
-    }
-    return () => sub?.unsubscribe?.();
-  }, [fetchCount]);
+  useSubscription(gql(TORRENT_PROGRESS_SUBSCRIPTION), {
+    onData: () => {
+      scheduleRefetch();
+    },
+  });
+  useSubscription(gql(TORRENT_ADDED_SUBSCRIPTION), {
+    onData: () => {
+      void refetch();
+    },
+  });
+  useSubscription(gql(TORRENT_REMOVED_SUBSCRIPTION), {
+    onData: () => {
+      void refetch();
+    },
+  });
+  useSubscription(gql(TORRENT_COMPLETED_SUBSCRIPTION), {
+    onData: () => {
+      void refetch();
+    },
+  });
 
-  return count;
+  return (
+    data?.ActiveDownloadCount ??
+    previousData?.ActiveDownloadCount ??
+    0
+  );
 }
 
 function DownloadIndicatorInner() {
@@ -105,7 +121,7 @@ function DownloadIndicatorFallback() {
 
 /**
  * Download icon with active-download badge, links to /downloads.
- * Uses ActiveDownloadCount query + TorrentChanged subscription.
+ * Uses ActiveDownloadCount query + torrent event subscriptions.
  * Only render when the user is authenticated.
  * Wrapped in ErrorBoundary so a failure here does not take down the Navbar.
  */

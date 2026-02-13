@@ -24,13 +24,11 @@ import {
 
 export interface AudiobookCardProps {
   audiobook: {
-    id: string;
-    title: string;
-    coverUrl: string | null;
-    downloadedChapterCount: number | null;
-    chapterCount: number | null;
-    durationSecs: number | null;
-    seriesName: string | null;
+    Id: string;
+    Title: string;
+    CoverUrl?: string | null;
+    ChapterCount?: number | null;
+    TotalDurationSecs?: number | null;
   };
   authorName?: string;
   onDelete?: () => void;
@@ -65,18 +63,18 @@ export function AudiobookCard({
         {/* Clickable overlay for navigation - covers the entire card */}
         <Link
           to="/audiobooks/$audiobookId"
-          params={{ audiobookId: audiobook.id }}
+          params={{ audiobookId: audiobook.Id }}
           className="absolute inset-0 z-20 w-full h-full cursor-pointer bg-transparent border-none outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-          aria-label={`View ${audiobook.title}`}
+          aria-label={`View ${audiobook.Title}`}
         />
 
         {/* Background artwork with gradient overlay */}
         <div className="absolute inset-0 w-full h-full">
-          {audiobook.coverUrl ? (
+          {audiobook.CoverUrl ? (
             <>
               <Image
-                src={audiobook.coverUrl}
-                alt={audiobook.title}
+                src={audiobook.CoverUrl}
+                alt={audiobook.Title}
                 loading="lazy"
                 classNames={{
                   wrapper: "absolute inset-0 w-full h-full !max-w-full",
@@ -101,8 +99,8 @@ export function AudiobookCard({
         {/* Progress badge - top left */}
         <div className="absolute top-2 left-2 z-10 pointer-events-none">
           {(() => {
-            const downloaded = audiobook.downloadedChapterCount ?? 0;
-            const total = audiobook.chapterCount ?? 0;
+            const downloaded = 0;
+            const total = audiobook.ChapterCount ?? 0;
             const isComplete = total > 0 && downloaded >= total;
             return (
               <div
@@ -120,11 +118,11 @@ export function AudiobookCard({
         </div>
 
         {/* Duration badge - top right */}
-        {audiobook.durationSecs && audiobook.durationSecs > 0 && (
+        {audiobook.TotalDurationSecs && audiobook.TotalDurationSecs > 0 && (
           <div className="absolute top-2 right-2 z-10 pointer-events-none">
             <div className="px-2 py-1 rounded-md bg-black/50 backdrop-blur-sm text-xs font-medium text-white/90">
               <IconClock size={12} className="inline mr-1" />
-              {formatDuration(audiobook.durationSecs)}
+              {formatDuration(audiobook.TotalDurationSecs)}
             </div>
           </div>
         )}
@@ -132,16 +130,10 @@ export function AudiobookCard({
         {/* Bottom content */}
         <div className="absolute bottom-0 left-0 right-0 z-10 p-3 pointer-events-none bg-black/50 backdrop-blur-sm h-20 flex flex-col">
           <h3 className="text-sm font-bold text-white mb-0.5 line-clamp-2 drop-shadow-lg grow">
-            {audiobook.title}
+            {audiobook.Title}
           </h3>
           <div className="flex items-center gap-1.5 text-xs text-white/70">
             {authorName && <span className="truncate">{authorName}</span>}
-            {audiobook.seriesName && (
-              <>
-                <span>•</span>
-                <span className="truncate">{audiobook.seriesName}</span>
-              </>
-            )}
           </div>
         </div>
 
@@ -149,9 +141,9 @@ export function AudiobookCard({
         <div className="absolute inset-0 z-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
           <Link
             to="/audiobooks/$audiobookId"
-            params={{ audiobookId: audiobook.id }}
+            params={{ audiobookId: audiobook.Id }}
             className="pointer-events-auto w-14 h-14 rounded-full bg-primary/90 text-white flex items-center justify-center shadow-lg hover:scale-110 transition-transform"
-            aria-label={`Open ${audiobook.title} to play`}
+            aria-label={`Open ${audiobook.Title} to play`}
           >
             <IconPlayerPlay size={28} className="ml-1" />
           </Link>

@@ -46,6 +46,8 @@ import {
   IconSearch,
   IconTrash,
   IconInfoCircle,
+  IconCheck,
+  IconX,
 } from "@tabler/icons-react";
 import {
   PlayPauseIndicator,
@@ -59,6 +61,7 @@ import {
   MeDocument,
   RefreshShowRouteDocument,
   ShowDetailRouteDocument,
+  ShowDetailSetEpisodeWantedDocument,
   type ShowDetailRouteQuery,
   ShowPlaybackProgressByMediaDocument,
   type ShowPlaybackProgressByMediaQuery,
@@ -107,6 +110,7 @@ interface Episode {
   WatchProgress: number | null;
   WatchPosition: number | null;
   IsWatched: boolean;
+  Wanted: boolean;
   DownloadProgress: number | null;
   CreatedAt: string;
   UpdatedAt: string;
@@ -301,6 +305,7 @@ const episodeColumns: DataTableColumn<Episode>[] = [
       <MediaItemStatusChip
         mediaFileId={ep.MediaFileId}
         downloadProgress={ep.DownloadProgress}
+        wanted={ep.Wanted}
       />
     ),
   },
@@ -340,7 +345,8 @@ function EpisodeTable({
   const hasFile = (ep: Episode) => !!ep.MediaFileId;
   const isDownloading = (ep: Episode) =>
     !ep.MediaFileId && ep.DownloadProgress != null && ep.DownloadProgress > 0;
-  const isWanted = (ep: Episode) => !ep.MediaFileId && !isDownloading(ep);
+  const isWanted = (ep: Episode) =>
+    !ep.MediaFileId && ep.Wanted && !isDownloading(ep);
 
   const rowActions: RowAction<Episode>[] = [
     {
@@ -497,6 +503,7 @@ function ShowDetailPage() {
         WatchProgress: null,
         WatchPosition: null,
         IsWatched: false,
+        Wanted: ep.Wanted,
         DownloadProgress: null,
         CreatedAt: ep.CreatedAt,
         UpdatedAt: ep.UpdatedAt,
@@ -582,6 +589,7 @@ function ShowDetailPage() {
   const [refreshShow, { loading: refreshing }] = useMutation(
     RefreshShowRouteDocument,
   );
+  const [setEpisodesWanted] = useMutation(ShowDetailSetEpisodeWantedDocument);
   const [deleteShow, { loading: deleting }] = useMutation(
     DeleteShowRouteDocument,
   );
@@ -688,6 +696,53 @@ function ShowDetailPage() {
       onPropertiesOpen();
     },
     [onPropertiesOpen],
+  );
+
+  const handleSetWantedForAllEpisodes = useCallback(
+    async (wanted: boolean) => {
+      if (episodes.length === 0) {
+        addToast({
+          title: "No episodes",
+          description: "No episodes found to update",
+          color: "warning",
+        });
+        return;
+      }
+
+      try {
+        const { data } = await setEpisodesWanted({
+          variables: { ShowId: showId, Wanted: wanted },
+        });
+        if (!data?.UpdateEpisodes?.success) {
+          addToast({
+            title: "Error",
+            description:
+              data?.UpdateEpisodes?.error ||
+              "Failed to update wanted status for episodes",
+            color: "danger",
+          });
+          return;
+        }
+
+        addToast({
+          title: wanted ? "Marked as wanted" : "Removed wanted",
+          description: wanted
+            ? `${data.UpdateEpisodes.affectedCount} episodes marked as wanted`
+            : `${data.UpdateEpisodes.affectedCount} episodes removed from wanted`,
+          color: "success",
+        });
+
+        await refetch();
+      } catch (err) {
+        console.error("Failed to update episode wanted state:", err);
+        addToast({
+          title: "Error",
+          description: "Failed to update wanted status",
+          color: "danger",
+        });
+      }
+    },
+    [episodes.length, refetch, setEpisodesWanted, showId],
   );
 
   // Group episodes by season
@@ -846,6 +901,10 @@ function ShowDetailPage() {
                     navigate({ to: "/settings/sources" });
                   } else if (key === "refresh") {
                     void handleRefresh();
+                  } else if (key === "wanted-on") {
+                    void handleSetWantedForAllEpisodes(true);
+                  } else if (key === "wanted-off") {
+                    void handleSetWantedForAllEpisodes(false);
                   } else if (key === "properties") {
                     const firstPlayable = playableEpisodes[0];
                     if (firstPlayable) {
@@ -867,6 +926,24 @@ function ShowDetailPage() {
                   startContent={<IconRefresh size={16} />}
                 >
                   Refresh
+                </DropdownItem>
+                <DropdownItem
+                  key="wanted-on"
+                  startContent={<IconCheck size={16} />}
+                  isDisabled={
+                    episodes.length === 0 || episodes.every((ep) => ep.Wanted)
+                  }
+                >
+                  Mark as Wanted
+                </DropdownItem>
+                <DropdownItem
+                  key="wanted-off"
+                  startContent={<IconX size={16} />}
+                  isDisabled={
+                    episodes.length === 0 || episodes.every((ep) => !ep.Wanted)
+                  }
+                >
+                  Remove as Wanted
                 </DropdownItem>
                 {playableEpisodes.length > 0 ? (
                   <DropdownItem

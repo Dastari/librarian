@@ -25,6 +25,9 @@ schema_roots! {
     entities: [
         Library,
         Movie,
+        Person,
+        MovieCastCredit,
+        Collection,
         Show,
         Episode,
         MediaFile,
@@ -113,6 +116,10 @@ where
         RelationLoader::<Movie>::new(db.clone(), "library_id"),
         tokio::spawn,
     );
+    let collections_loader = DataLoader::new(
+        RelationLoader::<Collection>::new(db.clone(), "library_id"),
+        tokio::spawn,
+    );
     let artists_loader = DataLoader::new(
         RelationLoader::<Artist>::new(db.clone(), "library_id"),
         tokio::spawn,
@@ -189,6 +196,7 @@ where
     // Register all relation DataLoaders
     .data(shows_loader)
     .data(movies_loader)
+    .data(collections_loader)
     .data(artists_loader)
     .data(albums_by_library_loader)
     .data(albums_by_artist_loader)

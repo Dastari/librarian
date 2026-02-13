@@ -157,6 +157,7 @@ use crate::services::graphql::entities::Album;
 use crate::services::graphql::entities::Artist;
 use crate::services::graphql::entities::Audiobook;
 use crate::services::graphql::entities::Chapter;
+use crate::services::graphql::entities::Collection;
 use crate::services::graphql::entities::Episode;
 use crate::services::graphql::entities::MediaFile;
 use crate::services::graphql::entities::Movie;
@@ -196,7 +197,7 @@ impl HasForeignKey for Movie {
 impl HasForeignKey for MediaFile {
     fn get_fk_value(&self, fk_column: &str) -> Option<String> {
         match fk_column {
-            "library_id" => Some(self.library_id.clone()),
+            "library_id" => self.library_id.clone(),
             _ => None,
         }
     }
@@ -235,6 +236,16 @@ impl HasForeignKey for Audiobook {
     fn get_fk_value(&self, fk_column: &str) -> Option<String> {
         match fk_column {
             "library_id" => Some(self.library_id.clone()),
+            _ => None,
+        }
+    }
+}
+
+impl HasForeignKey for Collection {
+    fn get_fk_value(&self, fk_column: &str) -> Option<String> {
+        match fk_column {
+            "library_id" => Some(self.library_id.clone()),
+            "user_id" => Some(self.user_id.clone()),
             _ => None,
         }
     }

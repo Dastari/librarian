@@ -6,7 +6,9 @@
 //! when it starts/stops.
 
 use std::collections::HashMap;
+use std::fs;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -251,6 +253,7 @@ async fn database_writer_task(
 ) {
     let mut batch: Vec<AppLog> = Vec::with_capacity(batch_size);
     let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(flush_interval_ms));
+    let mut last_fd_diag_log: Option<Instant> = None;
 
     loop {
         tokio::select! {
@@ -259,13 +262,17 @@ async fn database_writer_task(
                 batch.push(log);
                 if batch.len() >= batch_size {
                     if let Err(e) = operations::insert_app_logs_batch(&pool, &batch).await {
+                        let fd_diag = open_fd_diagnostics().unwrap_or_else(|| "fd_diag=unavailable".to_string());
                         tracing::error!(
                             error = %e,
                             batch_size = batch.len(),
-                            "Failed to write logs to database during size flush: batch_size={}, error={}",
+                            fd_diag = %fd_diag,
+                            "Failed to write logs to database during size flush: batch_size={}, error={}, {}",
                             batch.len(),
-                            e
+                            e,
+                            fd_diag
                         );
+                        maybe_log_fd_diag(&mut last_fd_diag_log, &fd_diag);
                     }
                     batch.clear();
                 }
@@ -273,19 +280,67 @@ async fn database_writer_task(
             _ = interval.tick() => {
                 if !batch.is_empty() {
                     if let Err(e) = operations::insert_app_logs_batch(&pool, &batch).await {
+                        let fd_diag = open_fd_diagnostics().unwrap_or_else(|| "fd_diag=unavailable".to_string());
                         tracing::error!(
                             error = %e,
                             batch_size = batch.len(),
-                            "Failed to write logs to database during interval flush: batch_size={}, error={}",
+                            fd_diag = %fd_diag,
+                            "Failed to write logs to database during interval flush: batch_size={}, error={}, {}",
                             batch.len(),
-                            e
+                            e,
+                            fd_diag
                         );
+                        maybe_log_fd_diag(&mut last_fd_diag_log, &fd_diag);
                     }
                     batch.clear();
                 }
             }
         }
     }
+}
+
+fn maybe_log_fd_diag(last_fd_diag_log: &mut Option<Instant>, fd_diag: &str) {
+    let now = Instant::now();
+    let should_log = last_fd_diag_log
+        .map(|last| now.duration_since(last) >= Duration::from_secs(60))
+        .unwrap_or(true);
+    if should_log {
+        tracing::debug!(
+            fd_diag = %fd_diag,
+            "Open-file diagnostics snapshot during DB log write failures: {}",
+            fd_diag
+        );
+        *last_fd_diag_log = Some(now);
+    }
+}
+
+fn open_fd_diagnostics() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let open_fd_count = fs::read_dir("/proc/self/fd").ok()?.count();
+        let limits = fs::read_to_string("/proc/self/limits").ok()?;
+        let mut soft = None::<String>;
+        let mut hard = None::<String>;
+        for line in limits.lines() {
+            if line.starts_with("Max open files") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 5 {
+                    soft = Some(parts[3].to_string());
+                    hard = Some(parts[4].to_string());
+                }
+                break;
+            }
+        }
+        let soft = soft.unwrap_or_else(|| "unknown".to_string());
+        let hard = hard.unwrap_or_else(|| "unknown".to_string());
+        return Some(format!(
+            "open_fds={}, max_open_files_soft={}, max_open_files_hard={}",
+            open_fd_count, soft, hard
+        ));
+    }
+
+    #[allow(unreachable_code)]
+    None
 }
 
 /// Tracing layer that sends events to the logging service (DB + broadcast).

@@ -15,14 +15,6 @@ import { Chip } from "@heroui/chip";
 import { Spinner } from "@heroui/spinner";
 import { Divider } from "@heroui/divider";
 import {
-  Table,
-  TableHeader,
-  TableColumn,
-  TableBody,
-  TableRow,
-  TableCell,
-} from "@heroui/table";
-import {
   Modal,
   ModalContent,
   ModalHeader,
@@ -30,7 +22,6 @@ import {
   ModalFooter,
   useDisclosure,
 } from "@heroui/modal";
-import { Tooltip } from "@heroui/tooltip";
 import {
   IconCast,
   IconRefresh,
@@ -38,7 +29,10 @@ import {
   IconTrash,
   IconStar,
   IconStarFilled,
+  IconPlugConnected,
+  IconPencil,
 } from "@tabler/icons-react";
+import { DataTable, type DataTableColumn, type RowAction } from "../../components/data-table";
 import {
   CastDevicesDocument,
   CastSettingsDocument,
@@ -377,6 +371,103 @@ function CastingSettingsPage() {
     }
   };
 
+  const deviceColumns: DataTableColumn<CastDevice>[] = [
+    {
+      key: "name",
+      label: "Name",
+      sortable: true,
+      render: (device) => (
+        <div className="flex items-center gap-2">
+          <IconCast size={18} className="text-default-400" />
+          <span className="font-medium">{device.name}</span>
+          {device.isManual ? (
+            <Chip size="sm" variant="flat">
+              Manual
+            </Chip>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      key: "deviceType",
+      label: "Type",
+      sortable: true,
+      width: 180,
+      render: (device) => (
+        <Chip size="sm" variant="flat" color="primary">
+          {getDeviceTypeLabel(device.deviceType)}
+        </Chip>
+      ),
+    },
+    {
+      key: "address",
+      label: "Address",
+      sortable: true,
+      width: 220,
+      render: (device) => (
+        <code className="text-small">
+          {device.address}:{device.port}
+        </code>
+      ),
+    },
+    {
+      key: "status",
+      label: "Status",
+      width: 220,
+      render: (device) =>
+        device.isConnected ? (
+          <Chip size="sm" color="success" variant="flat">
+            Connected
+          </Chip>
+        ) : device.lastSeenAt ? (
+          <span className="text-small text-default-400">
+            Last seen: {new Date(device.lastSeenAt).toLocaleString()}
+          </span>
+        ) : (
+          <span className="text-small text-default-400">Never seen</span>
+        ),
+    },
+  ];
+
+  const deviceActions: RowAction<CastDevice>[] = [
+    {
+      key: "favorite",
+      label: (device) =>
+        device.isFavorite ? "Remove from favorites" : "Add to favorites",
+      icon: (device) =>
+        device.isFavorite ? (
+          <IconStarFilled size={16} className="text-warning" />
+        ) : (
+          <IconStar size={16} />
+        ),
+      inDropdown: false,
+      onAction: (device) => void handleToggleFavorite(device),
+    },
+    {
+      key: "test",
+      label: "Discover",
+      icon: <IconPlugConnected size={16} className="text-blue-400" />,
+      inDropdown: false,
+      onAction: () => void handleDiscover(),
+      isDisabled: () => isDiscovering,
+    },
+    {
+      key: "edit",
+      label: "Edit",
+      icon: <IconPencil size={16} className="text-default-400" />,
+      inDropdown: false,
+      onAction: () => onOpen(),
+    },
+    {
+      key: "remove",
+      label: "Remove device",
+      icon: <IconTrash size={16} className="text-red-400" />,
+      isDestructive: true,
+      inDropdown: false,
+      onAction: (device) => void handleRemoveDevice(device.id),
+    },
+  ];
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -423,114 +514,33 @@ function CastingSettingsPage() {
         </CardHeader>
         <Divider />
         <CardBody>
-          {devices.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <IconCast size={48} className="text-default-300 mb-4" />
-              <p className="text-default-500 mb-2">No cast devices found</p>
-              <p className="text-small text-default-400 mb-4">
-                Click &quot;Discover&quot; to scan for devices on your network,
-                or add one manually.
-              </p>
-              <Button
-                variant="flat"
-                startContent={<IconRefresh size={16} />}
-                onPress={handleDiscover}
-              >
-                Discover Devices
-              </Button>
-            </div>
-          ) : (
-            <Table aria-label="Cast devices" removeWrapper>
-              <TableHeader>
-                <TableColumn>NAME</TableColumn>
-                <TableColumn>TYPE</TableColumn>
-                <TableColumn>ADDRESS</TableColumn>
-                <TableColumn>STATUS</TableColumn>
-                <TableColumn width={120}>ACTIONS</TableColumn>
-              </TableHeader>
-              <TableBody>
-                {devices.map((device) => (
-                  <TableRow key={device.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <IconCast size={18} className="text-default-400" />
-                        <span className="font-medium">{device.name}</span>
-                        {device.isManual && (
-                          <Chip size="sm" variant="flat">
-                            Manual
-                          </Chip>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Chip size="sm" variant="flat" color="primary">
-                        {getDeviceTypeLabel(device.deviceType)}
-                      </Chip>
-                    </TableCell>
-                    <TableCell>
-                      <code className="text-small">
-                        {device.address}:{device.port}
-                      </code>
-                    </TableCell>
-                    <TableCell>
-                      {device.isConnected ? (
-                        <Chip size="sm" color="success" variant="flat">
-                          Connected
-                        </Chip>
-                      ) : device.lastSeenAt ? (
-                        <span className="text-small text-default-400">
-                          Last seen:{" "}
-                          {new Date(device.lastSeenAt).toLocaleString()}
-                        </span>
-                      ) : (
-                        <span className="text-small text-default-400">
-                          Never seen
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Tooltip
-                          content={
-                            device.isFavorite
-                              ? "Remove from favorites"
-                              : "Add to favorites"
-                          }
-                        >
-                          <Button
-                            isIconOnly
-                            size="sm"
-                            variant="light"
-                            onPress={() => handleToggleFavorite(device)}
-                          >
-                            {device.isFavorite ? (
-                              <IconStarFilled
-                                size={16}
-                                className="text-warning"
-                              />
-                            ) : (
-                              <IconStar size={16} />
-                            )}
-                          </Button>
-                        </Tooltip>
-                        <Tooltip content="Remove device">
-                          <Button
-                            isIconOnly
-                            size="sm"
-                            variant="light"
-                            color="danger"
-                            onPress={() => handleRemoveDevice(device.id)}
-                          >
-                            <IconTrash size={16} />
-                          </Button>
-                        </Tooltip>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <DataTable
+            stateKey="settings-cast-devices"
+            data={devices}
+            columns={deviceColumns}
+            rowActions={deviceActions}
+            getRowKey={(device) => device.id}
+            ariaLabel="Cast devices"
+            searchPlaceholder="Search cast devices..."
+            showItemCount
+            emptyContent={
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <IconCast size={48} className="text-default-300 mb-4" />
+                <p className="text-default-500 mb-2">No cast devices found</p>
+                <p className="text-small text-default-400 mb-4">
+                  Click &quot;Discover&quot; to scan for devices on your network,
+                  or add one manually.
+                </p>
+                <Button
+                  variant="flat"
+                  startContent={<IconRefresh size={16} />}
+                  onPress={handleDiscover}
+                >
+                  Discover Devices
+                </Button>
+              </div>
+            }
+          />
         </CardBody>
       </Card>
 

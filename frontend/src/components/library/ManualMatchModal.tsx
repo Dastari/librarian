@@ -23,9 +23,10 @@ import {
   IconFile,
   IconAlertCircle,
 } from "@tabler/icons-react";
-import { type MediaFile } from "../../lib/graphql";
 import { apolloClient, useMutation } from "../../lib/graphql/client";
+import { formatBytes } from "../../lib/format";
 import {
+  type LibraryUnmatchedMediaFilesTabQuery,
   ManualMatchAlbumsByLibraryDocument,
   ManualMatchAudiobooksByLibraryDocument,
   ManualMatchFileDocument,
@@ -91,10 +92,13 @@ interface Chapter {
   title: string | null;
 }
 
+type MatchableMediaFile =
+  LibraryUnmatchedMediaFilesTabQuery["MediaFiles"]["Edges"][number]["Node"];
+
 export interface ManualMatchModalProps {
   isOpen: boolean;
   onClose: () => void;
-  mediaFile: MediaFile | null;
+  mediaFile: MatchableMediaFile | null;
   libraryId: string;
   libraryType: string;
   onMatched: () => void;
@@ -360,7 +364,7 @@ export function ManualMatchModal({
       const result = await manualMatchFile({
         variables: {
           Input: {
-            MediaFileId: mediaFile.id,
+            MediaFileId: mediaFile.Id,
             LibraryId: libraryId || undefined,
             EpisodeId: selectedEpisodeId || undefined,
             MovieId: selectedMovieId || undefined,
@@ -413,28 +417,23 @@ export function ManualMatchModal({
                   />
                   <div className="min-w-0">
                     <p className="font-medium truncate">
-                      {getFileName(mediaFile.path)}
+                      {getFileName(mediaFile.Path)}
                     </p>
                     <p className="text-sm text-default-500 truncate">
-                      {mediaFile.path}
+                      {mediaFile.Path}
                     </p>
                     <div className="flex items-center gap-2 mt-1">
                       <Chip size="sm" variant="flat">
-                        {mediaFile.sizeFormatted}
+                        {formatBytes(mediaFile.Size)}
                       </Chip>
-                      {mediaFile.resolution && (
+                      {mediaFile.Resolution && (
                         <Chip size="sm" variant="flat" color="primary">
-                          {mediaFile.resolution}
+                          {mediaFile.Resolution}
                         </Chip>
                       )}
-                      {mediaFile.videoCodec && (
+                      {mediaFile.VideoCodec && (
                         <Chip size="sm" variant="flat">
-                          {mediaFile.videoCodec}
-                        </Chip>
-                      )}
-                      {mediaFile.isManualMatch && (
-                        <Chip size="sm" variant="flat" color="warning">
-                          Currently Manual Match
+                          {mediaFile.VideoCodec}
                         </Chip>
                       )}
                     </div>

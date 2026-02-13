@@ -25,6 +25,7 @@ export const EPISODE_STATUS_CONFIG: Record<DerivedEpisodeStatus, StatusConfig> =
   downloaded: { color: 'success', label: 'Downloaded' },
   downloading: { color: 'primary', label: 'Downloading' },
   wanted: { color: 'warning', label: 'Wanted' },
+  missing: { color: 'danger', label: 'Missing' },
 }
 
 export function getEpisodeStatusConfig(status: DerivedEpisodeStatus): StatusConfig {

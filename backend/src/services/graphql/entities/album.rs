@@ -190,7 +190,9 @@ impl AlbumCustomOperations {
                 include_soundtracks,
             )
             .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            // Preserve the full anyhow chain so frontend/logs show the actual
+            // network failure cause (TLS/DNS/timeout/etc), not just top context.
+            .map_err(|e| async_graphql::Error::new(format!("{:#}", e)))?;
 
         Ok(results
             .into_iter()

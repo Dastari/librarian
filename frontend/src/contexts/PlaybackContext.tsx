@@ -1409,3 +1409,7 @@ export function usePlaybackContext(): PlaybackContextValue {
   }
   return context;
 }
+
+export function useOptionalPlaybackContext(): PlaybackContextValue | null {
+  return useContext(PlaybackContext);
+}

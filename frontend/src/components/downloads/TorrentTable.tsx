@@ -21,10 +21,9 @@ import {
   IconTrash,
   IconPlus,
   IconInfoCircle,
-  IconFolder,
   IconLibrary,
   IconCopy,
-  IconRefresh,
+  IconSearch,
 } from "@tabler/icons-react";
 import { TorrentCard, TORRENT_STATE_INFO } from "./TorrentCard";
 
@@ -39,9 +38,8 @@ export interface TorrentTableProps {
   onResume: (infoHash: string) => void;
   onRemove: (infoHash: string) => void;
   onInfo: (infoHash: string) => void;
-  onOrganize: (infoHash: string) => void;
   onProcess: (torrent: DownloadTorrent) => void;
-  onRematch: (torrent: DownloadTorrent) => void;
+  onMatch: (torrent: DownloadTorrent) => void;
   onLinkToLibrary: (torrent: DownloadTorrent) => void;
   onBulkPause: (infoHashes: string[]) => void;
   onBulkResume: (infoHashes: string[]) => void;
@@ -80,9 +78,8 @@ export function TorrentTable({
   onResume,
   onRemove,
   onInfo,
-  onOrganize,
   onProcess,
-  onRematch,
+  onMatch,
   onLinkToLibrary,
   onBulkPause,
   onBulkResume,
@@ -156,17 +153,23 @@ export function TorrentTable({
         width: 300,
         sortable: true,
         skeleton: () => (
-          <div className="flex flex-row gap-4 items-center">
+          <div className="w-full">
             <Skeleton className="w-full h-4 rounded" />
-            <Skeleton className="w-10 h-3 rounded" />
           </div>
         ),
         render: (torrent) => {
           const state = torrent.State.toUpperCase();
+          const percent = Math.max(0, Math.min(100, torrent.Progress * 100));
+          const labelClass =
+            percent >= 18
+              ? "text-white/90"
+              : percent >= 1
+                ? "text-default-600"
+                : "text-default-400";
           return (
-            <div className="flex flex-row gap-4 items-center">
+            <div className="relative w-full min-w-[120px]">
               <Progress
-                value={torrent.Progress * 100}
+                value={percent}
                 color={
                   state === "SEEDING"
                     ? "success"
@@ -176,12 +179,15 @@ export function TorrentTable({
                         ? "warning"
                         : "primary"
                 }
-                size="md"
+                size="sm"
                 aria-label="Download progress"
+                classNames={{ track: "h-4", indicator: "h-4" }}
               />
-              <span className="text-xs text-default-500 tabular-nums">
-                {(torrent.Progress * 100).toFixed(1)}%
-              </span>
+              <div
+                className={`absolute inset-0 flex items-center justify-center text-[10px] font-semibold tabular-nums pointer-events-none ${labelClass}`}
+              >
+                {percent.toFixed(0)}%
+              </div>
             </div>
           );
         },
@@ -203,7 +209,7 @@ export function TorrentTable({
       {
         key: "liveStats",
         label: "SPEED / PEERS",
-        width: 180,
+        width: 90,
         sortable: false,
         skeleton: () => <Skeleton className="w-24 h-4 rounded" />,
         render: (torrent) => {
@@ -393,26 +399,15 @@ export function TorrentTable({
         onAction: (torrent) => onProcess(torrent),
       },
       {
-        key: "rematch",
-        label: "Rematch",
-        icon: <IconRefresh size={16} className="text-blue-400" />,
+        key: "match",
+        label: "Match",
+        icon: <IconSearch size={16} className="text-blue-400" />,
         inDropdown: true,
         isVisible: (torrent) => {
           const state = torrent.State.toUpperCase();
           return state === "SEEDING" || torrent.Progress >= 1;
         },
-        onAction: (torrent) => onRematch(torrent),
-      },
-      {
-        key: "organize",
-        label: "Organize (Legacy)",
-        icon: <IconFolder size={16} className="text-amber-400" />,
-        inDropdown: true,
-        isVisible: (torrent) => {
-          const state = torrent.State.toUpperCase();
-          return state === "SEEDING" || torrent.Progress >= 1;
-        },
-        onAction: (torrent) => onOrganize(torrent.InfoHash),
+        onAction: (torrent) => onMatch(torrent),
       },
       {
         key: "link-library",
@@ -441,9 +436,8 @@ export function TorrentTable({
       onPause,
       onResume,
       onInfo,
-      onOrganize,
       onProcess,
-      onRematch,
+      onMatch,
       onLinkToLibrary,
       onConfirmOpen,
     ],

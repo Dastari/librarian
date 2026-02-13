@@ -23,7 +23,7 @@ pub struct MediaFile {
 
     #[graphql(name = "LibraryId")]
     #[filterable(type = "string")]
-    pub library_id: String,
+    pub library_id: Option<String>,
 
     #[graphql(name = "EpisodeId")]
     #[filterable(type = "string")]
@@ -36,6 +36,10 @@ pub struct MediaFile {
     #[graphql(name = "TrackId")]
     #[filterable(type = "string")]
     pub track_id: Option<String>,
+
+    #[graphql(name = "ChapterId")]
+    #[filterable(type = "string")]
+    pub chapter_id: Option<String>,
 
     #[graphql(name = "Path")]
     #[filterable(type = "string")]
@@ -110,6 +114,11 @@ pub struct MediaFile {
     #[filterable(type = "date")]
     #[sortable]
     pub added_at: String,
+
+    #[graphql(name = "AnalyzedAt")]
+    #[filterable(type = "date")]
+    #[sortable]
+    pub analyzed_at: Option<String>,
 }
 
 #[derive(Default)]

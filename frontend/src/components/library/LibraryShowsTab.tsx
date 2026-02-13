@@ -84,7 +84,7 @@ export function LibraryShowsTab({
   const normalizedLetter = selectedLetter === '' ? null : selectedLetter
 
   // Check if we should skip queries (loading or template ID)
-  const shouldSkipQueries = libraryId.startsWith('template')
+  const shouldSkipQueries = !libraryId || libraryId.startsWith('template')
 
   // Handle sort change from DataTable
   const handleSortChange = useCallback((column: string, direction: 'asc' | 'desc') => {

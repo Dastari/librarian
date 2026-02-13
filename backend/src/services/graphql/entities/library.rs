@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::album::Album;
 use super::artist::Artist;
 use super::audiobook::Audiobook;
+use super::collection::Collection;
 use super::media_file::MediaFile;
 use super::movie::Movie;
 use super::show::Show;
@@ -122,6 +123,13 @@ pub struct Library {
     #[skip_db]
     #[relation(target = "Movie", to = "library_id", multiple)]
     pub movies: Vec<Movie>,
+
+    /// Collections in this library
+    #[graphql(skip)]
+    #[serde(skip)]
+    #[skip_db]
+    #[relation(target = "Collection", to = "library_id", multiple)]
+    pub collections: Vec<Collection>,
 
     /// Albums in this library
     #[graphql(skip)]
