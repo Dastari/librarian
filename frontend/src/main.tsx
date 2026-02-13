@@ -15,7 +15,6 @@ import {
   getSession,
   hasValidToken,
   isTokenExpired,
-  getRefreshToken,
   setTokens,
   clearTokens,
 } from "./lib/auth";
@@ -67,15 +66,10 @@ function InnerApp() {
 
   // Refresh the access token using the refresh token
   const refreshAccessToken = useCallback(async (): Promise<boolean> => {
-    const refreshToken = getRefreshToken();
-    if (!refreshToken) {
-      return false;
-    }
-
     try {
       const result = await apolloClient.mutate({
         mutation: RefreshTokenDocument,
-        variables: { input: { RefreshToken: refreshToken } },
+        variables: { input: { RefreshToken: "" } },
       });
       const payload = result.data?.RefreshToken;
       if (payload?.Success && payload.Tokens) {
@@ -84,7 +78,6 @@ function InnerApp() {
         if (existingSession) {
           const newSession: AuthSession = {
             accessToken: tokens.AccessToken,
-            refreshToken: tokens.RefreshToken,
             expiresAt: Date.now() + tokens.ExpiresIn * 1000,
             user: existingSession.user,
           };

@@ -10,6 +10,7 @@ import { ErrorLogToaster } from '../components/ErrorLogToaster'
 import { GraphQLErrorToaster } from '../components/GraphQLErrorToaster'
 import { PersistentPlayer } from '../components/PersistentPlayer'
 import { PersistentAudioPlayer } from '../components/PersistentAudioPlayer'
+import { ServerDisconnectedOverlay } from '../components/ServerDisconnectedOverlay'
 import { CastControlBar } from '../components/cast'
 import { PlaybackProvider, usePlaybackContext } from '../contexts/PlaybackContext'
 import type { AuthContext } from '../lib/auth-context'
@@ -124,6 +125,9 @@ function RootLayoutContent() {
 
       {/* Cast control bar - shows when casting to a device */}
       <CastControlBar />
+
+      {/* Full-screen overlay when GraphQL websocket is disconnected */}
+      <ServerDisconnectedOverlay />
 
       {/* Dev tools - only in development */}
       {import.meta.env.DEV && (

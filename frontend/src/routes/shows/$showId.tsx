@@ -31,7 +31,6 @@ import { addToast } from "@heroui/toast";
 import { RouteError } from "../../components/RouteError";
 import { sanitizeError, formatBytes, formatDate } from "../../lib/format";
 import {
-  DataTable,
   type DataTableColumn,
   type RowAction,
 } from "../../components/data-table";
@@ -53,6 +52,7 @@ import {
   PlayPauseIndicator,
   MediaItemStatusChip,
 } from "../../components/shared";
+import { DetailItemsTable } from "../../components/media/DetailItemsTable";
 import { usePlaybackContext } from "../../contexts/PlaybackContext";
 import { FilePropertiesModal } from "../../components/FilePropertiesModal";
 import {
@@ -422,9 +422,8 @@ function EpisodeTable({
   const tableKey = `episodes-${currentlyPlayingEpisodeId || "none"}-${isPlaying}`;
 
   return (
-    <DataTable
-      key={tableKey}
-      skeletonDelay={500}
+    <DetailItemsTable
+      tableKey={tableKey}
       data={episodes}
       columns={episodeColumns}
       getRowKey={(ep) => ep.Id}

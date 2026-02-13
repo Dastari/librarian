@@ -266,8 +266,7 @@ pub async fn process_completed_torrent_files(
     info_hash: &str,
     download_dir: &std::path::Path,
 ) -> Result<(), anyhow::Error> {
-    let Some((torrent_id, excluded_files)) =
-        get_torrent_id_and_excluded(pool, info_hash).await?
+    let Some((torrent_id, excluded_files)) = get_torrent_id_and_excluded(pool, info_hash).await?
     else {
         tracing::debug!(
             info_hash = %info_hash,
@@ -339,7 +338,10 @@ pub async fn process_completed_torrent_files(
 /// Parse a hex info_hash string into a 20-byte `Id20`.
 fn hex_to_info_hash(hex: &str) -> Result<librqbit::dht::Id20, anyhow::Error> {
     if hex.len() != 40 {
-        anyhow::bail!("Invalid info_hash hex length: expected 40, got {}", hex.len());
+        anyhow::bail!(
+            "Invalid info_hash hex length: expected 40, got {}",
+            hex.len()
+        );
     }
     let mut bytes = [0u8; 20];
     for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
@@ -922,7 +924,9 @@ pub async fn sync_session_to_database(
         if let Ok(Some((torrent_id, excluded_files))) =
             get_torrent_id_and_excluded(pool, &info_hash).await
         {
-            if let Some(rows) = build_file_rows(&handle, &stats, &excluded_files, &config.download_dir) {
+            if let Some(rows) =
+                build_file_rows(&handle, &stats, &excluded_files, &config.download_dir)
+            {
                 if let Err(e) = upsert_torrent_files(schema, auth_user, &torrent_id, &rows).await {
                     let fd_diag =
                         open_fd_diagnostics().unwrap_or_else(|| "fd_diag=unavailable".to_string());

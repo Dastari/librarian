@@ -49,7 +49,7 @@ import {
 import { DeleteMovieModal } from "../../components/library";
 import { FilePropertiesModal } from "../../components/FilePropertiesModal";
 import { usePlaybackContext } from "../../contexts/PlaybackContext";
-import { DataTable, type DataTableColumn } from "../../components/data-table";
+import { CollectionMoviesTable } from "../../components/library/CollectionMoviesTable";
 
 export const Route = createFileRoute("/movies/$movieId")({
   beforeLoad: ({ context, location }) => {
@@ -313,72 +313,6 @@ function MovieDetailPage() {
 
   const isThisMoviePlaying =
     session?.movieId === movieId && !!session?.isPlaying;
-
-  const collectionMovieColumns: DataTableColumn<RelatedCollectionMovie>[] = [
-    {
-      key: "title",
-      label: "Movie",
-      sortable: true,
-      render: (relatedMovie) => (
-        <div className="flex items-center gap-3">
-          {relatedMovie.PosterUrl ? (
-            <Image
-              src={relatedMovie.PosterUrl}
-              alt={relatedMovie.Title}
-              className="w-10 h-14 object-cover rounded"
-              loading="lazy"
-            />
-          ) : (
-            <div className="w-10 h-14 bg-default-200 rounded flex items-center justify-center">
-              <IconMovie size={18} className="text-purple-400" />
-            </div>
-          )}
-          {relatedMovie.LibraryMovieId ? (
-            <Link
-              to="/movies/$movieId"
-              params={{ movieId: relatedMovie.LibraryMovieId }}
-              className="font-medium hover:opacity-80"
-            >
-              {relatedMovie.Title}
-            </Link>
-          ) : (
-            <span className="font-medium">{relatedMovie.Title}</span>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: "year",
-      label: "Year",
-      width: 90,
-      sortable: true,
-      render: (relatedMovie) => <span>{relatedMovie.Year ?? "—"}</span>,
-    },
-    {
-      key: "status",
-      label: "Status",
-      width: 130,
-      render: (relatedMovie) => (
-        <Chip
-          size="sm"
-          variant="flat"
-          color={
-            relatedMovie.MediaFileId
-              ? "success"
-              : relatedMovie.Wanted
-                ? "warning"
-                : "danger"
-          }
-        >
-          {relatedMovie.MediaFileId
-            ? "Downloaded"
-            : relatedMovie.Wanted
-              ? "Wanted"
-              : "Missing"}
-        </Chip>
-      ),
-    },
-  ];
 
   // Loading state
   if (movieLoading && !movie) {
@@ -725,57 +659,11 @@ function MovieDetailPage() {
       {movie.CollectionName && (
         <>
           {otherCollectionMovies.length > 0 && (
-            <DataTable
+            <CollectionMoviesTable
               stateKey={`movie-collection-peers-${movie.Id}`}
-              data={otherCollectionMovies}
-              columns={collectionMovieColumns}
-              getRowKey={(relatedMovie) => String(relatedMovie.TmdbId)}
+              movies={otherCollectionMovies}
               ariaLabel="Also in this collection"
               searchPlaceholder="Search collection movies..."
-              showItemCount
-              showViewModeToggle
-              cardGridClassName="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"
-              cardRenderer={({ item }) => (
-                <Card className="bg-content1 border border-default-200">
-                  <CardBody className="p-3">
-                    <div className="flex gap-3">
-                      {item.PosterUrl ? (
-                        <Image
-                          src={item.PosterUrl}
-                          alt={item.Title}
-                          className="w-14 h-20 object-cover rounded-md shrink-0"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div className="w-14 h-20 bg-default-200 rounded-md shrink-0 flex items-center justify-center">
-                          <IconMovie size={16} className="text-purple-400" />
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1 space-y-2">
-                        {item.LibraryMovieId ? (
-                          <Link
-                            to="/movies/$movieId"
-                            params={{ movieId: item.LibraryMovieId }}
-                            className="block font-medium truncate hover:opacity-80"
-                          >
-                            {item.Title}
-                          </Link>
-                        ) : (
-                          <p className="font-medium truncate">{item.Title}</p>
-                        )}
-                        <p className="text-xs text-default-500">{item.Year ?? "Unknown year"}</p>
-                        <Chip
-                          size="sm"
-                          variant="flat"
-                          color={item.MediaFileId ? "success" : item.Wanted ? "warning" : "danger"}
-                        >
-                          {item.MediaFileId ? "Downloaded" : item.Wanted ? "Wanted" : "Missing"}
-                        </Chip>
-                      </div>
-                    </div>
-                  </CardBody>
-                </Card>
-              )}
               headerContent={
                 <div className="px-2 py-1 text-sm text-default-600">
                   Also in {movie.CollectionName}

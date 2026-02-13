@@ -7,9 +7,11 @@
 //! This client uses rate limiting and retry logic to handle this gracefully.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use reqwest::header::RETRY_AFTER;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
@@ -22,6 +24,7 @@ pub struct TmdbClient {
     base_url: String,
     api_key: String,
     retry_config: RetryConfig,
+    adaptive_delay_ms: Arc<AtomicU64>,
 }
 
 /// Movie search result from TMDB
@@ -185,15 +188,20 @@ pub struct TmdbImagesConfiguration {
 }
 
 impl TmdbClient {
+    const ADAPTIVE_DELAY_BASE_MS: u64 = 250;
+    const ADAPTIVE_DELAY_STEP_DOWN_MS: u64 = 25;
+    const ADAPTIVE_DELAY_MAX_MS: u64 = 20_000;
+
     /// Create a new TMDB client with the given API key
     pub fn new(api_key: String) -> Self {
         Self {
-            // TMDB allows ~40 requests per 10 seconds, so ~4/sec with burst of 10
+            // TMDB guidance indicates higher soft limits than legacy.
+            // Keep this conservative relative to the ~40 rps ceiling.
             client: Arc::new(RateLimitedClient::new(
                 "tmdb",
                 RateLimitConfig {
-                    requests_per_second: 4,
-                    burst_size: 10,
+                    requests_per_second: 12,
+                    burst_size: 24,
                 },
             )),
             base_url: "https://api.themoviedb.org/3".to_string(),
@@ -204,6 +212,63 @@ impl TmdbClient {
                 max_interval: Duration::from_secs(10),
                 multiplier: 2.0,
             },
+            adaptive_delay_ms: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    async fn wait_for_adaptive_delay(&self) {
+        let delay_ms = self.adaptive_delay_ms.load(Ordering::Relaxed);
+        if delay_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        }
+    }
+
+    fn parse_retry_after_ms(response: &reqwest::Response) -> Option<u64> {
+        response
+            .headers()
+            .get(RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .map(|seconds| seconds.saturating_mul(1000))
+    }
+
+    fn increase_adaptive_delay_from_429(&self, response: &reqwest::Response) -> u64 {
+        let retry_after_ms = Self::parse_retry_after_ms(response).unwrap_or(0);
+        let mut current = self.adaptive_delay_ms.load(Ordering::Relaxed);
+        loop {
+            let doubled = if current == 0 {
+                Self::ADAPTIVE_DELAY_BASE_MS
+            } else {
+                current.saturating_mul(2)
+            };
+            let next = doubled
+                .max(retry_after_ms)
+                .clamp(Self::ADAPTIVE_DELAY_BASE_MS, Self::ADAPTIVE_DELAY_MAX_MS);
+            match self.adaptive_delay_ms.compare_exchange(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return next,
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
+    fn reduce_adaptive_delay_on_success(&self) {
+        let mut current = self.adaptive_delay_ms.load(Ordering::Relaxed);
+        while current > 0 {
+            let next = current.saturating_sub(Self::ADAPTIVE_DELAY_STEP_DOWN_MS);
+            match self.adaptive_delay_ms.compare_exchange(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return,
+                Err(actual) => current = actual,
+            }
         }
     }
 
@@ -254,6 +319,7 @@ impl TmdbClient {
         let api_key = self.api_key.clone();
         let query_owned = query.to_string();
         let retry_config = self.retry_config.clone();
+        let adaptive_client = self.clone();
 
         let result = retry_async(
             || {
@@ -261,6 +327,7 @@ impl TmdbClient {
                 let client = client.clone();
                 let q = query_owned.clone();
                 let key = api_key.clone();
+                let adaptive_client = adaptive_client.clone();
                 async move {
                     let q_for_log = q.clone();
                     let mut query_params: Vec<(&str, String)> = vec![
@@ -272,12 +339,15 @@ impl TmdbClient {
                         query_params.push(("year", y.to_string()));
                     }
 
+                    adaptive_client.wait_for_adaptive_delay().await;
                     let response = client.get_with_query(&url, &query_params).await?;
 
                     if response.status().as_u16() == 429 {
+                        let delay_ms = adaptive_client.increase_adaptive_delay_from_429(&response);
                         warn!(
-                            "TMDB rate limit hit (HTTP 429) while searching movies for query='{}'; retrying",
-                            q_for_log
+                            "TMDB rate limit hit (HTTP 429) while searching movies for query='{}'; retrying with adaptive delay={}ms",
+                            q_for_log,
+                            delay_ms
                         );
                         anyhow::bail!("Rate limited (429)");
                     }
@@ -289,6 +359,7 @@ impl TmdbClient {
                     if !response.status().is_success() {
                         anyhow::bail!("TMDB search failed with status: {}", response.status());
                     }
+                    adaptive_client.reduce_adaptive_delay_on_success();
 
                     let results: TmdbMovieSearchResult = response
                         .json()
@@ -320,6 +391,7 @@ impl TmdbClient {
         let api_key = self.api_key.clone();
         let query_owned = query.to_string();
         let retry_config = self.retry_config.clone();
+        let adaptive_client = self.clone();
 
         let result = retry_async(
             || {
@@ -327,6 +399,7 @@ impl TmdbClient {
                 let client = client.clone();
                 let q = query_owned.clone();
                 let key = api_key.clone();
+                let adaptive_client = adaptive_client.clone();
                 async move {
                     let q_for_log = q.clone();
                     let query_params: Vec<(&str, String)> = vec![
@@ -335,12 +408,15 @@ impl TmdbClient {
                         ("include_adult", "false".to_string()),
                     ];
 
+                    adaptive_client.wait_for_adaptive_delay().await;
                     let response = client.get_with_query(&url, &query_params).await?;
 
                     if response.status().as_u16() == 429 {
+                        let delay_ms = adaptive_client.increase_adaptive_delay_from_429(&response);
                         warn!(
-                            "TMDB rate limit hit (HTTP 429) while searching collections for query='{}'; retrying",
-                            q_for_log
+                            "TMDB rate limit hit (HTTP 429) while searching collections for query='{}'; retrying with adaptive delay={}ms",
+                            q_for_log,
+                            delay_ms
                         );
                         anyhow::bail!("Rate limited (429)");
                     }
@@ -355,6 +431,7 @@ impl TmdbClient {
                             response.status()
                         );
                     }
+                    adaptive_client.reduce_adaptive_delay_on_success();
 
                     let results: TmdbCollectionSearchResult = response
                         .json()
@@ -369,7 +446,10 @@ impl TmdbClient {
         )
         .await?;
 
-        debug!(count = result.len(), "TMDB collection search returned results");
+        debug!(
+            count = result.len(),
+            "TMDB collection search returned results"
+        );
         Ok(result)
     }
 
@@ -385,19 +465,24 @@ impl TmdbClient {
         let client = self.client.clone();
         let api_key = self.api_key.clone();
         let retry_config = self.retry_config.clone();
+        let adaptive_client = self.clone();
 
         retry_async(
             || {
                 let url = url.clone();
                 let client = client.clone();
                 let key = api_key.clone();
+                let adaptive_client = adaptive_client.clone();
                 async move {
+                    adaptive_client.wait_for_adaptive_delay().await;
                     let response = client.get_with_query(&url, &[("api_key", &key)]).await?;
 
                     if response.status().as_u16() == 429 {
+                        let delay_ms = adaptive_client.increase_adaptive_delay_from_429(&response);
                         warn!(
-                            "TMDB rate limit hit (HTTP 429) while fetching movie details for tmdb_id={}; retrying",
-                            tmdb_id
+                            "TMDB rate limit hit (HTTP 429) while fetching movie details for tmdb_id={}; retrying with adaptive delay={}ms",
+                            tmdb_id,
+                            delay_ms
                         );
                         anyhow::bail!("Rate limited (429)");
                     }
@@ -409,6 +494,7 @@ impl TmdbClient {
                     if !response.status().is_success() {
                         anyhow::bail!("TMDB get movie failed with status: {}", response.status());
                     }
+                    adaptive_client.reduce_adaptive_delay_on_success();
 
                     let movie: TmdbMovie = response
                         .json()
@@ -434,22 +520,32 @@ impl TmdbClient {
         let client = self.client.clone();
         let api_key = self.api_key.clone();
         let retry_config = self.retry_config.clone();
+        let adaptive_client = self.clone();
 
         retry_async(
             || {
                 let url = url.clone();
                 let client = client.clone();
                 let key = api_key.clone();
+                let adaptive_client = adaptive_client.clone();
                 async move {
+                    adaptive_client.wait_for_adaptive_delay().await;
                     let response = client.get_with_query(&url, &[("api_key", &key)]).await?;
 
                     if response.status().as_u16() == 429 {
+                        let delay_ms = adaptive_client.increase_adaptive_delay_from_429(&response);
+                        warn!(
+                            "TMDB rate limit hit (HTTP 429) while fetching credits for tmdb_id={}; retrying with adaptive delay={}ms",
+                            tmdb_id,
+                            delay_ms
+                        );
                         anyhow::bail!("Rate limited (429)");
                     }
 
                     if !response.status().is_success() {
                         anyhow::bail!("TMDB get credits failed with status: {}", response.status());
                     }
+                    adaptive_client.reduce_adaptive_delay_on_success();
 
                     let credits: TmdbCredits = response
                         .json()
@@ -475,16 +571,25 @@ impl TmdbClient {
         let client = self.client.clone();
         let api_key = self.api_key.clone();
         let retry_config = self.retry_config.clone();
+        let adaptive_client = self.clone();
 
         retry_async(
             || {
                 let url = url.clone();
                 let client = client.clone();
                 let key = api_key.clone();
+                let adaptive_client = adaptive_client.clone();
                 async move {
+                    adaptive_client.wait_for_adaptive_delay().await;
                     let response = client.get_with_query(&url, &[("api_key", &key)]).await?;
 
                     if response.status().as_u16() == 429 {
+                        let delay_ms = adaptive_client.increase_adaptive_delay_from_429(&response);
+                        warn!(
+                            "TMDB rate limit hit (HTTP 429) while fetching release dates for tmdb_id={}; retrying with adaptive delay={}ms",
+                            tmdb_id,
+                            delay_ms
+                        );
                         anyhow::bail!("Rate limited (429)");
                     }
 
@@ -494,6 +599,7 @@ impl TmdbClient {
                             response.status()
                         );
                     }
+                    adaptive_client.reduce_adaptive_delay_on_success();
 
                     let dates: TmdbReleaseDates = response
                         .json()
@@ -521,16 +627,25 @@ impl TmdbClient {
         let client = self.client.clone();
         let api_key = self.api_key.clone();
         let retry_config = self.retry_config.clone();
+        let adaptive_client = self.clone();
 
         retry_async(
             || {
                 let url = url.clone();
                 let client = client.clone();
                 let key = api_key.clone();
+                let adaptive_client = adaptive_client.clone();
                 async move {
+                    adaptive_client.wait_for_adaptive_delay().await;
                     let response = client.get_with_query(&url, &[("api_key", &key)]).await?;
 
                     if response.status().as_u16() == 429 {
+                        let delay_ms = adaptive_client.increase_adaptive_delay_from_429(&response);
+                        warn!(
+                            "TMDB rate limit hit (HTTP 429) while fetching collection details for collection_id={}; retrying with adaptive delay={}ms",
+                            collection_id,
+                            delay_ms
+                        );
                         anyhow::bail!("Rate limited (429)");
                     }
 
@@ -540,6 +655,7 @@ impl TmdbClient {
                             response.status()
                         );
                     }
+                    adaptive_client.reduce_adaptive_delay_on_success();
 
                     let collection: TmdbCollection = response
                         .json()
@@ -567,6 +683,7 @@ impl TmdbClient {
         let client = self.client.clone();
         let api_key = self.api_key.clone();
         let retry_config = self.retry_config.clone();
+        let adaptive_client = self.clone();
 
         #[derive(Deserialize)]
         struct FindResult {
@@ -578,7 +695,9 @@ impl TmdbClient {
                 let url = url.clone();
                 let client = client.clone();
                 let key = api_key.clone();
+                let adaptive_client = adaptive_client.clone();
                 async move {
+                    adaptive_client.wait_for_adaptive_delay().await;
                     let response = client
                         .get_with_query(
                             &url,
@@ -587,12 +706,19 @@ impl TmdbClient {
                         .await?;
 
                     if response.status().as_u16() == 429 {
+                        let delay_ms = adaptive_client.increase_adaptive_delay_from_429(&response);
+                        warn!(
+                            "TMDB rate limit hit (HTTP 429) while finding imdb_id={}; retrying with adaptive delay={}ms",
+                            imdb_id,
+                            delay_ms
+                        );
                         anyhow::bail!("Rate limited (429)");
                     }
 
                     if !response.status().is_success() {
                         anyhow::bail!("TMDB find failed with status: {}", response.status());
                     }
+                    adaptive_client.reduce_adaptive_delay_on_success();
 
                     let find_result: FindResult = response
                         .json()

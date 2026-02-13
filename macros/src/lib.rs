@@ -1280,8 +1280,54 @@ struct RelationDef {
     field_name: syn::Ident,
     graphql_name: String,
     target_type_str: String,
+    source_column: String,
     fk_column: String,
     is_multiple: bool,
+    source_field_ty: syn::Type,
+    source_supports_dataloader: bool,
+}
+
+#[derive(Copy, Clone)]
+enum RelationValueKind {
+    String,
+    Int,
+    Float,
+    Bool,
+}
+
+fn classify_relation_value_type(ty: &syn::Type) -> Option<(RelationValueKind, bool)> {
+    let mut current = ty;
+    let mut is_option = false;
+
+    loop {
+        match current {
+            syn::Type::Path(type_path) => {
+                let segment = type_path.path.segments.last()?;
+                let name = segment.ident.to_string();
+                if name == "Option" {
+                    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                        if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+                            current = inner;
+                            is_option = true;
+                            continue;
+                        }
+                    }
+                    return None;
+                }
+
+                let kind = match name.as_str() {
+                    "String" => RelationValueKind::String,
+                    "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64"
+                    | "usize" => RelationValueKind::Int,
+                    "f32" | "f64" => RelationValueKind::Float,
+                    "bool" => RelationValueKind::Bool,
+                    _ => return None,
+                };
+                return Some((kind, is_option));
+            }
+            _ => return None,
+        }
+    }
 }
 
 fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
@@ -1344,14 +1390,43 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
             .relation_to
             .clone()
             .unwrap_or_else(|| "unknown_id".to_string());
+        let from_col = meta
+            .relation_from
+            .clone()
+            .unwrap_or_else(|| pk_field.to_string());
+        let source_field = fields
+            .iter()
+            .find(|f| {
+                f.ident
+                    .as_ref()
+                    .map(|ident| ident == &syn::Ident::new(&from_col, ident.span()))
+                    .unwrap_or(false)
+            })
+            .ok_or_else(|| {
+                syn::Error::new_spanned(
+                    field,
+                    format!(
+                        "Relation '{}' references unknown source field '{}' on '{}'",
+                        rust_name, from_col, struct_name
+                    ),
+                )
+            })?;
+        let source_field_ty = source_field.ty.clone();
+        let source_supports_dataloader = matches!(
+            classify_relation_value_type(&source_field_ty),
+            Some((RelationValueKind::String, _))
+        );
         let is_multiple = meta.relation_multiple;
 
         relations.push(RelationDef {
             field_name,
             graphql_name,
             target_type_str: target_type,
+            source_column: from_col,
             fk_column: to_col,
             is_multiple,
+            source_field_ty,
+            source_supports_dataloader,
         });
     }
 
@@ -1380,11 +1455,40 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
     //
     // This gives optimal performance for simple relation traversal while keeping
     // full filter/sort/pagination support for complex queries.
-    let relation_resolvers: Vec<_> = relations.iter().map(|r| {
+    let relation_resolvers: Vec<_> = relations
+        .iter()
+        .map(|r| -> syn::Result<proc_macro2::TokenStream> {
         let field_name = &r.field_name;
         let graphql_name = &r.graphql_name;
         let fk_column = &r.fk_column;
-        
+        let source_column = &r.source_column;
+        let source_field = syn::Ident::new(source_column, struct_name.span());
+        let source_supports_dataloader = r.source_supports_dataloader;
+        let source_ty = &r.source_field_ty;
+
+        let (source_kind, source_is_option) =
+            classify_relation_value_type(source_ty).ok_or_else(|| {
+                syn::Error::new_spanned(
+                    source_ty,
+                    format!(
+                        "Unsupported relation source field type for '{}.{}': expected String/int/float/bool (optionals allowed)",
+                        struct_name, field_name
+                    ),
+                )
+            })?;
+
+        let sql_value_expr = match source_kind {
+            RelationValueKind::String => quote! { crate::graphql::orm::SqlValue::String(value.clone()) },
+            RelationValueKind::Int => quote! { crate::graphql::orm::SqlValue::Int(*value as i64) },
+            RelationValueKind::Float => quote! { crate::graphql::orm::SqlValue::Float((*value).into()) },
+            RelationValueKind::Bool => quote! { crate::graphql::orm::SqlValue::Bool(*value) },
+        };
+
+        let loader_key_expr = match source_kind {
+            RelationValueKind::String => quote! { value.clone() },
+            _ => quote! { value.to_string() },
+        };
+
         // Generate type name strings for use in fully-qualified paths
         let target_type_str = &r.target_type_str;
         let where_input_str = format!("{}WhereInput", r.target_type_str);
@@ -1398,10 +1502,47 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
         let order_by_input = syn::Ident::new(&order_by_input_str, struct_name.span());
         let connection_type = syn::Ident::new(&connection_type_str, struct_name.span());
         let edge_type = syn::Ident::new(&edge_type_str, struct_name.span());
+
+        let source_binding_multiple = if source_is_option {
+            quote! {
+                let Some(value) = self.#source_field.as_ref() else {
+                    let page_info = crate::graphql::pagination::PageInfo {
+                        has_next_page: false,
+                        has_previous_page: false,
+                        start_cursor: None,
+                        end_cursor: None,
+                        total_count: Some(0),
+                    };
+                    return Ok(#connection_type { edges: Vec::new(), page_info });
+                };
+                let relation_sql_value = #sql_value_expr;
+                let relation_loader_key = #loader_key_expr;
+            }
+        } else {
+            quote! {
+                let value = &self.#source_field;
+                let relation_sql_value = #sql_value_expr;
+                let relation_loader_key = #loader_key_expr;
+            }
+        };
+
+        let source_binding_single = if source_is_option {
+            quote! {
+                let Some(value) = self.#source_field.as_ref() else {
+                    return Ok(None);
+                };
+                let relation_sql_value = #sql_value_expr;
+            }
+        } else {
+            quote! {
+                let value = &self.#source_field;
+                let relation_sql_value = #sql_value_expr;
+            }
+        };
         
         if r.is_multiple {
             // One-to-many relation with smart batching
-            quote! {
+            Ok(quote! {
                 /// Get related #graphql_name with optional filtering, sorting, and pagination.
                 ///
                 /// When no arguments are provided, uses DataLoader to batch queries and
@@ -1424,7 +1565,9 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
                     let db = ctx.data_unchecked::<crate::db::Database>();
                     
                     // Check if we can use DataLoader (no filter/sort/pagination args)
-                    let use_dataloader = where_input.is_none() && order_by.is_none() && page.is_none();
+                    #source_binding_multiple
+
+                    let use_dataloader = #source_supports_dataloader && where_input.is_none() && order_by.is_none() && page.is_none();
                     
                     let entities: Vec<#target_type> = if use_dataloader {
                         // Fast path: Use DataLoader for batched loading
@@ -1433,7 +1576,7 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
                         
                         let loader = ctx.data_unchecked::<DataLoader<RelationLoader<#target_type>>>();
                         loader
-                            .load_one(self.id.clone())
+                            .load_one(relation_loader_key)
                             .await
                             .map_err(|e| async_graphql::Error::new(e.to_string()))?
                             .unwrap_or_default()
@@ -1442,7 +1585,7 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
                         let mut query = EntityQuery::<#target_type>::new()
                             .where_clause(
                                 &format!("{} = ?", #fk_column),
-                                SqlValue::String(self.id.clone())
+                                relation_sql_value
                             );
                         
                         if let Some(ref filter) = where_input {
@@ -1524,11 +1667,11 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
                     
                     Ok(#connection_type { edges, page_info })
                 }
-            }
+            })
         } else {
             // Single relation (many-to-one) - uses direct query
             // TODO: Could batch these too with a reverse lookup pattern
-            quote! {
+            Ok(quote! {
                 /// Get related #graphql_name
                 #[graphql(name = #graphql_name)]
                 async fn #field_name(
@@ -1539,11 +1682,12 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
                     use crate::graphql::entities::#target_type;
                     
                     let db = ctx.data_unchecked::<crate::db::Database>();
+                    #source_binding_single
                     
                     let result = EntityQuery::<#target_type>::new()
                         .where_clause(
-                            &format!("{} = ?", #target_type::PRIMARY_KEY),
-                            SqlValue::String(self.id.clone())
+                            &format!("{} = ?", #fk_column),
+                            relation_sql_value
                         )
                         .fetch_one(db)
                         .await
@@ -1551,9 +1695,10 @@ fn generate_graphql_relations(input: &DeriveInput) -> syn::Result<proc_macro2::T
                     
                     Ok(result)
                 }
-            }
+            })
         }
-    }).collect();
+    })
+    .collect::<syn::Result<Vec<_>>>()?;
 
     // Generate simple RelationLoader impl (for backward compatibility)
     let single_load_blocks: Vec<proc_macro2::TokenStream> = Vec::new();

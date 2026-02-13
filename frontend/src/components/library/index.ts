@@ -22,6 +22,10 @@ export {
   AddCollectionModal,
   type AddCollectionModalProps,
 } from "./AddCollectionModal";
+export {
+  CollectionSummaryCard,
+  type CollectionSummaryCardProps,
+} from "./CollectionSummaryCard";
 export { DeleteMovieModal } from "./DeleteMovieModal";
 
 // Shared form component

@@ -9,6 +9,7 @@ import { useEffect } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { useDashboardCache } from '../hooks/useDashboardCache'
 import { useDataReactivity } from '../hooks/useSubscription'
+import { sanitizeInternalRedirect } from '../lib/redirect'
 import { AlbumArtCarousel } from '../components/AlbumArtCarousel'
 import { SignInModal } from '../components/SignInModal'
 import { IconDeviceTv } from '@tabler/icons-react'
@@ -39,9 +40,14 @@ interface HomeSearchParams {
 // Authenticated users see the dashboard
 export const Route = createFileRoute('/')({
   validateSearch: (search: Record<string, unknown>): HomeSearchParams => {
+    const redirect =
+      typeof search.redirect === 'string'
+        ? sanitizeInternalRedirect(search.redirect)
+        : undefined
+
     return {
       signin: search.signin === true || search.signin === 'true',
-      redirect: typeof search.redirect === 'string' ? search.redirect : undefined,
+      redirect,
     }
   },
   component: HomePage,

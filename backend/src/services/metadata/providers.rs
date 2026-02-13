@@ -235,6 +235,18 @@ pub struct MovieCollectionDetails {
     pub movies: Vec<MovieCollectionMovieDetails>,
 }
 
+#[derive(Debug, Clone)]
+struct LocalCollectionMovieRow {
+    id: String,
+    tmdb_id: Option<i32>,
+    collection_id: Option<i32>,
+    title: String,
+    year: Option<i32>,
+    poster_url: Option<String>,
+    media_file_id: Option<String>,
+    wanted: bool,
+}
+
 /// Options for adding a TV show from a metadata provider
 #[derive(Debug, Clone)]
 pub struct AddTvShowOptions {
@@ -284,6 +296,83 @@ pub struct MetadataService {
 }
 
 impl MetadataService {
+    fn normalize_title_for_collection_match(value: &str) -> String {
+        value
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() {
+                    ch.to_ascii_lowercase()
+                } else {
+                    ' '
+                }
+            })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn collection_match_score(
+        local: &LocalCollectionMovieRow,
+        tmdb_collection_id: i32,
+        part_tmdb_id: i32,
+        part_title: &str,
+        part_year: Option<i32>,
+    ) -> Option<i32> {
+        if local.tmdb_id == Some(part_tmdb_id) {
+            return Some(10_000);
+        }
+
+        let part_norm = Self::normalize_title_for_collection_match(part_title);
+        let local_norm = Self::normalize_title_for_collection_match(&local.title);
+        if part_norm.is_empty() || local_norm.is_empty() {
+            return None;
+        }
+
+        let mut score = if local_norm == part_norm {
+            80
+        } else if local_norm.contains(&part_norm) || part_norm.contains(&local_norm) {
+            65
+        } else {
+            return None;
+        };
+
+        match (local.year, part_year) {
+            (Some(local_year), Some(target_year)) if local_year == target_year => score += 20,
+            (Some(local_year), Some(target_year)) if (local_year - target_year).abs() == 1 => {
+                score += 10;
+            }
+            (None, Some(_)) | (Some(_), None) => score += 4,
+            _ => {}
+        }
+
+        if local.collection_id == Some(tmdb_collection_id) {
+            score += 10;
+        }
+        if local.media_file_id.is_some() {
+            score += 2;
+        }
+
+        if score >= 70 { Some(score) } else { None }
+    }
+
+    fn is_high_confidence_heuristic_collection_match(
+        local: &LocalCollectionMovieRow,
+        part_title: &str,
+        part_year: Option<i32>,
+    ) -> bool {
+        let title_exact = Self::normalize_title_for_collection_match(&local.title)
+            == Self::normalize_title_for_collection_match(part_title);
+        if !title_exact {
+            return false;
+        }
+
+        match (local.year, part_year) {
+            (Some(local_year), Some(target_year)) => local_year == target_year,
+            _ => false,
+        }
+    }
+
     pub fn new(
         db: Database,
         services: Arc<ServicesManager>,
@@ -347,6 +436,221 @@ impl MetadataService {
         variables: serde_json::Value,
     ) -> Result<serde_json::Value> {
         self.execute_query(auth_user, mutation, variables).await
+    }
+
+    /// Ensure a single collection entity exists and is up-to-date for a TMDB collection id.
+    pub async fn ensure_movie_collection_entity(
+        &self,
+        library_id: Uuid,
+        user_id: Uuid,
+        collection_id: i32,
+    ) -> Result<()> {
+        self.upsert_movie_collection_entity(library_id, user_id, collection_id)
+            .await
+    }
+
+    /// Reconcile collection entities for a library by scanning movies with CollectionId and
+    /// upserting each unique TMDB collection into the collections table.
+    pub async fn ensure_movie_collections_for_library(
+        &self,
+        library_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<()> {
+        let auth_user = AuthUser {
+            user_id: user_id.to_string(),
+            email: None,
+            role: None,
+        };
+
+        let mut offset = 0usize;
+        let limit = 500usize;
+        let mut collection_ids: HashSet<i32> = HashSet::new();
+        info!(
+            library_id = %library_id,
+            user_id = %user_id,
+            "Starting library movie collection reconciliation: library_id={}, user_id={}, page_limit={}",
+            library_id,
+            user_id,
+            limit
+        );
+
+        loop {
+            let data = self
+                .execute_query(
+                    &auth_user,
+                    r#"query LibraryMovieCollectionsForSync($Where: MovieWhereInput, $Page: PageInput) {
+                        Movies(Where: $Where, Page: $Page) {
+                            Edges {
+                                Node {
+                                    CollectionId
+                                }
+                            }
+                        }
+                    }"#,
+                    serde_json::json!({
+                        "Where": {
+                            "LibraryId": { "Eq": library_id.to_string() }
+                        },
+                        "Page": { "Limit": limit, "Offset": offset }
+                    }),
+                )
+                .await?;
+
+            let edges = data
+                .get("Movies")
+                .and_then(|v| v.get("Edges"))
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            if edges.is_empty() {
+                break;
+            }
+
+            for edge in &edges {
+                if let Some(collection_id) = edge
+                    .get("Node")
+                    .and_then(|n| n.get("CollectionId"))
+                    .and_then(|v| v.as_i64())
+                {
+                    collection_ids.insert(collection_id as i32);
+                }
+            }
+
+            if edges.len() < limit {
+                break;
+            }
+            offset += limit;
+        }
+
+        if collection_ids.is_empty() {
+            debug!(
+                library_id = %library_id,
+                user_id = %user_id,
+                "Skipping movie collection reconciliation because no movies in library have CollectionId values: library_id={}, user_id={}",
+                library_id,
+                user_id
+            );
+            return Ok(());
+        }
+
+        let mut existing_collection_ids: HashSet<i32> = HashSet::new();
+        let mut existing_offset = 0usize;
+        loop {
+            let existing_data = self
+                .execute_query(
+                    &auth_user,
+                    r#"query ExistingCollectionsForSync($Where: CollectionWhereInput, $Page: PageInput) {
+                        Collections(Where: $Where, Page: $Page) {
+                            Edges {
+                                Node {
+                                    TmdbCollectionId
+                                }
+                            }
+                        }
+                    }"#,
+                    serde_json::json!({
+                        "Where": {
+                            "LibraryId": { "Eq": library_id.to_string() }
+                        },
+                        "Page": { "Limit": limit, "Offset": existing_offset }
+                    }),
+                )
+                .await?;
+
+            let existing_edges = existing_data
+                .get("Collections")
+                .and_then(|v| v.get("Edges"))
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            if existing_edges.is_empty() {
+                break;
+            }
+
+            for edge in &existing_edges {
+                if let Some(tmdb_collection_id) = edge
+                    .get("Node")
+                    .and_then(|n| n.get("TmdbCollectionId"))
+                    .and_then(|v| v.as_i64())
+                {
+                    existing_collection_ids.insert(tmdb_collection_id as i32);
+                }
+            }
+
+            if existing_edges.len() < limit {
+                break;
+            }
+            existing_offset += limit;
+        }
+
+        let missing_collection_ids: Vec<i32> = collection_ids
+            .difference(&existing_collection_ids)
+            .copied()
+            .collect();
+
+        if missing_collection_ids.is_empty() {
+            debug!(
+                library_id = %library_id,
+                user_id = %user_id,
+                discovered_collection_ids = collection_ids.len(),
+                existing_collection_ids = existing_collection_ids.len(),
+                "Skipping TMDB collection reconciliation because all movie collections already exist locally: library_id={}, user_id={}, discovered_collection_ids={}, existing_collection_ids={}",
+                library_id,
+                user_id,
+                collection_ids.len(),
+                existing_collection_ids.len()
+            );
+            return Ok(());
+        }
+
+        let discovered_total = collection_ids.len();
+        let existing_total = existing_collection_ids.len();
+        let missing_total = missing_collection_ids.len();
+        let mut synced = 0usize;
+        for collection_id in missing_collection_ids {
+            match self
+                .ensure_movie_collection_entity(library_id, user_id, collection_id)
+                .await
+            {
+                Ok(()) => synced += 1,
+                Err(error) => {
+                    warn!(
+                        library_id = %library_id,
+                        user_id = %user_id,
+                        collection_id = collection_id,
+                        error = %error,
+                        "Failed to upsert collection during library reconciliation: library_id={}, user_id={}, collection_id={}, error={}",
+                        library_id,
+                        user_id,
+                        collection_id,
+                        error
+                    );
+                }
+            }
+        }
+        let failed = missing_total.saturating_sub(synced);
+
+        info!(
+            library_id = %library_id,
+            user_id = %user_id,
+            discovered_collections = discovered_total,
+            existing_collections = existing_total,
+            missing_collections = missing_total,
+            synced_collections = synced,
+            failed_collections = failed,
+            "Completed library movie collection reconciliation: library_id={}, user_id={}, discovered_collections={}, existing_collections={}, missing_collections={}, synced_collections={}, failed_collections={}",
+            library_id,
+            user_id,
+            discovered_total,
+            existing_total,
+            missing_total,
+            synced,
+            failed
+        );
+
+        Ok(())
     }
 
     /// Trigger a lightweight Movie update to emit subscription notifications after
@@ -597,7 +901,10 @@ impl MetadataService {
         &self,
         query: &str,
     ) -> Result<Vec<MovieCollectionSearchResult>> {
-        info!("Metadata search requested for collections query='{}'", query);
+        info!(
+            "Metadata search requested for collections query='{}'",
+            query
+        );
 
         let tmdb = self.get_tmdb_client().await?;
         let collections = tmdb.search_collections(query).await?;
@@ -1015,41 +1322,31 @@ impl MetadataService {
             email: None,
             role: None,
         };
-        let data = self
-            .execute_query(
-                &auth_user,
-                r#"query MovieByTmdb($Where: MovieWhereInput, $Page: PageInput) {
-                    Movies(Where: $Where, Page: $Page) {
-                        Edges { Node { Id } }
-                    }
-                }"#,
-                serde_json::json!({
-                    "Where": {
-                        "LibraryId": { "Eq": options.library_id.to_string() },
-                        "TmdbId": { "Eq": options.provider_id as i32 }
-                    },
-                    "Page": { "Limit": 1, "Offset": 0 }
-                }),
-            )
+        let existing_id = self
+            .movie_id_in_library_by_tmdb(&auth_user, options.library_id, options.provider_id as i32)
             .await?;
-        let existing_id = data
-            .get("Movies")
-            .and_then(|m| m.get("Edges"))
-            .and_then(|e| e.as_array())
-            .and_then(|edges| edges.first())
-            .and_then(|edge| edge.get("Node"))
-            .and_then(|node| node.get("Id"))
-            .and_then(|id| id.as_str())
-            .map(|s| s.to_string());
 
         if let Some(movie_id_str) = existing_id {
             let existing_movie = Movie::get(&self.db, &movie_id_str)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Movie not found after query"))?;
             if let Some(collection_id) = existing_movie.collection_id {
-                let _ = self
-                    .upsert_movie_collection_entity(options.library_id, options.user_id, collection_id)
-                    .await;
+                if let Err(error) = self
+                    .ensure_movie_collection_entity(
+                        options.library_id,
+                        options.user_id,
+                        collection_id,
+                    )
+                    .await
+                {
+                    warn!(
+                        library_id = %options.library_id,
+                        user_id = %options.user_id,
+                        collection_id = collection_id,
+                        error = %error,
+                        "Failed to ensure collection entity while returning existing movie"
+                    );
+                }
             }
             debug!("Movie '{}' already exists in library", existing_movie.title);
             return Ok(existing_movie);
@@ -1119,6 +1416,32 @@ impl MetadataService {
                 .and_then(|v| v.get("Error"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("Failed to create movie");
+            // If a concurrent writer created the same movie first, recover by
+            // reading that row and returning it.
+            let is_unique_conflict = err.contains("UNIQUE constraint failed")
+                || err.contains("idx_movies_library_tmdb_unique");
+            if is_unique_conflict {
+                if let Some(existing_id) = self
+                    .movie_id_in_library_by_tmdb(
+                        &auth_user,
+                        options.library_id,
+                        options.provider_id as i32,
+                    )
+                    .await?
+                {
+                    let movie = Movie::get(&self.db, &existing_id)
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("Movie not found after unique conflict"))?;
+                    info!(
+                        library_id = %options.library_id,
+                        user_id = %options.user_id,
+                        tmdb_id = options.provider_id as i32,
+                        movie_id = %movie.id,
+                        "Resolved concurrent movie create by returning existing movie"
+                    );
+                    return Ok(movie);
+                }
+            }
             anyhow::bail!(err.to_string());
         }
         let created_id = data
@@ -1134,9 +1457,18 @@ impl MetadataService {
             .ok_or_else(|| anyhow::anyhow!("Movie not found after creation"))?;
 
         if let Some(collection_id) = movie_details.collection_id {
-            let _ = self
-                .upsert_movie_collection_entity(options.library_id, options.user_id, collection_id)
-                .await;
+            if let Err(error) = self
+                .ensure_movie_collection_entity(options.library_id, options.user_id, collection_id)
+                .await
+            {
+                warn!(
+                    library_id = %options.library_id,
+                    user_id = %options.user_id,
+                    collection_id = collection_id,
+                    error = %error,
+                    "Failed to ensure collection entity after movie creation"
+                );
+            }
         }
         let _ = self
             .sync_movie_cast_credits(&auth_user, &movie.id, &movie_details.cast_members)
@@ -1170,9 +1502,22 @@ impl MetadataService {
 
         let tmdb = self.get_tmdb_client().await?;
         let collection = tmdb.get_collection(options.collection_id).await?;
-        let _ = self
-            .upsert_movie_collection_entity(options.library_id, options.user_id, options.collection_id)
-            .await;
+        if let Err(error) = self
+            .ensure_movie_collection_entity(
+                options.library_id,
+                options.user_id,
+                options.collection_id,
+            )
+            .await
+        {
+            warn!(
+                library_id = %options.library_id,
+                user_id = %options.user_id,
+                collection_id = options.collection_id,
+                error = %error,
+                "Failed to ensure collection entity before collection import"
+            );
+        }
         let auth_user = AuthUser {
             user_id: options.user_id.to_string(),
             email: None,
@@ -1251,6 +1596,19 @@ impl MetadataService {
     ) -> Result<MovieCollectionDetails> {
         let tmdb = self.get_tmdb_client().await?;
         let collection = tmdb.get_collection(collection_id).await?;
+        let collection_poster_url = tmdb.poster_url(collection.poster_path.as_deref());
+        let collection_backdrop_url = tmdb.backdrop_url(collection.backdrop_path.as_deref());
+        let cached_collection_poster_url = self
+            .cache_collection_poster_artwork(Some(collection_id), collection_poster_url.as_deref())
+            .await
+            .or(collection_poster_url);
+        let cached_collection_backdrop_url = self
+            .cache_collection_backdrop_artwork(
+                Some(collection_id),
+                collection_backdrop_url.as_deref(),
+            )
+            .await
+            .or(collection_backdrop_url);
 
         let auth_user = AuthUser {
             user_id: user_id.to_string(),
@@ -1258,108 +1616,170 @@ impl MetadataService {
             role: None,
         };
 
-        let local_data = self
-            .execute_query(
-                &auth_user,
-                r#"query CollectionLibraryMovies($Where: MovieWhereInput, $Page: PageInput) {
-                    Movies(Where: $Where, Page: $Page) {
-                        Edges {
-                            Node {
-                                Id
-                                TmdbId
-                                Title
-                                Year
-                                PosterUrl
-                                MediaFileId
-                                Wanted
+        let mut local_movies: Vec<LocalCollectionMovieRow> = Vec::new();
+        let mut offset = 0usize;
+        let page_limit = 500usize;
+        loop {
+            let local_data = self
+                .execute_query(
+                    &auth_user,
+                    r#"query CollectionLibraryMovies($Where: MovieWhereInput, $Page: PageInput) {
+                        Movies(Where: $Where, Page: $Page) {
+                            Edges {
+                                Node {
+                                    Id
+                                    TmdbId
+                                    CollectionId
+                                    Title
+                                    Year
+                                    PosterUrl
+                                    MediaFileId
+                                    Wanted
+                                }
                             }
                         }
-                    }
-                }"#,
-                serde_json::json!({
-                    "Where": {
-                        "LibraryId": { "Eq": library_id.to_string() },
-                        "CollectionId": { "Eq": collection_id }
-                    },
-                    "Page": { "Limit": 500, "Offset": 0 }
-                }),
-            )
-            .await?;
+                    }"#,
+                    serde_json::json!({
+                        "Where": {
+                            "LibraryId": { "Eq": library_id.to_string() }
+                        },
+                        "Page": { "Limit": page_limit, "Offset": offset }
+                    }),
+                )
+                .await?;
 
-        #[derive(Debug, Clone)]
-        struct LocalMovieRow {
-            id: String,
-            tmdb_id: i32,
-            title: String,
-            year: Option<i32>,
-            poster_url: Option<String>,
-            media_file_id: Option<String>,
-            wanted: bool,
-        }
-
-        let mut local_by_tmdb: HashMap<i32, LocalMovieRow> = HashMap::new();
-        let local_edges = local_data
-            .get("Movies")
-            .and_then(|m| m.get("Edges"))
-            .and_then(|e| e.as_array())
-            .cloned()
-            .unwrap_or_default();
-
-        for edge in local_edges {
-            let node = edge.get("Node").unwrap_or(&serde_json::Value::Null);
-            let tmdb_id = node.get("TmdbId").and_then(|v| v.as_i64()).map(|v| v as i32);
-            let Some(tmdb_id) = tmdb_id else {
-                continue;
-            };
-            let id = node
-                .get("Id")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
-            if id.is_empty() {
-                continue;
+            let edges = local_data
+                .get("Movies")
+                .and_then(|m| m.get("Edges"))
+                .and_then(|e| e.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if edges.is_empty() {
+                break;
             }
 
-            let row = LocalMovieRow {
-                id,
-                tmdb_id,
-                title: node
-                    .get("Title")
+            for edge in &edges {
+                let node = edge.get("Node").unwrap_or(&serde_json::Value::Null);
+                let id = node
+                    .get("Id")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("Unknown")
-                    .to_string(),
-                year: node.get("Year").and_then(|v| v.as_i64()).map(|v| v as i32),
-                poster_url: node
-                    .get("PosterUrl")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-                media_file_id: node
-                    .get("MediaFileId")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string()),
-                wanted: node.get("Wanted").and_then(|v| v.as_bool()).unwrap_or(false),
-            };
-            local_by_tmdb.insert(tmdb_id, row);
+                    .unwrap_or_default()
+                    .to_string();
+                if id.is_empty() {
+                    continue;
+                }
+
+                local_movies.push(LocalCollectionMovieRow {
+                    id,
+                    tmdb_id: node
+                        .get("TmdbId")
+                        .and_then(|v| v.as_i64())
+                        .map(|v| v as i32),
+                    collection_id: node
+                        .get("CollectionId")
+                        .and_then(|v| v.as_i64())
+                        .map(|v| v as i32),
+                    title: node
+                        .get("Title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown")
+                        .to_string(),
+                    year: node.get("Year").and_then(|v| v.as_i64()).map(|v| v as i32),
+                    poster_url: node
+                        .get("PosterUrl")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    media_file_id: node
+                        .get("MediaFileId")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    wanted: node
+                        .get("Wanted")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                });
+            }
+
+            if edges.len() < page_limit {
+                break;
+            }
+            offset += page_limit;
         }
 
         let mut merged_movies: Vec<MovieCollectionMovieDetails> = Vec::new();
+        let mut used_local_movie_ids: HashSet<String> = HashSet::new();
+        let mut exact_tmdb_matches = 0usize;
+        let mut heuristic_matches = 0usize;
+        let mut pending_movie_metadata_updates: Vec<(String, i32)> = Vec::new();
         for part in collection.parts.iter() {
-            let local = local_by_tmdb.remove(&part.id);
+            let mut best_index: Option<usize> = None;
+            let mut best_score = i32::MIN;
+            for (index, local) in local_movies.iter().enumerate() {
+                if used_local_movie_ids.contains(&local.id) {
+                    continue;
+                }
+                let Some(score) = Self::collection_match_score(
+                    local,
+                    collection_id,
+                    part.id,
+                    &part.title,
+                    part.year(),
+                ) else {
+                    continue;
+                };
+                if score > best_score {
+                    best_score = score;
+                    best_index = Some(index);
+                }
+            }
+
+            let local = best_index.and_then(|index| local_movies.get(index).cloned());
+            if let Some(local_match) = local.as_ref() {
+                if local_match.tmdb_id == Some(part.id) {
+                    exact_tmdb_matches += 1;
+                    if local_match.collection_id != Some(collection_id) {
+                        pending_movie_metadata_updates.push((local_match.id.clone(), part.id));
+                    }
+                } else {
+                    heuristic_matches += 1;
+                    if local_match.tmdb_id.is_none()
+                        && Self::is_high_confidence_heuristic_collection_match(
+                            local_match,
+                            &part.title,
+                            part.year(),
+                        )
+                    {
+                        pending_movie_metadata_updates.push((local_match.id.clone(), part.id));
+                    }
+                }
+                used_local_movie_ids.insert(local_match.id.clone());
+            }
+
             merged_movies.push(MovieCollectionMovieDetails {
                 tmdb_id: part.id,
                 title: part.title.clone(),
                 year: part.year(),
-                poster_url: tmdb.poster_url(part.poster_path.as_deref()),
+                poster_url: local
+                    .as_ref()
+                    .and_then(|m| m.poster_url.clone())
+                    .or_else(|| tmdb.poster_url(part.poster_path.as_deref())),
                 library_movie_id: local.as_ref().map(|m| m.id.clone()),
                 media_file_id: local.as_ref().and_then(|m| m.media_file_id.clone()),
                 wanted: local.as_ref().map(|m| m.wanted).unwrap_or(false),
             });
         }
 
-        // Include local rows no longer present in TMDB collection response.
-        for (_, local) in local_by_tmdb {
+        // Include local rows explicitly linked to this collection that are not
+        // present in the current TMDB collection response.
+        for local in local_movies {
+            if used_local_movie_ids.contains(&local.id) {
+                continue;
+            }
+            if local.collection_id != Some(collection_id) {
+                continue;
+            }
             merged_movies.push(MovieCollectionMovieDetails {
-                tmdb_id: local.tmdb_id,
+                tmdb_id: local.tmdb_id.unwrap_or_default(),
                 title: local.title,
                 year: local.year,
                 poster_url: local.poster_url,
@@ -1369,12 +1789,74 @@ impl MetadataService {
             });
         }
 
+        let mut persisted_collection_links = 0usize;
+        for (movie_id, tmdb_id) in pending_movie_metadata_updates {
+            let update_data = self
+                .execute_mutation(
+                    &auth_user,
+                    r#"mutation PersistCollectionMovieLink($Id: String!, $Input: UpdateMovieInput!) {
+                        UpdateMovie(Id: $Id, Input: $Input) { Success Error }
+                    }"#,
+                    serde_json::json!({
+                        "Id": movie_id,
+                        "Input": {
+                            "TmdbId": tmdb_id,
+                            "CollectionId": collection_id,
+                            "CollectionName": collection.name,
+                            "CollectionPosterUrl": cached_collection_poster_url
+                        }
+                    }),
+                )
+                .await?;
+            let updated = update_data
+                .get("UpdateMovie")
+                .and_then(|v| v.get("Success"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !updated {
+                let error = update_data
+                    .get("UpdateMovie")
+                    .and_then(|v| v.get("Error"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Failed to persist movie collection metadata link");
+                warn!(
+                    movie_id = %movie_id,
+                    library_id = %library_id,
+                    user_id = %user_id,
+                    collection_id = collection_id,
+                    tmdb_id = tmdb_id,
+                    error = %error,
+                    "Failed to persist matched movie collection metadata link from collection details"
+                );
+                continue;
+            }
+            persisted_collection_links += 1;
+        }
+
+        info!(
+            library_id = %library_id,
+            user_id = %user_id,
+            collection_id = collection_id,
+            tmdb_part_count = collection.parts.len(),
+            exact_tmdb_matches = exact_tmdb_matches,
+            heuristic_matches = heuristic_matches,
+            persisted_collection_links = persisted_collection_links,
+            "Built movie collection details overlay with local library matching: library_id={}, user_id={}, collection_id={}, tmdb_part_count={}, exact_tmdb_matches={}, heuristic_matches={}, persisted_collection_links={}",
+            library_id,
+            user_id,
+            collection_id,
+            collection.parts.len(),
+            exact_tmdb_matches,
+            heuristic_matches,
+            persisted_collection_links
+        );
+
         Ok(MovieCollectionDetails {
             collection_id: collection.id,
             name: collection.name,
             overview: collection.overview,
-            poster_url: tmdb.poster_url(collection.poster_path.as_deref()),
-            backdrop_url: tmdb.backdrop_url(collection.backdrop_path.as_deref()),
+            poster_url: cached_collection_poster_url,
+            backdrop_url: cached_collection_backdrop_url,
             movies: merged_movies,
         })
     }
@@ -2072,13 +2554,23 @@ impl MetadataService {
             .ok_or_else(|| anyhow::anyhow!("Movie not found after refresh"))?;
 
         if let Some(collection_id) = details.collection_id {
-            let _ = self
-                .upsert_movie_collection_entity(
+            if let Err(error) = self
+                .ensure_movie_collection_entity(
                     Uuid::parse_str(&movie.library_id)?,
                     user_id,
                     collection_id,
                 )
-                .await;
+                .await
+            {
+                warn!(
+                    movie_id = %movie.id,
+                    library_id = %movie.library_id,
+                    user_id = %user_id,
+                    collection_id = collection_id,
+                    error = %error,
+                    "Failed to ensure collection entity after movie refresh"
+                );
+            }
         }
         let _ = self
             .sync_movie_cast_credits(&auth_user, &movie.id, &details.cast_members)
@@ -2307,15 +2799,34 @@ impl MetadataService {
         collection_id: Option<i32>,
         collection_poster_url: Option<&str>,
     ) -> Option<String> {
+        self.cache_collection_artwork(collection_id, collection_poster_url, "poster")
+            .await
+    }
+
+    async fn cache_collection_backdrop_artwork(
+        &self,
+        collection_id: Option<i32>,
+        collection_backdrop_url: Option<&str>,
+    ) -> Option<String> {
+        self.cache_collection_artwork(collection_id, collection_backdrop_url, "backdrop")
+            .await
+    }
+
+    async fn cache_collection_artwork(
+        &self,
+        collection_id: Option<i32>,
+        source_url: Option<&str>,
+        artwork_type: &str,
+    ) -> Option<String> {
         let collection_id = collection_id?;
-        let source_url = collection_poster_url?;
+        let source_url = source_url?;
         let artwork_service = crate::services::ArtworkService::new(self.db.clone());
         match artwork_service
             .cache_image(
                 source_url,
                 "collection",
                 &collection_id.to_string(),
-                "poster",
+                artwork_type,
             )
             .await
         {
@@ -2323,8 +2834,9 @@ impl MetadataService {
             Err(error) => {
                 warn!(
                     collection_id = collection_id,
+                    artwork_type = artwork_type,
                     error = %error,
-                    "Failed to cache collection poster artwork"
+                    "Failed to cache collection artwork"
                 );
                 None
             }
@@ -2337,11 +2849,6 @@ impl MetadataService {
         user_id: Uuid,
         collection_id: i32,
     ) -> Result<()> {
-        let tmdb = self.get_tmdb_client().await?;
-        let details = tmdb.get_collection(collection_id).await?;
-        let poster_url = tmdb.poster_url(details.poster_path.as_deref());
-        let backdrop_url = tmdb.backdrop_url(details.backdrop_path.as_deref());
-
         let auth_user = AuthUser {
             user_id: user_id.to_string(),
             email: None,
@@ -2376,53 +2883,100 @@ impl MetadataService {
             .and_then(|id| id.as_str())
             .map(|s| s.to_string());
 
-        match existing_id {
-            Some(id) => {
-                let _ = self
-                    .execute_mutation(
-                        &auth_user,
-                        r#"mutation UpdateCollectionFromTmdb($Id: String!, $Input: UpdateCollectionInput!) {
-                            UpdateCollection(Id: $Id, Input: $Input) { Success Error }
-                        }"#,
-                        serde_json::json!({
-                            "Id": id,
-                            "Input": {
-                                "Name": details.name,
-                                "Overview": details.overview,
-                                "PosterUrl": poster_url,
-                                "BackdropUrl": backdrop_url,
-                                "MovieCount": details.parts.len() as i32,
-                                "LastSyncedAt": chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
-                            }
-                        }),
-                    )
-                    .await?;
-            }
-            None => {
-                let _ = self
-                    .execute_mutation(
-                        &auth_user,
-                        r#"mutation CreateCollectionFromTmdb($Input: CreateCollectionInput!) {
-                            CreateCollection(Input: $Input) { Success Error Collection { Id } }
-                        }"#,
-                        serde_json::json!({
-                            "Input": {
-                                "Id": Uuid::new_v4().to_string(),
-                                "LibraryId": library_id.to_string(),
-                                "UserId": user_id.to_string(),
-                                "TmdbCollectionId": collection_id,
-                                "Name": details.name,
-                                "Overview": details.overview,
-                                "PosterUrl": poster_url,
-                                "BackdropUrl": backdrop_url,
-                                "MovieCount": details.parts.len() as i32,
-                                "LastSyncedAt": chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
-                            }
-                        }),
-                    )
-                    .await?;
-            }
+        if let Some(existing_entity_id) = existing_id {
+            debug!(
+                library_id = %library_id,
+                user_id = %user_id,
+                collection_id = collection_id,
+                collection_entity_id = %existing_entity_id,
+                "Skipping TMDB collection lookup because collection entity already exists: library_id={}, user_id={}, collection_id={}, collection_entity_id={}",
+                library_id,
+                user_id,
+                collection_id,
+                existing_entity_id
+            );
+            return Ok(());
         }
+
+        info!(
+            library_id = %library_id,
+            user_id = %user_id,
+            collection_id = collection_id,
+            "Attempting movie collection upsert from TMDB: library_id={}, user_id={}, collection_id={}",
+            library_id,
+            user_id,
+            collection_id
+        );
+        let tmdb = self.get_tmdb_client().await?;
+        let details = tmdb.get_collection(collection_id).await?;
+        let poster_url = tmdb.poster_url(details.poster_path.as_deref());
+        let backdrop_url = tmdb.backdrop_url(details.backdrop_path.as_deref());
+        let cached_poster_url = self
+            .cache_collection_poster_artwork(Some(collection_id), poster_url.as_deref())
+            .await
+            .or(poster_url);
+        let cached_backdrop_url = self
+            .cache_collection_backdrop_artwork(Some(collection_id), backdrop_url.as_deref())
+            .await
+            .or(backdrop_url);
+
+        let create = self
+            .execute_mutation(
+                &auth_user,
+                r#"mutation CreateCollectionFromTmdb($Input: CreateCollectionInput!) {
+                    CreateCollection(Input: $Input) { Success Error Collection { Id } }
+                }"#,
+                serde_json::json!({
+                    "Input": {
+                        "LibraryId": library_id.to_string(),
+                        "UserId": user_id.to_string(),
+                        "TmdbCollectionId": collection_id,
+                        "Name": details.name,
+                        "Overview": details.overview,
+                        "PosterUrl": cached_poster_url,
+                        "BackdropUrl": cached_backdrop_url,
+                        "MovieCount": details.parts.len() as i32,
+                        "LastSyncedAt": chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
+                    }
+                }),
+            )
+            .await?;
+
+        let success = create
+            .get("CreateCollection")
+            .and_then(|v| v.get("Success"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !success {
+            let error = create
+                .get("CreateCollection")
+                .and_then(|v| v.get("Error"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown error creating collection");
+            anyhow::bail!(error.to_string());
+        }
+        let created_id = create
+            .get("CreateCollection")
+            .and_then(|v| v.get("Collection"))
+            .and_then(|v| v.get("Id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        info!(
+            library_id = %library_id,
+            user_id = %user_id,
+            collection_id = collection_id,
+            collection_entity_id = %created_id,
+            collection_name = %details.name,
+            movie_count = details.parts.len(),
+            "Created movie collection entity from TMDB: library_id={}, user_id={}, collection_id={}, collection_entity_id={}, collection_name='{}', movie_count={}",
+            library_id,
+            user_id,
+            collection_id,
+            created_id,
+            details.name,
+            details.parts.len()
+        );
 
         Ok(())
     }
@@ -2433,6 +2987,18 @@ impl MetadataService {
         library_id: Uuid,
         tmdb_id: i32,
     ) -> Result<bool> {
+        Ok(self
+            .movie_id_in_library_by_tmdb(auth_user, library_id, tmdb_id)
+            .await?
+            .is_some())
+    }
+
+    async fn movie_id_in_library_by_tmdb(
+        &self,
+        auth_user: &AuthUser,
+        library_id: Uuid,
+        tmdb_id: i32,
+    ) -> Result<Option<String>> {
         let data = self
             .execute_query(
                 auth_user,
@@ -2451,14 +3017,17 @@ impl MetadataService {
             )
             .await?;
 
-        let exists = data
+        let movie_id = data
             .get("Movies")
             .and_then(|m| m.get("Edges"))
             .and_then(|e| e.as_array())
-            .map(|edges| !edges.is_empty())
-            .unwrap_or(false);
+            .and_then(|edges| edges.first())
+            .and_then(|edge| edge.get("Node"))
+            .and_then(|node| node.get("Id"))
+            .and_then(|id| id.as_str())
+            .map(|id| id.to_string());
 
-        Ok(exists)
+        Ok(movie_id)
     }
 
     /// Refresh TV show metadata from provider and persist via generated GraphQL UpdateShow mutation.

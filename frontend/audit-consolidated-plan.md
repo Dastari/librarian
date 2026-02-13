@@ -5,6 +5,23 @@ Sources: `frontend/audit1.md`, `frontend/audit2.md`
 
 This file consolidates and deduplicates all findings from both audits into one prioritized remediation plan.
 
+## Status Update (2026-02-13)
+
+Completed:
+- Security: open-redirect mitigation for sign-in callback flows.
+- Security: `graphqlClient` global exposure gated to dev-only.
+- Security: token prefix logging removed from frontend auth helpers.
+- Security: shared authenticated REST helper added and applied to torrent upload, health, and Ollama tags calls.
+- Security (partial migration): backend now rotates/clears refresh token via HttpOnly cookie on auth mutations; frontend refresh/logout flow uses cookie fallback.
+- Maintainability: collection routing normalized to internal `Collection.Id` (no TMDB-ID route navigation).
+- Maintainability: shared collection card UI primitives added and reused across collection routes and add-collection modal.
+
+In progress / remaining from security track:
+- Full server-managed auth migration still pending for access token (access token remains JS-readable in frontend auth storage).
+
+Recommended next continuation point:
+- Section 2: GraphQL naming and legacy operation cleanup.
+
 ## 1. Security (Highest Priority)
 
 1. Open redirect in sign-in callback handling.
@@ -16,6 +33,8 @@ This file consolidates and deduplicates all findings from both audits into one p
 validate `redirect` as internal-only (relative path or strict allowlist), fallback to `/`.
 - Acceptance:
 external redirect attempts (for example `https://evil.example`) are rejected.
+- Status:
+Done (2026-02-13).
 
 2. Authenticated GraphQL client exposed on `globalThis` in production.
 - File:
@@ -24,6 +43,8 @@ external redirect attempts (for example `https://evil.example`) are rejected.
 remove global exposure or gate under `import.meta.env.DEV`.
 - Acceptance:
 no production access to `graphqlClient` helpers through browser global scope.
+- Status:
+Done (2026-02-13).
 
 3. JS-readable auth cookies and token prefix logging.
 - File:
@@ -32,6 +53,8 @@ no production access to `graphqlClient` helpers through browser global scope.
 remove token prefix logging; document and/or migrate auth cookie approach toward HttpOnly server-set cookies.
 - Acceptance:
 no token material appears in logs; auth storage risk is explicitly resolved or documented.
+- Status:
+Partially done (2026-02-13): token prefix logging removed and refresh token moved to HttpOnly cookie flow; access token remains JS-readable pending full migration.
 
 4. Security-adjacent consistency issue: raw authenticated REST calls.
 - Files:
@@ -42,6 +65,8 @@ no token material appears in logs; auth storage risk is explicitly resolved or d
 introduce shared authenticated REST fetch helper for non-GraphQL endpoints (upload/health/tags).
 - Acceptance:
 these endpoints use one shared auth/header/error path.
+- Status:
+Done (2026-02-13).
 
 ## 2. GraphQL Naming and Legacy Operation Cleanup
 
@@ -159,6 +184,8 @@ Acceptance:
 - `frontend/src/components/downloads/MediaFilesMatchDialog.tsx`
 
 2. Consolidate duplicated helper patterns.
+- Status:
+Partially done (2026-02-13): shared collection card primitives extracted and reused.
 
 3. Optional React 19 enhancements (targeted, not blanket):
 - `useDeferredValue` for search-heavy UIs.

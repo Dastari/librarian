@@ -54,6 +54,7 @@ import {
   type FilenameParseResult,
 } from "../../lib/graphql";
 import { apolloClient, useQuery, useMutation } from "../../lib/graphql/client";
+import { authFetch } from "../../lib/api/authFetch";
 import {
   DataTable,
   type DataTableColumn,
@@ -720,7 +721,10 @@ function OrganizationSettingsPage() {
     setConnectionError(null);
     try {
       const baseUrl = ollamaUrl.replace(/\/$/, "");
-      const response = await fetch(`${baseUrl}/api/tags`);
+      const response = await authFetch("/api/tags", {
+        baseUrl,
+        includeAuth: false,
+      });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }

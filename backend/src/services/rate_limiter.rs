@@ -77,12 +77,13 @@ impl RateLimitedClient {
 
     /// Create a client for TMDB API
     pub fn for_tmdb() -> Self {
-        // TMDB allows ~40 requests per 10 seconds, so ~4/sec with burst of 10
+        // TMDB guidance indicates soft limits around 40 rps.
+        // Stay conservative and rely on retries when 429 appears.
         Self::new(
             "tmdb",
             RateLimitConfig {
-                requests_per_second: 4,
-                burst_size: 10,
+                requests_per_second: 12,
+                burst_size: 24,
             },
         )
     }

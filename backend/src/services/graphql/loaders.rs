@@ -189,6 +189,7 @@ impl HasForeignKey for Movie {
         match fk_column {
             "library_id" => Some(self.library_id.clone()),
             "user_id" => Some(self.user_id.clone()),
+            "collection_id" => self.collection_id.map(|id| id.to_string()),
             _ => None,
         }
     }

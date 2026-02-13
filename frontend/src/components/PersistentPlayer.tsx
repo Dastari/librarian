@@ -12,7 +12,7 @@ import { Spinner } from "@heroui/spinner";
 import {
   IconPlayerPlay,
   IconPlayerPause,
-  IconPlayerStop,
+  IconX,
   IconMinimize,
   IconMaximize,
 } from "@tabler/icons-react";
@@ -47,8 +47,10 @@ export function PersistentPlayer() {
     isLoading,
     updatePlayback,
     stopPlayback,
+    currentContent,
     currentEpisode,
     currentShow,
+    currentMovie,
     setCurrentEpisode,
     setCurrentShow,
     shouldExpand,
@@ -513,6 +515,13 @@ export function PersistentPlayer() {
   const epTitle = currentEpisode
     ? `S${String(currentEpisode.season).padStart(2, "0")}E${String(currentEpisode.episode).padStart(2, "0")}${currentEpisode.title ? ` - ${currentEpisode.title}` : ""}`
     : "Episode";
+  const isMovieSession = contentType === "MOVIE";
+  const displayTitle = isMovieSession
+    ? currentMovie?.Title || currentContent?.title || "Movie"
+    : currentShow?.name || currentContent?.title || "Show";
+  const displaySubtitle = isMovieSession
+    ? currentContent?.subtitle || ""
+    : epTitle;
 
   return (
     <>
@@ -579,6 +588,20 @@ export function PersistentPlayer() {
                 </div>
               </div>
             )}
+            {!isExpanded && (
+              <div className="absolute top-2 right-2 z-10">
+                <Button
+                  isIconOnly
+                  size="sm"
+                  variant="light"
+                  className="text-white bg-black/40 hover:bg-black/60"
+                  onPress={handleStop}
+                  aria-label="Close player"
+                >
+                  <IconX size={18} />
+                </Button>
+              </div>
+            )}
 
             {/* Expanded player: controls overlay */}
             {isExpanded && (
@@ -590,11 +613,13 @@ export function PersistentPlayer() {
                   <div className="bg-gradient-to-b from-black/70 to-transparent p-4 flex items-center justify-between">
                     <div className="flex-1 min-w-0">
                       <h2 className="text-white text-lg font-semibold truncate">
-                        {currentShow?.name || "Show"}
+                        {displayTitle}
                       </h2>
-                      <p className="text-white/70 text-sm truncate">
-                        {epTitle}
-                      </p>
+                      {displaySubtitle ? (
+                        <p className="text-white/70 text-sm truncate">
+                          {displaySubtitle}
+                        </p>
+                      ) : null}
                     </div>
                     <div className="flex items-center">
                       {session.mediaFileId && (
@@ -624,6 +649,15 @@ export function PersistentPlayer() {
                         aria-label="Minimize player"
                       >
                         <IconMinimize size={20} />
+                      </Button>
+                      <Button
+                        isIconOnly
+                        variant="light"
+                        className="text-white"
+                        onPress={handleStop}
+                        aria-label="Close player"
+                      >
+                        <IconX size={20} />
                       </Button>
                     </div>
                   </div>
@@ -677,15 +711,6 @@ export function PersistentPlayer() {
                           ) : (
                             <IconPlayerPause size={24} />
                           )}
-                        </Button>
-                        <Button
-                          isIconOnly
-                          variant="light"
-                          className="text-white"
-                          onPress={handleStop}
-                          aria-label="Stop"
-                        >
-                          <IconPlayerStop size={20} />
                         </Button>
                         <VolumeControl
                           volume={
@@ -760,19 +785,10 @@ export function PersistentPlayer() {
                 size="sm"
                 iconSize={18}
               />
-              <Button
-                isIconOnly
-                size="sm"
-                variant="light"
-                onPress={handleStop}
-                aria-label="Stop"
-              >
-                <IconPlayerStop size={18} />
-              </Button>
             </div>
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-xs text-default-400 truncate">
-                {currentShow?.name || "Playing"}
+                {displayTitle || "Playing"}
               </span>
               <span className="text-xs text-default-500 font-mono flex-shrink-0">
                 -{formatTime(Math.max(0, duration - currentTime))}

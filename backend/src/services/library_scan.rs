@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as AnyhowContext, Result};
 use async_graphql::{Request, Variables};
 use async_trait::async_trait;
 use chrono::{Datelike, Utc};
+use futures::stream::{self, StreamExt};
 use regex::Regex;
 use serde::Deserialize;
 use tokio::process::Command;
@@ -112,6 +113,53 @@ struct AnalyzeJob {
     path: String,
 }
 
+#[derive(Debug, Clone)]
+struct PendingProviderFallback {
+    media_file_id: String,
+    media_path: String,
+    match_source: String,
+}
+
+#[derive(Debug, Clone)]
+struct MovieCandidateRow {
+    id: String,
+    title: String,
+    year: Option<i32>,
+    wanted: bool,
+    has_file: bool,
+}
+
+#[derive(Debug, Clone)]
+struct EpisodeCandidateRow {
+    id: String,
+    show_name: String,
+    show_year: Option<i32>,
+    season: i32,
+    episode: i32,
+    wanted: bool,
+    has_file: bool,
+}
+
+#[derive(Debug, Clone)]
+struct TrackCandidateRow {
+    id: String,
+    title: String,
+    album_name: String,
+    wanted: bool,
+    has_file: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ChapterCandidateRow {
+    id: String,
+    title: String,
+    audiobook_title: String,
+    author_name: Option<String>,
+    chapter_number: Option<i32>,
+    wanted: bool,
+    has_file: bool,
+}
+
 #[derive(Debug)]
 struct Runtime {
     cancel: CancellationToken,
@@ -199,6 +247,10 @@ pub struct LibraryScanService {
     analyze_rx: Arc<Mutex<mpsc::UnboundedReceiver<AnalyzeJob>>>,
     in_progress_scans: Arc<Mutex<HashSet<String>>>,
     queued_analysis: Arc<Mutex<HashSet<String>>>,
+    movie_candidate_cache: Arc<RwLock<HashMap<String, Vec<MovieCandidateRow>>>>,
+    episode_candidate_cache: Arc<RwLock<HashMap<String, Vec<EpisodeCandidateRow>>>>,
+    track_candidate_cache: Arc<RwLock<HashMap<String, Vec<TrackCandidateRow>>>>,
+    chapter_candidate_cache: Arc<RwLock<HashMap<String, Vec<ChapterCandidateRow>>>>,
 }
 
 impl LibraryScanService {
@@ -245,6 +297,10 @@ impl LibraryScanService {
             analyze_rx: Arc::new(Mutex::new(analyze_rx)),
             in_progress_scans: Arc::new(Mutex::new(HashSet::new())),
             queued_analysis: Arc::new(Mutex::new(HashSet::new())),
+            movie_candidate_cache: Arc::new(RwLock::new(HashMap::new())),
+            episode_candidate_cache: Arc::new(RwLock::new(HashMap::new())),
+            track_candidate_cache: Arc::new(RwLock::new(HashMap::new())),
+            chapter_candidate_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -824,6 +880,81 @@ impl LibraryScanService {
         Ok(due)
     }
 
+    async fn clear_stale_library_scanning_state_on_startup(&self) -> Result<()> {
+        let auth_user = self.system_auth_user(None).await?;
+        let mut offset = 0usize;
+        let limit = 500usize;
+        let mut libraries_reset = 0usize;
+
+        info!(
+            page_limit = limit,
+            "Starting startup scan-state reconciliation for libraries with Scanning=true: page_limit={}",
+            limit
+        );
+
+        loop {
+            let data = self
+                .execute_graphql(
+                    &auth_user,
+                    r#"query LibrariesMarkedScanningOnStartup($Where: LibraryWhereInput, $Page: PageInput) {
+                        Libraries(Where: $Where, Page: $Page) {
+                            Edges { Node { Id Name Scanning } }
+                        }
+                    }"#,
+                    serde_json::json!({
+                        "Where": { "Scanning": { "Eq": true } },
+                        "Page": { "Limit": limit, "Offset": offset }
+                    }),
+                )
+                .await?;
+
+            let edges = data
+                .get("Libraries")
+                .and_then(|v| v.get("Edges"))
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if edges.is_empty() {
+                break;
+            }
+
+            for edge in &edges {
+                let node = edge.get("Node").unwrap_or(&serde_json::Value::Null);
+                let library_id = node.get("Id").and_then(|v| v.as_str()).unwrap_or_default();
+                let library_name = node
+                    .get("Name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown");
+                if library_id.is_empty() {
+                    continue;
+                }
+
+                self.set_library_scanning(&auth_user, library_id, false, false)
+                    .await?;
+                libraries_reset += 1;
+                info!(
+                    library_id = %library_id,
+                    library_name = %library_name,
+                    "Cleared stale library scanning state on startup: library_id={}, library_name={}",
+                    library_id,
+                    library_name
+                );
+            }
+
+            if edges.len() < limit {
+                break;
+            }
+            offset += limit;
+        }
+
+        info!(
+            reset_libraries = libraries_reset,
+            "Completed startup scan-state reconciliation: reset_libraries={}", libraries_reset
+        );
+
+        Ok(())
+    }
+
     fn extensions_for_library(library_type: &str) -> &'static [&'static str] {
         match Self::normalize_library_type(library_type).as_str() {
             "movies" | "tv" => &[
@@ -1263,6 +1394,7 @@ impl LibraryScanService {
                 library.name,
                 library.path
             );
+            self.reconcile_movie_collections_for_library(&library).await;
             self.set_library_scanning(&auth_user, library_id, false, true)
                 .await?;
             return Ok(());
@@ -1271,6 +1403,7 @@ impl LibraryScanService {
         let allowed_ext = Self::extensions_for_library(&normalized_library_type);
         let mut scanned_count: usize = 0;
         let mut discovered_paths: HashSet<String> = HashSet::new();
+        let mut pending_provider_fallback: Vec<PendingProviderFallback> = Vec::new();
 
         for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
             if !entry.file_type().is_file() {
@@ -1296,6 +1429,11 @@ impl LibraryScanService {
             }
 
             let abs_path = path.to_string_lossy().to_string();
+            let match_source = Path::new(&abs_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&abs_path)
+                .to_string();
             discovered_paths.insert(abs_path.clone());
             let rel_path = path
                 .strip_prefix(&root)
@@ -1342,8 +1480,20 @@ impl LibraryScanService {
                     media_file_id,
                     abs_path
                 );
+            } else {
+                debug!(
+                    library_id = %library_id,
+                    library_name = %library.name,
+                    media_file_id = %media_file_id,
+                    media_file_path = %abs_path,
+                    "Skipping provider metadata fallback for previously known media file during scan: library_id={}, media_file_id={}, path={}",
+                    library_id,
+                    media_file_id,
+                    abs_path
+                );
             }
 
+            let match_started = Instant::now();
             let match_result = self
                 .match_media_file(MatchRequest {
                     media_file_id: media_file_id.clone(),
@@ -1352,7 +1502,7 @@ impl LibraryScanService {
                     force: false,
                     auto_match: true,
                     candidate_limit: 10,
-                    allow_provider_fallback: true,
+                    allow_provider_fallback: false,
                     wanted_policy: MatchWantedPolicy::PreferWanted,
                     ..Default::default()
                 })
@@ -1360,57 +1510,34 @@ impl LibraryScanService {
 
             match match_result {
                 Ok(m) => {
-                    if m.success && library.auto_organize {
-                        match self
-                            .should_skip_auto_organize_for_match(
-                                &library,
-                                &auth_user,
-                                &media_file_id,
-                                &abs_path,
-                                &m,
-                            )
-                            .await
-                        {
-                            Ok(Some(reason)) => {
-                                warn!(
-                                    library_id = %library.id,
-                                    library_name = %library.name,
-                                    media_file_id = %media_file_id,
-                                    media_file_path = %abs_path,
-                                    matched_type = ?m.matched_type,
-                                    matched_id = ?m.matched_id,
-                                    confidence = m.confidence,
-                                    "{}",
-                                    reason
-                                );
-                                self.create_notification(
-                                    &auth_user,
-                                    "WARNING",
-                                    "SCAN",
-                                    "Auto-organize skipped due to potential mismatch",
-                                    &reason,
-                                )
-                                .await;
-                            }
-                            Ok(None) => {
-                                let _ = self.organize_media_file(&media_file_id).await;
-                            }
-                            Err(e) => {
-                                warn!(
-                                    library_id = %library.id,
-                                    media_file_id = %media_file_id,
-                                    media_file_path = %abs_path,
-                                    error = %e,
-                                    "Failed to evaluate auto-organize safety guard: library_id={}, media_file_id={}, path={}, error={}",
-                                    library.id,
-                                    media_file_id,
-                                    abs_path,
-                                    e
-                                );
-                                let _ = self.organize_media_file(&media_file_id).await;
-                            }
-                        }
+                    self.maybe_auto_organize_after_scan_match(
+                        &library,
+                        &auth_user,
+                        &media_file_id,
+                        &abs_path,
+                        &m,
+                    )
+                    .await;
+                    if !m.success && is_new_media_file {
+                        pending_provider_fallback.push(PendingProviderFallback {
+                            media_file_id: media_file_id.clone(),
+                            media_path: abs_path.clone(),
+                            match_source: match_source.clone(),
+                        });
                     }
+                    debug!(
+                        library_id = %library_id,
+                        media_file_id = %media_file_id,
+                        media_file_path = %abs_path,
+                        matched = m.success,
+                        elapsed_ms = match_started.elapsed().as_millis() as u64,
+                        "Completed scan match evaluation for media file: library_id={}, media_file_id={}, path={}, matched={}, elapsed_ms={}",
+                        library_id,
+                        media_file_id,
+                        abs_path,
+                        m.success,
+                        match_started.elapsed().as_millis() as u64
+                    );
                 }
                 Err(e) => {
                     warn!(
@@ -1432,8 +1559,13 @@ impl LibraryScanService {
             scanned_count += 1;
         }
 
+        self.process_provider_fallback_batch(&library, &auth_user, pending_provider_fallback)
+            .await;
+
         self.reconcile_missing_media_files(&library, &auth_user, &discovered_paths)
             .await?;
+
+        self.reconcile_movie_collections_for_library(&library).await;
 
         if Self::is_tv_library_type(&normalized_library_type) {
             self.ensure_tv_folder_structure(&library).await?;
@@ -1460,6 +1592,8 @@ impl LibraryScanService {
             discovered_paths.len(),
             library.auto_organize
         );
+
+        self.clear_candidate_caches_for_library(library_id).await;
 
         Ok(())
     }
@@ -1517,6 +1651,8 @@ impl LibraryScanService {
                         .await;
                 }
             }
+            self.clear_candidate_caches_for_library(&job.library_id)
+                .await;
 
             let mut in_progress = self.in_progress_scans.lock().await;
             in_progress.remove(&job.library_id);
@@ -2769,6 +2905,350 @@ impl LibraryScanService {
         ))
     }
 
+    async fn reconcile_movie_collections_for_library(&self, library: &LibraryRow) {
+        match (
+            Uuid::parse_str(&library.id),
+            Uuid::parse_str(&library.user_id),
+        ) {
+            (Ok(library_uuid), Ok(user_uuid)) => match self.metadata_service().await {
+                Ok(metadata) => {
+                    if let Err(error) = metadata
+                        .ensure_movie_collections_for_library(library_uuid, user_uuid)
+                        .await
+                    {
+                        warn!(
+                            library_id = %library.id,
+                            library_name = %library.name,
+                            user_id = %library.user_id,
+                            error = %error,
+                            "Movie collection reconciliation failed for library scan workflow"
+                        );
+                    }
+                }
+                Err(error) => {
+                    warn!(
+                        library_id = %library.id,
+                        library_name = %library.name,
+                        user_id = %library.user_id,
+                        error = %error,
+                        "Metadata service unavailable for collection reconciliation in library scan workflow"
+                    );
+                }
+            },
+            (library_parse, user_parse) => {
+                warn!(
+                    library_id = %library.id,
+                    user_id = %library.user_id,
+                    library_id_parse_ok = library_parse.is_ok(),
+                    user_id_parse_ok = user_parse.is_ok(),
+                    "Skipping library scan collection reconciliation because library/user IDs are invalid UUIDs"
+                );
+            }
+        }
+    }
+
+    fn movie_provider_fingerprint(match_source: &str) -> Option<String> {
+        let hint = Self::parse_movie_hint(match_source);
+        let title = hint.title?;
+        if title.len() < 2 {
+            return None;
+        }
+        let normalized = Self::normalize_for_match(&title);
+        if normalized.is_empty() {
+            return None;
+        }
+        Some(match hint.year {
+            Some(year) => format!("{}|{}", normalized, year),
+            None => normalized,
+        })
+    }
+
+    async fn maybe_auto_organize_after_scan_match(
+        &self,
+        library: &LibraryRow,
+        auth_user: &AuthUser,
+        media_file_id: &str,
+        media_path: &str,
+        match_result: &MatchResult,
+    ) {
+        if !match_result.success || !library.auto_organize {
+            return;
+        }
+
+        match self
+            .should_skip_auto_organize_for_match(
+                library,
+                auth_user,
+                media_file_id,
+                media_path,
+                match_result,
+            )
+            .await
+        {
+            Ok(Some(reason)) => {
+                warn!(
+                    library_id = %library.id,
+                    library_name = %library.name,
+                    media_file_id = %media_file_id,
+                    media_file_path = %media_path,
+                    matched_type = ?match_result.matched_type,
+                    matched_id = ?match_result.matched_id,
+                    confidence = match_result.confidence,
+                    "{}",
+                    reason
+                );
+                self.create_notification(
+                    auth_user,
+                    "WARNING",
+                    "SCAN",
+                    "Auto-organize skipped due to potential mismatch",
+                    &reason,
+                )
+                .await;
+            }
+            Ok(None) => {
+                let _ = self.organize_media_file(media_file_id).await;
+            }
+            Err(e) => {
+                warn!(
+                    library_id = %library.id,
+                    media_file_id = %media_file_id,
+                    media_file_path = %media_path,
+                    error = %e,
+                    "Failed to evaluate auto-organize safety guard: library_id={}, media_file_id={}, path={}, error={}",
+                    library.id,
+                    media_file_id,
+                    media_path,
+                    e
+                );
+                let _ = self.organize_media_file(media_file_id).await;
+            }
+        }
+    }
+
+    async fn process_provider_fallback_batch(
+        &self,
+        library: &LibraryRow,
+        auth_user: &AuthUser,
+        pending: Vec<PendingProviderFallback>,
+    ) {
+        if pending.is_empty() {
+            return;
+        }
+
+        info!(
+            library_id = %library.id,
+            library_name = %library.name,
+            library_type = %library.library_type,
+            pending_files = pending.len(),
+            "Starting deferred provider fallback batch for scan: library_id={}, library_name={}, library_type={}, pending_files={}",
+            library.id,
+            library.name,
+            library.library_type,
+            pending.len()
+        );
+
+        let normalized_library_type = Self::normalize_library_type(&library.library_type);
+        let fallback_workers = self.config.analyze_workers.clamp(2, 8);
+
+        match normalized_library_type.as_str() {
+            "movies" => {
+                let mut grouped: HashMap<String, Vec<PendingProviderFallback>> = HashMap::new();
+                let mut skipped_no_fingerprint = 0usize;
+                for item in pending {
+                    if let Some(fingerprint) = Self::movie_provider_fingerprint(&item.match_source)
+                    {
+                        grouped.entry(fingerprint).or_default().push(item);
+                    } else {
+                        skipped_no_fingerprint += 1;
+                    }
+                }
+
+                if skipped_no_fingerprint > 0 {
+                    debug!(
+                        library_id = %library.id,
+                        skipped = skipped_no_fingerprint,
+                        "Skipped deferred movie provider fallback for files with insufficient fingerprint hints: library_id={}, skipped={}",
+                        library.id,
+                        skipped_no_fingerprint
+                    );
+                }
+
+                let grouped_items: Vec<Vec<PendingProviderFallback>> =
+                    grouped.into_values().collect();
+                stream::iter(grouped_items)
+                    .map(|group| async move {
+                        if group.is_empty() {
+                            return;
+                        }
+                        let started = Instant::now();
+                        let representative = &group[0];
+                        match self
+                            .try_provider_create_and_match_movie(
+                                library,
+                                auth_user,
+                                &representative.media_file_id,
+                                &representative.media_path,
+                                &representative.match_source,
+                            )
+                            .await
+                        {
+                            Ok(Some(result))
+                                if result.matched_type.as_deref() == Some("Movie")
+                                    && result.matched_id.is_some() =>
+                            {
+                                self.maybe_auto_organize_after_scan_match(
+                                    library,
+                                    auth_user,
+                                    &representative.media_file_id,
+                                    &representative.media_path,
+                                    &result,
+                                )
+                                .await;
+
+                                let movie_id = result.matched_id.clone().unwrap_or_default();
+                                for sibling in group.iter().skip(1) {
+                                    if let Err(error) = self
+                                        .link_movie(auth_user, &sibling.media_file_id, &movie_id)
+                                        .await
+                                    {
+                                        warn!(
+                                            media_file_id = %sibling.media_file_id,
+                                            media_path = %sibling.media_path,
+                                            movie_id = %movie_id,
+                                            error = %error,
+                                            "Deferred provider fallback failed to link sibling media file: media_file_id={}, path={}, movie_id={}, error={}",
+                                            sibling.media_file_id,
+                                            sibling.media_path,
+                                            movie_id,
+                                            error
+                                        );
+                                        continue;
+                                    }
+                                    let sibling_result = MatchResult {
+                                        success: true,
+                                        auto_matched: true,
+                                        already_matched: false,
+                                        matched_type: Some("Movie".to_string()),
+                                        matched_id: Some(movie_id.clone()),
+                                        confidence: result.confidence,
+                                        reason: Some(
+                                            "Linked by deferred grouped movie provider fallback"
+                                                .to_string(),
+                                        ),
+                                        candidates: Vec::new(),
+                                    };
+                                    self.maybe_auto_organize_after_scan_match(
+                                        library,
+                                        auth_user,
+                                        &sibling.media_file_id,
+                                        &sibling.media_path,
+                                        &sibling_result,
+                                    )
+                                    .await;
+                                }
+                            }
+                            Ok(Some(_)) | Ok(None) => {}
+                            Err(error) => {
+                                warn!(
+                                    media_file_id = %representative.media_file_id,
+                                    media_path = %representative.media_path,
+                                    error = %error,
+                                    "Deferred movie provider fallback failed: media_file_id={}, path={}, error={}",
+                                    representative.media_file_id,
+                                    representative.media_path,
+                                    error
+                                );
+                            }
+                        }
+                        info!(
+                            media_file_id = %representative.media_file_id,
+                            media_path = %representative.media_path,
+                            grouped_files = group.len(),
+                            elapsed_ms = started.elapsed().as_millis() as u64,
+                            "Deferred movie provider fallback group processed: media_file_id={}, path={}, grouped_files={}, elapsed_ms={}",
+                            representative.media_file_id,
+                            representative.media_path,
+                            group.len(),
+                            started.elapsed().as_millis() as u64
+                        );
+                    })
+                    .buffer_unordered(fallback_workers)
+                    .collect::<Vec<_>>()
+                    .await;
+            }
+            "tv" | "music" | "audiobooks" => {
+                let fallback_kind = normalized_library_type.clone();
+                stream::iter(pending)
+                    .map(|item| {
+                        let fallback_kind = fallback_kind.clone();
+                        async move {
+                            let result = match fallback_kind.as_str() {
+                            "tv" => {
+                                self.try_provider_create_and_match_episode(
+                                    library,
+                                    auth_user,
+                                    &item.media_file_id,
+                                    &item.media_path,
+                                    &item.match_source,
+                                )
+                                .await
+                            }
+                            "music" => {
+                                self.try_provider_create_and_match_track(
+                                    library,
+                                    auth_user,
+                                    &item.media_file_id,
+                                    &item.media_path,
+                                    &item.match_source,
+                                )
+                                .await
+                            }
+                            _ => {
+                                self.try_provider_create_and_match_chapter(
+                                    library,
+                                    auth_user,
+                                    &item.media_file_id,
+                                    &item.media_path,
+                                    &item.match_source,
+                                )
+                                .await
+                            }
+                        };
+                        match result {
+                            Ok(Some(match_result)) => {
+                                self.maybe_auto_organize_after_scan_match(
+                                    library,
+                                    auth_user,
+                                    &item.media_file_id,
+                                    &item.media_path,
+                                    &match_result,
+                                )
+                                .await;
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                warn!(
+                                    media_file_id = %item.media_file_id,
+                                    media_path = %item.media_path,
+                                    error = %error,
+                                    "Deferred provider fallback failed: media_file_id={}, path={}, error={}",
+                                    item.media_file_id,
+                                    item.media_path,
+                                    error
+                                );
+                            }
+                        }
+                        }
+                    })
+                    .buffer_unordered(fallback_workers)
+                    .collect::<Vec<_>>()
+                    .await;
+            }
+            _ => {}
+        }
+    }
+
     async fn try_provider_create_and_match_movie(
         &self,
         library: &LibraryRow,
@@ -2783,12 +3263,11 @@ impl LibraryScanService {
         };
 
         let metadata = self.metadata_service().await?;
-        let mut attempts: Vec<(String, Option<i32>)> = vec![(title.to_string(), None)];
+        let mut attempts: Vec<(String, Option<i32>)> = Vec::new();
         if let Some(year) = hint.year {
-            // TMDB docs: include y:year in query text to narrow ambiguous results.
-            attempts.push((format!("{title} y:{year}"), None));
             attempts.push((title.to_string(), Some(year)));
         }
+        attempts.push((title.to_string(), None));
 
         let mut candidates = Vec::new();
         let mut attempted_labels: Vec<String> = Vec::new();
@@ -3625,32 +4104,37 @@ impl LibraryScanService {
         candidates
     }
 
-    async fn collect_movie_candidates(
+    async fn clear_candidate_caches_for_library(&self, library_id: &str) {
+        self.movie_candidate_cache.write().await.remove(library_id);
+        self.episode_candidate_cache
+            .write()
+            .await
+            .remove(library_id);
+        self.track_candidate_cache.write().await.remove(library_id);
+        self.chapter_candidate_cache
+            .write()
+            .await
+            .remove(library_id);
+    }
+
+    async fn get_or_load_movie_candidate_rows(
         &self,
+        auth_user: &AuthUser,
         library_id: &str,
-        path: &str,
-        limit: usize,
-        wanted_policy: MatchWantedPolicy,
-    ) -> Result<Vec<MatchCandidate>> {
-        let auth_user = self.system_auth_user(None).await?;
-        let hint = Self::parse_movie_hint(path);
-        let file_name = Path::new(path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(path);
-        let normalized = hint
-            .title
-            .as_deref()
-            .map(Self::normalize_for_match)
-            .unwrap_or_else(|| Self::normalize_for_match(file_name));
-        let hint_seq = hint
-            .title
-            .as_deref()
-            .and_then(Self::extract_title_sequence_number);
+    ) -> Result<Vec<MovieCandidateRow>> {
+        if let Some(rows) = self
+            .movie_candidate_cache
+            .read()
+            .await
+            .get(library_id)
+            .cloned()
+        {
+            return Ok(rows);
+        }
 
         let data = self
             .execute_graphql(
-                &auth_user,
+                auth_user,
                 r#"query MatchMovieCandidates($LibraryId: String!) {
                     Movies(
                         Where: { LibraryId: { Eq: $LibraryId } }
@@ -3663,7 +4147,7 @@ impl LibraryScanService {
             )
             .await?;
 
-        let mut out = Vec::new();
+        let mut rows = Vec::new();
         for edge in data
             .get("Movies")
             .and_then(|v| v.get("Edges"))
@@ -3674,109 +4158,67 @@ impl LibraryScanService {
             let Some(node) = edge.get("Node") else {
                 continue;
             };
-            let Some(target_id) = node.get("Id").and_then(|v| v.as_str()) else {
+            let Some(id) = node.get("Id").and_then(|v| v.as_str()) else {
                 continue;
             };
             let Some(title) = node.get("Title").and_then(|v| v.as_str()) else {
                 continue;
             };
-            let year = node.get("Year").and_then(|v| v.as_i64()).map(|v| v as i32);
-            let wanted = node
-                .get("Wanted")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let has_file = node
-                .get("HasFile")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if !Self::should_include_candidate(wanted, wanted_policy) {
-                continue;
-            }
 
-            let title_norm = Self::normalize_for_match(title);
-            let mut score = if normalized.contains(&title_norm) || title_norm.contains(&normalized)
-            {
-                0.85
-            } else {
-                jaro_winkler(&normalized, &title_norm)
-            };
-
-            if let Some(y) = year {
-                if hint.year == Some(y) {
-                    score += 0.1;
-                } else if hint.year.is_some() {
-                    score -= 0.35;
-                }
-            }
-            let title_seq = Self::extract_title_sequence_number(title);
-            if hint_seq != title_seq {
-                score -= 0.25;
-            }
-
-            let adjusted =
-                Self::adjust_candidate_score(score.min(1.0), wanted, has_file, wanted_policy);
-            if adjusted >= 0.4 {
-                let display_name = match year {
-                    Some(y) => format!("{} ({})", title, y),
-                    None => title.to_string(),
-                };
-                out.push(MatchCandidate {
-                    target_type: "Movie".to_string(),
-                    target_id: target_id.to_string(),
-                    target_name: Some(display_name),
-                    score: adjusted,
-                    reason: Some("movie title/year heuristic".to_string()),
-                    wanted: Some(wanted),
-                });
-            }
+            rows.push(MovieCandidateRow {
+                id: id.to_string(),
+                title: title.to_string(),
+                year: node.get("Year").and_then(|v| v.as_i64()).map(|v| v as i32),
+                wanted: node
+                    .get("Wanted")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+                has_file: node
+                    .get("HasFile")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            });
         }
 
-        Ok(Self::sort_and_trim_candidates(out, limit))
+        self.movie_candidate_cache
+            .write()
+            .await
+            .insert(library_id.to_string(), rows.clone());
+
+        Ok(rows)
     }
 
-    async fn collect_episode_candidates(
+    async fn get_or_load_episode_candidate_rows(
         &self,
+        auth_user: &AuthUser,
         library_id: &str,
-        path: &str,
-        limit: usize,
-        wanted_policy: MatchWantedPolicy,
-    ) -> Result<Vec<MatchCandidate>> {
-        let auth_user = self.system_auth_user(None).await?;
-        let hint = Self::parse_episode_hint(path);
-        let (season, episode) = match (hint.season, hint.episode) {
-            (Some(s), Some(e)) => (s, e),
-            _ => return Ok(Vec::new()),
-        };
-        let normalized = hint
-            .show_name
-            .as_deref()
-            .map(Self::normalize_for_match)
-            .unwrap_or_else(|| Self::normalize_for_match(path));
+    ) -> Result<Vec<EpisodeCandidateRow>> {
+        if let Some(rows) = self
+            .episode_candidate_cache
+            .read()
+            .await
+            .get(library_id)
+            .cloned()
+        {
+            return Ok(rows);
+        }
 
         let data = self
             .execute_graphql(
-                &auth_user,
-                r#"query MatchEpisodeCandidates($LibraryId: String!, $Season: Int!, $Episode: Int!) {
+                auth_user,
+                r#"query MatchEpisodeCandidates($LibraryId: String!) {
                     Episodes(
-                        Where: {
-                            Season: { Eq: $Season }
-                            Episode: { Eq: $Episode }
-                            Show: { LibraryId: { Eq: $LibraryId } }
-                        }
+                        Where: { Show: { LibraryId: { Eq: $LibraryId } } }
                         Page: { Limit: 10000 }
                     ) {
-                        Edges { Node { Id Wanted MediaFileId Show { Name Year } } }
+                        Edges { Node { Id Season Episode Wanted MediaFileId Show { Name Year } } }
                     }
                 }"#,
-                serde_json::json!({
-                    "LibraryId": library_id,
-                    "Season": season,
-                    "Episode": episode,
-                }),
+                serde_json::json!({ "LibraryId": library_id }),
             )
             .await?;
 
-        let mut out = Vec::new();
+        let mut rows = Vec::new();
         for edge in data
             .get("Episodes")
             .and_then(|v| v.get("Edges"))
@@ -3790,73 +4232,63 @@ impl LibraryScanService {
             let Some(show) = node.get("Show") else {
                 continue;
             };
-            let Some(target_id) = node.get("Id").and_then(|v| v.as_str()) else {
+            let Some(id) = node.get("Id").and_then(|v| v.as_str()) else {
                 continue;
             };
             let Some(show_name) = show.get("Name").and_then(|v| v.as_str()) else {
                 continue;
             };
-            let show_year = show.get("Year").and_then(|v| v.as_i64()).map(|v| v as i32);
-            let wanted = node
-                .get("Wanted")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let has_file = node
-                .get("MediaFileId")
-                .and_then(|v| v.as_str())
-                .map(|s| !s.is_empty())
-                .unwrap_or(false);
-            if !Self::should_include_candidate(wanted, wanted_policy) {
+            let Some(season) = node.get("Season").and_then(|v| v.as_i64()) else {
                 continue;
-            }
-
-            let show_norm = Self::normalize_for_match(show_name);
-            let mut score = if normalized.contains(&show_norm) {
-                0.95
-            } else {
-                (jaro_winkler(&normalized, &show_norm) * 0.9).max(0.65)
             };
-            if let Some(parsed_year) = hint.year
-                && let Some(y) = show_year
-                && y == parsed_year
-            {
-                score += 0.05;
-            }
-            let adjusted =
-                Self::adjust_candidate_score(score.min(1.0), wanted, has_file, wanted_policy);
-            if adjusted >= 0.45 {
-                let display_name = format!("{} S{:02}E{:02}", show_name, season, episode);
-                out.push(MatchCandidate {
-                    target_type: "Episode".to_string(),
-                    target_id: target_id.to_string(),
-                    target_name: Some(display_name),
-                    score: adjusted,
-                    reason: Some("episode season/number + show similarity".to_string()),
-                    wanted: Some(wanted),
-                });
-            }
+            let Some(episode) = node.get("Episode").and_then(|v| v.as_i64()) else {
+                continue;
+            };
+
+            rows.push(EpisodeCandidateRow {
+                id: id.to_string(),
+                show_name: show_name.to_string(),
+                show_year: show.get("Year").and_then(|v| v.as_i64()).map(|v| v as i32),
+                season: season as i32,
+                episode: episode as i32,
+                wanted: node
+                    .get("Wanted")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+                has_file: node
+                    .get("MediaFileId")
+                    .and_then(|v| v.as_str())
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false),
+            });
         }
 
-        Ok(Self::sort_and_trim_candidates(out, limit))
+        self.episode_candidate_cache
+            .write()
+            .await
+            .insert(library_id.to_string(), rows.clone());
+
+        Ok(rows)
     }
 
-    async fn collect_track_candidates(
+    async fn get_or_load_track_candidate_rows(
         &self,
+        auth_user: &AuthUser,
         library_id: &str,
-        path: &str,
-        limit: usize,
-        wanted_policy: MatchWantedPolicy,
-    ) -> Result<Vec<MatchCandidate>> {
-        let auth_user = self.system_auth_user(None).await?;
-        let file_name = Path::new(path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(path);
-        let normalized = Self::normalize_for_match(file_name);
+    ) -> Result<Vec<TrackCandidateRow>> {
+        if let Some(rows) = self
+            .track_candidate_cache
+            .read()
+            .await
+            .get(library_id)
+            .cloned()
+        {
+            return Ok(rows);
+        }
 
         let data = self
             .execute_graphql(
-                &auth_user,
+                auth_user,
                 r#"query MatchTrackCandidates($LibraryId: String!) {
                     Tracks(
                         Where: { LibraryId: { Eq: $LibraryId } }
@@ -3869,7 +4301,7 @@ impl LibraryScanService {
             )
             .await?;
 
-        let mut out = Vec::new();
+        let mut rows = Vec::new();
         for edge in data
             .get("Tracks")
             .and_then(|v| v.get("Edges"))
@@ -3880,81 +4312,60 @@ impl LibraryScanService {
             let Some(node) = edge.get("Node") else {
                 continue;
             };
-            let Some(target_id) = node.get("Id").and_then(|v| v.as_str()) else {
+            let Some(id) = node.get("Id").and_then(|v| v.as_str()) else {
                 continue;
             };
             let Some(title) = node.get("Title").and_then(|v| v.as_str()) else {
                 continue;
             };
-            let album = node
-                .get("Album")
-                .and_then(|a| a.get("Name"))
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            let wanted = node
-                .get("Wanted")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let has_file = node
-                .get("MediaFileId")
-                .and_then(|v| v.as_str())
-                .map(|s| !s.is_empty())
-                .unwrap_or(false);
-            if !Self::should_include_candidate(wanted, wanted_policy) {
-                continue;
-            }
 
-            let title_norm = Self::normalize_for_match(title);
-            let album_norm = Self::normalize_for_match(album);
-            let mut score = jaro_winkler(&normalized, &title_norm);
-            if !album_norm.is_empty() && normalized.contains(&album_norm) {
-                score += 0.1;
-            }
-
-            let adjusted =
-                Self::adjust_candidate_score(score.min(1.0), wanted, has_file, wanted_policy);
-            if adjusted >= 0.5 {
-                let display_name = if album.is_empty() {
-                    title.to_string()
-                } else {
-                    format!("{} — {}", album, title)
-                };
-                out.push(MatchCandidate {
-                    target_type: "Track".to_string(),
-                    target_id: target_id.to_string(),
-                    target_name: Some(display_name),
-                    score: adjusted,
-                    reason: Some("track title + album heuristic".to_string()),
-                    wanted: Some(wanted),
-                });
-            }
+            rows.push(TrackCandidateRow {
+                id: id.to_string(),
+                title: title.to_string(),
+                album_name: node
+                    .get("Album")
+                    .and_then(|a| a.get("Name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                wanted: node
+                    .get("Wanted")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+                has_file: node
+                    .get("MediaFileId")
+                    .and_then(|v| v.as_str())
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false),
+            });
         }
 
-        Ok(Self::sort_and_trim_candidates(out, limit))
+        self.track_candidate_cache
+            .write()
+            .await
+            .insert(library_id.to_string(), rows.clone());
+
+        Ok(rows)
     }
 
-    async fn collect_chapter_candidates(
+    async fn get_or_load_chapter_candidate_rows(
         &self,
+        auth_user: &AuthUser,
         library_id: &str,
-        path: &str,
-        limit: usize,
-        wanted_policy: MatchWantedPolicy,
-    ) -> Result<Vec<MatchCandidate>> {
-        let auth_user = self.system_auth_user(None).await?;
-        let file_name = Path::new(path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(path);
-        let normalized = Self::normalize_for_match(file_name);
-        let chapter_re = Regex::new(r"(?i)\b(ch(?:apter)?\s*|track\s*)(\d{1,3})\b")?;
-        let chapter_num = chapter_re
-            .captures(file_name)
-            .and_then(|c| c.get(2))
-            .and_then(|m| m.as_str().parse::<i32>().ok());
+    ) -> Result<Vec<ChapterCandidateRow>> {
+        if let Some(rows) = self
+            .chapter_candidate_cache
+            .read()
+            .await
+            .get(library_id)
+            .cloned()
+        {
+            return Ok(rows);
+        }
 
         let data = self
             .execute_graphql(
-                &auth_user,
+                auth_user,
                 r#"query MatchChapterCandidates($LibraryId: String!) {
                     Chapters(
                         Where: { Audiobook: { LibraryId: { Eq: $LibraryId } } }
@@ -3976,7 +4387,7 @@ impl LibraryScanService {
             )
             .await?;
 
-        let mut out = Vec::new();
+        let mut rows = Vec::new();
         for edge in data
             .get("Chapters")
             .and_then(|v| v.get("Edges"))
@@ -3990,28 +4401,282 @@ impl LibraryScanService {
             let Some(book) = node.get("Audiobook") else {
                 continue;
             };
-            let Some(target_id) = node.get("Id").and_then(|v| v.as_str()) else {
+            let Some(id) = node.get("Id").and_then(|v| v.as_str()) else {
                 continue;
             };
-            let chapter_number = node
-                .get("ChapterNumber")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0) as i32;
-            let book_title = book
-                .get("Title")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            let author_name = book.get("AuthorName").and_then(|v| v.as_str());
-            let chapter_title = node.get("Title").and_then(|v| v.as_str());
-            let wanted = node
-                .get("Wanted")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let has_file = node
-                .get("MediaFileId")
-                .and_then(|v| v.as_str())
-                .map(|s| !s.is_empty())
-                .unwrap_or(false);
+
+            rows.push(ChapterCandidateRow {
+                id: id.to_string(),
+                title: node
+                    .get("Title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                audiobook_title: book
+                    .get("Title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                author_name: book
+                    .get("AuthorName")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.to_string()),
+                chapter_number: node
+                    .get("ChapterNumber")
+                    .and_then(|v| v.as_i64())
+                    .map(|v| v as i32),
+                wanted: node
+                    .get("Wanted")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+                has_file: node
+                    .get("MediaFileId")
+                    .and_then(|v| v.as_str())
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false),
+            });
+        }
+
+        self.chapter_candidate_cache
+            .write()
+            .await
+            .insert(library_id.to_string(), rows.clone());
+
+        Ok(rows)
+    }
+
+    async fn collect_movie_candidates(
+        &self,
+        library_id: &str,
+        path: &str,
+        limit: usize,
+        wanted_policy: MatchWantedPolicy,
+    ) -> Result<Vec<MatchCandidate>> {
+        let auth_user = self.system_auth_user(None).await?;
+        let rows = self
+            .get_or_load_movie_candidate_rows(&auth_user, library_id)
+            .await?;
+        let hint = Self::parse_movie_hint(path);
+        let file_name = Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path);
+        let normalized = hint
+            .title
+            .as_deref()
+            .map(Self::normalize_for_match)
+            .unwrap_or_else(|| Self::normalize_for_match(file_name));
+        let hint_seq = hint
+            .title
+            .as_deref()
+            .and_then(Self::extract_title_sequence_number);
+
+        let mut out = Vec::new();
+        for row in rows {
+            let target_id = row.id;
+            let title = row.title;
+            let year = row.year;
+            let wanted = row.wanted;
+            let has_file = row.has_file;
+            if !Self::should_include_candidate(wanted, wanted_policy) {
+                continue;
+            }
+
+            let title_norm = Self::normalize_for_match(&title);
+            let mut score = if normalized.contains(&title_norm) || title_norm.contains(&normalized)
+            {
+                0.85
+            } else {
+                jaro_winkler(&normalized, &title_norm)
+            };
+
+            if let Some(y) = year {
+                if hint.year == Some(y) {
+                    score += 0.1;
+                } else if hint.year.is_some() {
+                    score -= 0.35;
+                }
+            }
+            let title_seq = Self::extract_title_sequence_number(&title);
+            if hint_seq != title_seq {
+                score -= 0.25;
+            }
+
+            let adjusted =
+                Self::adjust_candidate_score(score.min(1.0), wanted, has_file, wanted_policy);
+            if adjusted >= 0.4 {
+                let display_name = match year {
+                    Some(y) => format!("{} ({})", title, y),
+                    None => title.to_string(),
+                };
+                out.push(MatchCandidate {
+                    target_type: "Movie".to_string(),
+                    target_id,
+                    target_name: Some(display_name),
+                    score: adjusted,
+                    reason: Some("movie title/year heuristic".to_string()),
+                    wanted: Some(wanted),
+                });
+            }
+        }
+
+        Ok(Self::sort_and_trim_candidates(out, limit))
+    }
+
+    async fn collect_episode_candidates(
+        &self,
+        library_id: &str,
+        path: &str,
+        limit: usize,
+        wanted_policy: MatchWantedPolicy,
+    ) -> Result<Vec<MatchCandidate>> {
+        let auth_user = self.system_auth_user(None).await?;
+        let rows = self
+            .get_or_load_episode_candidate_rows(&auth_user, library_id)
+            .await?;
+        let hint = Self::parse_episode_hint(path);
+        let (season, episode) = match (hint.season, hint.episode) {
+            (Some(s), Some(e)) => (s, e),
+            _ => return Ok(Vec::new()),
+        };
+        let normalized = hint
+            .show_name
+            .as_deref()
+            .map(Self::normalize_for_match)
+            .unwrap_or_else(|| Self::normalize_for_match(path));
+
+        let mut out = Vec::new();
+        for row in rows {
+            if row.season != season || row.episode != episode {
+                continue;
+            }
+            let target_id = row.id;
+            let show_name = row.show_name;
+            let show_year = row.show_year;
+            let wanted = row.wanted;
+            let has_file = row.has_file;
+            if !Self::should_include_candidate(wanted, wanted_policy) {
+                continue;
+            }
+
+            let show_norm = Self::normalize_for_match(&show_name);
+            let mut score = if normalized.contains(&show_norm) {
+                0.95
+            } else {
+                (jaro_winkler(&normalized, &show_norm) * 0.9).max(0.65)
+            };
+            if let Some(parsed_year) = hint.year
+                && let Some(y) = show_year
+                && y == parsed_year
+            {
+                score += 0.05;
+            }
+            let adjusted =
+                Self::adjust_candidate_score(score.min(1.0), wanted, has_file, wanted_policy);
+            if adjusted >= 0.45 {
+                let display_name = format!("{} S{:02}E{:02}", show_name, season, episode);
+                out.push(MatchCandidate {
+                    target_type: "Episode".to_string(),
+                    target_id,
+                    target_name: Some(display_name),
+                    score: adjusted,
+                    reason: Some("episode season/number + show similarity".to_string()),
+                    wanted: Some(wanted),
+                });
+            }
+        }
+
+        Ok(Self::sort_and_trim_candidates(out, limit))
+    }
+
+    async fn collect_track_candidates(
+        &self,
+        library_id: &str,
+        path: &str,
+        limit: usize,
+        wanted_policy: MatchWantedPolicy,
+    ) -> Result<Vec<MatchCandidate>> {
+        let auth_user = self.system_auth_user(None).await?;
+        let rows = self
+            .get_or_load_track_candidate_rows(&auth_user, library_id)
+            .await?;
+        let file_name = Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path);
+        let normalized = Self::normalize_for_match(file_name);
+
+        let mut out = Vec::new();
+        for row in rows {
+            let target_id = row.id;
+            let title = row.title;
+            let album = row.album_name;
+            let wanted = row.wanted;
+            let has_file = row.has_file;
+            if !Self::should_include_candidate(wanted, wanted_policy) {
+                continue;
+            }
+
+            let title_norm = Self::normalize_for_match(&title);
+            let album_norm = Self::normalize_for_match(&album);
+            let mut score = jaro_winkler(&normalized, &title_norm);
+            if !album_norm.is_empty() && normalized.contains(&album_norm) {
+                score += 0.1;
+            }
+
+            let adjusted =
+                Self::adjust_candidate_score(score.min(1.0), wanted, has_file, wanted_policy);
+            if adjusted >= 0.5 {
+                let display_name = if album.is_empty() {
+                    title.to_string()
+                } else {
+                    format!("{} — {}", album, title)
+                };
+                out.push(MatchCandidate {
+                    target_type: "Track".to_string(),
+                    target_id,
+                    target_name: Some(display_name),
+                    score: adjusted,
+                    reason: Some("track title + album heuristic".to_string()),
+                    wanted: Some(wanted),
+                });
+            }
+        }
+
+        Ok(Self::sort_and_trim_candidates(out, limit))
+    }
+
+    async fn collect_chapter_candidates(
+        &self,
+        library_id: &str,
+        path: &str,
+        limit: usize,
+        wanted_policy: MatchWantedPolicy,
+    ) -> Result<Vec<MatchCandidate>> {
+        let auth_user = self.system_auth_user(None).await?;
+        let rows = self
+            .get_or_load_chapter_candidate_rows(&auth_user, library_id)
+            .await?;
+        let file_name = Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path);
+        let normalized = Self::normalize_for_match(file_name);
+        let chapter_re = Regex::new(r"(?i)\b(ch(?:apter)?\s*|track\s*)(\d{1,3})\b")?;
+        let chapter_num = chapter_re
+            .captures(file_name)
+            .and_then(|c| c.get(2))
+            .and_then(|m| m.as_str().parse::<i32>().ok());
+
+        let mut out = Vec::new();
+        for row in rows {
+            let target_id = row.id;
+            let chapter_number = row.chapter_number.unwrap_or_default();
+            let book_title = row.audiobook_title;
+            let chapter_title = row.title;
+            let author_name = row.author_name;
+            let wanted = row.wanted;
+            let has_file = row.has_file;
             if !Self::should_include_candidate(wanted, wanted_policy) {
                 continue;
             }
@@ -4022,20 +4687,18 @@ impl LibraryScanService {
             {
                 score += 0.5;
             }
-            let book_norm = Self::normalize_for_match(book_title);
+            let book_norm = Self::normalize_for_match(&book_title);
             if normalized.contains(&book_norm) {
                 score += 0.25;
             }
             if let Some(author) = author_name {
-                let author_norm = Self::normalize_for_match(author);
+                let author_norm = Self::normalize_for_match(&author);
                 if normalized.contains(&author_norm) {
                     score += 0.15;
                 }
             }
-            if let Some(ct) = chapter_title {
-                let title_norm = Self::normalize_for_match(ct);
-                score += (jaro_winkler(&normalized, &title_norm) * 0.1).min(0.1);
-            }
+            let title_norm = Self::normalize_for_match(&chapter_title);
+            score += (jaro_winkler(&normalized, &title_norm) * 0.1).min(0.1);
             let adjusted =
                 Self::adjust_candidate_score(score.min(1.0), wanted, has_file, wanted_policy);
             if adjusted >= 0.4 {
@@ -4046,7 +4709,7 @@ impl LibraryScanService {
                 };
                 out.push(MatchCandidate {
                     target_type: "Chapter".to_string(),
-                    target_id: target_id.to_string(),
+                    target_id,
                     target_name: Some(display_name),
                     score: adjusted,
                     reason: Some("chapter number/title heuristic".to_string()),
@@ -5633,6 +6296,8 @@ impl Service for LibraryScanService {
     }
 
     async fn start(&self) -> Result<()> {
+        self.clear_stale_library_scanning_state_on_startup().await?;
+
         let ffprobe_available = self.check_ffprobe_available().await;
         {
             let mut guard = self.ffprobe_available.write().await;

@@ -208,6 +208,11 @@ impl AuthService {
         Self::new(manager, AuthConfig::from_env())
     }
 
+    /// Expose refresh token lifetime for transport-level cookie max-age configuration.
+    pub fn refresh_token_lifetime_seconds(&self) -> i64 {
+        self.config.refresh_token_lifetime
+    }
+
     /// Get the database pool. Returns an error if the service has not been started.
     async fn get_pool(&self) -> Result<Database> {
         self.db

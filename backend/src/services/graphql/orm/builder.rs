@@ -47,7 +47,7 @@ impl<E: DatabaseEntity + FromSqlRow> EntityQuery<E> {
             let (conditions, values) = filter.to_sql_conditions();
             // Rewrite parameter placeholders to use correct indices
             for condition in conditions {
-                let rewritten = self.rewrite_params(&condition, values.len());
+                let rewritten = self.rewrite_params(&condition);
                 self.where_clauses.push(rewritten);
             }
             self.values.extend(values);
@@ -109,10 +109,11 @@ impl<E: DatabaseEntity + FromSqlRow> EntityQuery<E> {
     }
 
     /// Rewrite parameter placeholders to use sequential indices.
-    fn rewrite_params(&mut self, condition: &str, num_new_params: usize) -> String {
+    fn rewrite_params(&mut self, condition: &str) -> String {
         let mut result = condition.to_string();
+        let num_new_params = Self::count_unindexed_placeholders(condition);
         // Replace each ? with ?N where N is the parameter index
-        for _i in 0..num_new_params {
+        for _ in 0..num_new_params {
             self.param_counter += 1;
             // Replace first occurrence of ? with ?N
             if let Some(pos) = result.find('?') {
@@ -129,6 +130,22 @@ impl<E: DatabaseEntity + FromSqlRow> EntityQuery<E> {
             }
         }
         result
+    }
+
+    fn count_unindexed_placeholders(input: &str) -> usize {
+        let bytes = input.as_bytes();
+        let mut count = 0usize;
+        let mut i = 0usize;
+        while i < bytes.len() {
+            if bytes[i] == b'?' {
+                let next = bytes.get(i + 1).copied();
+                if !matches!(next, Some(b'0'..=b'9')) {
+                    count += 1;
+                }
+            }
+            i += 1;
+        }
+        count
     }
 
     /// Build the SQL query string.

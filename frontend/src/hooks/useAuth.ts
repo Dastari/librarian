@@ -11,7 +11,6 @@ import {
   getSession,
   setTokens,
   clearTokens,
-  getRefreshToken,
   hasValidToken,
 } from "../lib/auth";
 import { apolloClient } from "../lib/graphql/client";
@@ -24,7 +23,7 @@ import { apolloClient } from "../lib/graphql/client";
  * Hook for authentication state and actions.
  * Use this in components that need user info or sign in/out functionality.
  *
- * This hook uses custom GraphQL-based authentication with localStorage token storage.
+ * This hook uses custom GraphQL-based authentication with cookie-backed session storage.
  */
 export function useAuth() {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -34,15 +33,10 @@ export function useAuth() {
 
   // Refresh the access token using the refresh token
   const refreshAccessToken = useCallback(async (): Promise<boolean> => {
-    const refreshToken = getRefreshToken();
-    if (!refreshToken) {
-      return false;
-    }
-
     try {
       const result = await apolloClient.mutate({
         mutation: RefreshTokenDocument,
-        variables: { input: { RefreshToken: refreshToken } },
+        variables: { input: { RefreshToken: "" } },
       });
 
       const payload = result.data?.RefreshToken;
@@ -52,7 +46,6 @@ export function useAuth() {
         if (existingSession) {
           const newSession: AuthSession = {
             accessToken: tokens.AccessToken,
-            refreshToken: tokens.RefreshToken,
             expiresAt: Date.now() + tokens.ExpiresIn * 1000,
             user: existingSession.user,
           };
@@ -177,7 +170,6 @@ export function useAuth() {
 
     const newSession: AuthSession = {
       accessToken: authData.Tokens.AccessToken,
-      refreshToken: authData.Tokens.RefreshToken,
       expiresAt: Date.now() + authData.Tokens.ExpiresIn * 1000,
       user: authUser,
     };
@@ -230,7 +222,6 @@ export function useAuth() {
 
     const newSession: AuthSession = {
       accessToken: reg.Tokens.AccessToken,
-      refreshToken: reg.Tokens.RefreshToken,
       expiresAt: Date.now() + reg.Tokens.ExpiresIn * 1000,
       user: authUser,
     };
@@ -241,15 +232,11 @@ export function useAuth() {
   };
 
   const signOut = async () => {
-    const refreshToken = getRefreshToken();
-
     try {
-      if (refreshToken) {
-        await apolloClient.mutate({
-          mutation: LogoutDocument,
-          variables: { input: { RefreshToken: refreshToken } },
-        });
-      }
+      await apolloClient.mutate({
+        mutation: LogoutDocument,
+        variables: { input: { RefreshToken: "" } },
+      });
     } catch (err) {
       // Log but don't throw - we still want to clear local state
       console.error("[Auth] Logout mutation failed:", err);

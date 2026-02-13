@@ -1,7 +1,6 @@
 import type { AuthContext } from "./auth-context";
 import {
   clearTokens,
-  getRefreshToken,
   getSession,
   hasValidToken,
   setTokens,
@@ -23,9 +22,8 @@ export async function ensureAuthenticated(
     return true;
   }
 
-  const refreshToken = getRefreshToken();
   const existingSession = getSession();
-  if (!refreshToken || !existingSession?.user) {
+  if (!existingSession?.user) {
     clearTokens();
     return false;
   }
@@ -33,7 +31,7 @@ export async function ensureAuthenticated(
   try {
     const result = await apolloClient.mutate({
       mutation: RefreshTokenDocument,
-      variables: { input: { RefreshToken: refreshToken } },
+      variables: { input: { RefreshToken: "" } },
     });
 
     const payload = result.data?.RefreshToken;
@@ -45,7 +43,6 @@ export async function ensureAuthenticated(
     const tokens = payload.Tokens;
     const newSession: AuthSession = {
       accessToken: tokens.AccessToken,
-      refreshToken: tokens.RefreshToken,
       expiresAt: Date.now() + tokens.ExpiresIn * 1000,
       user: existingSession.user,
     };
@@ -56,4 +53,3 @@ export async function ensureAuthenticated(
     return false;
   }
 }
-

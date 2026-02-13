@@ -23,6 +23,10 @@ use tracing::info;
 use crate::services::manager::{Service, ServiceHealth};
 
 use super::{AuthUser, LibrarianSchema, build_schema, verify_token};
+use crate::services::graphql::mutations::auth::AuthCookieContext;
+
+const ACCESS_TOKEN_COOKIE: &str = "librarian_access_token";
+const REFRESH_TOKEN_COOKIE: &str = "librarian_refresh_token";
 
 /// Configuration for the GraphQL service (server port for playground URL logging).
 #[derive(Debug, Clone)]
@@ -64,12 +68,36 @@ impl GraphqlService {
     }
 }
 
-fn extract_token(headers: &HeaderMap) -> Option<String> {
+fn extract_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+    let cookie_header = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
+    cookie_header.split(';').find_map(|segment| {
+        let mut parts = segment.trim().splitn(2, '=');
+        let key = parts.next()?.trim();
+        let value = parts.next()?.trim();
+        if key == name && !value.is_empty() {
+            Some(value.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+fn request_uses_secure_transport(headers: &HeaderMap) -> bool {
     headers
+        .get("x-forwarded-proto")
+        .and_then(|h| h.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("https"))
+        .unwrap_or(false)
+}
+
+fn extract_token(headers: &HeaderMap) -> Option<String> {
+    let header_token = headers
         .get(AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .filter(|h| h.starts_with("Bearer "))
-        .map(|h| h[7..].to_string())
+        .map(|h| h[7..].to_string());
+
+    header_token.or_else(|| extract_cookie(headers, ACCESS_TOKEN_COOKIE))
 }
 
 async fn graphiql(headers: HeaderMap) -> impl IntoResponse {
@@ -104,6 +132,13 @@ async fn graphql_handler(
     req: GraphQLRequest,
 ) -> GraphQLResponse {
     let mut request = req.into_inner();
+    let refresh_cookie = extract_cookie(&headers, REFRESH_TOKEN_COOKIE);
+    let secure_transport = request_uses_secure_transport(&headers);
+    request = request.data(AuthCookieContext {
+        refresh_token: refresh_cookie,
+        secure: secure_transport,
+    });
+
     if let Some(token) = extract_token(&headers) {
         let secret = match state.services.get_auth().await {
             Some(auth) => auth.get_jwt_secret().await.ok(),
@@ -116,11 +151,7 @@ async fn graphql_handler(
                     request = request.data(user);
                 }
                 Err(e) => {
-                    tracing::debug!(
-                        "Token verification failed: {} (token prefix: {}...)",
-                        e.message,
-                        &token[..token.len().min(20)]
-                    );
+                    tracing::debug!("Token verification failed: {}", e.message);
                 }
             }
         }

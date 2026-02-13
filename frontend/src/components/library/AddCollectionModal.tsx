@@ -4,12 +4,12 @@ import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from "@herou
 import { Input } from "@heroui/input";
 import { Switch } from "@heroui/switch";
 import { Chip } from "@heroui/chip";
-import { Image } from "@heroui/image";
 import { addToast } from "@heroui/toast";
-import { IconSearch, IconStack } from "@tabler/icons-react";
+import { IconSearch } from "@tabler/icons-react";
 import { DataTable, type DataTableColumn } from "../data-table";
 import { sanitizeError } from "../../lib/format";
 import { useLazyQuery, useMutation } from "../../lib/graphql/client";
+import { CollectionPoster } from "./CollectionCardParts";
 import {
   AddMovieCollectionDocument,
   type AddMovieCollectionMutation,
@@ -136,18 +136,12 @@ export function AddCollectionModal({
       sortable: true,
       render: (collection) => (
         <div className="flex items-center gap-3">
-          {collection.PosterUrl ? (
-            <Image
-              src={collection.PosterUrl}
-              alt={collection.Name}
-              className="w-10 h-14 object-cover rounded"
-              loading="lazy"
-            />
-          ) : (
-            <div className="w-10 h-14 bg-default-200 rounded flex items-center justify-center">
-              <IconStack size={18} className="text-purple-400" />
-            </div>
-          )}
+          <CollectionPoster
+            posterUrl={collection.PosterUrl ?? null}
+            name={collection.Name}
+            imageClassName="w-10 h-14 object-cover rounded"
+            fallbackClassName="w-10 h-14 bg-default-200 rounded flex items-center justify-center"
+          />
           <div>
             <p className="font-medium">{collection.Name}</p>
             <p className="text-xs text-default-500">TMDB #{collection.CollectionId}</p>

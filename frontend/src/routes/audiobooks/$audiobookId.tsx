@@ -37,7 +37,6 @@ import {
   type AudiobookDetailRouteQuery,
 } from "../../lib/graphql/generated/graphql";
 import {
-  DataTable,
   type DataTableColumn,
   type RowAction,
 } from "../../components/data-table";
@@ -59,6 +58,7 @@ import { ChapterStatusChip, PlayPauseIndicator } from "../../components/shared";
 import { FilePropertiesModal } from "../../components/FilePropertiesModal";
 import { usePlaybackContext } from "../../contexts/PlaybackContext";
 import { useDataReactivity } from "../../hooks/useSubscription";
+import { DetailItemsTable } from "../../components/media/DetailItemsTable";
 
 export const Route = createFileRoute("/audiobooks/$audiobookId")({
   beforeLoad: ({ context, location }) => {
@@ -264,9 +264,8 @@ function ChapterTable({
   const tableKey = `chapters-${currentlyPlayingChapterId || "none"}-${isPlaying}`;
 
   return (
-    <DataTable
-      key={tableKey}
-      skeletonDelay={500}
+    <DetailItemsTable
+      tableKey={tableKey}
       headerContent={
         <div className="p-4">
           <h2 className="text-lg font-semibold flex items-center gap-2">

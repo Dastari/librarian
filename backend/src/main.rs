@@ -224,10 +224,7 @@ fn raise_fd_limit() {
                         target, prev
                     );
                 } else {
-                    eprintln!(
-                        "Raised file descriptor soft limit: {} -> {}",
-                        prev, target
-                    );
+                    eprintln!("Raised file descriptor soft limit: {} -> {}", prev, target);
                 }
             }
         }

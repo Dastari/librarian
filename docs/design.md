@@ -222,6 +222,7 @@ The system must optimize for these real user expectations:
 - Scan discovers files, identifies media from filename/path first, then probed metadata.
 - Missing catalog entries (shows, movies, albums, audiobooks) are created and enriched from metadata providers where available.
 - Files are linked to created/found items so UI reflects actual file presence.
+- Library scan must only invoke provider metadata fallback (TMDB/TVMaze/MusicBrainz/OpenLibrary create flows) for newly discovered media files. Previously known files should not repeatedly trigger provider fallback on subsequent scans.
 
 2. Manual library curation:
 - User can add media entries manually even before files exist.

@@ -14,6 +14,7 @@ import { IconShieldCheck, IconAlertCircle } from "@tabler/icons-react";
 import { useAuth } from "../hooks/useAuth";
 import { NeedsSetupDocument } from "../lib/graphql/generated/graphql";
 import { apolloClient } from "../lib/graphql/client";
+import { sanitizeInternalRedirect } from "../lib/redirect";
 
 interface SignInModalProps {
   isOpen: boolean;
@@ -40,6 +41,7 @@ export function SignInModal({
 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const safeRedirect = sanitizeInternalRedirect(redirectUrl);
 
   // Check if setup is needed when modal opens
   useEffect(() => {
@@ -110,8 +112,8 @@ export function SignInModal({
         });
         handleClose();
 
-        if (redirectUrl) {
-          window.location.href = redirectUrl;
+        if (safeRedirect) {
+          window.location.href = safeRedirect;
         } else if (onSuccess) {
           onSuccess();
         }
@@ -126,8 +128,8 @@ export function SignInModal({
         await signIn(email.trim(), password);
         handleClose();
 
-        if (redirectUrl) {
-          window.location.href = redirectUrl;
+        if (safeRedirect) {
+          window.location.href = safeRedirect;
         } else if (onSuccess) {
           onSuccess();
         }

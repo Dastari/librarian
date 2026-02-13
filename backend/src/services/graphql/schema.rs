@@ -14,7 +14,7 @@ use crate::services::graphql::loaders::RelationLoader;
 use crate::services::graphql::mutations::{
     ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations,
 };
-use crate::services::graphql::queries::FilesystemQueries;
+use crate::services::graphql::queries::{FilesystemQueries, SchemaMigrationsQueries};
 use crate::services::graphql::subscriptions::filesystem::FilesystemChangeBroker;
 use crate::services::graphql::subscriptions::{FilesystemSubscriptions, TorrentSubscriptions};
 use crate::services::manager::ServicesManager;
@@ -66,7 +66,7 @@ schema_roots! {
         ArtworkCache,
         TorznabCategory,
     ],
-    extra_query_types: [FilesystemQueries, SourceCustomQueries],
+    extra_query_types: [FilesystemQueries, SchemaMigrationsQueries, SourceCustomQueries],
     extra_mutation_types: [ArtworkMutations, AuthMutations, FilesystemMutations, LibraryScanMutations, TorrentClientMutations, MovieMetadataMutations, ShowMetadataMutations, AlbumMetadataMutations, AudiobookMetadataMutations, SourceCustomMutations, CastMutations],
     extra_subscription_types: [FilesystemSubscriptions, TorrentSubscriptions],
 }

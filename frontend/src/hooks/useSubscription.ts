@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { TORRENT_COMPLETED_SUBSCRIPTION } from '../lib/graphql'
+import { subscriptionStream } from '../lib/graphql/client'
 
 /**
  * Hook to subscribe to torrent completion events and trigger a callback.

@@ -12,14 +12,13 @@ import {
   UpdateAppSettingDocument,
 } from '../../lib/graphql'
 import { useQuery, useMutation } from '../../lib/graphql/client'
+import { authFetch } from '../../lib/api/authFetch'
 
 export const Route = createFileRoute('/settings/')({
   component: GeneralSettingsPage,
 })
 
 const PLAYBACK_SYNC_KEY = 'playback_sync_interval'
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
-
 type HealthResponse = {
   status: string
   version: string
@@ -65,7 +64,7 @@ function GeneralSettingsPage() {
         setIsHealthLoading(true)
       }
 
-      const res = await fetch(`${API_URL}/api/healthz`)
+      const res = await authFetch('/api/healthz')
       if (!res.ok) {
         throw new Error(`Health check failed (${res.status})`)
       }

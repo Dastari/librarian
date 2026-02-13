@@ -1,10 +1,10 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useState, useMemo, useCallback } from "react";
-import { getAccessToken } from "../../lib/auth";
 import { useDisclosure } from "@heroui/modal";
 import { addToast } from "@heroui/toast";
 import { Button } from "@heroui/button";
 import { IconRefresh } from "@tabler/icons-react";
+import { authFetch } from "../../lib/api/authFetch";
 import {
   TORRENT_PROGRESS_SUBSCRIPTION,
   TORRENT_ADDED_SUBSCRIPTION,
@@ -429,14 +429,8 @@ function DownloadsPage() {
       const formData = new FormData();
       formData.append("file", file);
 
-      const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
-
-      // Get auth token from cookie storage
-      const authToken = getAccessToken() || "";
-
-      const response = await fetch(`${API_URL}/api/torrents/upload`, {
+      const response = await authFetch("/api/torrents/upload", {
         method: "POST",
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
         body: formData,
       });
 

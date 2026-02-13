@@ -23,6 +23,56 @@ type GraphQLErrorHandler = (error: {
 }) => void;
 const errorHandlers: Set<GraphQLErrorHandler> = new Set();
 
+export type WebSocketConnectionStatus =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "disconnected";
+
+export interface WebSocketConnectionState {
+  status: WebSocketConnectionStatus;
+  retryCount: number;
+  lastCloseCode: number | null;
+  lastCloseReason: string | null;
+  isAuthIssue: boolean;
+}
+
+type WebSocketConnectionHandler = (state: WebSocketConnectionState) => void;
+const wsConnectionHandlers: Set<WebSocketConnectionHandler> = new Set();
+
+let wsConnectionState: WebSocketConnectionState = {
+  status: "idle",
+  retryCount: 0,
+  lastCloseCode: null,
+  lastCloseReason: null,
+  isAuthIssue: false,
+};
+
+function isExpectedWsClose(code: number | null): boolean {
+  // 1000/1001 are normal client/server lifecycle closes (including lazy mode)
+  // and should not be treated as server disconnects.
+  return code === 1000 || code === 1001;
+}
+
+function notifyWebSocketConnectionState() {
+  wsConnectionHandlers.forEach((handler) => handler(wsConnectionState));
+}
+
+function updateWebSocketConnectionState(
+  partial: Partial<WebSocketConnectionState>,
+) {
+  wsConnectionState = { ...wsConnectionState, ...partial };
+  notifyWebSocketConnectionState();
+}
+
+export function onWebSocketConnectionState(
+  handler: WebSocketConnectionHandler,
+): () => void {
+  wsConnectionHandlers.add(handler);
+  handler(wsConnectionState);
+  return () => wsConnectionHandlers.delete(handler);
+}
+
 /** Subscribe to GraphQL errors for displaying toasts/alerts */
 export function onGraphQLError(handler: GraphQLErrorHandler): () => void {
   errorHandlers.add(handler);
@@ -50,6 +100,7 @@ function getAuthTokenSync(): string {
 // HTTP link for queries and mutations
 const httpLink = new HttpLink({
   uri: `${API_URL}/graphql`,
+  credentials: "include",
 });
 
 // Auth context link - adds Authorization header to every request
@@ -71,8 +122,61 @@ const wsClient = createWSClient({
     Authorization: getAuthTokenSync(),
   }),
   lazy: true, // Only connect when needed
-  retryAttempts: 5,
+  retryAttempts: Infinity,
+  retryWait: async (retries) => {
+    // Exponential backoff with cap to keep trying forever.
+    const delayMs = Math.min(1000 * 2 ** retries, 10000);
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  },
   shouldRetry: () => true,
+  on: {
+    connecting: (isRetry) => {
+      updateWebSocketConnectionState({
+        status: "connecting",
+        retryCount: isRetry ? wsConnectionState.retryCount + 1 : 0,
+        isAuthIssue: false,
+      });
+    },
+    connected: () => {
+      updateWebSocketConnectionState({
+        status: "connected",
+        retryCount: 0,
+        lastCloseCode: null,
+        lastCloseReason: null,
+        isAuthIssue: false,
+      });
+    },
+    closed: (event) => {
+      const closeCode =
+        typeof event === "object" &&
+        event != null &&
+        "code" in event &&
+        typeof (event as { code?: unknown }).code === "number"
+          ? (event as { code: number }).code
+          : null;
+      const closeReason =
+        typeof event === "object" &&
+        event != null &&
+        "reason" in event &&
+        typeof (event as { reason?: unknown }).reason === "string"
+          ? (event as { reason: string }).reason
+          : null;
+      const isAuthIssue = closeCode === 4401 || closeCode === 4403;
+      const isExpectedClose = isExpectedWsClose(closeCode);
+      updateWebSocketConnectionState({
+        status: isAuthIssue || isExpectedClose ? "idle" : "disconnected",
+        lastCloseCode: closeCode,
+        lastCloseReason: closeReason,
+        isAuthIssue,
+      });
+    },
+    error: (err) => {
+      // Some subscription operation errors can flow through this callback even
+      // while the underlying WebSocket transport remains healthy. Let `closed`
+      // drive transport state transitions to avoid false "disconnected" overlays.
+      console.warn("[GraphQL WS] socket error callback:", err);
+    },
+  },
 });
 
 const wsLink = new GraphQLWsLink(wsClient);
@@ -314,7 +418,7 @@ export const graphqlClient = {
 
 // Transitional global exposure for files being migrated off `graphqlClient...toPromise()`.
 // This keeps runtime stable while imports are standardized incrementally.
-if (typeof globalThis !== "undefined") {
+if (import.meta.env.DEV && typeof globalThis !== "undefined") {
   (globalThis as any).graphqlClient = graphqlClient;
   (globalThis as any).queryPromise = queryPromise;
   (globalThis as any).mutationPromise = mutationPromise;

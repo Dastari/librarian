@@ -14,7 +14,7 @@ import {
   type DashboardShowsQuery,
   type DashboardScheduleCachesQuery,
 } from "../lib/graphql/generated/graphql";
-import { apolloClient } from "../lib/graphql/client";
+import { apolloClient, subscriptionStream } from "../lib/graphql/client";
 import { TORRENT_COMPLETED_SUBSCRIPTION } from "../lib/graphql/subscriptions";
 
 /** Library node type derived from Libraries query */

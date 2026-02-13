@@ -5,13 +5,13 @@
 export const TORRENT_PROGRESS_SUBSCRIPTION = `
   subscription TorrentProgress {
     TorrentProgress: torrentProgress {
-      Id
-      InfoHash
-      Progress
-      DownloadSpeed
-      UploadSpeed
-      Peers
-      State
+      Id: id
+      InfoHash: infoHash
+      Progress: progress
+      DownloadSpeed: downloadSpeed
+      UploadSpeed: uploadSpeed
+      Peers: peers
+      State: state
     }
   }
 `;
@@ -19,9 +19,9 @@ export const TORRENT_PROGRESS_SUBSCRIPTION = `
 export const TORRENT_ADDED_SUBSCRIPTION = `
   subscription TorrentAdded {
     TorrentAdded: torrentAdded {
-      Id
-      Name
-      InfoHash
+      Id: id
+      Name: name
+      InfoHash: infoHash
     }
   }
 `;
@@ -29,9 +29,9 @@ export const TORRENT_ADDED_SUBSCRIPTION = `
 export const TORRENT_COMPLETED_SUBSCRIPTION = `
   subscription TorrentCompleted {
     TorrentCompleted: torrentCompleted {
-      Id
-      Name
-      InfoHash
+      Id: id
+      Name: name
+      InfoHash: infoHash
     }
   }
 `;
@@ -39,8 +39,8 @@ export const TORRENT_COMPLETED_SUBSCRIPTION = `
 export const TORRENT_REMOVED_SUBSCRIPTION = `
   subscription TorrentRemoved {
     TorrentRemoved: torrentRemoved {
-      Id
-      InfoHash
+      Id: id
+      InfoHash: infoHash
     }
   }
 `;

@@ -79,7 +79,12 @@ pub struct Collection {
     #[graphql(skip)]
     #[serde(skip)]
     #[skip_db]
-    #[relation(target = "Movie", from = "tmdb_collection_id", to = "collection_id", multiple)]
+    #[relation(
+        target = "Movie",
+        from = "tmdb_collection_id",
+        to = "collection_id",
+        multiple
+    )]
     pub movies: Vec<Movie>,
 }
 

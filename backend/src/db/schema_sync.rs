@@ -23,6 +23,103 @@ pub struct SchemaSyncResult {
     pub errors: Vec<String>,
 }
 
+/// Internal table used to track one-off in-code migrations/fixes applied by schema_sync.
+const SCHEMA_MIGRATIONS_TABLE: &str = "schema_migrations";
+
+async fn ensure_schema_migrations_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let sql = format!(
+        r#"
+        CREATE TABLE IF NOT EXISTS {} (
+            id TEXT PRIMARY KEY NOT NULL,
+            description TEXT,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        "#,
+        SCHEMA_MIGRATIONS_TABLE
+    );
+    sqlx::query(&sql).execute(pool).await?;
+    Ok(())
+}
+
+async fn is_migration_applied(pool: &SqlitePool, id: &str) -> Result<bool, sqlx::Error> {
+    let sql = format!("SELECT id FROM {} WHERE id = ?1", SCHEMA_MIGRATIONS_TABLE);
+    let row: Option<(String,)> = sqlx::query_as(&sql).bind(id).fetch_optional(pool).await?;
+    Ok(row.is_some())
+}
+
+async fn mark_migration_applied(
+    pool: &SqlitePool,
+    id: &str,
+    description: &str,
+) -> Result<(), sqlx::Error> {
+    let sql = format!(
+        "INSERT OR IGNORE INTO {} (id, description) VALUES (?1, ?2)",
+        SCHEMA_MIGRATIONS_TABLE
+    );
+    sqlx::query(&sql)
+        .bind(id)
+        .bind(description)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+fn append_schema_sync_result(to: &mut SchemaSyncResult, from: SchemaSyncResult) {
+    to.tables_created.extend(from.tables_created);
+    to.columns_added.extend(from.columns_added);
+    to.errors.extend(from.errors);
+}
+
+async fn apply_in_code_migration_once<F>(
+    pool: &SqlitePool,
+    total_result: &mut SchemaSyncResult,
+    id: &str,
+    description: &str,
+    runner: F,
+) where
+    F: std::future::Future<Output = SchemaSyncResult>,
+{
+    let already_applied = match is_migration_applied(pool, id).await {
+        Ok(v) => v,
+        Err(e) => {
+            total_result.errors.push(format!(
+                "Failed checking migration {} applied state: {}",
+                id, e
+            ));
+            return;
+        }
+    };
+    if already_applied {
+        return;
+    }
+
+    info!(
+        migration_id = id,
+        description = description,
+        "Applying in-code schema migration"
+    );
+    let migration_result = runner.await;
+    let has_errors = !migration_result.errors.is_empty();
+    append_schema_sync_result(total_result, migration_result);
+
+    if has_errors {
+        warn!(
+            migration_id = id,
+            "In-code schema migration finished with errors; leaving unapplied"
+        );
+        return;
+    }
+
+    if let Err(e) = mark_migration_applied(pool, id, description).await {
+        total_result.errors.push(format!(
+            "Migration {} ran but failed to mark as applied: {}",
+            id, e
+        ));
+        return;
+    }
+    info!(migration_id = id, "In-code schema migration applied");
+}
+
 /// Check if a table exists in the database
 async fn table_exists(pool: &SqlitePool, table_name: &str) -> Result<bool, sqlx::Error> {
     let result: Option<(String,)> =
@@ -482,6 +579,72 @@ async fn ensure_collections_library_tmdb_unique_index(pool: &SqlitePool) -> Sche
     result
 }
 
+/// Ensure a movie can only exist once per (library_id, tmdb_id).
+///
+/// This prevents duplicate movie rows from repeated scans/refreshes while still
+/// allowing the same TMDB movie in different libraries.
+async fn ensure_movies_library_tmdb_unique_index(pool: &SqlitePool) -> SchemaSyncResult {
+    let mut result = SchemaSyncResult::default();
+    if !table_exists(pool, "movies").await.unwrap_or(false) {
+        return result;
+    }
+
+    // Remove duplicate rows so the unique index can be created.
+    // Keep the best candidate by:
+    // 1) linked media file present
+    // 2) has_file=true
+    // 3) wanted=true
+    // 4) most recently updated
+    // 5) latest rowid as tie-breaker
+    if let Err(e) = sqlx::query(
+        r#"
+        DELETE FROM movies
+        WHERE rowid IN (
+            SELECT rowid FROM (
+                SELECT
+                    rowid,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY library_id, tmdb_id
+                        ORDER BY
+                            CASE WHEN media_file_id IS NOT NULL THEN 1 ELSE 0 END DESC,
+                            CASE WHEN has_file THEN 1 ELSE 0 END DESC,
+                            CASE WHEN wanted THEN 1 ELSE 0 END DESC,
+                            COALESCE(updated_at, created_at) DESC,
+                            rowid DESC
+                    ) AS rn
+                FROM movies
+                WHERE tmdb_id IS NOT NULL
+            )
+            WHERE rn > 1
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    {
+        result.errors.push(format!(
+            "Failed deduplicating movies before composite unique index: {}",
+            e
+        ));
+        return result;
+    }
+
+    let index_sql = "CREATE UNIQUE INDEX IF NOT EXISTS idx_movies_library_tmdb_unique ON movies(library_id, tmdb_id)";
+    if let Err(e) = sqlx::query(index_sql).execute(pool).await {
+        result.errors.push(format!(
+            "Failed creating movies composite unique index: {}",
+            e
+        ));
+        return result;
+    }
+
+    result.columns_added.push((
+        "movies".to_string(),
+        "library_id,tmdb_id (composite unique index)".to_string(),
+    ));
+    result
+}
+
 /// Ensure a person appears only once per movie in movie cast credits.
 async fn ensure_movie_cast_credit_unique_index(pool: &SqlitePool) -> SchemaSyncResult {
     let mut result = SchemaSyncResult::default();
@@ -625,39 +788,63 @@ pub async fn sync_all_entity_schemas(pool: &SqlitePool) -> SchemaSyncResult {
     sync_and_unique!(TorznabCategory);
     sync_one!(AuthSecretSchema);
 
-    // Future one-off/manual migrations can be added here when they cannot be
-    // represented by entity schema sync alone.
+    // One-off/manual in-code migrations (ordered, applied once, recorded).
+    if let Err(e) = ensure_schema_migrations_table(pool).await {
+        total_result.errors.push(format!(
+            "Failed to ensure {} table: {}",
+            SCHEMA_MIGRATIONS_TABLE, e
+        ));
+        return total_result;
+    }
 
-    // Fix cast_settings.default_volume if it was created as INTEGER (Rust expects REAL/f64)
-    let fix_cast = fix_cast_settings_default_volume_type(pool).await;
-    total_result.columns_added.extend(fix_cast.columns_added);
-    total_result.errors.extend(fix_cast.errors);
-
-    // Fix media_files.library_id to be nullable (required for unmatched ingest pipeline).
-    let fix_media_files = fix_media_files_library_id_nullable(pool).await;
-    total_result
-        .columns_added
-        .extend(fix_media_files.columns_added);
-    total_result.errors.extend(fix_media_files.errors);
-
-    // Ensure show episode identity is enforced at the DB layer.
-    let episode_unique = ensure_episode_composite_unique_index(pool).await;
-    total_result.columns_added.extend(episode_unique.columns_added);
-    total_result.errors.extend(episode_unique.errors);
-
-    // Ensure one TMDB collection row per library.
-    let collection_unique = ensure_collections_library_tmdb_unique_index(pool).await;
-    total_result
-        .columns_added
-        .extend(collection_unique.columns_added);
-    total_result.errors.extend(collection_unique.errors);
-
-    // Ensure cast credits remain unique per movie/person pair.
-    let cast_credit_unique = ensure_movie_cast_credit_unique_index(pool).await;
-    total_result
-        .columns_added
-        .extend(cast_credit_unique.columns_added);
-    total_result.errors.extend(cast_credit_unique.errors);
+    apply_in_code_migration_once(
+        pool,
+        &mut total_result,
+        "2026_02_14_fix_cast_settings_default_volume_type",
+        "Recreate cast_settings with REAL default_volume where legacy INTEGER exists",
+        fix_cast_settings_default_volume_type(pool),
+    )
+    .await;
+    apply_in_code_migration_once(
+        pool,
+        &mut total_result,
+        "2026_02_14_fix_media_files_library_id_nullable",
+        "Recreate media_files to make library_id nullable for unmatched ingest",
+        fix_media_files_library_id_nullable(pool),
+    )
+    .await;
+    apply_in_code_migration_once(
+        pool,
+        &mut total_result,
+        "2026_02_14_enforce_episode_unique",
+        "Dedupe episodes and enforce unique (show_id, season, episode)",
+        ensure_episode_composite_unique_index(pool),
+    )
+    .await;
+    apply_in_code_migration_once(
+        pool,
+        &mut total_result,
+        "2026_02_14_enforce_collections_library_tmdb_unique",
+        "Enforce unique collections per (library_id, tmdb_collection_id)",
+        ensure_collections_library_tmdb_unique_index(pool),
+    )
+    .await;
+    apply_in_code_migration_once(
+        pool,
+        &mut total_result,
+        "2026_02_14_enforce_movies_library_tmdb_unique",
+        "Dedupe movies and enforce unique (library_id, tmdb_id)",
+        ensure_movies_library_tmdb_unique_index(pool),
+    )
+    .await;
+    apply_in_code_migration_once(
+        pool,
+        &mut total_result,
+        "2026_02_14_enforce_movie_cast_credit_unique",
+        "Enforce unique movie cast credits per (movie_id, person_id)",
+        ensure_movie_cast_credit_unique_index(pool),
+    )
+    .await;
 
     total_result
 }

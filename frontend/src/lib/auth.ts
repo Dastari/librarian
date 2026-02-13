@@ -1,7 +1,13 @@
 /**
  * Authentication utilities for custom GraphQL-based auth.
- * Manages JWT tokens in cookies for API authentication.
+ * Manages JWT tokens in browser cookies for API authentication.
  * Cookies are shared across all tabs automatically.
+ *
+ * Security note:
+ * This client-side cookie model is transitional. Because cookies are written via
+ * JavaScript, they cannot be HttpOnly and are therefore readable by scripts.
+ * Target architecture is server-set HttpOnly auth cookies with frontend code no
+ * longer reading/writing token cookie values directly.
  */
 
 // ============================================================================
@@ -20,7 +26,6 @@ export interface AuthUser {
 /** Auth session containing tokens and user info */
 export interface AuthSession {
   accessToken: string;
-  refreshToken: string;
   expiresAt: number; // Unix timestamp in seconds
   user: AuthUser;
 }
@@ -28,7 +33,6 @@ export interface AuthSession {
 /** Auth tokens for API requests */
 export interface AuthTokens {
   accessToken: string;
-  refreshToken: string;
   expiresAt: number;
 }
 
@@ -78,13 +82,6 @@ function setCookie(
 
   if (secure) {
     cookieString += "; Secure";
-  }
-
-  // Debug logging in development
-  if (import.meta.env?.DEV && name === COOKIE_NAMES.ACCESS_TOKEN) {
-    console.debug(
-      `[Cookie] Setting ${name}: ${value.substring(0, 20)}... (secure=${secure}, sameSite=${sameSite})`
-    );
   }
 
   document.cookie = cookieString;
@@ -169,9 +166,6 @@ export function setTokens(session: AuthSession): void {
     setCookie(COOKIE_NAMES.ACCESS_TOKEN, session.accessToken, {
       expires: accessExpiry,
     });
-    setCookie(COOKIE_NAMES.REFRESH_TOKEN, session.refreshToken, {
-      expires: refreshExpiry,
-    });
     setCookie(COOKIE_NAMES.EXPIRES_AT, session.expiresAt.toString(), {
       expires: refreshExpiry,
     });
@@ -242,17 +236,15 @@ export function clearTokens(): void {
 /** Get the full session if valid tokens exist */
 export function getSession(): AuthSession | null {
   const accessToken = getAccessToken();
-  const refreshToken = getRefreshToken();
   const expiresAt = getTokenExpiresAt();
   const user = getStoredUser();
 
-  if (!accessToken || !refreshToken || !expiresAt || !user) {
+  if (!accessToken || !expiresAt || !user) {
     return null;
   }
 
   return {
     accessToken,
-    refreshToken,
     expiresAt,
     user,
   };

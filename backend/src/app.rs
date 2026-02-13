@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 #[cfg(not(feature = "embed-frontend"))]
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
@@ -41,9 +41,10 @@ pub async fn build_app(state: AppState) -> Router<()> {
         .merge(GraphqlService::router())
         .layer(
             CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
+                .allow_origin(AllowOrigin::mirror_request())
+                .allow_methods(AllowMethods::mirror_request())
+                .allow_headers(AllowHeaders::mirror_request())
+                .allow_credentials(true),
         )
         .layer(TraceLayer::new_for_http())
         .with_state(state);
