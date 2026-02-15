@@ -4,6 +4,7 @@
 //! API key is loaded from app_settings database table.
 
 use anyhow::Result;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -221,6 +222,11 @@ pub struct MovieCollectionMovieDetails {
     pub poster_url: Option<String>,
     pub library_movie_id: Option<String>,
     pub media_file_id: Option<String>,
+    pub file_size_bytes: Option<i64>,
+    pub resolution: Option<String>,
+    pub video_codec: Option<String>,
+    pub audio_codec: Option<String>,
+    pub audio_channels: Option<String>,
     pub wanted: bool,
 }
 
@@ -244,6 +250,11 @@ struct LocalCollectionMovieRow {
     year: Option<i32>,
     poster_url: Option<String>,
     media_file_id: Option<String>,
+    file_size_bytes: Option<i64>,
+    resolution: Option<String>,
+    video_codec: Option<String>,
+    audio_codec: Option<String>,
+    audio_channels: Option<String>,
     wanted: bool,
 }
 
@@ -280,6 +291,12 @@ pub struct AddAudiobookOptions {
 #[derive(Debug, Clone, Default)]
 pub struct MetadataServiceConfig {
     pub tmdb_api_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MetadataFetchPolicy {
+    PreferCache,
+    ForceRefresh,
 }
 
 /// Unified metadata service
@@ -436,6 +453,227 @@ impl MetadataService {
         variables: serde_json::Value,
     ) -> Result<serde_json::Value> {
         self.execute_query(auth_user, mutation, variables).await
+    }
+
+    async fn execute_internal_query(
+        &self,
+        query: &str,
+        variables: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let schema = self.graphql_schema().await?;
+        let request = Request::new(query).variables(Variables::from_json(variables));
+        let response = schema.execute(request).await;
+        if !response.errors.is_empty() {
+            let msg = response
+                .errors
+                .iter()
+                .map(|e| e.message.clone())
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(anyhow::anyhow!(msg));
+        }
+        Ok(serde_json::to_value(&response.data)?)
+    }
+
+    async fn execute_internal_mutation(
+        &self,
+        mutation: &str,
+        variables: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.execute_internal_query(mutation, variables).await
+    }
+
+    fn provider_cache_key(provider: MetadataProvider) -> &'static str {
+        match provider {
+            MetadataProvider::Tmdb => "tmdb",
+            MetadataProvider::Tvmaze => "tvmaze",
+            MetadataProvider::Musicbrainz => "musicbrainz",
+            MetadataProvider::OpenLibrary => "openlibrary",
+        }
+    }
+
+    fn normalized_cache_component(value: &str) -> String {
+        value.trim().to_ascii_lowercase()
+    }
+
+    async fn provider_cache_days(&self, provider: MetadataProvider) -> i32 {
+        match MetadataSettings::load(&self.db).await {
+            Ok(settings) => match provider {
+                MetadataProvider::Tmdb => settings.tmdb_cache_days,
+                MetadataProvider::Tvmaze => settings.tvmaze_cache_days,
+                MetadataProvider::Musicbrainz => settings.musicbrainz_cache_days,
+                MetadataProvider::OpenLibrary => settings.openlibrary_cache_days,
+            },
+            Err(error) => {
+                warn!(
+                    provider = Self::provider_cache_key(provider),
+                    error = %error,
+                    "Failed to load metadata settings for cache staleness; defaulting to 7 days"
+                );
+                7
+            }
+        }
+    }
+
+    fn parse_cached_timestamp(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+        chrono::DateTime::parse_from_rfc3339(value)
+            .map(|ts| ts.with_timezone(&chrono::Utc))
+            .ok()
+            .or_else(|| {
+                chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
+                    .ok()
+                    .map(|ts| ts.and_utc())
+            })
+    }
+
+    fn is_cache_stale(fetched_at: &str, max_age_days: i32) -> bool {
+        if max_age_days <= 0 {
+            return true;
+        }
+
+        let Some(ts) = Self::parse_cached_timestamp(fetched_at) else {
+            return true;
+        };
+
+        let now = chrono::Utc::now();
+        let max_age = chrono::Duration::days(max_age_days as i64);
+        now.signed_duration_since(ts) > max_age
+    }
+
+    async fn read_metadata_cache<T: DeserializeOwned>(
+        &self,
+        provider: MetadataProvider,
+        operation: &str,
+        cache_key: &str,
+        max_age_days: i32,
+    ) -> Result<Option<T>> {
+        if max_age_days <= 0 {
+            return Ok(None);
+        }
+
+        let data = self
+            .execute_internal_query(
+                r#"query MetadataCacheLookup($Where: MetadataCacheWhereInput, $Page: PageInput) {
+                    MetadataCaches(Where: $Where, Page: $Page) {
+                        Edges { Node { Payload FetchedAt } }
+                    }
+                }"#,
+                serde_json::json!({
+                    "Where": {
+                        "Provider": { "Eq": Self::provider_cache_key(provider) },
+                        "Operation": { "Eq": operation },
+                        "CacheKey": { "Eq": cache_key }
+                    },
+                    "Page": { "Limit": 1, "Offset": 0 }
+                }),
+            )
+            .await?;
+
+        let node = data
+            .get("MetadataCaches")
+            .and_then(|v| v.get("Edges"))
+            .and_then(|v| v.as_array())
+            .and_then(|edges| edges.first())
+            .and_then(|edge| edge.get("Node"));
+
+        let Some(node) = node else {
+            return Ok(None);
+        };
+
+        let fetched_at = node
+            .get("FetchedAt")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+
+        if Self::is_cache_stale(fetched_at, max_age_days) {
+            return Ok(None);
+        }
+
+        let payload = node
+            .get("Payload")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Metadata cache payload missing"))?;
+
+        let parsed = serde_json::from_str::<T>(payload)?;
+        Ok(Some(parsed))
+    }
+
+    async fn upsert_metadata_cache<T: Serialize>(
+        &self,
+        provider: MetadataProvider,
+        operation: &str,
+        cache_key: &str,
+        payload: &T,
+    ) -> Result<()> {
+        let payload_json = serde_json::to_string(payload)?;
+        let now = Self::now_iso_string();
+
+        let existing = self
+            .execute_internal_query(
+                r#"query MetadataCacheExisting($Where: MetadataCacheWhereInput, $Page: PageInput) {
+                    MetadataCaches(Where: $Where, Page: $Page) {
+                        Edges { Node { Id } }
+                    }
+                }"#,
+                serde_json::json!({
+                    "Where": {
+                        "Provider": { "Eq": Self::provider_cache_key(provider) },
+                        "Operation": { "Eq": operation },
+                        "CacheKey": { "Eq": cache_key }
+                    },
+                    "Page": { "Limit": 1, "Offset": 0 }
+                }),
+            )
+            .await?;
+
+        let existing_id = existing
+            .get("MetadataCaches")
+            .and_then(|v| v.get("Edges"))
+            .and_then(|v| v.as_array())
+            .and_then(|edges| edges.first())
+            .and_then(|edge| edge.get("Node"))
+            .and_then(|node| node.get("Id"))
+            .and_then(|id| id.as_str())
+            .map(|id| id.to_string());
+
+        if let Some(cache_id) = existing_id {
+            let _ = self
+                .execute_internal_mutation(
+                    r#"mutation UpdateMetadataCachePayload($Id: String!, $Input: UpdateMetadataCacheInput!) {
+                        UpdateMetadataCache(Id: $Id, Input: $Input) { Success Error }
+                    }"#,
+                    serde_json::json!({
+                        "Id": cache_id,
+                        "Input": {
+                            "Payload": payload_json,
+                            "PayloadVersion": 1,
+                            "FetchedAt": now,
+                        }
+                    }),
+                )
+                .await?;
+            return Ok(());
+        }
+
+        let _ = self
+            .execute_internal_mutation(
+                r#"mutation CreateMetadataCachePayload($Input: CreateMetadataCacheInput!) {
+                    CreateMetadataCache(Input: $Input) { Success Error }
+                }"#,
+                serde_json::json!({
+                    "Input": {
+                        "Id": Uuid::new_v4().to_string(),
+                        "Provider": Self::provider_cache_key(provider),
+                        "Operation": operation,
+                        "CacheKey": cache_key,
+                        "Payload": payload_json,
+                        "PayloadVersion": 1,
+                        "FetchedAt": now,
+                    }
+                }),
+            )
+            .await?;
+        Ok(())
     }
 
     /// Ensure a single collection entity exists and is up-to-date for a TMDB collection id.
@@ -858,14 +1096,44 @@ impl MetadataService {
         query: &str,
         year: Option<i32>,
     ) -> Result<Vec<MovieSearchResult>> {
+        self.search_movies_with_policy(query, year, MetadataFetchPolicy::PreferCache)
+            .await
+    }
+
+    async fn search_movies_with_policy(
+        &self,
+        query: &str,
+        year: Option<i32>,
+        policy: MetadataFetchPolicy,
+    ) -> Result<Vec<MovieSearchResult>> {
         info!(
             "Metadata search requested for movie query='{}'{}",
             query,
             year.map(|y| format!(" ({})", y)).unwrap_or_default()
         );
 
-        let tmdb = self.get_tmdb_client().await?;
+        let cache_key = format!(
+            "query={};year={}",
+            Self::normalized_cache_component(query),
+            year.map(|v| v.to_string())
+                .unwrap_or_else(|| "none".to_string())
+        );
+        if policy == MetadataFetchPolicy::PreferCache {
+            let max_age_days = self.provider_cache_days(MetadataProvider::Tmdb).await;
+            if let Some(cached) = self
+                .read_metadata_cache::<Vec<MovieSearchResult>>(
+                    MetadataProvider::Tmdb,
+                    "SearchMovies",
+                    &cache_key,
+                    max_age_days,
+                )
+                .await?
+            {
+                return Ok(cached);
+            }
+        }
 
+        let tmdb = self.get_tmdb_client().await?;
         let movies = tmdb.search_movies(query, year).await?;
 
         let results: Vec<MovieSearchResult> = movies
@@ -892,6 +1160,13 @@ impl MetadataService {
             })
             .collect();
 
+        if let Err(error) = self
+            .upsert_metadata_cache(MetadataProvider::Tmdb, "SearchMovies", &cache_key, &results)
+            .await
+        {
+            warn!(error = %error, "Failed to update metadata cache for SearchMovies");
+        }
+
         debug!(count = results.len(), "Found movies");
         Ok(results)
     }
@@ -901,10 +1176,35 @@ impl MetadataService {
         &self,
         query: &str,
     ) -> Result<Vec<MovieCollectionSearchResult>> {
+        self.search_movie_collections_with_policy(query, MetadataFetchPolicy::PreferCache)
+            .await
+    }
+
+    async fn search_movie_collections_with_policy(
+        &self,
+        query: &str,
+        policy: MetadataFetchPolicy,
+    ) -> Result<Vec<MovieCollectionSearchResult>> {
         info!(
             "Metadata search requested for collections query='{}'",
             query
         );
+
+        let cache_key = format!("query={}", Self::normalized_cache_component(query));
+        if policy == MetadataFetchPolicy::PreferCache {
+            let max_age_days = self.provider_cache_days(MetadataProvider::Tmdb).await;
+            if let Some(cached) = self
+                .read_metadata_cache::<Vec<MovieCollectionSearchResult>>(
+                    MetadataProvider::Tmdb,
+                    "SearchMovieCollections",
+                    &cache_key,
+                    max_age_days,
+                )
+                .await?
+            {
+                return Ok(cached);
+            }
+        }
 
         let tmdb = self.get_tmdb_client().await?;
         let collections = tmdb.search_collections(query).await?;
@@ -921,13 +1221,53 @@ impl MetadataService {
             })
             .collect::<Vec<_>>();
 
+        if let Err(error) = self
+            .upsert_metadata_cache(
+                MetadataProvider::Tmdb,
+                "SearchMovieCollections",
+                &cache_key,
+                &results,
+            )
+            .await
+        {
+            warn!(
+                error = %error,
+                "Failed to update metadata cache for SearchMovieCollections"
+            );
+        }
+
         debug!(count = results.len(), "Found collections");
         Ok(results)
     }
 
     /// Search for TV shows on TVMaze
     pub async fn search_tv_shows(&self, query: &str) -> Result<Vec<TvShowSearchResult>> {
+        self.search_tv_shows_with_policy(query, MetadataFetchPolicy::PreferCache)
+            .await
+    }
+
+    async fn search_tv_shows_with_policy(
+        &self,
+        query: &str,
+        policy: MetadataFetchPolicy,
+    ) -> Result<Vec<TvShowSearchResult>> {
         info!("Metadata search requested for TV shows query='{}'", query);
+
+        let cache_key = format!("query={}", Self::normalized_cache_component(query));
+        if policy == MetadataFetchPolicy::PreferCache {
+            let max_age_days = self.provider_cache_days(MetadataProvider::Tvmaze).await;
+            if let Some(cached) = self
+                .read_metadata_cache::<Vec<TvShowSearchResult>>(
+                    MetadataProvider::Tvmaze,
+                    "SearchTvShows",
+                    &cache_key,
+                    max_age_days,
+                )
+                .await?
+            {
+                return Ok(cached);
+            }
+        }
 
         let tvmaze = self.get_tvmaze_client().await?;
         let results = tvmaze.search_shows(query).await?;
@@ -966,6 +1306,18 @@ impl MetadataService {
             })
             .collect();
 
+        if let Err(error) = self
+            .upsert_metadata_cache(
+                MetadataProvider::Tvmaze,
+                "SearchTvShows",
+                &cache_key,
+                &shows,
+            )
+            .await
+        {
+            warn!(error = %error, "Failed to update metadata cache for SearchTvShows");
+        }
+
         debug!(count = shows.len(), "Found TV shows");
         Ok(shows)
     }
@@ -980,6 +1332,54 @@ impl MetadataService {
         include_live: bool,
         include_soundtracks: bool,
     ) -> Result<Vec<AlbumSearchResult>> {
+        self.search_albums_with_policy(
+            query,
+            include_eps,
+            include_singles,
+            include_compilations,
+            include_live,
+            include_soundtracks,
+            MetadataFetchPolicy::PreferCache,
+        )
+        .await
+    }
+
+    async fn search_albums_with_policy(
+        &self,
+        query: &str,
+        include_eps: bool,
+        include_singles: bool,
+        include_compilations: bool,
+        include_live: bool,
+        include_soundtracks: bool,
+        policy: MetadataFetchPolicy,
+    ) -> Result<Vec<AlbumSearchResult>> {
+        let cache_key = format!(
+            "query={};eps={};singles={};compilations={};live={};soundtracks={}",
+            Self::normalized_cache_component(query),
+            include_eps,
+            include_singles,
+            include_compilations,
+            include_live,
+            include_soundtracks
+        );
+        if policy == MetadataFetchPolicy::PreferCache {
+            let max_age_days = self
+                .provider_cache_days(MetadataProvider::Musicbrainz)
+                .await;
+            if let Some(cached) = self
+                .read_metadata_cache::<Vec<AlbumSearchResult>>(
+                    MetadataProvider::Musicbrainz,
+                    "SearchAlbums",
+                    &cache_key,
+                    max_age_days,
+                )
+                .await?
+            {
+                return Ok(cached);
+            }
+        }
+
         let musicbrainz = self.get_musicbrainz_client().await?;
 
         let mut types = vec!["Album".to_string()];
@@ -1001,7 +1401,7 @@ impl MetadataService {
 
         let albums = musicbrainz.search_albums_with_types(query, &types).await?;
 
-        Ok(albums
+        let results = albums
             .into_iter()
             .map(|album| {
                 let provider_id = album.id.to_string();
@@ -1028,11 +1428,34 @@ impl MetadataService {
                     score,
                 }
             })
-            .collect())
+            .collect::<Vec<_>>();
+
+        if let Err(error) = self
+            .upsert_metadata_cache(
+                MetadataProvider::Musicbrainz,
+                "SearchAlbums",
+                &cache_key,
+                &results,
+            )
+            .await
+        {
+            warn!(error = %error, "Failed to update metadata cache for SearchAlbums");
+        }
+
+        Ok(results)
     }
 
     /// Search for audiobooks on OpenLibrary
     pub async fn search_audiobooks(&self, query: &str) -> Result<Vec<AudiobookSearchResult>> {
+        self.search_audiobooks_with_policy(query, MetadataFetchPolicy::PreferCache)
+            .await
+    }
+
+    async fn search_audiobooks_with_policy(
+        &self,
+        query: &str,
+        policy: MetadataFetchPolicy,
+    ) -> Result<Vec<AudiobookSearchResult>> {
         #[derive(Debug, Deserialize)]
         struct OpenLibraryDoc {
             key: Option<String>,
@@ -1048,6 +1471,24 @@ impl MetadataService {
             docs: Vec<OpenLibraryDoc>,
         }
 
+        let cache_key = format!("query={}", Self::normalized_cache_component(query));
+        if policy == MetadataFetchPolicy::PreferCache {
+            let max_age_days = self
+                .provider_cache_days(MetadataProvider::OpenLibrary)
+                .await;
+            if let Some(cached) = self
+                .read_metadata_cache::<Vec<AudiobookSearchResult>>(
+                    MetadataProvider::OpenLibrary,
+                    "SearchAudiobooks",
+                    &cache_key,
+                    max_age_days,
+                )
+                .await?
+            {
+                return Ok(cached);
+            }
+        }
+
         let client = reqwest::Client::new();
         let response = client
             .get("https://openlibrary.org/search.json")
@@ -1058,7 +1499,7 @@ impl MetadataService {
             .json::<OpenLibrarySearchResponse>()
             .await?;
 
-        Ok(response
+        let results = response
             .docs
             .into_iter()
             .filter_map(|doc| {
@@ -1085,12 +1526,54 @@ impl MetadataService {
                     description: None,
                 })
             })
-            .collect())
+            .collect::<Vec<_>>();
+
+        if let Err(error) = self
+            .upsert_metadata_cache(
+                MetadataProvider::OpenLibrary,
+                "SearchAudiobooks",
+                &cache_key,
+                &results,
+            )
+            .await
+        {
+            warn!(
+                error = %error,
+                "Failed to update metadata cache for SearchAudiobooks"
+            );
+        }
+
+        Ok(results)
     }
 
     /// Get movie details from TMDB
     pub async fn get_movie(&self, tmdb_id: u32) -> Result<MovieDetails> {
+        self.get_movie_with_policy(tmdb_id, MetadataFetchPolicy::PreferCache)
+            .await
+    }
+
+    async fn get_movie_with_policy(
+        &self,
+        tmdb_id: u32,
+        policy: MetadataFetchPolicy,
+    ) -> Result<MovieDetails> {
         debug!("Fetching movie details from TMDB (ID: {})", tmdb_id);
+
+        let cache_key = tmdb_id.to_string();
+        if policy == MetadataFetchPolicy::PreferCache {
+            let max_age_days = self.provider_cache_days(MetadataProvider::Tmdb).await;
+            if let Some(cached) = self
+                .read_metadata_cache::<MovieDetails>(
+                    MetadataProvider::Tmdb,
+                    "GetMovie",
+                    &cache_key,
+                    max_age_days,
+                )
+                .await?
+            {
+                return Ok(cached);
+            }
+        }
 
         let tmdb = self.get_tmdb_client().await?;
 
@@ -1135,7 +1618,7 @@ impl MetadataService {
                 (None, None, None)
             };
 
-        Ok(MovieDetails {
+        let details = MovieDetails {
             provider: MetadataProvider::Tmdb,
             provider_id: tmdb_id,
             title: movie.title.clone(),
@@ -1161,12 +1644,46 @@ impl MetadataService {
             collection_name,
             collection_poster_url,
             release_date: movie.release_date.clone(),
-        })
+        };
+
+        if let Err(error) = self
+            .upsert_metadata_cache(MetadataProvider::Tmdb, "GetMovie", &cache_key, &details)
+            .await
+        {
+            warn!(error = %error, "Failed to update metadata cache for GetMovie");
+        }
+
+        Ok(details)
     }
 
     /// Get TV show details from TVMaze
     pub async fn get_tv_show(&self, tvmaze_id: u32) -> Result<TvShowDetails> {
+        self.get_tv_show_with_policy(tvmaze_id, MetadataFetchPolicy::PreferCache)
+            .await
+    }
+
+    async fn get_tv_show_with_policy(
+        &self,
+        tvmaze_id: u32,
+        policy: MetadataFetchPolicy,
+    ) -> Result<TvShowDetails> {
         debug!("Fetching TV show details from TVMaze (ID: {})", tvmaze_id);
+
+        let cache_key = tvmaze_id.to_string();
+        if policy == MetadataFetchPolicy::PreferCache {
+            let max_age_days = self.provider_cache_days(MetadataProvider::Tvmaze).await;
+            if let Some(cached) = self
+                .read_metadata_cache::<TvShowDetails>(
+                    MetadataProvider::Tvmaze,
+                    "GetTvShow",
+                    &cache_key,
+                    max_age_days,
+                )
+                .await?
+            {
+                return Ok(cached);
+            }
+        }
 
         let tvmaze = self.get_tvmaze_client().await?;
         let show = tvmaze.get_show(tvmaze_id).await?;
@@ -1177,7 +1694,7 @@ impl MetadataService {
             .map(|n| n.name.clone())
             .or_else(|| show.web_channel.as_ref().map(|c| c.name.clone()));
 
-        Ok(TvShowDetails {
+        let details = TvShowDetails {
             provider: MetadataProvider::Tvmaze,
             provider_id: tvmaze_id,
             name: show.name.clone(),
@@ -1200,11 +1717,29 @@ impl MetadataService {
                 .and_then(|e| e.thetvdb)
                 .map(|v| v as i32),
             imdb_id: show.externals.as_ref().and_then(|e| e.imdb.clone()),
-        })
+        };
+
+        if let Err(error) = self
+            .upsert_metadata_cache(MetadataProvider::Tvmaze, "GetTvShow", &cache_key, &details)
+            .await
+        {
+            warn!(error = %error, "Failed to update metadata cache for GetTvShow");
+        }
+
+        Ok(details)
     }
 
     /// Get audiobook details from OpenLibrary work API
     pub async fn get_audiobook(&self, openlibrary_id: &str) -> Result<AudiobookDetails> {
+        self.get_audiobook_with_policy(openlibrary_id, MetadataFetchPolicy::PreferCache)
+            .await
+    }
+
+    async fn get_audiobook_with_policy(
+        &self,
+        openlibrary_id: &str,
+        policy: MetadataFetchPolicy,
+    ) -> Result<AudiobookDetails> {
         #[derive(Debug, Deserialize)]
         struct OpenLibraryWorkAuthor {
             author: OpenLibraryAuthorRef,
@@ -1240,6 +1775,24 @@ impl MetadataService {
         #[derive(Debug, Deserialize)]
         struct OpenLibraryAuthor {
             name: Option<String>,
+        }
+
+        let cache_key = Self::normalized_cache_component(openlibrary_id);
+        if policy == MetadataFetchPolicy::PreferCache {
+            let max_age_days = self
+                .provider_cache_days(MetadataProvider::OpenLibrary)
+                .await;
+            if let Some(cached) = self
+                .read_metadata_cache::<AudiobookDetails>(
+                    MetadataProvider::OpenLibrary,
+                    "GetAudiobook",
+                    &cache_key,
+                    max_age_days,
+                )
+                .await?
+            {
+                return Ok(cached);
+            }
         }
 
         let client = reqwest::Client::new();
@@ -1281,7 +1834,7 @@ impl MetadataService {
             None
         };
 
-        Ok(AudiobookDetails {
+        let details = AudiobookDetails {
             provider: MetadataProvider::OpenLibrary,
             provider_id: openlibrary_id.to_string(),
             title: work
@@ -1298,7 +1851,24 @@ impl MetadataService {
             isbn: None,
             published_date: work.first_publish_date,
             cover_url,
-        })
+        };
+
+        if let Err(error) = self
+            .upsert_metadata_cache(
+                MetadataProvider::OpenLibrary,
+                "GetAudiobook",
+                &cache_key,
+                &details,
+            )
+            .await
+        {
+            warn!(
+                error = %error,
+                "Failed to update metadata cache for GetAudiobook"
+            );
+        }
+
+        Ok(details)
     }
 
     /// Add a movie from TMDB to a library
@@ -1634,6 +2204,13 @@ impl MetadataService {
                                     Year
                                     PosterUrl
                                     MediaFileId
+                                    MediaFile {
+                                        Size
+                                        Resolution
+                                        VideoCodec
+                                        AudioCodec
+                                        AudioChannels
+                                    }
                                     Wanted
                                 }
                             }
@@ -1691,6 +2268,30 @@ impl MetadataService {
                         .map(|s| s.to_string()),
                     media_file_id: node
                         .get("MediaFileId")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    file_size_bytes: node
+                        .get("MediaFile")
+                        .and_then(|v| v.get("Size"))
+                        .and_then(|v| v.as_i64()),
+                    resolution: node
+                        .get("MediaFile")
+                        .and_then(|v| v.get("Resolution"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    video_codec: node
+                        .get("MediaFile")
+                        .and_then(|v| v.get("VideoCodec"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    audio_codec: node
+                        .get("MediaFile")
+                        .and_then(|v| v.get("AudioCodec"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    audio_channels: node
+                        .get("MediaFile")
+                        .and_then(|v| v.get("AudioChannels"))
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string()),
                     wanted: node
@@ -1765,6 +2366,11 @@ impl MetadataService {
                     .or_else(|| tmdb.poster_url(part.poster_path.as_deref())),
                 library_movie_id: local.as_ref().map(|m| m.id.clone()),
                 media_file_id: local.as_ref().and_then(|m| m.media_file_id.clone()),
+                file_size_bytes: local.as_ref().and_then(|m| m.file_size_bytes),
+                resolution: local.as_ref().and_then(|m| m.resolution.clone()),
+                video_codec: local.as_ref().and_then(|m| m.video_codec.clone()),
+                audio_codec: local.as_ref().and_then(|m| m.audio_codec.clone()),
+                audio_channels: local.as_ref().and_then(|m| m.audio_channels.clone()),
                 wanted: local.as_ref().map(|m| m.wanted).unwrap_or(false),
             });
         }
@@ -1785,6 +2391,11 @@ impl MetadataService {
                 poster_url: local.poster_url,
                 library_movie_id: Some(local.id),
                 media_file_id: local.media_file_id,
+                file_size_bytes: local.file_size_bytes,
+                resolution: local.resolution,
+                video_codec: local.video_codec,
+                audio_codec: local.audio_codec,
+                audio_channels: local.audio_channels,
                 wanted: local.wanted,
             });
         }
@@ -2484,7 +3095,9 @@ impl MetadataService {
             .tmdb_id
             .ok_or_else(|| anyhow::anyhow!("Movie has no TmdbId"))?;
 
-        let details = self.get_movie(tmdb_id as u32).await?;
+        let details = self
+            .get_movie_with_policy(tmdb_id as u32, MetadataFetchPolicy::ForceRefresh)
+            .await?;
         let cached_collection_poster_url = self
             .cache_collection_poster_artwork(
                 details.collection_id,
@@ -3048,7 +3661,9 @@ impl MetadataService {
             .tvmaze_id
             .ok_or_else(|| anyhow::anyhow!("Show has no TvmazeId"))?;
 
-        let details = self.get_tv_show(tvmaze_id as u32).await?;
+        let details = self
+            .get_tv_show_with_policy(tvmaze_id as u32, MetadataFetchPolicy::ForceRefresh)
+            .await?;
 
         let auth_user = AuthUser {
             user_id: user_id.to_string(),

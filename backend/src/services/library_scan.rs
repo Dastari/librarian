@@ -1475,7 +1475,7 @@ impl LibraryScanService {
                     library_name = %library.name,
                     media_file_id = %media_file_id,
                     media_file_path = %abs_path,
-                    "Discovered new media file during scan with deferred analysis (on-demand or torrent completion only): library_id={}, media_file_id={}, path={}",
+                    "Discovered new media file during scan: library_id={}, media_file_id={}, path={}",
                     library_id,
                     media_file_id,
                     abs_path
@@ -1490,6 +1490,26 @@ impl LibraryScanService {
                     library_id,
                     media_file_id,
                     abs_path
+                );
+            }
+
+            // Queue ffprobe analysis during scans as well.
+            // queue_analyze_job is idempotent and will skip when:
+            // - ffprobe is unavailable
+            // - file is already analyzed
+            // - file is already queued
+            if let Err(e) = self.queue_analyze_job(&media_file_id, &abs_path).await {
+                warn!(
+                    library_id = %library_id,
+                    library_name = %library.name,
+                    media_file_id = %media_file_id,
+                    media_file_path = %abs_path,
+                    error = %e,
+                    "Failed to queue analyze job during scan: library_id={}, media_file_id={}, path={}, error={}",
+                    library_id,
+                    media_file_id,
+                    abs_path,
+                    e
                 );
             }
 

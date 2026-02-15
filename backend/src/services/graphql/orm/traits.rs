@@ -55,6 +55,14 @@ pub trait DatabaseSchema: DatabaseEntity {
     /// Get all column definitions for this entity's table
     fn columns() -> &'static [ColumnDef];
 
+    /// Composite unique indexes expressed as sets of column names.
+    ///
+    /// Example:
+    /// `&[&["provider", "operation", "cache_key"], &["library_id", "tmdb_id"]]`
+    fn composite_unique_indexes() -> &'static [&'static [&'static str]] {
+        &[]
+    }
+
     /// Generate CREATE TABLE IF NOT EXISTS SQL
     fn create_table_sql() -> String {
         let column_defs: Vec<String> = Self::columns().iter().map(|c| c.to_sql()).collect();

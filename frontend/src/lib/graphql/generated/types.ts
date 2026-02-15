@@ -1495,6 +1495,16 @@ export type CreateMediaFileInput = {
 };
 
 /** Input for creating a new #struct_name */
+export type CreateMetadataCacheInput = {
+  CacheKey: Scalars["String"]["input"];
+  FetchedAt: Scalars["String"]["input"];
+  Operation: Scalars["String"]["input"];
+  Payload: Scalars["String"]["input"];
+  PayloadVersion: Scalars["Int"]["input"];
+  Provider: Scalars["String"]["input"];
+};
+
+/** Input for creating a new #struct_name */
 export type CreateMovieCastCreditInput = {
   CastOrder?: InputMaybe<Scalars["Int"]["input"]>;
   CharacterName?: InputMaybe<Scalars["String"]["input"]>;
@@ -2084,6 +2094,13 @@ export type DeleteMediaChaptersResult = {
 
 /** Result of bulk delete by Where filter */
 export type DeleteMediaFilesResult = {
+  DeletedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
+/** Result of bulk delete by Where filter */
+export type DeleteMetadataCachesResult = {
   DeletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
@@ -2992,6 +3009,73 @@ export type MediaFileWhereInput = {
   Width?: InputMaybe<IntFilter>;
 };
 
+export type MetadataCache = {
+  CacheKey: Scalars["String"]["output"];
+  CreatedAt: Scalars["String"]["output"];
+  FetchedAt: Scalars["String"]["output"];
+  Id: Scalars["String"]["output"];
+  Operation: Scalars["String"]["output"];
+  Payload: Scalars["String"]["output"];
+  PayloadVersion: Scalars["Int"]["output"];
+  Provider: Scalars["String"]["output"];
+  UpdatedAt: Scalars["String"]["output"];
+};
+
+/** Event for #struct_name changes (subscriptions) */
+export type MetadataCacheChangedEvent = {
+  Action: ChangeAction;
+  Id: Scalars["String"]["output"];
+  MetadataCache?: Maybe<MetadataCache>;
+};
+
+/** Connection containing edges and page info */
+export type MetadataCacheConnection = {
+  /** The edges in this connection */
+  Edges: Array<MetadataCacheEdge>;
+  /** Pagination information */
+  PageInfo: PageInfo;
+};
+
+/** Edge containing a node and cursor */
+export type MetadataCacheEdge = {
+  /** A cursor for pagination */
+  Cursor: Scalars["String"]["output"];
+  /** The item at the end of the edge */
+  Node: MetadataCache;
+};
+
+export type MetadataCacheOrderByInput = {
+  CreatedAt?: InputMaybe<SortDirection>;
+  FetchedAt?: InputMaybe<SortDirection>;
+  Operation?: InputMaybe<SortDirection>;
+  Provider?: InputMaybe<SortDirection>;
+  UpdatedAt?: InputMaybe<SortDirection>;
+};
+
+/** Result type for #struct_name mutations */
+export type MetadataCacheResult = {
+  Error?: Maybe<Scalars["String"]["output"]>;
+  MetadataCache?: Maybe<MetadataCache>;
+  Success: Scalars["Boolean"]["output"];
+};
+
+export type MetadataCacheWhereInput = {
+  /** Logical AND of conditions */
+  And?: InputMaybe<Array<MetadataCacheWhereInput>>;
+  CacheKey?: InputMaybe<StringFilter>;
+  CreatedAt?: InputMaybe<DateFilter>;
+  FetchedAt?: InputMaybe<DateFilter>;
+  Id?: InputMaybe<StringFilter>;
+  /** Logical NOT of condition */
+  Not?: InputMaybe<MetadataCacheWhereInput>;
+  Operation?: InputMaybe<StringFilter>;
+  /** Logical OR of conditions */
+  Or?: InputMaybe<Array<MetadataCacheWhereInput>>;
+  PayloadVersion?: InputMaybe<IntFilter>;
+  Provider?: InputMaybe<StringFilter>;
+  UpdatedAt?: InputMaybe<DateFilter>;
+};
+
 export type MoveFilesInput = {
   Destination: Scalars["String"]["input"];
   Overwrite?: InputMaybe<Scalars["Boolean"]["input"]>;
@@ -3127,11 +3211,16 @@ export type MovieCollectionDetails = {
 
 /** Movie row in a collection detail response */
 export type MovieCollectionMovieDetails = {
+  AudioChannels?: Maybe<Scalars["String"]["output"]>;
+  AudioCodec?: Maybe<Scalars["String"]["output"]>;
+  FileSizeBytes?: Maybe<Scalars["Int"]["output"]>;
   LibraryMovieId?: Maybe<Scalars["String"]["output"]>;
   MediaFileId?: Maybe<Scalars["String"]["output"]>;
   PosterUrl?: Maybe<Scalars["String"]["output"]>;
+  Resolution?: Maybe<Scalars["String"]["output"]>;
   Title: Scalars["String"]["output"];
   TmdbId: Scalars["Int"]["output"];
+  VideoCodec?: Maybe<Scalars["String"]["output"]>;
   Wanted: Scalars["Boolean"]["output"];
   Year?: Maybe<Scalars["Int"]["output"]>;
 };
@@ -3303,6 +3392,8 @@ export type MutationRoot = {
   /** Create a new #struct_name_str */
   CreateMediaFile: MediaFileResult;
   /** Create a new #struct_name_str */
+  CreateMetadataCache: MetadataCacheResult;
+  /** Create a new #struct_name_str */
   CreateMovie: MovieResult;
   /** Create a new #struct_name_str */
   CreateMovieCastCredit: MovieCastCreditResult;
@@ -3421,6 +3512,10 @@ export type MutationRoot = {
   DeleteMediaFile: MediaFileResult;
   /** Delete multiple #plural_name matching the given Where filter */
   DeleteMediaFiles: DeleteMediaFilesResult;
+  /** Delete a #struct_name_str */
+  DeleteMetadataCache: MetadataCacheResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  DeleteMetadataCaches: DeleteMetadataCachesResult;
   /** Delete a #struct_name_str */
   DeleteMovie: MovieResult;
   /** Delete a #struct_name_str */
@@ -3631,6 +3726,10 @@ export type MutationRoot = {
   UpdateMediaFile: MediaFileResult;
   /** Update multiple #plural_name matching the given Where filter */
   UpdateMediaFiles: UpdateMediaFilesResult;
+  /** Update an existing #struct_name_str */
+  UpdateMetadataCache: MetadataCacheResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  UpdateMetadataCaches: UpdateMetadataCachesResult;
   /** Update an existing #struct_name_str */
   UpdateMovie: MovieResult;
   /** Update an existing #struct_name_str */
@@ -3882,6 +3981,10 @@ export type MutationRootCreateMediaFileArgs = {
   Input: CreateMediaFileInput;
 };
 
+export type MutationRootCreateMetadataCacheArgs = {
+  Input: CreateMetadataCacheInput;
+};
+
 export type MutationRootCreateMovieArgs = {
   Input: CreateMovieInput;
 };
@@ -4120,6 +4223,14 @@ export type MutationRootDeleteMediaFileArgs = {
 
 export type MutationRootDeleteMediaFilesArgs = {
   Where?: InputMaybe<MediaFileWhereInput>;
+};
+
+export type MutationRootDeleteMetadataCacheArgs = {
+  Id: Scalars["String"]["input"];
+};
+
+export type MutationRootDeleteMetadataCachesArgs = {
+  Where?: InputMaybe<MetadataCacheWhereInput>;
 };
 
 export type MutationRootDeleteMovieArgs = {
@@ -4591,6 +4702,16 @@ export type MutationRootUpdateMediaFileArgs = {
 export type MutationRootUpdateMediaFilesArgs = {
   Input: UpdateMediaFileInput;
   Where?: InputMaybe<MediaFileWhereInput>;
+};
+
+export type MutationRootUpdateMetadataCacheArgs = {
+  Id: Scalars["String"]["input"];
+  Input: UpdateMetadataCacheInput;
+};
+
+export type MutationRootUpdateMetadataCachesArgs = {
+  Input: UpdateMetadataCacheInput;
+  Where?: InputMaybe<MetadataCacheWhereInput>;
 };
 
 export type MutationRootUpdateMovieArgs = {
@@ -5442,6 +5563,10 @@ export type QueryRoot = {
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
   MediaFiles: MediaFileConnection;
   /** Get a single #struct_name_str by ID */
+  MetadataCache?: Maybe<MetadataCache>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  MetadataCaches: MetadataCacheConnection;
+  /** Get a single #struct_name_str by ID */
   Movie?: Maybe<Movie>;
   /** Get a single #struct_name_str by ID */
   MovieCastCredit?: Maybe<MovieCastCredit>;
@@ -5497,6 +5622,8 @@ export type QueryRoot = {
   ScheduleSyncState?: Maybe<ScheduleSyncState>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
   ScheduleSyncStates: ScheduleSyncStateConnection;
+  /** List in-code schema migrations applied by backend schema sync. */
+  SchemaMigrations: Array<SchemaMigrationEntry>;
   /** Search albums on MusicBrainz. */
   SearchAlbums: Array<AlbumSearchResult>;
   /** Search audiobooks on OpenLibrary. */
@@ -5741,6 +5868,16 @@ export type QueryRootMediaFilesArgs = {
   OrderBy?: InputMaybe<Array<MediaFileOrderByInput>>;
   Page?: InputMaybe<PageInput>;
   Where?: InputMaybe<MediaFileWhereInput>;
+};
+
+export type QueryRootMetadataCacheArgs = {
+  Id: Scalars["String"]["input"];
+};
+
+export type QueryRootMetadataCachesArgs = {
+  OrderBy?: InputMaybe<Array<MetadataCacheOrderByInput>>;
+  Page?: InputMaybe<PageInput>;
+  Where?: InputMaybe<MetadataCacheWhereInput>;
 };
 
 export type QueryRootMovieArgs = {
@@ -6445,6 +6582,12 @@ export type ScheduleSyncStateWhereInput = {
   UpdatedAt?: InputMaybe<DateFilter>;
 };
 
+export type SchemaMigrationEntry = {
+  AppliedAt: Scalars["String"]["output"];
+  Description?: Maybe<Scalars["String"]["output"]>;
+  Id: Scalars["String"]["output"];
+};
+
 /** Input for searching sources */
 export type SearchSourcesInput = {
   Categories?: InputMaybe<Array<Scalars["Int"]["input"]>>;
@@ -6916,6 +7059,8 @@ export type SubscriptionRoot = {
   /** Subscribe to #struct_name_str changes */
   MediaFileChanged: MediaFileChangedEvent;
   /** Subscribe to #struct_name_str changes */
+  MetadataCacheChanged: MetadataCacheChangedEvent;
+  /** Subscribe to #struct_name_str changes */
   MovieCastCreditChanged: MovieCastCreditChangedEvent;
   /** Subscribe to #struct_name_str changes */
   MovieChanged: MovieChangedEvent;
@@ -7038,6 +7183,10 @@ export type SubscriptionRootMediaChapterChangedArgs = {
 };
 
 export type SubscriptionRootMediaFileChangedArgs = {
+  Filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRootMetadataCacheChangedArgs = {
   Filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
@@ -7973,6 +8122,23 @@ export type UpdateMediaFileInput = {
 
 /** Result of bulk update by Where filter */
 export type UpdateMediaFilesResult = {
+  affectedCount: Scalars["Int"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+};
+
+/** Input for updating an existing #struct_name */
+export type UpdateMetadataCacheInput = {
+  CacheKey?: InputMaybe<Scalars["String"]["input"]>;
+  FetchedAt?: InputMaybe<Scalars["String"]["input"]>;
+  Operation?: InputMaybe<Scalars["String"]["input"]>;
+  Payload?: InputMaybe<Scalars["String"]["input"]>;
+  PayloadVersion?: InputMaybe<Scalars["Int"]["input"]>;
+  Provider?: InputMaybe<Scalars["String"]["input"]>;
+};
+
+/** Result of bulk update by Where filter */
+export type UpdateMetadataCachesResult = {
   affectedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];

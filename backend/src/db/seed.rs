@@ -206,6 +206,30 @@ async fn seed_app_settings(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
             description: "MusicBrainz User-Agent override (optional)",
             category: "metadata",
         },
+        SettingRow {
+            key: "metadata.cache_days.tmdb",
+            value: "7",
+            description: "Max metadata cache age in days for TMDB during scan fallback",
+            category: "metadata",
+        },
+        SettingRow {
+            key: "metadata.cache_days.tvmaze",
+            value: "7",
+            description: "Max metadata cache age in days for TVMaze during scan fallback",
+            category: "metadata",
+        },
+        SettingRow {
+            key: "metadata.cache_days.musicbrainz",
+            value: "7",
+            description: "Max metadata cache age in days for MusicBrainz during scan fallback",
+            category: "metadata",
+        },
+        SettingRow {
+            key: "metadata.cache_days.openlibrary",
+            value: "7",
+            description: "Max metadata cache age in days for OpenLibrary during scan fallback",
+            category: "metadata",
+        },
         // Subtitles
         SettingRow {
             key: "subtitles.auto_download",

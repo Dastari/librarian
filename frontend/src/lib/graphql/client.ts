@@ -181,6 +181,14 @@ const wsClient = createWSClient({
 
 const wsLink = new GraphQLWsLink(wsClient);
 
+// Keep auth lifecycle operations on HTTP because they rely on HTTP cookie headers.
+const HTTP_ONLY_OPERATION_NAMES = new Set([
+  "Login",
+  "Register",
+  "RefreshToken",
+  "Logout",
+]);
+
 // Function to restart WebSocket connection (called after auth changes)
 export function restartWebSocket(): void {
   // Terminate existing connection so it reconnects with new auth
@@ -234,23 +242,50 @@ const errorLink = onError(({ error, operation }) => {
 // Combine error, auth and http links
 const authedHttpLink = from([errorLink, authLink, httpLink]);
 
-// Split link: subscriptions go to WebSocket, everything else to HTTP
+// Split link: auth lifecycle ops go to HTTP; everything else goes to WebSocket.
+// This enables WS-first query/mutation/subscription transport while preserving
+// cookie-based auth flows that require HTTP response headers.
 const splitLink = split(
-  ({ query }) => {
+  (operation) => {
+    if (typeof window === "undefined") {
+      // SSR/build-time execution should not attempt a WebSocket transport.
+      return true;
+    }
+    const { query, operationName } = operation;
     const definition = getMainDefinition(query);
-    return (
-      definition.kind === "OperationDefinition" &&
-      definition.operation === "subscription"
-    );
+    if (definition.kind !== "OperationDefinition") {
+      return true;
+    }
+    const resolvedName = operationName || definition.name?.value;
+    if (!resolvedName) {
+      // Keep anonymous operations on HTTP for predictable behavior.
+      return true;
+    }
+    return HTTP_ONLY_OPERATION_NAMES.has(resolvedName);
   },
+  authedHttpLink,
   wsLink,
-  authedHttpLink
 );
 
 // Create Apollo Client
 export const apolloClient = new ApolloClient({
   link: splitLink,
-  cache: new InMemoryCache(),
+  cache: new InMemoryCache({
+    typePolicies: {
+      MediaFile: {
+        keyFields: ["Id"],
+      },
+      Query: {
+        fields: {
+          MediaFile: {
+            // Merge partial payloads (e.g. { Id, Metadata }) into existing
+            // MediaFile objects instead of replacing and dropping cached fields.
+            merge: true,
+          },
+        },
+      },
+    },
+  }),
   defaultOptions: {
     watchQuery: {
       fetchPolicy: "cache-and-network",

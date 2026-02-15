@@ -9,6 +9,13 @@ import { MediaItemStatusChip, PlayPauseIndicator } from "../shared";
 import { usePlaybackContext } from "../../contexts/PlaybackContext";
 import { IconInfoCircle, IconMovie, IconPlayerPlay, IconSearch } from "@tabler/icons-react";
 import { DetailItemsTable } from "../media/DetailItemsTable";
+import { useQuery } from "../../lib/graphql/client";
+import {
+  MeDocument,
+  ShowPlaybackProgressByMediaDocument,
+  type ShowPlaybackProgressByMediaQuery,
+} from "../../lib/graphql/generated/graphql";
+import { formatBytes } from "../../lib/format";
 
 export interface CollectionMovieTableItem {
   TmdbId: number;
@@ -17,6 +24,11 @@ export interface CollectionMovieTableItem {
   PosterUrl: string | null;
   LibraryMovieId: string | null;
   MediaFileId: string | null;
+  FileSizeBytes?: number | null;
+  Resolution?: string | null;
+  VideoCodec?: string | null;
+  AudioCodec?: string | null;
+  AudioChannels?: string | null;
   Wanted: boolean;
 }
 
@@ -27,6 +39,45 @@ interface CollectionMoviesTableProps {
   searchPlaceholder: string;
   isLoading?: boolean;
   headerContent?: ReactNode;
+}
+
+type PlaybackProgressNode =
+  ShowPlaybackProgressByMediaQuery["PlaybackProgresses"]["Edges"][number]["Node"];
+
+interface CollectionMovieResolvedRow extends CollectionMovieTableItem {
+  ResolvedWanted: boolean;
+  ResolvedMediaFileId: string | null;
+  FileSizeBytes: number | null;
+  Resolution: string | null;
+  VideoCodec: string | null;
+  AudioCodec: string | null;
+  AudioChannels: string | null;
+}
+
+function formatVideoCodec(codec: string | null): string {
+  if (!codec) return "";
+  const normalized = codec.toLowerCase();
+  if (normalized.includes("hevc") || normalized === "h265") return "HEVC";
+  if (normalized.includes("h264") || normalized === "avc") return "H.264";
+  if (normalized.includes("av1")) return "AV1";
+  if (normalized.includes("vp9")) return "VP9";
+  return codec.toUpperCase();
+}
+
+function formatAudioCodec(codec: string | null, channels: string | null): string {
+  if (!codec) return "";
+  const normalized = codec.toLowerCase();
+  let name = codec.toUpperCase();
+  if (normalized.includes("truehd")) name = "TrueHD";
+  else if (normalized.includes("atmos")) name = "Atmos";
+  else if (normalized.includes("dts")) name = "DTS";
+  else if (normalized.includes("aac")) name = "AAC";
+  else if (normalized.includes("ac3") || normalized.includes("ac-3")) name = "AC3";
+  else if (normalized.includes("eac3") || normalized.includes("e-ac-3")) name = "EAC3";
+  else if (normalized.includes("flac")) name = "FLAC";
+  else if (normalized.includes("opus")) name = "Opus";
+  if (channels) return `${name} ${channels}`;
+  return name;
 }
 
 export function CollectionMoviesTable({
@@ -48,13 +99,73 @@ export function CollectionMoviesTable({
 
   const currentMovieId = session?.movieId ?? null;
   const isPlaying = session?.isPlaying ?? false;
+  const resolvedMovies = useMemo<CollectionMovieResolvedRow[]>(() => {
+    return movies.map((movie) => {
+      return {
+        ...movie,
+        ResolvedWanted: movie.Wanted,
+        ResolvedMediaFileId: movie.MediaFileId ?? null,
+        FileSizeBytes: movie.FileSizeBytes ?? null,
+        Resolution: movie.Resolution ?? null,
+        VideoCodec: movie.VideoCodec ?? null,
+        AudioCodec: movie.AudioCodec ?? null,
+        AudioChannels: movie.AudioChannels ?? null,
+      };
+    });
+  }, [movies]);
+
+  const { data: meData } = useQuery(MeDocument, {
+    fetchPolicy: "cache-first",
+  });
+  const userId = meData?.Me?.Id;
+  const mediaFileIds = useMemo(
+    () => [
+      ...new Set(
+        resolvedMovies
+          .map((movie) => movie.ResolvedMediaFileId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ],
+    [resolvedMovies],
+  );
+  const { data: progressData, previousData: previousProgressData } = useQuery(
+    ShowPlaybackProgressByMediaDocument,
+    {
+      variables: {
+        Where: {
+          UserId: { Eq: userId },
+          MediaFileId: { In: mediaFileIds },
+        },
+        Page: { Limit: 5000, Offset: 0 },
+        OrderBy: [{ UpdatedAt: "Desc" }],
+      },
+      skip: !userId || mediaFileIds.length === 0,
+      fetchPolicy: "cache-and-network",
+    },
+  );
+  const progressEdges =
+    progressData?.PlaybackProgresses?.Edges ??
+    previousProgressData?.PlaybackProgresses?.Edges ??
+    [];
+  const progressByMediaFile = useMemo(() => {
+    const map = new Map<string, PlaybackProgressNode>();
+    for (const edge of progressEdges) {
+      const node = edge.Node;
+      if (!node.MediaFileId) continue;
+      if (!map.has(node.MediaFileId)) {
+        map.set(node.MediaFileId, node);
+      }
+    }
+    return map;
+  }, [progressEdges]);
+
   const isCurrentMovieRow = useCallback(
-    (movie: CollectionMovieTableItem) =>
+    (movie: CollectionMovieResolvedRow) =>
       Boolean(movie.LibraryMovieId) && movie.LibraryMovieId === currentMovieId,
     [currentMovieId],
   );
 
-  const columns: DataTableColumn<CollectionMovieTableItem>[] = [
+  const columns: DataTableColumn<CollectionMovieResolvedRow>[] = [
     {
       key: "title",
       label: "Title",
@@ -92,7 +203,7 @@ export function CollectionMoviesTable({
       label: "Progress",
       width: 110,
       render: (movie) => {
-        if (!movie.MediaFileId || !movie.LibraryMovieId) {
+        if (!movie.ResolvedMediaFileId || !movie.LibraryMovieId) {
           return <span className="text-default-400">-</span>;
         }
         if (isCurrentMovieRow(movie)) {
@@ -100,6 +211,29 @@ export function CollectionMoviesTable({
             <span className={isPlaying ? "text-success text-sm" : "text-default-500 text-sm"}>
               {isPlaying ? "Playing" : "Paused"}
             </span>
+          );
+        }
+        const playbackProgress = progressByMediaFile.get(movie.ResolvedMediaFileId);
+        if (!playbackProgress) {
+          return <span className="text-default-400">-</span>;
+        }
+        if (playbackProgress.IsWatched) {
+          return <span className="text-success text-sm">Watched</span>;
+        }
+        if (playbackProgress.ProgressPercent > 0) {
+          const percentage = Math.round(
+            Math.max(0, Math.min(1, playbackProgress.ProgressPercent)) * 100,
+          );
+          return (
+            <div className="flex items-center gap-2">
+              <div className="h-1.5 w-16 bg-default-200 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary rounded-full"
+                  style={{ width: `${percentage}%` }}
+                />
+              </div>
+              <span className="text-xs text-default-400">{percentage}%</span>
+            </div>
           );
         }
         return <span className="text-default-400">-</span>;
@@ -120,19 +254,40 @@ export function CollectionMoviesTable({
       key: "quality",
       label: "Quality",
       width: 120,
-      render: () => <span className="text-default-400">-</span>,
+      render: (movie) => {
+        if (!movie.ResolvedMediaFileId) return <span className="text-default-400">-</span>;
+        const qualityParts = [movie.Resolution, formatVideoCodec(movie.VideoCodec)].filter(
+          Boolean,
+        );
+        if (qualityParts.length === 0) return <span className="text-default-400">-</span>;
+        return <span className="text-default-500 text-sm">{qualityParts.join(" · ")}</span>;
+      },
     },
     {
       key: "audio",
       label: "Audio",
       width: 100,
-      render: () => <span className="text-default-400">-</span>,
+      render: (movie) => {
+        if (!movie.ResolvedMediaFileId) return <span className="text-default-400">-</span>;
+        const audioLabel = formatAudioCodec(movie.AudioCodec, movie.AudioChannels);
+        if (!audioLabel) return <span className="text-default-400">-</span>;
+        return <span className="text-default-500 text-sm">{audioLabel}</span>;
+      },
     },
     {
       key: "size",
       label: "Size",
       width: 100,
-      render: () => <span className="text-default-400">-</span>,
+      render: (movie) => {
+        if (!movie.ResolvedMediaFileId || !movie.FileSizeBytes) {
+          return <span className="text-default-400">-</span>;
+        }
+        return (
+          <span className="text-default-500 text-sm text-nowrap">
+            {formatBytes(movie.FileSizeBytes)}
+          </span>
+        );
+      },
     },
     {
       key: "status",
@@ -141,14 +296,14 @@ export function CollectionMoviesTable({
       sortable: true,
       render: (movie) => (
         <MediaItemStatusChip
-          mediaFileId={movie.MediaFileId}
-          wanted={movie.Wanted}
+          mediaFileId={movie.ResolvedMediaFileId}
+          wanted={movie.ResolvedWanted}
         />
       ),
     },
   ];
 
-  const rowActions: RowAction<CollectionMovieTableItem>[] = [
+  const rowActions: RowAction<CollectionMovieResolvedRow>[] = [
     {
       key: `pause-${currentMovieId || "none"}-${isPlaying ? "playing" : "paused"}`,
       label: "Pause",
@@ -162,7 +317,7 @@ export function CollectionMoviesTable({
       color: "default",
       inDropdown: false,
       isVisible: (movie) =>
-        Boolean(movie.MediaFileId) && isCurrentMovieRow(movie) && isPlaying,
+        Boolean(movie.ResolvedMediaFileId) && isCurrentMovieRow(movie) && isPlaying,
       onAction: () => {
         void updatePlayback({ isPlaying: false });
       },
@@ -175,10 +330,10 @@ export function CollectionMoviesTable({
       inDropdown: false,
       isVisible: (movie) =>
         Boolean(movie.LibraryMovieId) &&
-        Boolean(movie.MediaFileId) &&
+        Boolean(movie.ResolvedMediaFileId) &&
         !(isCurrentMovieRow(movie) && isPlaying),
       onAction: (movie) => {
-        if (!movie.LibraryMovieId || !movie.MediaFileId) return;
+        if (!movie.LibraryMovieId || !movie.ResolvedMediaFileId) return;
         const playbackMovie = {
           Id: movie.LibraryMovieId,
           Title: movie.Title,
@@ -188,7 +343,7 @@ export function CollectionMoviesTable({
         };
         void startMoviePlayback(
           movie.LibraryMovieId,
-          movie.MediaFileId,
+          movie.ResolvedMediaFileId,
           playbackMovie as Parameters<typeof startMoviePlayback>[2],
         );
       },
@@ -199,7 +354,7 @@ export function CollectionMoviesTable({
       icon: <IconSearch size={16} />,
       color: "default",
       inDropdown: false,
-      isVisible: (movie) => !movie.MediaFileId,
+      isVisible: (movie) => !movie.ResolvedMediaFileId,
       onAction: () => {
         void navigate({ to: "/settings/sources" });
       },
@@ -210,10 +365,10 @@ export function CollectionMoviesTable({
       icon: <IconInfoCircle size={16} />,
       color: "default",
       inDropdown: true,
-      isVisible: (movie) => Boolean(movie.MediaFileId),
+      isVisible: (movie) => Boolean(movie.ResolvedMediaFileId),
       onAction: (movie) => {
-        if (!movie.MediaFileId) return;
-        setPropertiesMediaFileId(movie.MediaFileId);
+        if (!movie.ResolvedMediaFileId) return;
+        setPropertiesMediaFileId(movie.ResolvedMediaFileId);
         onPropertiesOpen();
       },
     },
@@ -231,7 +386,7 @@ export function CollectionMoviesTable({
       <DetailItemsTable
         tableKey={tableKey}
         stateKey={stateKey}
-        data={movies}
+        data={resolvedMovies}
         columns={columns}
         rowActions={rowActions}
         getRowKey={(movie) => movie.LibraryMovieId ?? `tmdb-${movie.TmdbId}`}
@@ -272,8 +427,8 @@ export function CollectionMoviesTable({
                   )}
                   <p className="text-xs text-default-500">{item.Year ?? "Unknown year"}</p>
                   <MediaItemStatusChip
-                    mediaFileId={item.MediaFileId}
-                    wanted={item.Wanted}
+                    mediaFileId={item.ResolvedMediaFileId}
+                    wanted={item.ResolvedWanted}
                   />
                 </div>
               </div>

@@ -148,6 +148,7 @@ impl Parse for MutationResultInput {
 ///
 /// ## Struct-level:
 /// - `#[graphql_entity(table = "...", plural = "...", default_sort = "...")]`
+/// - `#[graphql_entity(unique_composite = "col_a,col_b")]` (repeatable)
 ///
 /// ## Field-level:
 /// - `#[primary_key]` - Mark as primary key column
@@ -217,6 +218,7 @@ struct EntityMetadata {
     default_sort: Option<String>,
     /// Notify another table when this entity changes (e.g., "libraries" to trigger LibraryChangedEvent)
     notify: Option<String>,
+    unique_composite: Vec<Vec<String>>,
 }
 
 fn parse_entity_metadata(attrs: &[syn::Attribute]) -> syn::Result<EntityMetadata> {
@@ -241,6 +243,22 @@ fn parse_entity_metadata(attrs: &[syn::Attribute]) -> syn::Result<EntityMetadata
                     let value = meta.value()?;
                     let lit: syn::LitStr = value.parse()?;
                     metadata.notify = Some(lit.value());
+                } else if meta.path.is_ident("unique_composite") {
+                    let value = meta.value()?;
+                    let lit: syn::LitStr = value.parse()?;
+                    let cols = lit
+                        .value()
+                        .split(',')
+                        .map(|c| c.trim().to_string())
+                        .filter(|c| !c.is_empty())
+                        .collect::<Vec<_>>();
+                    if cols.len() < 2 {
+                        return Err(syn::Error::new(
+                            lit.span(),
+                            "unique_composite must include at least two comma-separated columns",
+                        ));
+                    }
+                    metadata.unique_composite.push(cols);
                 }
                 Ok(())
             })?;
@@ -487,6 +505,17 @@ fn generate_graphql_entity(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("{}s", struct_name));
     let default_sort = entity_meta.default_sort.as_deref().unwrap_or("id");
+    let composite_unique_indexes = entity_meta
+        .unique_composite
+        .iter()
+        .map(|cols| {
+            let col_lits = cols
+                .iter()
+                .map(|c| syn::LitStr::new(c, struct_name.span()))
+                .collect::<Vec<_>>();
+            quote! { &[#(#col_lits),*] }
+        })
+        .collect::<Vec<_>>();
 
     // Collect field info
     let mut column_names: Vec<String> = Vec::new();
@@ -713,6 +742,13 @@ fn generate_graphql_entity(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                     #(#column_defs),*
                 ];
                 COLUMNS
+            }
+
+            fn composite_unique_indexes() -> &'static [&'static [&'static str]] {
+                static UNIQUE_INDEXES: &[&[&str]] = &[
+                    #(#composite_unique_indexes),*
+                ];
+                UNIQUE_INDEXES
             }
         }
 

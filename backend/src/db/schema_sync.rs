@@ -556,6 +556,48 @@ async fn ensure_unique_indexes_for_entity<E: DatabaseSchema>(
     result
 }
 
+/// Ensure composite unique indexes declared by an entity exist.
+async fn ensure_composite_unique_indexes_for_entity<E: DatabaseSchema>(
+    pool: &SqlitePool,
+) -> SchemaSyncResult {
+    let mut result = SchemaSyncResult::default();
+    let table = E::TABLE_NAME;
+    if !table_exists(pool, table).await.unwrap_or(false) {
+        return result;
+    }
+
+    for cols in E::composite_unique_indexes() {
+        if cols.len() < 2 {
+            continue;
+        }
+
+        let suffix = cols.join("_");
+        let index_name = format!("idx_{}_{}_unique", table, suffix);
+        let index_cols = cols.join(", ");
+        let sql = format!(
+            "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {}({})",
+            index_name, table, index_cols
+        );
+
+        if let Err(e) = sqlx::query(&sql).execute(pool).await {
+            let msg = format!(
+                "Failed to create composite unique index {} on {}({}): {}",
+                index_name, table, index_cols, e
+            );
+            warn!("{}", msg);
+            result.errors.push(msg);
+            continue;
+        }
+
+        result.columns_added.push((
+            table.to_string(),
+            format!("{} (composite unique index)", index_cols),
+        ));
+    }
+
+    result
+}
+
 /// Ensure a collection can only exist once per (library_id, tmdb_collection_id).
 async fn ensure_collections_library_tmdb_unique_index(pool: &SqlitePool) -> SchemaSyncResult {
     let mut result = SchemaSyncResult::default();
@@ -708,6 +750,13 @@ pub async fn sync_all_entity_schemas(pool: &SqlitePool) -> SchemaSyncResult {
                 .columns_added
                 .extend(unique_result.columns_added);
             total_result.errors.extend(unique_result.errors);
+
+            let composite_unique_result =
+                ensure_composite_unique_indexes_for_entity::<$entity>(pool).await;
+            total_result
+                .columns_added
+                .extend(composite_unique_result.columns_added);
+            total_result.errors.extend(composite_unique_result.errors);
         };
     }
 
@@ -780,6 +829,7 @@ pub async fn sync_all_entity_schemas(pool: &SqlitePool) -> SchemaSyncResult {
     sync_and_unique!(ScheduleCache);
     sync_and_unique!(ScheduleSyncState);
     sync_and_unique!(NamingPattern);
+    sync_and_unique!(MetadataCache);
     sync_and_unique!(SourcePriorityRule);
 
     // Other entities
@@ -845,6 +895,5 @@ pub async fn sync_all_entity_schemas(pool: &SqlitePool) -> SchemaSyncResult {
         ensure_movie_cast_credit_unique_index(pool),
     )
     .await;
-
     total_result
 }

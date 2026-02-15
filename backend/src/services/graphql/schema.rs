@@ -61,6 +61,7 @@ schema_roots! {
         ScheduleCache,
         ScheduleSyncState,
         NamingPattern,
+        MetadataCache,
         SourcePriorityRule,
         Notification,
         ArtworkCache,

@@ -469,6 +469,11 @@ impl MovieCustomOperations {
                     poster_url: m.poster_url,
                     library_movie_id: m.library_movie_id,
                     media_file_id: m.media_file_id,
+                    file_size_bytes: m.file_size_bytes,
+                    resolution: m.resolution,
+                    video_codec: m.video_codec,
+                    audio_codec: m.audio_codec,
+                    audio_channels: m.audio_channels,
                     wanted: m.wanted,
                 })
                 .collect(),
@@ -576,6 +581,16 @@ pub struct MovieCollectionMovieDetailsGql {
     pub library_movie_id: Option<String>,
     #[graphql(name = "MediaFileId")]
     pub media_file_id: Option<String>,
+    #[graphql(name = "FileSizeBytes")]
+    pub file_size_bytes: Option<i64>,
+    #[graphql(name = "Resolution")]
+    pub resolution: Option<String>,
+    #[graphql(name = "VideoCodec")]
+    pub video_codec: Option<String>,
+    #[graphql(name = "AudioCodec")]
+    pub audio_codec: Option<String>,
+    #[graphql(name = "AudioChannels")]
+    pub audio_channels: Option<String>,
     #[graphql(name = "Wanted")]
     pub wanted: bool,
 }

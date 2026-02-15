@@ -4,6 +4,7 @@ import { Button } from "@heroui/button";
 // Card is used for test results display when needed
 import { Input, Textarea } from "@heroui/input";
 import { Switch } from "@heroui/switch";
+import { Slider } from "@heroui/slider";
 import { Accordion, AccordionItem } from "@heroui/accordion";
 import { Divider } from "@heroui/divider";
 import { addToast } from "@heroui/toast";
@@ -69,6 +70,10 @@ const METADATA_KEYS = {
   tvmaze_enabled: "metadata.tvmaze_enabled",
   musicbrainz_enabled: "metadata.musicbrainz_enabled",
   openlibrary_enabled: "metadata.openlibrary_enabled",
+  tmdb_cache_days: "metadata.cache_days.tmdb",
+  tvmaze_cache_days: "metadata.cache_days.tvmaze",
+  musicbrainz_cache_days: "metadata.cache_days.musicbrainz",
+  openlibrary_cache_days: "metadata.cache_days.openlibrary",
   opensubtitles_api_key: "metadata.opensubtitles_api_key",
   opensubtitles_username: "metadata.opensubtitles_username",
   opensubtitles_password: "metadata.opensubtitles_password",
@@ -82,6 +87,10 @@ interface MetadataSettingsShape {
   tvmazeEnabled: boolean;
   musicbrainzEnabled: boolean;
   openlibraryEnabled: boolean;
+  tmdbCacheDays: number;
+  tvmazeCacheDays: number;
+  musicbrainzCacheDays: number;
+  openlibraryCacheDays: number;
   opensubtitlesApiKey: string;
   opensubtitlesUsername: string;
   opensubtitlesPassword: string;
@@ -104,12 +113,23 @@ function appSettingsToMetadataSettings(
     if (val === "false") return false;
     return def;
   };
+  const getInt = (k: string, def: number) => {
+    const val = map.get(k);
+    if (!val) return def;
+    const parsed = Number.parseInt(val, 10);
+    if (!Number.isFinite(parsed)) return def;
+    return Math.min(30, Math.max(0, parsed));
+  };
   return {
     tmdbApiKey: get(METADATA_KEYS.tmdb_api_key, ""),
     tmdbEnabled: getBool(METADATA_KEYS.tmdb_enabled, true),
     tvmazeEnabled: getBool(METADATA_KEYS.tvmaze_enabled, true),
     musicbrainzEnabled: getBool(METADATA_KEYS.musicbrainz_enabled, true),
     openlibraryEnabled: getBool(METADATA_KEYS.openlibrary_enabled, true),
+    tmdbCacheDays: getInt(METADATA_KEYS.tmdb_cache_days, 7),
+    tvmazeCacheDays: getInt(METADATA_KEYS.tvmaze_cache_days, 7),
+    musicbrainzCacheDays: getInt(METADATA_KEYS.musicbrainz_cache_days, 7),
+    openlibraryCacheDays: getInt(METADATA_KEYS.openlibrary_cache_days, 7),
     opensubtitlesApiKey: get(METADATA_KEYS.opensubtitles_api_key, ""),
     opensubtitlesUsername: get(METADATA_KEYS.opensubtitles_username, ""),
     opensubtitlesPassword: get(METADATA_KEYS.opensubtitles_password, ""),
@@ -181,6 +201,10 @@ function MetadataSettingsPage() {
     tvmazeEnabled: true,
     musicbrainzEnabled: true,
     openlibraryEnabled: true,
+    tmdbCacheDays: 7,
+    tvmazeCacheDays: 7,
+    musicbrainzCacheDays: 7,
+    openlibraryCacheDays: 7,
     opensubtitlesApiKey: "",
     opensubtitlesUsername: "",
     opensubtitlesPassword: "",
@@ -242,6 +266,10 @@ function MetadataSettingsPage() {
       settings.tvmazeEnabled !== initialSettings.tvmazeEnabled ||
       settings.musicbrainzEnabled !== initialSettings.musicbrainzEnabled ||
       settings.openlibraryEnabled !== initialSettings.openlibraryEnabled ||
+      settings.tmdbCacheDays !== initialSettings.tmdbCacheDays ||
+      settings.tvmazeCacheDays !== initialSettings.tvmazeCacheDays ||
+      settings.musicbrainzCacheDays !== initialSettings.musicbrainzCacheDays ||
+      settings.openlibraryCacheDays !== initialSettings.openlibraryCacheDays ||
       settings.opensubtitlesApiKey !== initialSettings.opensubtitlesApiKey ||
       settings.opensubtitlesUsername !==
         initialSettings.opensubtitlesUsername ||
@@ -271,6 +299,22 @@ function MetadataSettingsPage() {
         {
           key: METADATA_KEYS.openlibrary_enabled,
           value: String(settings.openlibraryEnabled),
+        },
+        {
+          key: METADATA_KEYS.tmdb_cache_days,
+          value: String(settings.tmdbCacheDays),
+        },
+        {
+          key: METADATA_KEYS.tvmaze_cache_days,
+          value: String(settings.tvmazeCacheDays),
+        },
+        {
+          key: METADATA_KEYS.musicbrainz_cache_days,
+          value: String(settings.musicbrainzCacheDays),
+        },
+        {
+          key: METADATA_KEYS.openlibrary_cache_days,
+          value: String(settings.openlibraryCacheDays),
         },
         {
           key: METADATA_KEYS.opensubtitles_api_key,
@@ -462,6 +506,30 @@ function MetadataSettingsPage() {
                 />
               </div>
             </div>
+            <div className="p-3 bg-content2 rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <p className="font-medium">TVMaze Cache Staleness</p>
+                <span className="text-sm text-default-500">
+                  {settings.tvmazeCacheDays} day
+                  {settings.tvmazeCacheDays === 1 ? "" : "s"}
+                </span>
+              </div>
+              <p className="text-sm text-default-500 mb-3">
+                During scans, use cached TV metadata until this age before
+                refetching.
+              </p>
+              <Slider
+                aria-label="TVMaze cache staleness in days"
+                minValue={0}
+                maxValue={30}
+                step={1}
+                value={settings.tvmazeCacheDays}
+                onChange={(value: number | number[]) => {
+                  const days = Array.isArray(value) ? value[0] : value;
+                  setSettings((prev) => ({ ...prev, tvmazeCacheDays: days }));
+                }}
+              />
+            </div>
           </div>
         </AccordionItem>
 
@@ -545,6 +613,30 @@ function MetadataSettingsPage() {
                 />
               )}
             </div>
+            <div className="p-3 bg-content2 rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <p className="font-medium">TMDB Cache Staleness</p>
+                <span className="text-sm text-default-500">
+                  {settings.tmdbCacheDays} day
+                  {settings.tmdbCacheDays === 1 ? "" : "s"}
+                </span>
+              </div>
+              <p className="text-sm text-default-500 mb-3">
+                During scans, use cached movie metadata until this age before
+                refetching.
+              </p>
+              <Slider
+                aria-label="TMDB cache staleness in days"
+                minValue={0}
+                maxValue={30}
+                step={1}
+                value={settings.tmdbCacheDays}
+                onChange={(value: number | number[]) => {
+                  const days = Array.isArray(value) ? value[0] : value;
+                  setSettings((prev) => ({ ...prev, tmdbCacheDays: days }));
+                }}
+              />
+            </div>
           </div>
         </AccordionItem>
 
@@ -584,6 +676,33 @@ function MetadataSettingsPage() {
                 />
               </div>
             </div>
+            <div className="p-3 bg-content2 rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <p className="font-medium">MusicBrainz Cache Staleness</p>
+                <span className="text-sm text-default-500">
+                  {settings.musicbrainzCacheDays} day
+                  {settings.musicbrainzCacheDays === 1 ? "" : "s"}
+                </span>
+              </div>
+              <p className="text-sm text-default-500 mb-3">
+                During scans, use cached music metadata until this age before
+                refetching.
+              </p>
+              <Slider
+                aria-label="MusicBrainz cache staleness in days"
+                minValue={0}
+                maxValue={30}
+                step={1}
+                value={settings.musicbrainzCacheDays}
+                onChange={(value: number | number[]) => {
+                  const days = Array.isArray(value) ? value[0] : value;
+                  setSettings((prev) => ({
+                    ...prev,
+                    musicbrainzCacheDays: days,
+                  }));
+                }}
+              />
+            </div>
           </div>
         </AccordionItem>
 
@@ -622,6 +741,33 @@ function MetadataSettingsPage() {
                   }
                 />
               </div>
+            </div>
+            <div className="p-3 bg-content2 rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <p className="font-medium">OpenLibrary Cache Staleness</p>
+                <span className="text-sm text-default-500">
+                  {settings.openlibraryCacheDays} day
+                  {settings.openlibraryCacheDays === 1 ? "" : "s"}
+                </span>
+              </div>
+              <p className="text-sm text-default-500 mb-3">
+                During scans, use cached audiobook metadata until this age
+                before refetching.
+              </p>
+              <Slider
+                aria-label="OpenLibrary cache staleness in days"
+                minValue={0}
+                maxValue={30}
+                step={1}
+                value={settings.openlibraryCacheDays}
+                onChange={(value: number | number[]) => {
+                  const days = Array.isArray(value) ? value[0] : value;
+                  setSettings((prev) => ({
+                    ...prev,
+                    openlibraryCacheDays: days,
+                  }));
+                }}
+              />
             </div>
           </div>
         </AccordionItem>

@@ -42,6 +42,11 @@ interface CollectionMovieNode {
   PosterUrl: string | null;
   LibraryMovieId: string | null;
   MediaFileId: string | null;
+  FileSizeBytes: number | null;
+  Resolution: string | null;
+  VideoCodec: string | null;
+  AudioCodec: string | null;
+  AudioChannels: string | null;
   Wanted: boolean;
 }
 
@@ -130,6 +135,11 @@ const COLLECTION_DETAILS_QUERY = gql`
         PosterUrl
         LibraryMovieId
         MediaFileId
+        FileSizeBytes
+        Resolution
+        VideoCodec
+        AudioCodec
+        AudioChannels
         Wanted
       }
     }

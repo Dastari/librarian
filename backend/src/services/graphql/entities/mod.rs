@@ -47,6 +47,7 @@ pub mod usenet_download;
 pub mod usenet_server;
 
 // Schedule and automation
+pub mod metadata_cache;
 pub mod naming_pattern;
 pub mod schedule_cache;
 pub mod schedule_sync_state;
@@ -84,6 +85,7 @@ pub use invite_token::*;
 pub use library::*;
 pub use media_chapter::*;
 pub use media_file::*;
+pub use metadata_cache::*;
 pub use movie::*;
 pub use movie_cast_credit::*;
 pub use naming_pattern::*;
