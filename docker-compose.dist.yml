@@ -1,0 +1,60 @@
+# Librarian Self-Hosted Distribution
+#
+# This docker-compose file is for end-users who want to run Librarian.
+# It uses pre-built Docker images from GitHub Container Registry.
+#
+# Quick Start:
+#   1. Copy this file to your server
+#   2. Create a .env file (see below for required variables)
+#   3. Run: docker compose -f docker-compose.dist.yml up -d
+#
+# Required .env variables:
+#   JWT_SECRET=your-secure-secret-here
+#   INDEXER_ENCRYPTION_KEY=your-encryption-key-here
+#
+# Optional .env variables:
+#   TVDB_API_KEY=your-key
+#   TMDB_API_KEY=your-key
+#   OPENSUBTITLES_API_KEY=your-key
+
+services:
+  librarian:
+    image: ghcr.io/yourusername/librarian:latest
+    container_name: librarian
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+      - "${TORRENT_PORT:-6881}:6881"
+      - "${TORRENT_PORT:-6881}:6881/udp"
+    environment:
+      - PORT=3000
+      - RUST_LOG=${RUST_LOG:-info}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - INDEXER_ENCRYPTION_KEY=${INDEXER_ENCRYPTION_KEY:?INDEXER_ENCRYPTION_KEY is required}
+      - TVDB_API_KEY=${TVDB_API_KEY:-}
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
+      - OPENSUBTITLES_API_KEY=${OPENSUBTITLES_API_KEY:-}
+      - DATABASE_PATH=/data/librarian.db
+      - MEDIA_PATH=/data/media
+      - DOWNLOADS_PATH=/data/downloads
+      - CACHE_PATH=/data/cache
+      - SESSION_PATH=/data/session
+      - TORRENT_ENABLE_DHT=${TORRENT_ENABLE_DHT:-true}
+      - TORRENT_LISTEN_PORT=6881
+      - TORRENT_MAX_CONCURRENT=${TORRENT_MAX_CONCURRENT:-5}
+    volumes:
+      - ${DATA_PATH:-./data}:/data
+      - ${MEDIA_PATH:-/path/to/media}:/media:ro
+      - ${DOWNLOADS_PATH:-./downloads}:/downloads
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+# Notes:
+# - First user to register becomes admin
+# - JWT_SECRET: use `openssl rand -hex 32` to generate
+# - Backup: copy the ./data directory
+# - Upgrade: docker compose pull && docker compose up -d
