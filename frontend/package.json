@@ -61,7 +61,7 @@
     "hls.js": "^1.6.16",
     "lucide-react": "^1.14.0",
     "nuqs": "^2.8.9",
-    "react": "link:@apollo/client/react",
+    "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-hook-form": "^7.75.0",
     "react-json-view-lite": "^2.5.0",
