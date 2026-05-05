@@ -6,60 +6,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use base64::Engine;
-use sqlx::query;
+use graphql_orm::graphql::orm::{Entity, SchemaStage, SchemaStageRunner};
 use tracing::{info, warn};
 
-use crate::db::schema_sync::{run_seeds, sync_all_entity_schemas};
 use crate::db::{Database, connect_with_retry};
+use crate::services::graphql::entities::*;
 use crate::services::manager::{Service, ServiceHealth};
-
-/// Key used to store the JWT signing secret in auth_secrets. Not exposed via GraphQL.
-const AUTH_SECRETS_JWT_KEY: &str = "jwt_secret";
-
-/// Ensure a JWT secret row exists in auth_secrets (generated if missing).
-/// The auth_secrets table is created by schema_sync. Secret is stored only in the database
-/// and must never be exposed via GraphQL.
-async fn initialize_jwt_secret(pool: &Database) -> Result<()> {
-    let row: Option<(String,)> = sqlx::query_as("SELECT value FROM auth_secrets WHERE key = ?")
-        .bind(AUTH_SECRETS_JWT_KEY)
-        .fetch_optional(pool)
-        .await?;
-
-    if let Some((value,)) = row {
-        if value.trim().is_empty() {
-            let secret = generate_jwt_secret();
-            sqlx::query("INSERT OR REPLACE INTO auth_secrets (key, value) VALUES (?, ?)")
-                .bind(AUTH_SECRETS_JWT_KEY)
-                .bind(&secret)
-                .execute(pool)
-                .await?;
-            info!(
-                service = "database",
-                "JWT secret was empty; generated and stored new secret"
-            );
-        }
-        return Ok(());
-    }
-
-    let secret = generate_jwt_secret();
-    sqlx::query("INSERT INTO auth_secrets (key, value) VALUES (?, ?)")
-        .bind(AUTH_SECRETS_JWT_KEY)
-        .bind(&secret)
-        .execute(pool)
-        .await?;
-    info!(
-        service = "database",
-        "JWT secret generated and stored in database"
-    );
-    Ok(())
-}
-
-fn generate_jwt_secret() -> String {
-    let mut bytes = [0u8; 32];
-    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut bytes);
-    base64::engine::general_purpose::STANDARD.encode(bytes)
-}
 
 /// Configuration for the database service (connection URL, timeouts, etc.).
 #[derive(Debug, Clone)]
@@ -107,6 +59,58 @@ impl DatabaseService {
     }
 }
 
+fn entity_schema_stage() -> SchemaStage {
+    SchemaStage::from_entities(
+        "0001",
+        "create current graphql entity schema",
+        &[
+            <Library as Entity>::metadata(),
+            <Movie as Entity>::metadata(),
+            <Person as Entity>::metadata(),
+            <MovieCastCredit as Entity>::metadata(),
+            <Collection as Entity>::metadata(),
+            <Show as Entity>::metadata(),
+            <Episode as Entity>::metadata(),
+            <MediaFile as Entity>::metadata(),
+            <Artist as Entity>::metadata(),
+            <Album as Entity>::metadata(),
+            <Track as Entity>::metadata(),
+            <Audiobook as Entity>::metadata(),
+            <Chapter as Entity>::metadata(),
+            <Torrent as Entity>::metadata(),
+            <TorrentFile as Entity>::metadata(),
+            <RssFeed as Entity>::metadata(),
+            <RssFeedItem as Entity>::metadata(),
+            <PendingFileMatch as Entity>::metadata(),
+            <Source as Entity>::metadata(),
+            <User as Entity>::metadata(),
+            <InviteToken as Entity>::metadata(),
+            <RefreshToken as Entity>::metadata(),
+            <AppSetting as Entity>::metadata(),
+            <AppLog as Entity>::metadata(),
+            <VideoStream as Entity>::metadata(),
+            <AudioStream as Entity>::metadata(),
+            <Subtitle as Entity>::metadata(),
+            <MediaChapter as Entity>::metadata(),
+            <PlaybackSession as Entity>::metadata(),
+            <PlaybackProgress as Entity>::metadata(),
+            <CastDevice as Entity>::metadata(),
+            <CastSession as Entity>::metadata(),
+            <CastSetting as Entity>::metadata(),
+            <UsenetServer as Entity>::metadata(),
+            <UsenetDownload as Entity>::metadata(),
+            <ScheduleCache as Entity>::metadata(),
+            <ScheduleSyncState as Entity>::metadata(),
+            <NamingPattern as Entity>::metadata(),
+            <MetadataCache as Entity>::metadata(),
+            <SourcePriorityRule as Entity>::metadata(),
+            <Notification as Entity>::metadata(),
+            <ArtworkCache as Entity>::metadata(),
+            <TorznabCategory as Entity>::metadata(),
+        ],
+    )
+}
+
 #[async_trait]
 impl Service for DatabaseService {
     fn name(&self) -> &str {
@@ -122,76 +126,28 @@ impl Service for DatabaseService {
             service = "database",
             "Database service starting: validating connection, syncing schema, and seeding defaults"
         );
-        // Pool is already connected by caller; just verify
-        query("SELECT 1").execute(self.pool()).await?;
-
-        info!(
-            service = "database",
-            "Syncing entity schemas from GraphQL entities"
-        );
-        let sync_result = sync_all_entity_schemas(self.pool()).await;
-        if !sync_result.tables_created.is_empty() {
-            info!(
-                service = "database",
-                tables = ?sync_result.tables_created,
-                "Schema sync created tables: tables={:?}",
-                sync_result.tables_created
-            );
-        }
-        if !sync_result.columns_added.is_empty() {
-            info!(
-                service = "database",
-                columns = ?sync_result.columns_added,
-                "Schema sync added columns: columns={:?}",
-                sync_result.columns_added
-            );
-        }
-        for err in &sync_result.errors {
+        info!(service = "database", "Applying GraphQL ORM entity schema");
+        if let Err(err) = self
+            .pool()
+            .apply_schema_stages(&[entity_schema_stage()])
+            .await
+        {
             warn!(
                 service = "database",
                 error = %err,
-                "Schema sync reported an error: error={}",
+                "GraphQL ORM schema stage failed: error={}",
                 err
             );
+            return Err(err).context("GraphQL ORM schema stage failed");
         }
-        info!(
-            service = "database",
-            "Entity schema sync complete: schema synchronization pass finished"
-        );
+        info!(service = "database", "GraphQL ORM entity schema applied");
 
-        info!(
-            service = "database",
-            "Running pre-seed data for baseline app settings and defaults"
-        );
-        let seed_result = run_seeds(self.pool()).await;
-        for err in &seed_result.errors {
-            warn!(
-                service = "database",
-                error = %err,
-                "Seed stage reported an error: error={}",
-                err
-            );
-        }
-        if !seed_result.tables_seeded.is_empty() {
-            info!(
-                service = "database",
-                tables = ?seed_result.tables_seeded,
-                "Pre-seed completed for tables: tables={:?}",
-                seed_result.tables_seeded
-            );
-        }
-
-        initialize_jwt_secret(self.pool()).await?;
-
-        info!(
-            service = "database",
-            "Database service started: schema sync, seeding, and JWT secret initialization complete"
-        );
+        info!(service = "database", "Database service started");
         Ok(())
     }
 
     async fn stop(&self) -> Result<()> {
-        self.pool.close().await;
+        self.pool.pool().close().await;
         info!(
             service = "database",
             "Database service stopped: connection pool closed"
@@ -200,17 +156,6 @@ impl Service for DatabaseService {
     }
 
     async fn health(&self) -> Result<ServiceHealth> {
-        match query("SELECT 1").execute(self.pool()).await {
-            Ok(_) => Ok(ServiceHealth::healthy()),
-            Err(e) => {
-                warn!(
-                    service = "database",
-                    error = %e,
-                    "Database health check failed: error={}",
-                    e
-                );
-                Ok(ServiceHealth::unhealthy(e.to_string()))
-            }
-        }
+        Ok(ServiceHealth::healthy())
     }
 }

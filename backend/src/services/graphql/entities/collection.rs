@@ -1,5 +1,6 @@
+use crate::graphql::entities::*;
 use async_graphql::SimpleObject;
-use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 use super::library::Library;
@@ -9,13 +10,14 @@ use super::movie::Movie;
     GraphQLEntity,
     GraphQLRelations,
     GraphQLOperations,
-    SimpleObject,
+    async_graphql::SimpleObject,
     Clone,
     Debug,
     Serialize,
     Deserialize,
 )]
-#[graphql(name = "Collection", complex)]
+#[graphql(complex)]
+#[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(table = "collections", plural = "Collections", default_sort = "name")]
 pub struct Collection {

@@ -1,7 +1,8 @@
-use async_graphql::{Context, InputObject, Object, SimpleObject};
+use async_graphql::{Context, InputObject, Object};
 use std::sync::Arc;
 
-use macros::{GraphQLEntity, GraphQLOperations};
+use crate::graphql::entities::*;
+use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 use crate::db::Database;
@@ -15,15 +16,20 @@ pub use crate::services::metadata::providers::{
     CreateMovieFromMetadataOptions, MovieDetails as MovieMetadataDetails,
 };
 
-#[derive(GraphQLEntity, GraphQLOperations, SimpleObject, Clone, Debug, Serialize, Deserialize)]
-#[graphql(name = "Movie", complex)]
-#[serde(rename_all = "PascalCase")]
-#[graphql_entity(
-    table = "movies",
-    plural = "Movies",
-    default_sort = "title",
-    notify = "libraries"
+#[derive(
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
+#[graphql(complex)]
+#[graphql(rename_fields = "camelCase")]
+#[serde(rename_all = "PascalCase")]
+#[graphql_entity(table = "movies", plural = "Movies", default_sort = "title")]
 pub struct Movie {
     #[graphql(name = "Id")]
     #[primary_key]
@@ -160,73 +166,10 @@ pub struct Movie {
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
-
-    #[graphql(name = "MediaFile")]
+    #[graphql(skip)]
+    #[serde(skip)]
     #[relation(target = "MediaFile", from = "media_file_id", to = "id")]
     pub media_file: Option<MediaFile>,
-}
-
-// ============================================================================
-// Movie ComplexObject Resolvers (computed fields)
-// ============================================================================
-
-#[async_graphql::ComplexObject]
-impl Movie {
-    /// Get poster URL, preferring cached version if available
-    #[graphql(name = "PosterUrl")]
-    async fn poster_url_resolver(&self, ctx: &async_graphql::Context<'_>) -> Option<String> {
-        let db = ctx.data_unchecked::<crate::db::Database>();
-        let artwork_service = crate::services::ArtworkService::new(db.clone());
-
-        artwork_service
-            .get_artwork_url("movie", &self.id, "poster", self.poster_url.as_deref())
-            .await
-    }
-
-    /// Get backdrop URL, preferring cached version if available
-    #[graphql(name = "BackdropUrl")]
-    async fn backdrop_url_resolver(&self, ctx: &async_graphql::Context<'_>) -> Option<String> {
-        let db = ctx.data_unchecked::<crate::db::Database>();
-        let artwork_service = crate::services::ArtworkService::new(db.clone());
-
-        artwork_service
-            .get_artwork_url("movie", &self.id, "backdrop", self.backdrop_url.as_deref())
-            .await
-    }
-
-    /// Computed status based on playback, file availability, and download state
-    ///
-    /// Returns one of: PLAYING, PAUSED, AVAILABLE, DOWNLOADING, WANTED, MISSING
-    #[graphql(name = "Status")]
-    async fn status(&self, ctx: &Context<'_>) -> ContentStatus {
-        let db = match ctx.data::<Database>() {
-            Ok(db) => db,
-            Err(_) => return ContentStatus::Missing,
-        };
-
-        let user_id = match ctx.data::<AuthUser>() {
-            Ok(user) => user.user_id.clone(),
-            Err(_) => {
-                return if self.media_file_id.is_some() {
-                    ContentStatus::Available
-                } else if self.wanted {
-                    ContentStatus::Wanted
-                } else {
-                    ContentStatus::Missing
-                };
-            }
-        };
-
-        calculate_content_status(
-            db,
-            ContentType::Movie,
-            &self.id,
-            &user_id,
-            self.media_file_id.as_deref(),
-            self.wanted,
-        )
-        .await
-    }
 }
 
 // ============================================================================
@@ -251,81 +194,48 @@ impl Movie {
         details: &MovieMetadataDetails,
         options: CreateMovieFromMetadataOptions,
     ) -> anyhow::Result<Self> {
-        let movie_id = uuid::Uuid::new_v4();
-
-        // Serialize JSON fields
-        let genres_json =
-            serde_json::to_string(&details.genres).unwrap_or_else(|_| "[]".to_string());
-        let cast_json =
-            serde_json::to_string(&details.cast_names).unwrap_or_else(|_| "[]".to_string());
-        let countries_json = serde_json::to_string(&details.production_countries)
-            .unwrap_or_else(|_| "[]".to_string());
-        let languages_json =
-            serde_json::to_string(&details.spoken_languages).unwrap_or_else(|_| "[]".to_string());
-
-        // Parse release date
-        let release_date = details
-            .release_date
-            .as_ref()
-            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
-
-        // Convert vote_average to Decimal string
         let tmdb_rating = details
             .vote_average
             .and_then(|v| rust_decimal::Decimal::from_f64_retain(v))
             .map(|d| d.to_string());
 
-        // Insert into database
-        // wanted = monitored (if user wants to auto-download, mark as wanted)
-        sqlx::query(
-            r#"
-            INSERT INTO movies (
-                id, library_id, user_id, title, original_title, year, tmdb_id, imdb_id,
-                overview, tagline, runtime, genres, production_countries, spoken_languages,
-                director, cast_names, tmdb_rating, tmdb_vote_count, poster_url, backdrop_url,
-                collection_id, collection_name, collection_poster_url, release_date,
-                certification, tmdb_status, monitored, wanted, has_file, created_at, updated_at
-            ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, 0, datetime('now'), datetime('now')
-            )
-            "#,
+        let movie = Self::insert(
+            db,
+            CreateMovieInput {
+                library_id: options.library_id.to_string(),
+                user_id: options.user_id.to_string(),
+                title: details.title.clone(),
+                sort_title: None,
+                original_title: details.original_title.clone(),
+                year: details.year,
+                tmdb_id: Some(details.provider_id as i32),
+                imdb_id: details.imdb_id.clone(),
+                overview: details.overview.clone(),
+                tagline: details.tagline.clone(),
+                runtime: details.runtime,
+                genres: details.genres.clone(),
+                director: details.director.clone(),
+                cast_names: details.cast_names.clone(),
+                production_countries: details.production_countries.clone(),
+                spoken_languages: details.spoken_languages.clone(),
+                tmdb_rating,
+                tmdb_vote_count: details.vote_count,
+                poster_url: details.poster_url.clone(),
+                backdrop_url: details.backdrop_url.clone(),
+                collection_id: details.collection_id,
+                collection_name: details.collection_name.clone(),
+                collection_poster_url: details.collection_poster_url.clone(),
+                release_date: details.release_date.clone(),
+                certification: details.certification.clone(),
+                monitored: options.monitored,
+                tmdb_status: details.tmdb_status.clone(),
+                wanted: options.monitored,
+                download_status: None,
+                has_file: false,
+                media_file_id: None,
+            },
         )
-        .bind(movie_id.to_string())
-        .bind(options.library_id.to_string())
-        .bind(options.user_id.to_string())
-        .bind(&details.title)
-        .bind(&details.original_title)
-        .bind(details.year)
-        .bind(details.provider_id as i32) // tmdb_id
-        .bind(&details.imdb_id)
-        .bind(&details.overview)
-        .bind(&details.tagline)
-        .bind(details.runtime)
-        .bind(&genres_json)
-        .bind(&countries_json)
-        .bind(&languages_json)
-        .bind(&details.director)
-        .bind(&cast_json)
-        .bind(&tmdb_rating)
-        .bind(details.vote_count)
-        .bind(&details.poster_url)
-        .bind(&details.backdrop_url)
-        .bind(details.collection_id)
-        .bind(&details.collection_name)
-        .bind(&details.collection_poster_url)
-        .bind(release_date.map(|d| d.format("%Y-%m-%d").to_string()))
-        .bind(&details.certification)
-        .bind(&details.tmdb_status)
-        .bind(options.monitored)
-        .bind(options.monitored) // wanted = monitored
-        .execute(db)
         .await?;
-
-        // Fetch the created movie
-        let movie = Self::get(db, &movie_id.to_string())
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Movie not found after creation"))?;
 
         tracing::info!(
             movie_id = %movie.id,
@@ -353,7 +263,7 @@ impl MovieCustomOperations {
     ) -> async_graphql::Result<Vec<MovieSearchResultGql>> {
         use crate::graphql::auth::AuthExt;
 
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let metadata =
             ctx.data_unchecked::<Arc<crate::services::metadata::providers::MetadataService>>();
 
@@ -395,7 +305,7 @@ impl MovieCustomOperations {
     ) -> async_graphql::Result<Vec<MovieCollectionSearchResultGql>> {
         use crate::graphql::auth::AuthExt;
 
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let metadata =
             ctx.data_unchecked::<Arc<crate::services::metadata::providers::MetadataService>>();
 
@@ -434,7 +344,7 @@ impl MovieCustomOperations {
         use crate::graphql::auth::AuthExt;
         use crate::services::metadata::providers::MetadataService;
 
-        let user = ctx.auth_user()?;
+        let user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
         if !metadata.has_tmdb().await {
@@ -664,7 +574,7 @@ impl MovieMetadataMutations {
             AddMovieOptions, MetadataProvider, MetadataService,
         };
 
-        let user = ctx.auth_user()?;
+        let user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
         let lib_id = uuid::Uuid::parse_str(&library_id)
@@ -729,7 +639,7 @@ impl MovieMetadataMutations {
             AddMovieCollectionOptions, MetadataProvider, MetadataService,
         };
 
-        let user = ctx.auth_user()?;
+        let user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
         let lib_id = uuid::Uuid::parse_str(&library_id)
@@ -791,7 +701,7 @@ impl MovieMetadataMutations {
         use crate::graphql::auth::AuthExt;
         use crate::services::metadata::providers::MetadataService;
 
-        let user = ctx.auth_user()?;
+        let user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
         let user_id = uuid::Uuid::parse_str(&user.user_id)

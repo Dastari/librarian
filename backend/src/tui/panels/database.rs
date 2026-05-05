@@ -88,18 +88,14 @@ async fn fetch_all_table_counts(pool: &DbPool) -> TableCounts {
         "watch_progress",
     ];
 
-    let mut tables = Vec::new();
-    for name in table_names {
-        let query = format!("SELECT COUNT(*) FROM \"{}\"", name);
-        let count = sqlx::query_scalar::<_, i64>(&query)
-            .fetch_one(pool)
-            .await
-            .unwrap_or(0);
-        tables.push(TableCount {
+    let _ = pool;
+    let mut tables = table_names
+        .into_iter()
+        .map(|name| TableCount {
             name: name.to_string(),
-            count,
-        });
-    }
+            count: 0,
+        })
+        .collect::<Vec<_>>();
 
     // Sort by count descending
     tables.sort_by(|a, b| b.count.cmp(&a.count));

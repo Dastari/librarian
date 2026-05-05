@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
+use crate::graphql::entities::{AppSetting, CreateAppSettingInput, Source};
 use crate::services::manager::{Service, ServiceHealth, ServicesManager};
 
 use super::encryption::CredentialEncryption;
@@ -51,28 +52,25 @@ impl SourcesService {
             .await
             .ok_or_else(|| anyhow::anyhow!("Database service not available"))?;
 
-        let pool = db.pool();
-
-        // Try to get existing key
-        let result = sqlx::query_scalar::<_, String>(
-            "SELECT value FROM app_settings WHERE key = 'sources_encryption_key'",
-        )
-        .fetch_optional(pool)
-        .await?;
-
-        if let Some(key) = result {
-            return Ok(key);
+        if let Some(setting) = AppSetting::query(db.pool().pool())
+            .fetch_all()
+            .await?
+            .into_iter()
+            .find(|setting| setting.key == "sources_encryption_key")
+        {
+            return Ok(setting.value);
         }
 
-        // Generate a new key
         let new_key = CredentialEncryption::generate_key();
-
-        sqlx::query(
-            "INSERT INTO app_settings (id, key, value, category, created_at, updated_at)
-             VALUES (lower(hex(randomblob(16))), 'sources_encryption_key', ?, 'sources', datetime('now'), datetime('now'))"
+        AppSetting::insert(
+            db.pool(),
+            CreateAppSettingInput {
+                key: "sources_encryption_key".to_string(),
+                value: new_key.clone(),
+                description: Some("Sources credential encryption key".to_string()),
+                category: "sources".to_string(),
+            },
         )
-        .bind(&new_key)
-        .execute(pool)
         .await?;
 
         info!(
@@ -89,30 +87,13 @@ impl SourcesService {
             .await
             .ok_or_else(|| anyhow::anyhow!("Database service not available"))?;
 
-        let pool = db.pool();
-
-        // Check if the sources table exists
-        let table_exists = sqlx::query_scalar::<_, i32>(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sources'",
-        )
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
-
-        if table_exists == 0 {
-            info!("Sources table does not exist yet; skipping source loading during startup");
-            return Ok(());
-        }
-
-        let rows = sqlx::query_as::<_, SourceRow>(
-            "SELECT id, name, source_type, definition_id, enabled, priority,
-                    site_url, credentials, settings
-             FROM sources
-             WHERE enabled = 1
-             ORDER BY priority ASC",
-        )
-        .fetch_all(pool)
-        .await?;
+        let mut rows = Source::query(db.pool().pool())
+            .fetch_all()
+            .await?
+            .into_iter()
+            .filter(|source| source.enabled)
+            .collect::<Vec<_>>();
+        rows.sort_by(|a, b| a.priority.cmp(&b.priority));
 
         let mut loaded = 0;
         for row in rows {
@@ -194,22 +175,6 @@ impl SourcesService {
         }
         Ok(())
     }
-}
-
-#[derive(sqlx::FromRow)]
-struct SourceRow {
-    id: String,
-    name: String,
-    #[allow(dead_code)]
-    source_type: String,
-    definition_id: String,
-    #[allow(dead_code)]
-    enabled: bool,
-    priority: i32,
-    site_url: Option<String>,
-    /// Combined "nonce_b64:ciphertext_b64" format
-    credentials: String,
-    settings: Option<String>,
 }
 
 #[async_trait]

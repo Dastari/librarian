@@ -13,6 +13,7 @@ use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
 use crate::db::Database;
+use crate::graphql::entities::{AppSetting, CreateAppSettingInput, UpdateAppSettingInput};
 use crate::services::manager::ServicesManager;
 
 const CONFIG_KEY_PREFIX: &str = "network_mount.";
@@ -239,31 +240,28 @@ async fn upsert_network_config(db: &Database, cfg: &StoredNetworkPathConfig) -> 
     let key = normalize_path_key(&cfg.target_path);
     let value = serde_json::to_string(cfg)?;
 
-    let updated = sqlx::query(
-        "UPDATE app_settings SET value = ?, category = ?, description = ?, updated_at = ? WHERE key = ?",
-    )
-    .bind(&value)
-    .bind("filesystem")
-    .bind("Persisted network path configuration")
-    .bind(&cfg.updated_at)
-    .bind(&key)
-    .execute(db)
-    .await?
-    .rows_affected();
-
-    if updated == 0 {
-        let now = cfg.updated_at.clone();
-        sqlx::query(
-            "INSERT INTO app_settings (id, key, value, description, category, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    if let Some(existing) = find_app_setting_by_key(db, &key).await? {
+        AppSetting::update_by_id(
+            db,
+            &existing.id,
+            UpdateAppSettingInput {
+                key: None,
+                value: Some(value),
+                description: Some(Some("Persisted network path configuration".to_string())),
+                category: Some("filesystem".to_string()),
+            },
         )
-        .bind(Uuid::new_v4().to_string())
-        .bind(&key)
-        .bind(&value)
-        .bind("Persisted network path configuration")
-        .bind("filesystem")
-        .bind(&now)
-        .bind(&now)
-        .execute(db)
+        .await?;
+    } else {
+        AppSetting::insert(
+            db,
+            CreateAppSettingInput {
+                key,
+                value,
+                description: Some("Persisted network path configuration".to_string()),
+                category: "filesystem".to_string(),
+            },
+        )
         .await?;
     }
 
@@ -271,22 +269,15 @@ async fn upsert_network_config(db: &Database, cfg: &StoredNetworkPathConfig) -> 
 }
 
 pub async fn load_saved_network_configs(db: &Database) -> Result<Vec<StoredNetworkPathConfig>> {
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT key, value FROM app_settings WHERE key LIKE ? ORDER BY updated_at DESC, created_at DESC, rowid DESC",
-    )
-    .bind(format!("{}%", CONFIG_KEY_PREFIX))
-    .fetch_all(db)
-    .await?;
-
     let mut seen = HashSet::new();
     let mut out = Vec::new();
 
-    for (key, value) in rows {
-        if !seen.insert(key) {
+    for setting in AppSetting::query(db.pool()).fetch_all().await? {
+        if !setting.key.starts_with(CONFIG_KEY_PREFIX) || !seen.insert(setting.key) {
             continue;
         }
 
-        if let Ok(cfg) = serde_json::from_str::<StoredNetworkPathConfig>(&value) {
+        if let Ok(cfg) = serde_json::from_str::<StoredNetworkPathConfig>(&setting.value) {
             out.push(cfg);
         }
     }
@@ -299,18 +290,19 @@ async fn find_config_for_target(
     target_path: &str,
 ) -> Result<Option<StoredNetworkPathConfig>> {
     let key = normalize_path_key(target_path);
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT value FROM app_settings WHERE key = ? ORDER BY updated_at DESC, created_at DESC, rowid DESC LIMIT 1",
-    )
-    .bind(key)
-    .fetch_optional(db)
-    .await?;
-
-    if let Some((value,)) = row {
-        Ok(serde_json::from_str::<StoredNetworkPathConfig>(&value).ok())
+    if let Some(setting) = find_app_setting_by_key(db, &key).await? {
+        Ok(serde_json::from_str::<StoredNetworkPathConfig>(&setting.value).ok())
     } else {
         Ok(None)
     }
+}
+
+async fn find_app_setting_by_key(db: &Database, key: &str) -> Result<Option<AppSetting>> {
+    Ok(AppSetting::query(db.pool())
+        .fetch_all()
+        .await?
+        .into_iter()
+        .find(|setting| setting.key == key))
 }
 
 async fn run_command(cmd: &str, args: &[String]) -> Result<String> {

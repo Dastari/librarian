@@ -1897,7 +1897,7 @@ impl MetadataService {
             .await?;
 
         if let Some(movie_id_str) = existing_id {
-            let existing_movie = Movie::get(&self.db, &movie_id_str)
+            let existing_movie = Movie::get(self.db.pool(), &movie_id_str)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Movie not found after query"))?;
             if let Some(collection_id) = existing_movie.collection_id {
@@ -1999,7 +1999,7 @@ impl MetadataService {
                     )
                     .await?
                 {
-                    let movie = Movie::get(&self.db, &existing_id)
+                    let movie = Movie::get(self.db.pool(), &existing_id)
                         .await?
                         .ok_or_else(|| anyhow::anyhow!("Movie not found after unique conflict"))?;
                     info!(
@@ -2022,7 +2022,7 @@ impl MetadataService {
             .map(|s| s.to_string())
             .ok_or_else(|| anyhow::anyhow!("Movie not found after creation"))?;
 
-        let movie = Movie::get(&self.db, &created_id)
+        let movie = Movie::get(self.db.pool(), &created_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Movie not found after creation"))?;
 
@@ -2517,7 +2517,7 @@ impl MetadataService {
             .map(|s| s.to_string());
 
         if let Some(show_id) = existing_id {
-            let existing_show = Show::get(&self.db, &show_id)
+            let existing_show = Show::get(self.db.pool(), &show_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Show not found after query"))?;
             let wanted_default = options.monitor_type != AutoDownloadMode::None;
@@ -2593,7 +2593,7 @@ impl MetadataService {
             .ok_or_else(|| anyhow::anyhow!("Show ID missing after creation"))?
             .to_string();
 
-        let show = Show::get(&self.db, &show_id)
+        let show = Show::get(self.db.pool(), &show_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Show not found after creation"))?;
 
@@ -2808,7 +2808,8 @@ impl MetadataService {
             .and_then(|node| node.get("Id"))
             .and_then(|id| id.as_str())
         {
-            return Album::get(&self.db, existing_id)
+            let existing_id = existing_id.to_string();
+            return Album::get(self.db.pool(), &existing_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Album not found after lookup"));
         }
@@ -2945,7 +2946,8 @@ impl MetadataService {
             .and_then(|id| id.as_str())
             .ok_or_else(|| anyhow::anyhow!("Album not found after creation"))?;
 
-        let album = Album::get(&self.db, created_album_id)
+        let created_album_id = created_album_id.to_string();
+        let album = Album::get(self.db.pool(), &created_album_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Album not found after creation"))?;
 
@@ -3005,7 +3007,8 @@ impl MetadataService {
             .and_then(|node| node.get("Id"))
             .and_then(|id| id.as_str())
         {
-            return Audiobook::get(&self.db, existing_id)
+            let existing_id = existing_id.to_string();
+            return Audiobook::get(self.db.pool(), &existing_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Audiobook not found after lookup"));
         }
@@ -3060,7 +3063,8 @@ impl MetadataService {
             .and_then(|id| id.as_str())
             .ok_or_else(|| anyhow::anyhow!("Audiobook ID missing after creation"))?;
 
-        let audiobook = Audiobook::get(&self.db, created_audiobook_id)
+        let created_audiobook_id = created_audiobook_id.to_string();
+        let audiobook = Audiobook::get(self.db.pool(), &created_audiobook_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Audiobook not found after creation"))?;
 
@@ -3083,7 +3087,8 @@ impl MetadataService {
         movie_id: &str,
         user_id: Uuid,
     ) -> Result<Movie> {
-        let movie = Movie::get(&self.db, movie_id)
+        let movie_id_string = movie_id.to_string();
+        let movie = Movie::get(self.db.pool(), &movie_id_string)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Movie not found"))?;
 
@@ -3162,7 +3167,8 @@ impl MetadataService {
             anyhow::bail!(err.to_string());
         }
 
-        let movie = Movie::get(&self.db, movie_id)
+        let movie_id_string = movie_id.to_string();
+        let movie = Movie::get(self.db.pool(), &movie_id_string)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Movie not found after refresh"))?;
 
@@ -3649,7 +3655,8 @@ impl MetadataService {
         show_id: &str,
         user_id: Uuid,
     ) -> Result<Show> {
-        let show = Show::get(&self.db, show_id)
+        let show_id = show_id.to_string();
+        let show = Show::get(self.db.pool(), &show_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Show not found"))?;
 
@@ -3712,7 +3719,8 @@ impl MetadataService {
             anyhow::bail!(err.to_string());
         }
 
-        let show = Show::get(&self.db, show_id)
+        let show_id = show_id.to_string();
+        let show = Show::get(self.db.pool(), &show_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Show not found after refresh"))?;
 

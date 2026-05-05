@@ -21,6 +21,7 @@ use tokio_util::io::ReaderStream;
 use tracing::{debug, error, warn};
 
 use crate::AppState;
+use crate::graphql::entities::MediaFile;
 
 /// Create media routes
 pub fn router() -> Router<AppState> {
@@ -227,32 +228,8 @@ async fn media_info(
 }
 
 async fn fetch_media_file(state: &AppState, file_id: &str) -> Result<MediaFileRecord, StatusCode> {
-    let row = sqlx::query_as::<
-        _,
-        (
-            String,
-            String,
-            i64,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<i32>,
-            Option<i32>,
-            Option<i32>,
-            bool,
-            Option<String>,
-        ),
-    >(
-        r#"SELECT id, path, size, container, video_codec, audio_codec, resolution, width, height, duration, is_hdr, hdr_type
-           FROM media_files
-           WHERE id = ?1
-           LIMIT 1"#,
-    )
-    .bind(file_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| {
+    let id = file_id.to_string();
+    let row = MediaFile::get(state.db.pool(), &id).await.map_err(|e| {
         error!(
             media_file_id = %file_id,
             error = %e,
@@ -263,21 +240,7 @@ async fn fetch_media_file(state: &AppState, file_id: &str) -> Result<MediaFileRe
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let Some((
-        id,
-        path,
-        size,
-        container,
-        video_codec,
-        audio_codec,
-        resolution,
-        width,
-        height,
-        duration,
-        is_hdr,
-        hdr_type,
-    )) = row
-    else {
+    let Some(media_file) = row else {
         warn!(
             media_file_id = %file_id,
             "Media file not found for stream/info: media_file_id={}",
@@ -287,18 +250,18 @@ async fn fetch_media_file(state: &AppState, file_id: &str) -> Result<MediaFileRe
     };
 
     Ok(MediaFileRecord {
-        id,
-        path,
-        size,
-        container,
-        video_codec,
-        audio_codec,
-        resolution,
-        width,
-        height,
-        duration,
-        is_hdr,
-        hdr_type,
+        id: media_file.id,
+        path: media_file.path,
+        size: media_file.size,
+        container: media_file.container,
+        video_codec: media_file.video_codec,
+        audio_codec: media_file.audio_codec,
+        resolution: media_file.resolution,
+        width: media_file.width,
+        height: media_file.height,
+        duration: media_file.duration,
+        is_hdr: media_file.is_hdr,
+        hdr_type: media_file.hdr_type,
     })
 }
 

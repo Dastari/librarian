@@ -1,9 +1,12 @@
+use crate::graphql::entities::*;
 use async_graphql::SimpleObject;
-use macros::{GraphQLEntity, GraphQLOperations};
+use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
-#[derive(GraphQLEntity, GraphQLOperations, SimpleObject, Clone, Debug, Serialize, Deserialize)]
-#[graphql(name = "Person")]
+#[derive(
+    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
+)]
+#[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(table = "people", plural = "People", default_sort = "name")]
 pub struct Person {

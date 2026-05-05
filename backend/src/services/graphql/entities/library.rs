@@ -3,8 +3,9 @@
 //! This module contains the Library entity with macro-generated relations.
 //! Relations use DataLoader batching to avoid N+1 queries.
 
+use crate::graphql::entities::*;
 use async_graphql::SimpleObject;
-use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 use super::album::Album;
@@ -23,13 +24,14 @@ use super::show::Show;
     GraphQLEntity,
     GraphQLRelations,
     GraphQLOperations,
-    SimpleObject,
+    async_graphql::SimpleObject,
     Clone,
     Debug,
     Serialize,
     Deserialize,
 )]
-#[graphql(name = "Library", complex)]
+#[graphql(complex)]
+#[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(table = "libraries", plural = "Libraries", default_sort = "name")]
 pub struct Library {

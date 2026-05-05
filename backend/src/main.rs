@@ -164,6 +164,7 @@ async fn main() -> anyhow::Result<()> {
             .await
             .context("database service unavailable for TUI")?
             .pool()
+            .pool()
             .clone();
         let tui = TuiApp::new(
             log_rx.expect("log_rx set when use_tui"),

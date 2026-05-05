@@ -1,8 +1,45 @@
 @import "tailwindcss";
+@import "data-table-pro/styles.css";
 @plugin "./hero.ts";
 @source "../node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx}";
+@source "../node_modules/data-table-pro/dist/**/*.{js,ts,jsx,tsx}";
 @custom-variant dark (&:is(.dark *));
 @custom-variant light (&:is(.light *));
+
+.data-table-container-query {
+  container-type: inline-size;
+  container-name: data-table;
+}
+
+@container data-table (width < 40rem) {
+  .dt-hide-on-sm {
+    display: none;
+  }
+}
+
+@container data-table (width < 48rem) {
+  .dt-hide-on-md {
+    display: none;
+  }
+}
+
+@container data-table (width < 64rem) {
+  .dt-hide-on-lg {
+    display: none;
+  }
+}
+
+@container data-table (width < 80rem) {
+  .dt-hide-on-xl {
+    display: none;
+  }
+}
+
+@container data-table (width < 96rem) {
+  .dt-hide-on-2xl {
+    display: none;
+  }
+}
 
 /* 
  * Note: Removed manual input styling overrides.

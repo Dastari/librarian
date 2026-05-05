@@ -3,8 +3,9 @@
 //! This module contains the Show entity with macro-generated relations.
 //! Relations use DataLoader batching to avoid N+1 queries.
 
-use async_graphql::{Context, InputObject, Object, SimpleObject};
-use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use crate::graphql::entities::*;
+use async_graphql::{Context, InputObject, Object};
+use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -31,20 +32,16 @@ use crate::services::metadata::providers::{AddTvShowOptions, MetadataProvider, M
     GraphQLEntity,
     GraphQLRelations,
     GraphQLOperations,
-    SimpleObject,
+    async_graphql::SimpleObject,
     Clone,
     Debug,
     Serialize,
     Deserialize,
 )]
-#[graphql(name = "Show", complex)]
+#[graphql(complex)]
+#[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
-#[graphql_entity(
-    table = "shows",
-    plural = "Shows",
-    default_sort = "name",
-    notify = "libraries"
-)]
+#[graphql_entity(table = "shows", plural = "Shows", default_sort = "name")]
 pub struct Show {
     #[graphql(name = "Id")]
     #[primary_key]
@@ -169,7 +166,7 @@ impl ShowCustomOperations {
         ctx: &Context<'_>,
         #[graphql(name = "Query")] query: String,
     ) -> async_graphql::Result<Vec<TvShowSearchResultGql>> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
         let results = metadata
@@ -282,7 +279,7 @@ impl ShowMetadataMutations {
         #[graphql(name = "LibraryId")] library_id: String,
         #[graphql(name = "Input")] input: AddTvShowInput,
     ) -> async_graphql::Result<TvShowOperationResult> {
-        let user = ctx.auth_user()?;
+        let user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
         let lib_id = uuid::Uuid::parse_str(&library_id)
@@ -323,7 +320,7 @@ impl ShowMetadataMutations {
         ctx: &Context<'_>,
         #[graphql(name = "Id")] id: String,
     ) -> async_graphql::Result<TvShowOperationResult> {
-        let user = ctx.auth_user()?;
+        let user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
         let user_id = uuid::Uuid::parse_str(&user.user_id)

@@ -288,7 +288,7 @@ impl AuthMutations {
     ///
     /// Requires authentication.
     async fn logout_all(&self, ctx: &Context<'_>) -> Result<AuthMutationResult> {
-        let user = ctx.auth_user()?;
+        let user = ctx.librarian_auth_user()?;
         let db = ctx.data_unchecked::<Database>();
         let auth_service = AuthService::with_env(db.clone());
 
@@ -327,7 +327,7 @@ impl AuthMutations {
         current_password: String,
         new_password: String,
     ) -> Result<AuthMutationResult> {
-        let user = ctx.auth_user()?;
+        let user = ctx.librarian_auth_user()?;
         let db = ctx.data_unchecked::<Database>();
         let auth_service = AuthService::with_env(db.clone());
 

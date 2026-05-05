@@ -1,5 +1,6 @@
-use async_graphql::{Context, InputObject, Object, Result, SimpleObject};
-use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use crate::graphql::entities::*;
+use async_graphql::{Context, InputObject, Object, Result};
+use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -14,20 +15,16 @@ use crate::services::metadata::providers::{
     GraphQLEntity,
     GraphQLRelations,
     GraphQLOperations,
-    SimpleObject,
+    async_graphql::SimpleObject,
     Clone,
     Debug,
     Serialize,
     Deserialize,
 )]
-#[graphql(name = "Audiobook", complex)]
+#[graphql(complex)]
+#[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
-#[graphql_entity(
-    table = "audiobooks",
-    plural = "Audiobooks",
-    default_sort = "title",
-    notify = "libraries"
-)]
+#[graphql_entity(table = "audiobooks", plural = "Audiobooks", default_sort = "title")]
 pub struct Audiobook {
     #[graphql(name = "Id")]
     #[primary_key]
@@ -147,7 +144,7 @@ pub struct Audiobook {
 pub struct AudiobookCustomOperations;
 
 /// Search result for OpenLibrary audiobook search.
-#[derive(Debug, Clone, SimpleObject)]
+#[derive(Debug, Clone, async_graphql::SimpleObject)]
 #[graphql(name = "AudiobookSearchResult")]
 pub struct AudiobookSearchResultGql {
     #[graphql(name = "Provider")]
@@ -177,7 +174,7 @@ impl AudiobookCustomOperations {
         ctx: &Context<'_>,
         #[graphql(name = "Query")] query: String,
     ) -> Result<Vec<AudiobookSearchResultGql>> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
         let results = metadata
@@ -215,7 +212,7 @@ pub struct AddAudiobookInput {
     pub openlibrary_id: String,
 }
 
-#[derive(Debug, SimpleObject)]
+#[derive(Debug, async_graphql::SimpleObject)]
 #[graphql(name = "AudiobookOperationResult")]
 pub struct AudiobookOperationResult {
     #[graphql(name = "Success")]
@@ -238,7 +235,7 @@ impl AudiobookMetadataMutations {
         ctx: &Context<'_>,
         #[graphql(name = "Input")] input: AddAudiobookInput,
     ) -> Result<AudiobookOperationResult> {
-        let user = ctx.auth_user()?;
+        let user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
         let library_id = uuid::Uuid::parse_str(&input.library_id)

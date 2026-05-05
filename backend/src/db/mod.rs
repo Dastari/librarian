@@ -1,10 +1,5 @@
-pub mod operations;
-pub mod schema_sync;
-pub mod seed;
-pub mod sqlite_helpers;
-
-pub type DbPool = sqlx::SqlitePool;
-pub type Database = sqlx::SqlitePool;
+pub type DbPool = graphql_orm::DbPool;
+pub type Database = graphql_orm::db::Database;
 
 use std::path::Path;
 use std::time::Instant;
@@ -45,8 +40,8 @@ pub async fn connect_with_retry(
     let mut attempt = 0u32;
     loop {
         attempt += 1;
-        match Database::connect_with(opts.clone()).await {
-            Ok(pool) => return Ok(pool),
+        match DbPool::connect_with(opts.clone()).await {
+            Ok(pool) => return Ok(Database::new(pool)),
             Err(e) => {
                 if start.elapsed() >= timeout {
                     anyhow::bail!(

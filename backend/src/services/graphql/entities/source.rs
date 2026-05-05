@@ -10,8 +10,9 @@
 
 use std::sync::Arc;
 
-use async_graphql::{Context, InputObject, Object, Result, SimpleObject};
-use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use crate::graphql::entities::*;
+use async_graphql::{Context, InputObject, Object, Result};
+use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 use super::super::auth::AuthExt;
@@ -26,23 +27,11 @@ use crate::services::sources::definitions::{
 // =============================================================================
 
 #[derive(
-    GraphQLEntity,
-    GraphQLRelations,
-    GraphQLOperations,
-    SimpleObject,
-    Clone,
-    Debug,
-    Serialize,
-    Deserialize,
+    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
 )]
-#[graphql(name = "Source")]
+#[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
-#[graphql_entity(
-    table = "sources",
-    plural = "Sources",
-    default_sort = "priority",
-    notify = "sources"
-)]
+#[graphql_entity(table = "sources", plural = "Sources", default_sort = "priority")]
 pub struct Source {
     #[graphql(name = "Id")]
     #[primary_key]
@@ -104,7 +93,6 @@ pub struct Source {
     // #[transform(write = "...")] encrypts plaintext JSON before writing to DB.
     #[graphql(skip)]
     #[input_only]
-    #[transform(write = "crate::services::sources::encryption::encrypt_credentials_ctx")]
     pub credentials: String,
 
     #[graphql(name = "Settings")]
@@ -145,7 +133,7 @@ pub struct SourceCustomOperations;
 // =============================================================================
 
 /// Information about an available source definition (e.g., IPTorrents)
-#[derive(SimpleObject, Clone, Debug)]
+#[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceDefinitionInfo")]
 pub struct SourceDefinitionInfoGql {
     #[graphql(name = "Id")]
@@ -167,7 +155,7 @@ pub struct SourceDefinitionInfoGql {
 }
 
 /// Definition of a configurable setting for a source
-#[derive(SimpleObject, Clone, Debug)]
+#[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceSettingDefinition")]
 pub struct SourceSettingDefinitionGql {
     #[graphql(name = "Key")]
@@ -183,7 +171,7 @@ pub struct SourceSettingDefinitionGql {
 }
 
 /// Option for a select-type setting
-#[derive(SimpleObject, Clone, Debug)]
+#[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceSettingOption")]
 pub struct SourceSettingOptionGql {
     #[graphql(name = "Value")]
@@ -193,7 +181,7 @@ pub struct SourceSettingOptionGql {
 }
 
 /// A single release from a source search
-#[derive(SimpleObject, Clone, Debug)]
+#[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceReleaseInfo")]
 pub struct SourceReleaseInfoGql {
     #[graphql(name = "Title")]
@@ -239,7 +227,7 @@ pub struct SourceReleaseInfoGql {
 }
 
 /// Results from a single source
-#[derive(SimpleObject, Clone, Debug)]
+#[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceSearchResultItem")]
 pub struct SourceSearchResultItemGql {
     #[graphql(name = "SourceId")]
@@ -257,7 +245,7 @@ pub struct SourceSearchResultItemGql {
 }
 
 /// Aggregated search results from all sources
-#[derive(SimpleObject, Clone, Debug)]
+#[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceSearchResultSet")]
 pub struct SourceSearchResultSetGql {
     #[graphql(name = "Sources")]
@@ -271,7 +259,7 @@ pub struct SourceSearchResultSetGql {
 }
 
 /// Generic success/error result for source mutations
-#[derive(SimpleObject, Clone, Debug)]
+#[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceMutationResult")]
 pub struct SourceMutationResultGql {
     #[graphql(name = "Success")]
@@ -281,7 +269,7 @@ pub struct SourceMutationResultGql {
 }
 
 /// Result of testing a source connection
-#[derive(SimpleObject, Clone, Debug)]
+#[derive(Clone, Debug, async_graphql::SimpleObject)]
 #[graphql(name = "SourceTestConnectionResult")]
 pub struct SourceTestConnectionResultGql {
     #[graphql(name = "Success")]
@@ -343,7 +331,7 @@ impl SourceCustomQueries {
         &self,
         ctx: &Context<'_>,
     ) -> Result<Vec<SourceDefinitionInfoGql>> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
 
         let definitions = get_available_definitions()
             .iter()
@@ -373,7 +361,7 @@ impl SourceCustomQueries {
         ctx: &Context<'_>,
         #[graphql(name = "DefinitionId")] definition_id: String,
     ) -> Result<Vec<SourceSettingDefinitionGql>> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
 
         let info = get_definition_info(&definition_id).ok_or_else(|| {
             async_graphql::Error::new(format!("Unknown source definition: {}", definition_id))
@@ -413,7 +401,7 @@ impl SourceCustomQueries {
         ctx: &Context<'_>,
         #[graphql(name = "Input")] input: SearchSourcesInput,
     ) -> Result<SourceSearchResultSetGql> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
 
         let sources_svc = manager
@@ -530,24 +518,18 @@ impl SourceCustomMutations {
         ctx: &Context<'_>,
         #[graphql(name = "Id")] id: String,
     ) -> Result<SourceTestConnectionResultGql> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let db = ctx.data::<Database>()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
 
-        // Verify source exists
-        let exists = sqlx::query_scalar::<_, i32>("SELECT COUNT(*) FROM sources WHERE id = ?")
-            .bind(&id)
-            .fetch_one(db)
-            .await?;
-
-        if exists == 0 {
+        let Some(source) = Source::get(db.pool(), &id).await? else {
             return Ok(SourceTestConnectionResultGql {
                 success: false,
                 error: Some("Source not found".to_string()),
                 releases_found: None,
                 elapsed_ms: None,
             });
-        }
+        };
 
         let sources_svc = manager
             .get_sources()
@@ -575,14 +557,15 @@ impl SourceCustomMutations {
                     Some(result) => {
                         let releases_found = result.releases.len() as i32;
 
-                        // Record success
-                        sqlx::query(
-                            "UPDATE sources SET error_count = 0, last_error = NULL, last_success_at = datetime('now'), updated_at = datetime('now') WHERE id = ?"
+                        let _ = update_source_status(
+                            db,
+                            &id,
+                            Some(0),
+                            Some(None),
+                            Some(Some(now_iso_string())),
+                            None,
                         )
-                        .bind(&id)
-                        .execute(db)
-                        .await
-                        .ok();
+                        .await;
 
                         Ok(SourceTestConnectionResultGql {
                             success: true,
@@ -602,14 +585,15 @@ impl SourceCustomMutations {
             Ok(false) => {
                 let error = "Connection test failed - check your credentials".to_string();
 
-                sqlx::query(
-                    "UPDATE sources SET error_count = error_count + 1, last_error = ?, last_error_at = datetime('now'), updated_at = datetime('now') WHERE id = ?"
+                let _ = update_source_status(
+                    db,
+                    &id,
+                    Some(source.error_count + 1),
+                    Some(Some(error.clone())),
+                    None,
+                    Some(Some(now_iso_string())),
                 )
-                .bind(&error)
-                .bind(&id)
-                .execute(db)
-                .await
-                .ok();
+                .await;
 
                 Ok(SourceTestConnectionResultGql {
                     success: false,
@@ -621,14 +605,15 @@ impl SourceCustomMutations {
             Err(e) => {
                 let error = e.to_string();
 
-                sqlx::query(
-                    "UPDATE sources SET error_count = error_count + 1, last_error = ?, last_error_at = datetime('now'), updated_at = datetime('now') WHERE id = ?"
+                let _ = update_source_status(
+                    db,
+                    &id,
+                    Some(source.error_count + 1),
+                    Some(Some(error.clone())),
+                    None,
+                    Some(Some(now_iso_string())),
                 )
-                .bind(&error)
-                .bind(&id)
-                .execute(db)
-                .await
-                .ok();
+                .await;
 
                 Ok(SourceTestConnectionResultGql {
                     success: false,
@@ -647,18 +632,36 @@ impl SourceCustomMutations {
         ctx: &Context<'_>,
         #[graphql(name = "Input")] input: UpdateSourcePrioritiesInput,
     ) -> Result<SourceMutationResultGql> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let db = ctx.data::<Database>()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
 
         for (index, source_id) in input.source_ids.iter().enumerate() {
             let priority = (index + 1) as i32;
-            sqlx::query(
-                "UPDATE sources SET priority = ?, updated_at = datetime('now') WHERE id = ?",
+            Source::update_by_id(
+                db,
+                source_id,
+                UpdateSourceInput {
+                    name: None,
+                    source_type: None,
+                    definition_id: None,
+                    enabled: None,
+                    priority: Some(priority),
+                    media_types: None,
+                    site_url: None,
+                    supports_search: None,
+                    supports_tv_search: None,
+                    supports_movie_search: None,
+                    supports_music_search: None,
+                    supports_book_search: None,
+                    credentials: None,
+                    settings: None,
+                    last_error: None,
+                    error_count: None,
+                    last_success_at: None,
+                    last_error_at: None,
+                },
             )
-            .bind(priority)
-            .bind(source_id)
-            .execute(db)
             .await?;
         }
 
@@ -703,4 +706,44 @@ fn format_bytes(bytes: i64) -> String {
     } else {
         format!("{} B", bytes)
     }
+}
+
+fn now_iso_string() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+async fn update_source_status(
+    db: &Database,
+    id: &str,
+    error_count: Option<i32>,
+    last_error: Option<Option<String>>,
+    last_success_at: Option<Option<String>>,
+    last_error_at: Option<Option<String>>,
+) -> Result<()> {
+    Source::update_by_id(
+        db,
+        &id.to_string(),
+        UpdateSourceInput {
+            name: None,
+            source_type: None,
+            definition_id: None,
+            enabled: None,
+            priority: None,
+            media_types: None,
+            site_url: None,
+            supports_search: None,
+            supports_tv_search: None,
+            supports_movie_search: None,
+            supports_music_search: None,
+            supports_book_search: None,
+            credentials: None,
+            settings: None,
+            last_error,
+            error_count,
+            last_success_at,
+            last_error_at,
+        },
+    )
+    .await?;
+    Ok(())
 }

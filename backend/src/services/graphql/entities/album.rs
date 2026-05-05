@@ -1,5 +1,6 @@
-use async_graphql::{Context, InputObject, Object, Result, SimpleObject};
-use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use crate::graphql::entities::*;
+use async_graphql::{Context, InputObject, Object, Result};
+use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -8,23 +9,25 @@ use super::track::Track;
 use crate::{
     db::Database,
     graphql::auth::AuthExt,
-    graphql::{
-        entities::{Library, TrackOrderByInput, TrackWhereInput},
-        orm::{EntityQuery, StringFilter},
-    },
+    graphql::entities::{Library, TrackOrderByInput, TrackWhereInput},
     services::metadata::providers::{AddAlbumOptions, MetadataProvider, MetadataService},
 };
 
 /// Album Entity
-#[derive(GraphQLEntity, GraphQLOperations, SimpleObject, Clone, Debug, Serialize, Deserialize)]
-#[graphql(name = "Album")]
-#[serde(rename_all = "PascalCase")]
-#[graphql_entity(
-    table = "albums",
-    plural = "Albums",
-    default_sort = "name",
-    notify = "libraries"
+#[derive(
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
 )]
+#[graphql(complex)]
+#[graphql(rename_fields = "camelCase")]
+#[serde(rename_all = "PascalCase")]
+#[graphql_entity(table = "albums", plural = "Albums", default_sort = "name")]
 
 pub struct Album {
     #[graphql(name = "Id")]
@@ -126,8 +129,8 @@ pub struct Album {
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
-
-    #[graphql(name = "Library")]
+    #[graphql(skip)]
+    #[serde(skip)]
     #[relation(target = "Library", from = "library_id", to = "id")]
     pub library: Option<Library>,
 
@@ -142,7 +145,7 @@ pub struct Album {
 pub struct AlbumCustomOperations;
 
 /// Search result for MusicBrainz album search.
-#[derive(Debug, Clone, SimpleObject)]
+#[derive(Debug, Clone, async_graphql::SimpleObject)]
 #[graphql(name = "AlbumSearchResult")]
 pub struct AlbumSearchResultGql {
     #[graphql(name = "Provider")]
@@ -177,7 +180,7 @@ impl AlbumCustomOperations {
         #[graphql(name = "IncludeLive", default = false)] include_live: bool,
         #[graphql(name = "IncludeSoundtracks", default = false)] include_soundtracks: bool,
     ) -> Result<Vec<AlbumSearchResultGql>> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
         let results = metadata
@@ -224,7 +227,7 @@ pub struct AddAlbumInput {
     pub musicbrainz_id: String,
 }
 
-#[derive(Debug, SimpleObject)]
+#[derive(Debug, async_graphql::SimpleObject)]
 #[graphql(name = "AlbumOperationResult")]
 pub struct AlbumOperationResult {
     #[graphql(name = "Success")]
@@ -247,7 +250,7 @@ impl AlbumMetadataMutations {
         ctx: &Context<'_>,
         #[graphql(name = "Input")] input: AddAlbumInput,
     ) -> Result<AlbumOperationResult> {
-        let user = ctx.auth_user()?;
+        let user = ctx.librarian_auth_user()?;
         let metadata = ctx.data_unchecked::<Arc<MetadataService>>();
 
         let library_id = uuid::Uuid::parse_str(&input.library_id)

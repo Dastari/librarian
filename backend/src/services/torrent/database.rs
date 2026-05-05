@@ -8,6 +8,7 @@ use std::fs;
 use uuid::Uuid;
 
 use crate::db::Database;
+use crate::graphql::entities::{AppSetting, Torrent, User};
 use crate::services::graphql::{AuthUser, LibrarianSchema};
 use librqbit::{AddTorrent, AddTorrentResponse};
 
@@ -397,16 +398,9 @@ pub async fn get_setting_string(
     pool: &Database,
     key: &str,
 ) -> Result<Option<String>, anyhow::Error> {
-    // Prefer most recently updated row to handle legacy duplicate keys.
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT value FROM app_settings WHERE key = ? ORDER BY updated_at DESC, created_at DESC, rowid DESC LIMIT 1",
-    )
-        .bind(key)
-        .fetch_optional(pool)
-        .await?;
-
-    Ok(row
-        .map(|(s,)| s)
+    Ok(find_setting(pool, key)
+        .await?
+        .map(|setting| setting.value)
         .filter(|s| !s.trim().is_empty() && s != "null"))
 }
 
@@ -415,17 +409,9 @@ pub async fn get_setting<T: serde::de::DeserializeOwned>(
     pool: &Database,
     key: &str,
 ) -> Result<Option<T>, anyhow::Error> {
-    // Prefer most recently updated row to handle legacy duplicate keys.
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT value FROM app_settings WHERE key = ? ORDER BY updated_at DESC, created_at DESC, rowid DESC LIMIT 1",
-    )
-        .bind(key)
-        .fetch_optional(pool)
-        .await?;
-
-    match row {
-        Some((s,)) => {
-            let s = s.trim();
+    match find_setting(pool, key).await? {
+        Some(setting) => {
+            let s = setting.value.trim();
             if s.is_empty() {
                 return Ok(None);
             }
@@ -439,14 +425,12 @@ pub async fn get_setting<T: serde::de::DeserializeOwned>(
 
 /// First user id from users table (for fallback when creating torrent records).
 pub async fn get_default_user_id(pool: &Database) -> Result<Option<Uuid>, anyhow::Error> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: String,
-    }
-    let row: Option<Row> = sqlx::query_as("SELECT id FROM users ORDER BY created_at ASC LIMIT 1")
-        .fetch_optional(pool)
-        .await?;
-    Ok(row.and_then(|r| Uuid::parse_str(&r.id).ok()))
+    Ok(User::query(pool.pool())
+        .fetch_all()
+        .await?
+        .into_iter()
+        .min_by(|a, b| a.created_at.cmp(&b.created_at))
+        .and_then(|user| Uuid::parse_str(&user.id).ok()))
 }
 
 /// Insert a new torrent record.
@@ -506,12 +490,7 @@ pub async fn upsert_from_session(
     uploaded_bytes: i64,
     save_path: &str,
 ) -> Result<(), anyhow::Error> {
-    let existing: Option<(String,)> = sqlx::query_as("SELECT id FROM torrents WHERE info_hash = ?")
-        .bind(info_hash)
-        .fetch_optional(pool)
-        .await?;
-
-    if let Some((id,)) = existing {
+    if let Some(id) = get_torrent_id_by_info_hash(pool, info_hash).await? {
         let data = execute_mutation(
             schema,
             auth_user,
@@ -675,35 +654,18 @@ pub async fn get_torrent_id_and_excluded(
     pool: &Database,
     info_hash: &str,
 ) -> Result<Option<(String, Vec<i32>)>, anyhow::Error> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: String,
-        excluded_files: Option<String>,
-    }
-    let row: Option<Row> =
-        sqlx::query_as("SELECT id, excluded_files FROM torrents WHERE info_hash = ?")
-            .bind(info_hash)
-            .fetch_optional(pool)
-            .await?;
-
-    Ok(row.map(|r| {
-        let excluded = r
-            .excluded_files
-            .and_then(|s| serde_json::from_str::<Vec<i32>>(s.trim()).ok())
-            .unwrap_or_default();
-        (r.id, excluded)
-    }))
+    Ok(find_torrent_by_info_hash(pool, info_hash)
+        .await?
+        .map(|torrent| (torrent.id, torrent.excluded_files)))
 }
 
 async fn get_torrent_id_by_info_hash(
     pool: &Database,
     info_hash: &str,
 ) -> Result<Option<String>, anyhow::Error> {
-    let row: Option<(String,)> = sqlx::query_as("SELECT id FROM torrents WHERE info_hash = ?")
-        .bind(info_hash)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row.map(|(id,)| id))
+    Ok(find_torrent_by_info_hash(pool, info_hash)
+        .await?
+        .map(|torrent| torrent.id))
 }
 
 /// Row for upserting a single torrent file.
@@ -826,26 +788,40 @@ pub struct ResumableRecord {
 
 /// List torrents that can be resumed (have magnet_uri and are not completed).
 pub async fn list_resumable(pool: &Database) -> Result<Vec<ResumableRecord>, anyhow::Error> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        info_hash: String,
-        name: String,
-        magnet_uri: Option<String>,
-    }
-    let rows = sqlx::query_as::<_, Row>(
-        r#"SELECT info_hash, name, magnet_uri FROM torrents WHERE magnet_uri IS NOT NULL AND state NOT IN ('completed', 'seeding')"#,
-    )
-    .fetch_all(pool)
-    .await?;
-
-    Ok(rows
+    Ok(Torrent::query(pool.pool())
+        .fetch_all()
+        .await?
         .into_iter()
-        .map(|r| ResumableRecord {
-            info_hash: r.info_hash,
-            name: r.name,
-            magnet_uri: r.magnet_uri,
+        .filter(|torrent| {
+            torrent.magnet_uri.is_some()
+                && torrent.state != "completed"
+                && torrent.state != "seeding"
+        })
+        .map(|torrent| ResumableRecord {
+            info_hash: torrent.info_hash,
+            name: torrent.name,
+            magnet_uri: torrent.magnet_uri,
         })
         .collect())
+}
+
+async fn find_setting(db: &Database, key: &str) -> Result<Option<AppSetting>, anyhow::Error> {
+    Ok(AppSetting::query(db.pool())
+        .fetch_all()
+        .await?
+        .into_iter()
+        .find(|setting| setting.key == key))
+}
+
+async fn find_torrent_by_info_hash(
+    db: &Database,
+    info_hash: &str,
+) -> Result<Option<Torrent>, anyhow::Error> {
+    Ok(Torrent::query(db.pool())
+        .fetch_all()
+        .await?
+        .into_iter()
+        .find(|torrent| torrent.info_hash == info_hash))
 }
 
 /// Sync all session torrents into the database (upsert by info_hash).

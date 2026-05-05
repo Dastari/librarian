@@ -22,7 +22,7 @@ use tracing::info;
 
 use crate::services::manager::{Service, ServiceHealth};
 
-use super::{AuthUser, LibrarianSchema, build_schema, verify_token};
+use super::{AuthUser, LibrarianSchema, build_schema};
 use crate::services::graphql::mutations::auth::AuthCookieContext;
 
 const ACCESS_TOKEN_COOKIE: &str = "librarian_access_token";
@@ -140,18 +140,15 @@ async fn graphql_handler(
     });
 
     if let Some(token) = extract_token(&headers) {
-        let secret = match state.services.get_auth().await {
-            Some(auth) => auth.get_jwt_secret().await.ok(),
-            None => None,
-        };
-        if let Some(secret) = secret {
-            match verify_token(&token, &secret) {
+        if let Some(auth) = state.services.get_auth().await {
+            match auth.authenticate_access_token(&token).await {
                 Ok(user) => {
+                    let user = AuthUser::from(user);
                     tracing::debug!("Auth successful for user: {}", user.user_id);
                     request = request.data(user);
                 }
                 Err(e) => {
-                    tracing::debug!("Token verification failed: {}", e.message);
+                    tracing::debug!("Token verification failed: {}", e);
                 }
             }
         }
@@ -167,13 +164,16 @@ async fn graphql_ws_handler(
     protocol: async_graphql_axum::GraphQLProtocol,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    let secret = match state.services.get_auth().await {
-        Some(auth) => auth.get_jwt_secret().await.ok(),
-        None => None,
+    let auth = state.services.get_auth().await;
+    let auth_user = match (extract_token(&headers), auth.as_ref()) {
+        (Some(token), Some(auth)) => auth
+            .authenticate_access_token(&token)
+            .await
+            .ok()
+            .map(AuthUser::from),
+        _ => None,
     };
-    let auth_user = extract_token(&headers)
-        .and_then(|token| secret.as_ref().and_then(|s| verify_token(&token, s).ok()));
-    let secret_for_init = secret.clone();
+    let auth_for_init = auth.clone();
 
     ws.protocols(["graphql-transport-ws", "graphql-ws"])
         .on_upgrade(move |socket| {
@@ -184,9 +184,8 @@ async fn graphql_ws_handler(
                 data.insert(user);
                 ws = ws.with_data(data);
             }
-            let secret = secret_for_init;
             ws.on_connection_init(move |params| {
-                let secret = secret.clone();
+                let auth = auth_for_init.clone();
                 async move {
                     if let Some(token) = params
                         .get("Authorization")
@@ -194,10 +193,10 @@ async fn graphql_ws_handler(
                         .and_then(|v| v.as_str())
                     {
                         let token = token.strip_prefix("Bearer ").unwrap_or(token);
-                        if let Some(ref s) = secret {
-                            if let Ok(user) = verify_token(token, s) {
+                        if let Some(auth) = auth {
+                            if let Ok(user) = auth.authenticate_access_token(token).await {
                                 let mut data = async_graphql::Data::default();
-                                data.insert(user);
+                                data.insert(AuthUser::from(user));
                                 return Ok(data);
                             }
                         }

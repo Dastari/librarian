@@ -168,7 +168,7 @@ impl LibraryScanMutations {
         ctx: &Context<'_>,
         #[graphql(name = "Id")] id: String,
     ) -> async_graphql::Result<ScanLibraryResult> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
         let scan_service = services
             .get_library_scan()
@@ -204,7 +204,7 @@ impl LibraryScanMutations {
         #[graphql(name = "MediaFileId")] media_file_id: String,
         #[graphql(name = "Path")] path: String,
     ) -> async_graphql::Result<AnalyzeMediaFileResult> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
         let scan_service = services
             .get_library_scan()
@@ -235,7 +235,7 @@ impl LibraryScanMutations {
         ctx: &Context<'_>,
         #[graphql(name = "Input")] input: MatchMediaFileInput,
     ) -> async_graphql::Result<MatchMediaFileResult> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
         let scan_service = services
             .get_library_scan()
@@ -309,7 +309,7 @@ impl LibraryScanMutations {
         ctx: &Context<'_>,
         #[graphql(name = "Input")] input: OrganizeMediaFileInput,
     ) -> async_graphql::Result<OrganizeMediaFileResult> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
         let scan_service = services
             .get_library_scan()
@@ -338,7 +338,7 @@ impl LibraryScanMutations {
         ctx: &Context<'_>,
         #[graphql(name = "MediaFileId")] media_file_id: String,
     ) -> async_graphql::Result<UnmatchMediaFileResult> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let services = ctx.data_unchecked::<std::sync::Arc<crate::services::ServicesManager>>();
         let scan_service = services
             .get_library_scan()

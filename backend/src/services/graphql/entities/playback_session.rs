@@ -1,18 +1,12 @@
+use crate::graphql::entities::*;
 use async_graphql::SimpleObject;
-use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    GraphQLEntity,
-    GraphQLRelations,
-    GraphQLOperations,
-    SimpleObject,
-    Clone,
-    Debug,
-    Serialize,
-    Deserialize,
+    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
 )]
-#[graphql(name = "PlaybackSession")]
+#[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
     table = "playback_sessions",

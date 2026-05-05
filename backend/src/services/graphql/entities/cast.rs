@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use async_graphql::{Context, InputObject, Object, Request, Result, SimpleObject, Variables};
+use async_graphql::{Context, InputObject, Object, Request, Result, Variables};
 use serde::Deserialize;
 
 use super::super::auth::{AuthExt, AuthUser};
 use crate::services::ServicesManager;
 
-#[derive(SimpleObject, Clone, Debug)]
+#[derive(Clone, Debug, async_graphql::SimpleObject)]
 pub struct LegacyCastDevice {
     pub id: String,
     pub name: String,
@@ -20,7 +20,7 @@ pub struct LegacyCastDevice {
     pub last_seen_at: Option<String>,
 }
 
-#[derive(SimpleObject, Clone, Debug)]
+#[derive(Clone, Debug, async_graphql::SimpleObject)]
 pub struct LegacyCastSession {
     pub id: String,
     pub device_id: Option<String>,
@@ -36,21 +36,21 @@ pub struct LegacyCastSession {
     pub started_at: String,
 }
 
-#[derive(SimpleObject, Clone, Debug)]
+#[derive(Clone, Debug, async_graphql::SimpleObject)]
 pub struct CastSessionOperationResult {
     pub success: bool,
     pub session: Option<LegacyCastSession>,
     pub error: Option<String>,
 }
 
-#[derive(SimpleObject, Clone, Debug)]
+#[derive(Clone, Debug, async_graphql::SimpleObject)]
 pub struct CastDeviceOperationResult {
     pub success: bool,
     pub device: Option<LegacyCastDevice>,
     pub error: Option<String>,
 }
 
-#[derive(SimpleObject, Clone, Debug)]
+#[derive(Clone, Debug, async_graphql::SimpleObject)]
 pub struct LegacyCastSettings {
     pub auto_discovery_enabled: bool,
     pub discovery_interval_seconds: i32,
@@ -59,14 +59,14 @@ pub struct LegacyCastSettings {
     pub preferred_quality: Option<String>,
 }
 
-#[derive(SimpleObject, Clone, Debug)]
+#[derive(Clone, Debug, async_graphql::SimpleObject)]
 pub struct CastSettingsOperationResult {
     pub success: bool,
     pub settings: Option<LegacyCastSettings>,
     pub error: Option<String>,
 }
 
-#[derive(SimpleObject, Clone, Debug)]
+#[derive(Clone, Debug, async_graphql::SimpleObject)]
 pub struct CastActionResult {
     pub success: bool,
     pub error: Option<String>,
@@ -118,7 +118,7 @@ pub struct CastMutations;
 impl CastMutations {
     #[graphql(name = "DiscoverCastDevices")]
     async fn discover_cast_devices(&self, ctx: &Context<'_>) -> Result<Vec<LegacyCastDevice>> {
-        let auth_user = ctx.auth_user()?.clone();
+        let auth_user = ctx.librarian_auth_user()?.clone();
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let cast = manager
             .get_cast()
@@ -145,7 +145,7 @@ impl CastMutations {
         ctx: &Context<'_>,
         input: CastMediaInput,
     ) -> Result<CastSessionOperationResult> {
-        let auth_user = ctx.auth_user()?.clone();
+        let auth_user = ctx.librarian_auth_user()?.clone();
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let cast = manager
             .get_cast()
@@ -253,7 +253,7 @@ impl CastMutations {
 
     #[graphql(name = "CastStop")]
     async fn cast_stop(&self, ctx: &Context<'_>, session_id: String) -> Result<CastActionResult> {
-        let auth_user = ctx.auth_user()?.clone();
+        let auth_user = ctx.librarian_auth_user()?.clone();
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let cast = manager
             .get_cast()
@@ -341,7 +341,7 @@ impl CastMutations {
         ctx: &Context<'_>,
         input: AddCastDeviceInput,
     ) -> Result<CastDeviceOperationResult> {
-        let auth_user = ctx.auth_user()?.clone();
+        let auth_user = ctx.librarian_auth_user()?.clone();
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let name = input
             .name
@@ -377,7 +377,7 @@ impl CastMutations {
         id: String,
         input: UpdateCastDeviceInput,
     ) -> Result<CastDeviceOperationResult> {
-        let auth_user = ctx.auth_user()?.clone();
+        let auth_user = ctx.librarian_auth_user()?.clone();
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let Some(existing) = query_device_by_id(manager, &auth_user, &id).await? else {
             return Ok(CastDeviceOperationResult {
@@ -412,7 +412,7 @@ impl CastMutations {
 
     #[graphql(name = "RemoveCastDevice")]
     async fn remove_cast_device(&self, ctx: &Context<'_>, id: String) -> Result<CastActionResult> {
-        let auth_user = ctx.auth_user()?.clone();
+        let auth_user = ctx.librarian_auth_user()?.clone();
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         delete_cast_device(manager, &auth_user, &id).await?;
         Ok(CastActionResult {
@@ -427,7 +427,7 @@ impl CastMutations {
         ctx: &Context<'_>,
         input: UpdateCastSettingsInput,
     ) -> Result<CastSettingsOperationResult> {
-        let auth_user = ctx.auth_user()?.clone();
+        let auth_user = ctx.librarian_auth_user()?.clone();
         let manager = ctx.data::<Arc<ServicesManager>>()?;
 
         let existing = query_latest_cast_setting(manager, &auth_user).await?;
@@ -569,7 +569,7 @@ async fn update_cast_session_state(
     session_id: &str,
     command: SessionCommand,
 ) -> Result<CastSessionOperationResult> {
-    let auth_user = ctx.auth_user()?.clone();
+    let auth_user = ctx.librarian_auth_user()?.clone();
     let manager = ctx.data::<Arc<ServicesManager>>()?;
     let cast = manager
         .get_cast()

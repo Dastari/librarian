@@ -23,8 +23,7 @@ use tracing_subscriber::layer::Context;
 use uuid::Uuid;
 
 use crate::db::Database;
-use crate::db::operations;
-use crate::services::graphql::entities::AppLog;
+use crate::services::graphql::entities::{AppLog, CreateAppLogInput};
 use crate::services::manager::{Service, ServiceHealth};
 
 /// Shared state for the optional DB layer. Main builds the subscriber with [OptionalDbLayer] using
@@ -261,7 +260,7 @@ async fn database_writer_task(
             Some(log) = rx.recv() => {
                 batch.push(log);
                 if batch.len() >= batch_size {
-                    if let Err(e) = operations::insert_app_logs_batch(&pool, &batch).await {
+                    if let Err(e) = insert_app_logs_batch(&pool, &batch).await {
                         let fd_diag = open_fd_diagnostics().unwrap_or_else(|| "fd_diag=unavailable".to_string());
                         tracing::error!(
                             error = %e,
@@ -279,7 +278,7 @@ async fn database_writer_task(
             }
             _ = interval.tick() => {
                 if !batch.is_empty() {
-                    if let Err(e) = operations::insert_app_logs_batch(&pool, &batch).await {
+                    if let Err(e) = insert_app_logs_batch(&pool, &batch).await {
                         let fd_diag = open_fd_diagnostics().unwrap_or_else(|| "fd_diag=unavailable".to_string());
                         tracing::error!(
                             error = %e,
@@ -297,6 +296,26 @@ async fn database_writer_task(
             }
         }
     }
+}
+
+async fn insert_app_logs_batch(db: &Database, logs: &[AppLog]) -> Result<()> {
+    for log in logs {
+        AppLog::insert(
+            db,
+            CreateAppLogInput {
+                timestamp: log.timestamp.clone(),
+                level: log.level.clone(),
+                target: log.target.clone(),
+                message: log.message.clone(),
+                fields: log.fields.clone(),
+                span_name: log.span_name.clone(),
+                span_id: log.span_id.clone(),
+            },
+        )
+        .await?;
+    }
+
+    Ok(())
 }
 
 fn maybe_log_fd_diag(last_fd_diag_log: &mut Option<Instant>, fd_diag: &str) {

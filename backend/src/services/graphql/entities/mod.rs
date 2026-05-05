@@ -1,4 +1,5 @@
 // Common types shared across entities
+mod batch_load;
 pub mod common;
 
 // Base entities (no relations to other entities)

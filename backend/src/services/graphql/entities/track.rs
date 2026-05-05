@@ -1,5 +1,6 @@
-use async_graphql::{Context, SimpleObject};
-use macros::{GraphQLEntity, GraphQLOperations};
+use crate::graphql::entities::*;
+use async_graphql::Context;
+use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 use crate::db::Database;
@@ -8,8 +9,18 @@ use crate::services::graphql::AuthUser;
 use super::common::{ContentStatus, ContentType, calculate_content_status};
 use super::media_file::MediaFile;
 
-#[derive(GraphQLEntity, GraphQLOperations, SimpleObject, Clone, Debug, Serialize, Deserialize)]
-#[graphql(name = "Track", complex)]
+#[derive(
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+)]
+#[graphql(complex)]
+#[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(table = "tracks", plural = "Tracks", default_sort = "track_number")]
 pub struct Track {
@@ -92,44 +103,3 @@ pub struct Track {
 
 #[derive(Default)]
 pub struct TrackCustomOperations;
-
-// ============================================================================
-// ComplexObject Resolvers (computed fields)
-// ============================================================================
-
-#[async_graphql::ComplexObject]
-impl Track {
-    /// Computed status based on playback, file availability, and download state
-    ///
-    /// Returns one of: PLAYING, PAUSED, AVAILABLE, DOWNLOADING, WANTED, MISSING
-    #[graphql(name = "Status")]
-    async fn status(&self, ctx: &Context<'_>) -> ContentStatus {
-        let db = match ctx.data::<Database>() {
-            Ok(db) => db,
-            Err(_) => return ContentStatus::Missing,
-        };
-
-        let user_id = match ctx.data::<AuthUser>() {
-            Ok(user) => user.user_id.clone(),
-            Err(_) => {
-                return if self.media_file_id.is_some() {
-                    ContentStatus::Available
-                } else if self.wanted {
-                    ContentStatus::Wanted
-                } else {
-                    ContentStatus::Missing
-                };
-            }
-        };
-
-        calculate_content_status(
-            db,
-            ContentType::Track,
-            &self.id,
-            &user_id,
-            self.media_file_id.as_deref(),
-            self.wanted,
-        )
-        .await
-    }
-}

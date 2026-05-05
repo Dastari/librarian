@@ -2,6 +2,7 @@ use async_graphql::{Context, Object, Result};
 use tracing::info;
 
 use crate::db::Database;
+use crate::graphql::entities::Movie;
 use crate::services::ArtworkService;
 
 #[derive(Default)]
@@ -18,14 +19,9 @@ impl ArtworkMutations {
     ) -> Result<bool> {
         let db = ctx.data_unchecked::<Database>();
 
-        // Fetch movie details
-        let movie: Option<(String, String)> =
-            sqlx::query_as("SELECT poster_url, backdrop_url FROM movies WHERE id = ?1")
-                .bind(&movie_id)
-                .fetch_optional(db)
-                .await?;
+        let movie = Movie::get(db.pool(), &movie_id).await?;
 
-        if let Some((poster_url, backdrop_url)) = movie {
+        if let Some(movie) = movie {
             let artwork_service = ArtworkService::new(db.clone());
 
             info!(
@@ -39,8 +35,8 @@ impl ArtworkMutations {
                 artwork_service
                     .cache_movie_artwork(
                         &movie_id,
-                        Some(poster_url.as_str()).filter(|s| !s.is_empty()),
-                        Some(backdrop_url.as_str()).filter(|s| !s.is_empty()),
+                        movie.poster_url.as_deref().filter(|s| !s.is_empty()),
+                        movie.backdrop_url.as_deref().filter(|s| !s.is_empty()),
                     )
                     .await;
             });
@@ -56,12 +52,12 @@ impl ArtworkMutations {
     async fn recache_all_movie_artwork(&self, ctx: &Context<'_>) -> Result<i64> {
         let db = ctx.data_unchecked::<Database>();
 
-        // Fetch all movies with artwork URLs
-        let movies: Vec<(String, String, String)> = sqlx::query_as(
-            "SELECT id, poster_url, backdrop_url FROM movies WHERE poster_url IS NOT NULL OR backdrop_url IS NOT NULL"
-        )
-        .fetch_all(db)
-        .await?;
+        let movies = Movie::query(db.pool())
+            .fetch_all()
+            .await?
+            .into_iter()
+            .filter(|movie| movie.poster_url.is_some() || movie.backdrop_url.is_some())
+            .collect::<Vec<_>>();
 
         let count = movies.len() as i64;
         let db_clone = db.clone();
@@ -75,12 +71,12 @@ impl ArtworkMutations {
         tokio::spawn(async move {
             let artwork_service = ArtworkService::new(db_clone);
 
-            for (movie_id, poster_url, backdrop_url) in movies {
+            for movie in movies {
                 artwork_service
                     .cache_movie_artwork(
-                        &movie_id,
-                        Some(poster_url.as_str()).filter(|s| !s.is_empty()),
-                        Some(backdrop_url.as_str()).filter(|s| !s.is_empty()),
+                        &movie.id,
+                        movie.poster_url.as_deref().filter(|s| !s.is_empty()),
+                        movie.backdrop_url.as_deref().filter(|s| !s.is_empty()),
                     )
                     .await;
 

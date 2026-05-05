@@ -1,21 +1,15 @@
 //! AppSetting Entity
 
+use crate::graphql::entities::*;
 use async_graphql::SimpleObject;
-use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 /// AppSetting Entity - application settings
 #[derive(
-    GraphQLEntity,
-    GraphQLRelations,
-    GraphQLOperations,
-    SimpleObject,
-    Clone,
-    Debug,
-    Serialize,
-    Deserialize,
+    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
 )]
-#[graphql(name = "AppSetting")]
+#[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(table = "app_settings", plural = "AppSettings", default_sort = "key")]
 pub struct AppSetting {

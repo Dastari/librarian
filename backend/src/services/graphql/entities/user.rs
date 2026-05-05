@@ -1,23 +1,17 @@
 use std::sync::Arc;
 
-use async_graphql::{Context, Object, Result, SimpleObject};
-use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use crate::graphql::entities::*;
+use async_graphql::{Context, Object, Result};
+use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 use super::super::auth::AuthUser;
 use crate::services::auth::AuthService;
 
 #[derive(
-    GraphQLEntity,
-    GraphQLRelations,
-    GraphQLOperations,
-    SimpleObject,
-    Clone,
-    Debug,
-    Serialize,
-    Deserialize,
+    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
 )]
-#[graphql(name = "User")]
+#[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(table = "users", plural = "Users", default_sort = "username")]
 pub struct User {
@@ -71,7 +65,7 @@ pub struct User {
 }
 
 /// Current user info returned by Me query (PascalCase).
-#[derive(Debug, Clone, SimpleObject)]
+#[derive(Debug, Clone, async_graphql::SimpleObject)]
 #[graphql(name = "MeUser")]
 pub struct MeUser {
     #[graphql(name = "Id")]
@@ -112,7 +106,7 @@ impl UserCustomOperations {
         let db = ctx
             .data::<crate::db::Database>()
             .map_err(|e| async_graphql::Error::new(format!("Database unavailable: {:?}", e)))?;
-        let user = match User::get(db, &auth_user.user_id).await {
+        let user = match User::get(db.pool(), &auth_user.user_id).await {
             Ok(Some(u)) => u,
             _ => return Ok(None),
         };

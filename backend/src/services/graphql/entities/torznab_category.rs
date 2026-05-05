@@ -1,18 +1,12 @@
+use crate::graphql::entities::*;
 use async_graphql::SimpleObject;
-use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    GraphQLEntity,
-    GraphQLRelations,
-    GraphQLOperations,
-    SimpleObject,
-    Clone,
-    Debug,
-    Serialize,
-    Deserialize,
+    GraphQLEntity, GraphQLRelations, GraphQLOperations, Clone, Debug, Serialize, Deserialize,
 )]
-#[graphql(name = "TorznabCategory")]
+#[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
     table = "torznab_categories",
@@ -22,9 +16,9 @@ use serde::{Deserialize, Serialize};
 pub struct TorznabCategory {
     #[graphql(name = "Id")]
     #[primary_key]
-    #[filterable(type = "number")]
+    #[filterable(type = "string")]
     #[sortable]
-    pub id: i32,
+    pub id: String,
 
     #[graphql(name = "Name")]
     #[filterable(type = "string")]
@@ -32,8 +26,8 @@ pub struct TorznabCategory {
     pub name: String,
 
     #[graphql(name = "ParentId")]
-    #[filterable(type = "number")]
-    pub parent_id: Option<i32>,
+    #[filterable(type = "string")]
+    pub parent_id: Option<String>,
 
     #[graphql(name = "Description")]
     pub description: Option<String>,

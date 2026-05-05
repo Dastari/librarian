@@ -7,7 +7,7 @@ description = "Rust backend for Librarian media library"
 
 [features]
 default = ["sqlite"]
-sqlite = ["sqlx/sqlite"]
+sqlite = ["sqlx/sqlite", "graphql-orm/sqlite"]
 embed-frontend = ["rust-embed"]
 
 [dependencies]
@@ -33,9 +33,6 @@ librqbit = "8"
 # Database - features controlled by crate features above
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "uuid", "time", "json", "chrono", "rust_decimal"] }
 
-# Password hashing
-bcrypt = "0.16"
-
 # File type detection (for artwork)
 infer = "0.19"
 
@@ -48,8 +45,8 @@ thiserror = "2"
 anyhow = "1"
 async-trait = "0.1"
 
-# JWT/Auth
-jsonwebtoken = "9"
+# Auth
+agql-auth = { git = "https://github.com/Dastari/agql-auth", rev = "d248f8aaf545da7fdc86b2d66c5b08def69310a7" }
 
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "cookies", "gzip", "deflate"], default-features = false }
@@ -60,8 +57,8 @@ tokio-cron-scheduler = "0.13"
 # File walking
 walkdir = "2"
 
-# Internal macros
-macros = { path = "../macros" }
+# GraphQL ORM
+graphql-orm = { git = "https://github.com/Dastari/graphql-orm", rev = "1704b0a9dc6e2c8eafa0450c40ab80621a7a6482", default-features = false }
 
 # Utilities
 regex = "1"

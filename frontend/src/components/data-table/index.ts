@@ -25,17 +25,6 @@ export type {
   ColumnSizing,
 } from './types'
 
-// Hooks
-export {
-  useDataTableState,
-  useFilteredData,
-  useSortedData,
-  usePagination,
-  useInfiniteScroll,
-  useColumnReorder,
-  useColumnResize,
-} from './hooks'
-
 // Re-export tabler icons (for use in custom renderers)
 export {
   IconSearch,

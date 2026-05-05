@@ -1,12 +1,23 @@
+use crate::graphql::entities::*;
 use async_graphql::SimpleObject;
-use macros::{GraphQLEntity, GraphQLOperations};
+use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 
 use super::movie::Movie;
 use super::person::Person;
 
-#[derive(GraphQLEntity, GraphQLOperations, SimpleObject, Clone, Debug, Serialize, Deserialize)]
-#[graphql(name = "MovieCastCredit")]
+#[derive(
+    GraphQLEntity,
+    GraphQLRelations,
+    GraphQLOperations,
+    async_graphql::SimpleObject,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+)]
+#[graphql(complex)]
+#[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(
     table = "movie_cast_credits",
@@ -45,12 +56,12 @@ pub struct MovieCastCredit {
     #[filterable(type = "date")]
     #[sortable]
     pub updated_at: String,
-
-    #[graphql(name = "Movie")]
+    #[graphql(skip)]
+    #[serde(skip)]
     #[relation(target = "Movie", from = "movie_id", to = "id")]
     pub movie: Option<Movie>,
-
-    #[graphql(name = "Person")]
+    #[graphql(skip)]
+    #[serde(skip)]
     #[relation(target = "Person", from = "person_id", to = "id")]
     pub person: Option<Person>,
 }

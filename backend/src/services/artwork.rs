@@ -8,11 +8,10 @@
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
 use tracing::{debug, info, warn};
-use uuid::Uuid;
 
 use crate::db::Database;
+use crate::graphql::entities::{ArtworkCache, CreateArtworkCacheInput};
 
 /// Artwork service for caching images from external URLs
 #[derive(Clone)]
@@ -103,32 +102,21 @@ impl ArtworkService {
             }
         };
 
-        // Generate ID
-        let id = Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
-
-        // Insert into database
-        sqlx::query(
-            r#"
-            INSERT INTO artwork_cache 
-            (id, entity_type, entity_id, artwork_type, content_hash, mime_type, data, size_bytes, source_url, width, height, created_at, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-            "#,
+        ArtworkCache::insert(
+            &self.db,
+            CreateArtworkCacheInput {
+                entity_type: entity_type.to_string(),
+                entity_id: entity_id.to_string(),
+                artwork_type: artwork_type.to_string(),
+                content_hash: content_hash.clone(),
+                mime_type: mime_type.clone(),
+                data,
+                size_bytes,
+                source_url: Some(source_url.to_string()),
+                width,
+                height,
+            },
         )
-        .bind(&id)
-        .bind(entity_type)
-        .bind(entity_id)
-        .bind(artwork_type)
-        .bind(&content_hash)
-        .bind(&mime_type)
-        .bind(&data)
-        .bind(size_bytes)
-        .bind(source_url)
-        .bind(width)
-        .bind(height)
-        .bind(&now)
-        .bind(&now)
-        .execute(&self.db)
         .await
         .context("Failed to insert artwork into database")?;
 
@@ -155,20 +143,16 @@ impl ArtworkService {
         entity_id: &str,
         artwork_type: &str,
     ) -> Result<Option<String>> {
-        let result: Option<(String,)> = sqlx::query_as(
-            r#"
-            SELECT id FROM artwork_cache
-            WHERE entity_type = ?1 AND entity_id = ?2 AND artwork_type = ?3
-            LIMIT 1
-            "#,
-        )
-        .bind(entity_type)
-        .bind(entity_id)
-        .bind(artwork_type)
-        .fetch_optional(&self.db)
-        .await?;
-
-        Ok(result.map(|(id,)| id))
+        Ok(ArtworkCache::query(self.db.pool())
+            .fetch_all()
+            .await?
+            .into_iter()
+            .find(|entry| {
+                entry.entity_type == entity_type
+                    && entry.entity_id == entity_id
+                    && entry.artwork_type == artwork_type
+            })
+            .map(|entry| entry.id))
     }
 
     /// Cache movie artwork (poster and backdrop)

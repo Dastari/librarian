@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use async_graphql::{Context, InputObject, Object, Result, SimpleObject};
-use macros::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
+use crate::graphql::entities::*;
+use async_graphql::{Context, InputObject, Object, Result};
+use graphql_orm::{GraphQLEntity, GraphQLOperations, GraphQLRelations};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -16,13 +17,14 @@ use crate::services::torrent::{
     GraphQLEntity,
     GraphQLRelations,
     GraphQLOperations,
-    SimpleObject,
+    async_graphql::SimpleObject,
     Clone,
     Debug,
     Serialize,
     Deserialize,
 )]
-#[graphql(name = "Torrent", complex)]
+#[graphql(complex)]
+#[graphql(rename_fields = "camelCase")]
 #[serde(rename_all = "PascalCase")]
 #[graphql_entity(table = "torrents", plural = "Torrents", default_sort = "added_at")]
 pub struct Torrent {
@@ -140,7 +142,7 @@ pub struct TorrentCustomOperations;
 // =============================================================================
 
 /// Live torrent file (from torrent client)
-#[derive(Debug, Clone, SimpleObject)]
+#[derive(Debug, Clone, async_graphql::SimpleObject)]
 #[graphql(name = "LiveTorrentFile")]
 pub struct LiveTorrentFile {
     #[graphql(name = "Index")]
@@ -154,7 +156,7 @@ pub struct LiveTorrentFile {
 }
 
 /// Live torrent (from torrent client, not DB)
-#[derive(Debug, Clone, SimpleObject)]
+#[derive(Debug, Clone, async_graphql::SimpleObject)]
 #[graphql(name = "LiveTorrent")]
 pub struct LiveTorrent {
     #[graphql(name = "Id")]
@@ -234,7 +236,7 @@ pub struct AddTorrentInput {
 }
 
 /// Result of add torrent mutation
-#[derive(Debug, SimpleObject)]
+#[derive(Debug, async_graphql::SimpleObject)]
 #[graphql(name = "AddTorrentResult")]
 pub struct AddTorrentResult {
     #[graphql(name = "Success")]
@@ -246,7 +248,7 @@ pub struct AddTorrentResult {
 }
 
 /// Result of pause/resume/remove
-#[derive(Debug, SimpleObject)]
+#[derive(Debug, async_graphql::SimpleObject)]
 #[graphql(name = "TorrentActionResult")]
 pub struct TorrentActionResult {
     #[graphql(name = "Success")]
@@ -256,7 +258,7 @@ pub struct TorrentActionResult {
 }
 
 /// Result of processing matched files from a source
-#[derive(Debug, SimpleObject)]
+#[derive(Debug, async_graphql::SimpleObject)]
 #[graphql(name = "ProcessSourceResult")]
 pub struct ProcessSourceResult {
     #[graphql(name = "Success")]
@@ -272,7 +274,7 @@ pub struct ProcessSourceResult {
 }
 
 /// Result of re-matching files for a source
-#[derive(Debug, SimpleObject)]
+#[derive(Debug, async_graphql::SimpleObject)]
 #[graphql(name = "RematchSourceResult")]
 pub struct RematchSourceResult {
     #[graphql(name = "Success")]
@@ -288,7 +290,7 @@ impl TorrentCustomOperations {
     /// Get all torrents with live state from the torrent client
     #[graphql(name = "LiveTorrents")]
     async fn live_torrents(&self, ctx: &Context<'_>) -> Result<Vec<LiveTorrent>> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let service = manager
             .get_torrent()
@@ -308,7 +310,7 @@ impl TorrentCustomOperations {
         ctx: &Context<'_>,
         #[graphql(name = "Id")] id: i32,
     ) -> Result<Option<LiveTorrent>> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let service = manager.get_torrent().await;
         Ok(match service {
@@ -324,7 +326,7 @@ impl TorrentCustomOperations {
     /// Count of active (downloading/checking) torrents
     #[graphql(name = "ActiveDownloadCount")]
     async fn active_download_count(&self, ctx: &Context<'_>) -> Result<i32> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let service: Arc<TorrentService> = manager
             .get_torrent()
@@ -351,7 +353,7 @@ impl TorrentClientMutations {
         ctx: &Context<'_>,
         #[graphql(name = "Input")] input: AddTorrentInput,
     ) -> Result<AddTorrentResult> {
-        let user = ctx.auth_user()?;
+        let user = ctx.librarian_auth_user()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let service = manager
             .get_torrent()
@@ -390,7 +392,7 @@ impl TorrentClientMutations {
         ctx: &Context<'_>,
         #[graphql(name = "Id")] id: i32,
     ) -> Result<TorrentActionResult> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let service = manager
             .get_torrent()
@@ -415,7 +417,7 @@ impl TorrentClientMutations {
         ctx: &Context<'_>,
         #[graphql(name = "Id")] id: i32,
     ) -> Result<TorrentActionResult> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let service = manager
             .get_torrent()
@@ -441,7 +443,7 @@ impl TorrentClientMutations {
         #[graphql(name = "Id")] id: i32,
         #[graphql(name = "DeleteFiles", default = false)] delete_files: bool,
     ) -> Result<TorrentActionResult> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let service = manager
             .get_torrent()
@@ -465,7 +467,7 @@ impl TorrentClientMutations {
         ctx: &Context<'_>,
         #[graphql(name = "InfoHash")] info_hash: String,
     ) -> Result<TorrentActionResult> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let service = manager
             .get_torrent()
@@ -489,7 +491,7 @@ impl TorrentClientMutations {
         ctx: &Context<'_>,
         #[graphql(name = "InfoHash")] info_hash: String,
     ) -> Result<TorrentActionResult> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let service = manager
             .get_torrent()
@@ -514,7 +516,7 @@ impl TorrentClientMutations {
         #[graphql(name = "InfoHash")] info_hash: String,
         #[graphql(name = "DeleteFiles", default = false)] delete_files: bool,
     ) -> Result<TorrentActionResult> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
         let manager = ctx.data::<Arc<ServicesManager>>()?;
         let service = manager
             .get_torrent()
@@ -541,7 +543,7 @@ impl TorrentClientMutations {
         #[graphql(name = "SourceType")] source_type: String,
         #[graphql(name = "SourceId")] source_id: String,
     ) -> Result<ProcessSourceResult> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
 
         let normalized_source = source_type.trim().to_ascii_lowercase();
         if normalized_source != "torrent" {
@@ -600,7 +602,7 @@ impl TorrentClientMutations {
         #[graphql(name = "SourceId")] source_id: String,
         #[graphql(name = "LibraryId")] _library_id: Option<String>,
     ) -> Result<RematchSourceResult> {
-        let _user = ctx.auth_user()?;
+        let _user = ctx.librarian_auth_user()?;
 
         let normalized_source = source_type.trim().to_ascii_lowercase();
         if normalized_source != "torrent" {

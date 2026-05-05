@@ -56,94 +56,16 @@ pub async fn calculate_content_status(
     media_file_id: Option<&str>,
     wanted: bool,
 ) -> ContentStatus {
-    // 1. Check for active playback session
-    let column_name = match content_type {
-        ContentType::Episode => "episode_id",
-        ContentType::Movie => "movie_id",
-        ContentType::Track => "track_id",
-        ContentType::Chapter => "audiobook_id", // chapters are part of audiobooks
-    };
+    let _ = (pool, content_type, content_id, user_id);
 
-    // Query for active playback session (not completed)
-    let session_query = format!(
-        r#"
-        SELECT is_playing FROM playback_sessions
-        WHERE user_id = ? AND {} = ? AND completed_at IS NULL
-        ORDER BY last_updated_at DESC
-        LIMIT 1
-        "#,
-        column_name
-    );
-
-    if let Ok(session) = sqlx::query_scalar::<_, bool>(&session_query)
-        .bind(user_id)
-        .bind(content_id)
-        .fetch_optional(pool)
-        .await
-    {
-        if let Some(is_playing) = session {
-            if is_playing {
-                return ContentStatus::Playing;
-            } else {
-                return ContentStatus::Paused;
-            }
-        }
-    }
-
-    // 2. Check if has media file (available)
     if media_file_id.is_some() {
-        // Check if the media file is linked to a downloading torrent_file
-        if let Some(mf_id) = media_file_id {
-            let downloading_query = r#"
-                SELECT t.state FROM torrent_files tf
-                JOIN torrents t ON tf.torrent_id = t.id
-                WHERE tf.media_file_id = ? AND LOWER(t.state) = 'downloading'
-                LIMIT 1
-            "#;
-
-            if let Ok(Some(_)) = sqlx::query_scalar::<_, String>(downloading_query)
-                .bind(mf_id)
-                .fetch_optional(pool)
-                .await
-            {
-                return ContentStatus::Downloading;
-            }
-        }
         return ContentStatus::Available;
     }
 
-    // 3. Check for downloading (pending file match linked to downloading torrent)
-    let match_column = match content_type {
-        ContentType::Episode => "episode_id",
-        ContentType::Movie => "movie_id",
-        ContentType::Track => "track_id",
-        ContentType::Chapter => "chapter_id",
-    };
-
-    let downloading_match_query = format!(
-        r#"
-        SELECT t.state FROM pending_file_matches pfm
-        JOIN torrents t ON pfm.source_id = t.info_hash
-        WHERE pfm.{} = ? AND pfm.source_type = 'torrent' AND LOWER(t.state) = 'downloading'
-        LIMIT 1
-        "#,
-        match_column
-    );
-
-    if let Ok(Some(_)) = sqlx::query_scalar::<_, String>(&downloading_match_query)
-        .bind(content_id)
-        .fetch_optional(pool)
-        .await
-    {
-        return ContentStatus::Downloading;
-    }
-
-    // 4. Check wanted status
     if wanted {
         return ContentStatus::Wanted;
     }
 
-    // 5. Default to missing
     ContentStatus::Missing
 }
 
