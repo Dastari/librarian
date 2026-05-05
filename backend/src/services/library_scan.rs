@@ -7003,8 +7003,8 @@ mod tests {
 
     #[test]
     fn parse_movie_hint_from_rss_samples_produces_clean_search_titles() {
-        let xml_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../legacy/sample-data/movie-sample.xml");
+        let xml_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../docs/sample-data/movie-sample.xml");
         let Ok(xml) = fs::read_to_string(&xml_path) else {
             eprintln!(
                 "skipping RSS sample parser test; missing optional fixture {}",
@@ -7133,7 +7133,7 @@ mod tests {
     #[test]
     fn parse_movie_hint_from_movies_file_list_produces_clean_search_titles() {
         let sample_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../legacy/sample-data/movies-file-list.txt");
+            .join("../docs/sample-data/movies-file-list.txt");
         let Ok(content) = fs::read_to_string(&sample_path) else {
             eprintln!(
                 "skipping movie file-list parser test; missing optional fixture {}",

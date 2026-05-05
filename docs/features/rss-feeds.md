@@ -4,7 +4,7 @@
 
 Planned. The repository currently has `RssFeed` and `RssFeedItem` entities in the GraphQL ORM schema, but it does not yet have a complete RSS polling, digesting, matching, or auto-download implementation.
 
-No checked-in RSS XML fixture is currently present. Older tests reference `legacy/sample-data/movie-sample.xml`, but the `legacy/` directory is not in this checkout.
+A sanitized IPTorrents-style RSS XML fixture is checked in at `docs/sample-data/movie-sample.xml`. The old `legacy/sample-data/movie-sample.xml` path must not be reintroduced.
 
 ## Purpose
 
@@ -314,8 +314,9 @@ Recommended initial decisions:
 ### Phase 1: Contract and Fixtures
 
 - Add this feature contract.
-- Add a checked-in RSS fixture under `backend/tests/fixtures/rss/`.
-- Add at least one RSS 2.0 sample with torrent-like titles, guid, link, pubDate, and description.
+- Use the checked-in RSS fixture at `docs/sample-data/movie-sample.xml`.
+- Add smaller focused RSS fixtures under `backend/tests/fixtures/rss/` when parser tests need narrow cases.
+- Add at least one RSS 2.0 sample with torrent-like titles, guid, link, pubDate, and description if the existing sample does not cover a parser case.
 - Add at least one malformed/partial feed fixture.
 - When real user feeds are available, add sanitized snapshots as fixtures if licensing/privacy allows.
 
@@ -430,4 +431,3 @@ Recommended initial decisions:
 - Verify feed item is marked processed.
 - Disable feed and verify it is not polled.
 - Break feed URL and verify `LastError` / `ConsecutiveFailures`.
-
