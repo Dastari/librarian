@@ -32,7 +32,11 @@ import {
   IconPlugConnected,
   IconPencil,
 } from "@tabler/icons-react";
-import { DataTable, type DataTableColumn, type RowAction } from "../../components/data-table";
+import {
+  DataTable,
+  type DataTableColumn,
+  type RowAction,
+} from "../../components/data-table";
 import {
   CastDevicesDocument,
   CastSettingsDocument,
@@ -154,8 +158,8 @@ function CastingSettingsPage() {
         apolloClient.query({
           query: CastSettingsDocument,
           variables: {
-            Page: { Limit: 1, Offset: 0 },
-            OrderBy: [{ UpdatedAt: "Desc" }],
+            Page: { limit: 1, offset: 0 },
+            OrderBy: [{ UpdatedAt: "DESC" }],
           },
           fetchPolicy: "network-only",
         }),
@@ -528,8 +532,8 @@ function CastingSettingsPage() {
                 <IconCast size={48} className="text-default-300 mb-4" />
                 <p className="text-default-500 mb-2">No cast devices found</p>
                 <p className="text-small text-default-400 mb-4">
-                  Click &quot;Discover&quot; to scan for devices on your network,
-                  or add one manually.
+                  Click &quot;Discover&quot; to scan for devices on your
+                  network, or add one manually.
                 </p>
                 <Button
                   variant="flat"

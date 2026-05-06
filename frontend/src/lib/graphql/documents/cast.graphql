@@ -1,14 +1,11 @@
-# Cast: devices, sessions, settings (connection-based)
-# Used by codegen for TypedDocumentNode and types
-
 query CastDevices(
   $Where: CastDeviceWhereInput
   $OrderBy: [CastDeviceOrderByInput!]
   $Page: PageInput
 ) {
-  CastDevices(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
-    Edges {
-      Node {
+  CastDevices: castDevices(where: $Where, orderBy: $OrderBy, page: $Page) {
+    Edges: edges {
+      Node: node {
         Id
         Name
         Address
@@ -19,11 +16,11 @@ query CastDevices(
         IsManual
         LastSeenAt
       }
-      Cursor
+      Cursor: cursor
     }
-    PageInfo {
-      HasNextPage
-      TotalCount
+    PageInfo: pageInfo {
+      HasNextPage: hasNextPage
+      TotalCount: totalCount
     }
   }
 }
@@ -33,9 +30,9 @@ query CastSessions(
   $OrderBy: [CastSessionOrderByInput!]
   $Page: PageInput
 ) {
-  CastSessions(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
-    Edges {
-      Node {
+  CastSessions: castSessions(where: $Where, orderBy: $OrderBy, page: $Page) {
+    Edges: edges {
+      Node: node {
         Id
         DeviceId
         MediaFileId
@@ -48,11 +45,11 @@ query CastSessions(
         IsMuted
         StartedAt
       }
-      Cursor
+      Cursor: cursor
     }
-    PageInfo {
-      HasNextPage
-      TotalCount
+    PageInfo: pageInfo {
+      HasNextPage: hasNextPage
+      TotalCount: totalCount
     }
   }
 }
@@ -62,9 +59,9 @@ query CastSettings(
   $OrderBy: [CastSettingOrderByInput!]
   $Page: PageInput
 ) {
-  CastSettings(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
-    Edges {
-      Node {
+  CastSettings: castSettings(where: $Where, orderBy: $OrderBy, page: $Page) {
+    Edges: edges {
+      Node: node {
         Id
         AutoDiscoveryEnabled
         DiscoveryIntervalSeconds
@@ -72,20 +69,20 @@ query CastSettings(
         TranscodeIncompatible
         PreferredQuality
       }
-      Cursor
+      Cursor: cursor
     }
-    PageInfo {
-      HasNextPage
-      TotalCount
+    PageInfo: pageInfo {
+      HasNextPage: hasNextPage
+      TotalCount: totalCount
     }
   }
 }
 
 mutation CreateCastDevice($Input: CreateCastDeviceInput!) {
-  CreateCastDevice(Input: $Input) {
-    Success
-    Error
-    CastDevice {
+  CreateCastDevice: createCastDevice(input: $Input) {
+    Success: success
+    Error: error
+    CastDevice: castDevice {
       Id
       Name
       Address
@@ -100,10 +97,10 @@ mutation CreateCastDevice($Input: CreateCastDeviceInput!) {
 }
 
 mutation UpdateCastDevice($Id: String!, $Input: UpdateCastDeviceInput!) {
-  UpdateCastDevice(Id: $Id, Input: $Input) {
-    Success
-    Error
-    CastDevice {
+  UpdateCastDevice: updateCastDevice(id: $Id, input: $Input) {
+    Success: success
+    Error: error
+    CastDevice: castDevice {
       Id
       Name
       Address
@@ -118,17 +115,17 @@ mutation UpdateCastDevice($Id: String!, $Input: UpdateCastDeviceInput!) {
 }
 
 mutation DeleteCastDevice($Id: String!) {
-  DeleteCastDevice(Id: $Id) {
-    Success
-    Error
+  DeleteCastDevice: deleteCastDevice(id: $Id) {
+    Success: success
+    Error: error
   }
 }
 
 mutation CreateCastSetting($Input: CreateCastSettingInput!) {
-  CreateCastSetting(Input: $Input) {
-    Success
-    Error
-    CastSetting {
+  CreateCastSetting: createCastSetting(input: $Input) {
+    Success: success
+    Error: error
+    CastSetting: castSetting {
       Id
       AutoDiscoveryEnabled
       DiscoveryIntervalSeconds
@@ -140,10 +137,10 @@ mutation CreateCastSetting($Input: CreateCastSettingInput!) {
 }
 
 mutation UpdateCastSetting($Id: String!, $Input: UpdateCastSettingInput!) {
-  UpdateCastSetting(Id: $Id, Input: $Input) {
-    Success
-    Error
-    CastSetting {
+  UpdateCastSetting: updateCastSetting(id: $Id, input: $Input) {
+    Success: success
+    Error: error
+    CastSetting: castSetting {
       Id
       AutoDiscoveryEnabled
       DiscoveryIntervalSeconds

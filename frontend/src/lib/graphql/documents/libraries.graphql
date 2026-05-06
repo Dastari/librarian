@@ -1,14 +1,11 @@
-# Libraries: query, subscription, create and delete
-# Used by codegen for TypedDocumentNode and types
-
 query Libraries(
   $Where: LibraryWhereInput
   $OrderBy: [LibraryOrderByInput!]
   $Page: PageInput
 ) {
-  Libraries(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
-    Edges {
-      Node {
+  Libraries: libraries(where: $Where, orderBy: $OrderBy, page: $Page) {
+    Edges: edges {
+      Node: node {
         Id
         UserId
         Name
@@ -25,85 +22,85 @@ query Libraries(
         LastScannedAt
         CreatedAt
         UpdatedAt
-        Shows {
-          PageInfo {
-            TotalCount
+        Shows: shows {
+          PageInfo: pageInfo {
+            TotalCount: totalCount
           }
         }
-        ShowArtwork: Shows(
-          OrderBy: { UpdatedAt: Desc }
-          Page: { Limit: 8, Offset: 0 }
+        ShowArtwork: shows(
+          orderBy: { UpdatedAt: DESC }
+          page: { limit: 8, offset: 0 }
         ) {
-          Edges {
-            Node {
+          Edges: edges {
+            Node: node {
               Id
               PosterUrl
             }
           }
         }
-        Movies {
-          PageInfo {
-            TotalCount
+        Movies: movies {
+          PageInfo: pageInfo {
+            TotalCount: totalCount
           }
         }
-        MovieArtwork: Movies(
-          OrderBy: { UpdatedAt: Desc }
-          Page: { Limit: 8, Offset: 0 }
+        MovieArtwork: movies(
+          orderBy: { UpdatedAt: DESC }
+          page: { limit: 8, offset: 0 }
         ) {
-          Edges {
-            Node {
+          Edges: edges {
+            Node: node {
               Id
-              PosterUrl
+              CollectionPosterUrl
             }
           }
         }
-        Albums {
-          PageInfo {
-            TotalCount
+        Albums: albums {
+          PageInfo: pageInfo {
+            TotalCount: totalCount
           }
         }
-        AlbumArtwork: Albums(
-          OrderBy: { UpdatedAt: Desc }
-          Page: { Limit: 8, Offset: 0 }
+        AlbumArtwork: albums(
+          orderBy: { UpdatedAt: DESC }
+          page: { limit: 8, offset: 0 }
         ) {
-          Edges {
-            Node {
+          Edges: edges {
+            Node: node {
               Id
               CoverUrl
             }
           }
         }
-        Audiobooks {
-          PageInfo {
-            TotalCount
+        Audiobooks: audiobooks {
+          PageInfo: pageInfo {
+            TotalCount: totalCount
           }
         }
-        AudiobookArtwork: Audiobooks(
-          OrderBy: { UpdatedAt: Desc }
-          Page: { Limit: 8, Offset: 0 }
+        AudiobookArtwork: audiobooks(
+          orderBy: { UpdatedAt: DESC }
+          page: { limit: 8, offset: 0 }
         ) {
-          Edges {
-            Node {
+          Edges: edges {
+            Node: node {
               Id
               CoverUrl
             }
           }
         }
       }
-      Cursor
+      Cursor: cursor
     }
-    PageInfo {
-      HasNextPage
-      TotalCount
+    PageInfo: pageInfo {
+      HasNextPage: hasNextPage
+      TotalCount: totalCount
     }
   }
 }
 
 subscription LibraryChanged($Filter: SubscriptionFilterInput) {
-  LibraryChanged(Filter: $Filter) {
-    Action
-    Id
-    Library {
+  LibraryChanged: libraryChanged(filter: $Filter) {
+    Action: action
+    Id: id
+    Library: library {
       Id
       Name
       Path
@@ -122,10 +119,10 @@ subscription LibraryChanged($Filter: SubscriptionFilterInput) {
 }
 
 mutation CreateLibrary($Input: CreateLibraryInput!) {
-  CreateLibrary(Input: $Input) {
-    Success
-    Error
-    Library {
+  CreateLibrary: createLibrary(input: $Input) {
+    Success: success
+    Error: error
+    Library: library {
       Id
       Name
       Path
@@ -137,16 +134,15 @@ mutation CreateLibrary($Input: CreateLibraryInput!) {
 }
 
 mutation DeleteLibrary($Id: String!) {
-  DeleteLibrary(Id: $Id) {
-    Success
-    Error
+  DeleteLibrary: deleteLibrary(id: $Id) {
+    Success: success
+    Error: error
   }
 }
 
 mutation ScanLibrary($Id: String!) {
   ScanLibrary(Id: $Id) {
     Success
-    Status
     Message
   }
 }

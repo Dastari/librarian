@@ -57,24 +57,21 @@ const LIBRARY_COLLECTIONS_QUERY = gql`
     $Page: PageInput
     $LibraryId: String!
   ) {
-    Collections(Where: $Where, Page: $Page) {
-      Edges {
-        Node {
+    Collections: collections(where: $Where, page: $Page) {
+      Edges: edges {
+        Node: node {
           Id
           TmdbCollectionId
           Name
           PosterUrl
           BackdropUrl
           MovieCount
-          DownloadedMovies: Movies(
-            Where: {
-              LibraryId: { Eq: $LibraryId }
-              HasFile: { Eq: true }
-            }
-            Page: { Limit: 1, Offset: 0 }
+          DownloadedMovies: movies(
+            where: { LibraryId: { eq: $LibraryId }, HasFile: { eq: true } }
+            page: { limit: 1, offset: 0 }
           ) {
-            PageInfo {
-              TotalCount
+            PageInfo: pageInfo {
+              TotalCount: totalCount
             }
           }
         }
@@ -97,9 +94,9 @@ function CollectionsPage() {
       variables: {
         LibraryId: library.Id,
         Where: {
-          LibraryId: { Eq: library.Id },
+          LibraryId: { eq: library.Id },
         },
-        Page: { Limit: 5000, Offset: 0 },
+        Page: { limit: 5000, offset: 0 },
       },
       fetchPolicy: "cache-and-network",
     });
@@ -114,7 +111,8 @@ function CollectionsPage() {
   const collections = useMemo<CollectionSummary[]>(() => {
     return collectionNodes
       .map((collection) => {
-        const hasFileCount = collection.DownloadedMovies?.PageInfo?.TotalCount ?? 0;
+        const hasFileCount =
+          collection.DownloadedMovies?.PageInfo?.TotalCount ?? 0;
         return {
           rowId: collection.Id,
           dbId: collection.Id,

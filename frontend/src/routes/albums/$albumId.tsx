@@ -435,10 +435,10 @@ function AlbumDetailPage() {
     (
       mediaFileId: string | null | undefined,
       wanted: boolean,
-      backendStatus: string,
+      backendStatus?: string | null,
     ): TrackWithStatus["track"]["status"] => {
       if (mediaFileId) return "downloaded";
-      const normalized = backendStatus.toLowerCase();
+      const normalized = backendStatus?.toLowerCase() ?? "";
       if (normalized === "downloading") return "downloading";
       return wanted ? "wanted" : "missing";
     },
@@ -471,11 +471,7 @@ function AlbumDetailPage() {
           artistId: edge.Node.ArtistId ?? null,
           mediaFileId: edge.Node.MediaFileId ?? null,
           hasFile: Boolean(edge.Node.MediaFileId),
-          status: toTrackStatus(
-            edge.Node.MediaFileId,
-            edge.Node.Wanted,
-            edge.Node.Status,
-          ),
+          status: toTrackStatus(edge.Node.MediaFileId, edge.Node.Wanted),
           wanted: edge.Node.Wanted,
           downloadProgress: null,
         },
@@ -652,7 +648,8 @@ function AlbumDetailPage() {
           addToast({
             title: "Error",
             description:
-              data?.UpdateTracks?.error || "Failed to update wanted status for tracks",
+              data?.UpdateTracks?.error ||
+              "Failed to update wanted status for tracks",
             color: "danger",
           });
           return;

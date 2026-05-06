@@ -3,9 +3,13 @@ query PlaybackSessions(
   $OrderBy: [PlaybackSessionOrderByInput!]
   $Page: PageInput
 ) {
-  PlaybackSessions(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
-    Edges {
-      Node {
+  PlaybackSessions: playbackSessions(
+    where: $Where
+    orderBy: $OrderBy
+    page: $Page
+  ) {
+    Edges: edges {
+      Node: node {
         Id
         UserId
         MediaFileId
@@ -20,11 +24,11 @@ query PlaybackSessions(
         CreatedAt
         UpdatedAt
       }
-      Cursor
+      Cursor: cursor
     }
-    PageInfo {
-      HasNextPage
-      TotalCount
+    PageInfo: pageInfo {
+      HasNextPage: hasNextPage
+      TotalCount: totalCount
     }
   }
 }
@@ -34,9 +38,13 @@ query ShowPlaybackProgressByMedia(
   $Page: PageInput
   $OrderBy: [PlaybackProgressOrderByInput!]
 ) {
-  PlaybackProgresses(Where: $Where, Page: $Page, OrderBy: $OrderBy) {
-    Edges {
-      Node {
+  PlaybackProgresses: playbackProgresses(
+    where: $Where
+    page: $Page
+    orderBy: $OrderBy
+  ) {
+    Edges: edges {
+      Node: node {
         Id
         MediaFileId
         CurrentPosition
@@ -54,9 +62,13 @@ query PlaybackProgressByMediaFileContext(
   $Page: PageInput
   $OrderBy: [PlaybackProgressOrderByInput!]
 ) {
-  PlaybackProgresses(Where: $Where, Page: $Page, OrderBy: $OrderBy) {
-    Edges {
-      Node {
+  PlaybackProgresses: playbackProgresses(
+    where: $Where
+    page: $Page
+    orderBy: $OrderBy
+  ) {
+    Edges: edges {
+      Node: node {
         Id
         UserId
         MediaFileId
@@ -73,10 +85,10 @@ query PlaybackProgressByMediaFileContext(
 }
 
 mutation CreatePlaybackSessionContext($Input: CreatePlaybackSessionInput!) {
-  CreatePlaybackSession(Input: $Input) {
-    Success
-    Error
-    PlaybackSession {
+  CreatePlaybackSession: createPlaybackSession(input: $Input) {
+    Success: success
+    Error: error
+    PlaybackSession: playbackSession {
       Id
       UserId
       ContentType
@@ -105,10 +117,10 @@ mutation UpdatePlaybackSessionContext(
   $Id: String!
   $Input: UpdatePlaybackSessionInput!
 ) {
-  UpdatePlaybackSession(Id: $Id, Input: $Input) {
-    Success
-    Error
-    PlaybackSession {
+  UpdatePlaybackSession: updatePlaybackSession(id: $Id, input: $Input) {
+    Success: success
+    Error: error
+    PlaybackSession: playbackSession {
       Id
       UserId
       ContentType
@@ -134,10 +146,10 @@ mutation UpdatePlaybackSessionContext(
 }
 
 mutation CreatePlaybackProgressContext($Input: CreatePlaybackProgressInput!) {
-  CreatePlaybackProgress(Input: $Input) {
-    Success
-    Error
-    PlaybackProgress {
+  CreatePlaybackProgress: createPlaybackProgress(input: $Input) {
+    Success: success
+    Error: error
+    PlaybackProgress: playbackProgress {
       Id
       UserId
       MediaFileId
@@ -156,10 +168,10 @@ mutation UpdatePlaybackProgressContext(
   $Id: String!
   $Input: UpdatePlaybackProgressInput!
 ) {
-  UpdatePlaybackProgress(Id: $Id, Input: $Input) {
-    Success
-    Error
-    PlaybackProgress {
+  UpdatePlaybackProgress: updatePlaybackProgress(id: $Id, input: $Input) {
+    Success: success
+    Error: error
+    PlaybackProgress: playbackProgress {
       Id
       UserId
       MediaFileId

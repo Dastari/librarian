@@ -123,9 +123,9 @@ export function useDashboardCache(
         apolloClient.query({
           query: DashboardScheduleCachesDocument,
           variables: {
-            Where: { AirDate: { Gte: fromStr, Lte: toStr } },
-            OrderBy: [{ AirDate: "Asc" }],
-            Page: { Limit: 50, Offset: 0 },
+            Where: { AirDate: { gte: fromStr, lte: toStr } },
+            OrderBy: [{ AirDate: "ASC" }],
+            Page: { limit: 50, offset: 0 },
           },
           fetchPolicy: "network-only",
         }),
@@ -133,11 +133,11 @@ export function useDashboardCache(
           query: DashboardScheduleCachesDocument,
           variables: {
             Where: {
-              AirDate: { Gte: fromStr, Lte: toStr },
-              CountryCode: { Eq: "US" },
+              AirDate: { gte: fromStr, lte: toStr },
+              CountryCode: { eq: "US" },
             },
-            OrderBy: [{ AirDate: "Asc" }],
-            Page: { Limit: 50, Offset: 0 },
+            OrderBy: [{ AirDate: "ASC" }],
+            Page: { limit: 50, offset: 0 },
           },
           fetchPolicy: "network-only",
         }),
@@ -158,9 +158,9 @@ export function useDashboardCache(
         const showsResult = await apolloClient.query({
           query: DashboardShowsDocument,
           variables: {
-            Where: { LibraryId: { Eq: library.Id } },
-            OrderBy: [{ CreatedAt: "Desc" }],
-            Page: { Limit: 6, Offset: 0 },
+            Where: { LibraryId: { eq: library.Id } },
+            OrderBy: [{ CreatedAt: "DESC" }],
+            Page: { limit: 6, offset: 0 },
           },
           fetchPolicy: "network-only",
         });

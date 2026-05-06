@@ -79,7 +79,7 @@ interface CollectionDetailsQueryData {
 
 const COLLECTION_QUERY = gql`
   query CollectionDetailRoute($Id: String!) {
-    Collection(Id: $Id) {
+    Collection: collection(id: $Id) {
       Id
       LibraryId
       TmdbCollectionId
@@ -97,9 +97,9 @@ const COLLECTION_RESOLVE_BY_TMDB_QUERY = gql`
     $Where: CollectionWhereInput
     $Page: PageInput
   ) {
-    Collections(Where: $Where, Page: $Page) {
-      Edges {
-        Node {
+    Collections: collections(where: $Where, page: $Page) {
+      Edges: edges {
+        Node: node {
           Id
           LibraryId
           TmdbCollectionId
@@ -116,7 +116,7 @@ const COLLECTION_RESOLVE_BY_TMDB_QUERY = gql`
 
 const LIBRARY_QUERY = gql`
   query CollectionDetailLibraryRoute($Id: String!) {
-    Library(Id: $Id) {
+    Library: library(id: $Id) {
       Id
       Name
     }
@@ -174,9 +174,9 @@ function CollectionDetailPage() {
     {
       variables: {
         Where: {
-          TmdbCollectionId: { Eq: parsedCollectionTmdbId },
+          TmdbCollectionId: { eq: parsedCollectionTmdbId },
         },
-        Page: { Limit: 1, Offset: 0 },
+        Page: { limit: 1, offset: 0 },
       },
       skip: !hasNumericCollectionParam || directCollection != null,
       fetchPolicy: "cache-and-network",

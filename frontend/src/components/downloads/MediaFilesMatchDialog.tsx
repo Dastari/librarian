@@ -63,9 +63,9 @@ const UNMATCHED_LIBRARY_ID = "__torrent_unmatched__";
 
 const TORRENT_MATCH_LIBRARIES_QUERY = gql(`
   query TorrentMatchLibrariesRuntime {
-    Libraries(Page: { Limit: 1000, Offset: 0 }) {
-      Edges {
-        Node {
+    Libraries: libraries(page: { limit: 1000, offset: 0 }) {
+      Edges: edges {
+        Node: node {
           Id
           Name
           LibraryType
@@ -77,9 +77,9 @@ const TORRENT_MATCH_LIBRARIES_QUERY = gql(`
 
 const TORRENT_MEDIA_LOOKUP_QUERY = gql(`
   query TorrentMatchMediaFilesByPathsRuntime($Paths: [String!]!) {
-    MediaFiles(Where: { Path: { In: $Paths } }, Page: { Limit: 1000, Offset: 0 }) {
-      Edges {
-        Node {
+    MediaFiles: mediaFiles(where: { Path: { inList: $Paths } }, page: { limit: 1000, offset: 0 }) {
+      Edges: edges {
+        Node: node {
           Id
           Path
           Metadata
@@ -135,60 +135,60 @@ const TORRENT_MATCH_ARTWORK_QUERY = gql(`
     $ChapterIds: [String!]!
     $AudiobookIds: [String!]!
   ) {
-    Movies(Where: { Id: { In: $MovieIds } }, Page: { Limit: 1000, Offset: 0 }) {
-      Edges {
-        Node {
+    Movies: movies(where: { Id: { inList: $MovieIds } }, page: { limit: 1000, offset: 0 }) {
+      Edges: edges {
+        Node: node {
           Id
-          PosterUrl
+          PosterUrl: CollectionPosterUrl
         }
       }
     }
-    Episodes(Where: { Id: { In: $EpisodeIds } }, Page: { Limit: 1000, Offset: 0 }) {
-      Edges {
-        Node {
+    Episodes: episodes(where: { Id: { inList: $EpisodeIds } }, page: { limit: 1000, offset: 0 }) {
+      Edges: edges {
+        Node: node {
           Id
           ShowId
         }
       }
     }
-    Shows(Where: { Id: { In: $ShowIds } }, Page: { Limit: 1000, Offset: 0 }) {
-      Edges {
-        Node {
+    Shows: shows(where: { Id: { inList: $ShowIds } }, page: { limit: 1000, offset: 0 }) {
+      Edges: edges {
+        Node: node {
           Id
           PosterUrl
         }
       }
     }
-    Tracks(Where: { Id: { In: $TrackIds } }, Page: { Limit: 1000, Offset: 0 }) {
-      Edges {
-        Node {
+    Tracks: tracks(where: { Id: { inList: $TrackIds } }, page: { limit: 1000, offset: 0 }) {
+      Edges: edges {
+        Node: node {
           Id
           AlbumId
         }
       }
     }
-    Albums(Where: { Id: { In: $AlbumIds } }, Page: { Limit: 1000, Offset: 0 }) {
-      Edges {
-        Node {
+    Albums: albums(where: { Id: { inList: $AlbumIds } }, page: { limit: 1000, offset: 0 }) {
+      Edges: edges {
+        Node: node {
           Id
           CoverUrl
         }
       }
     }
-    Chapters(Where: { Id: { In: $ChapterIds } }, Page: { Limit: 1000, Offset: 0 }) {
-      Edges {
-        Node {
+    Chapters: chapters(where: { Id: { inList: $ChapterIds } }, page: { limit: 1000, offset: 0 }) {
+      Edges: edges {
+        Node: node {
           Id
           AudiobookId
         }
       }
     }
-    Audiobooks(
-      Where: { Id: { In: $AudiobookIds } }
-      Page: { Limit: 1000, Offset: 0 }
+    Audiobooks: audiobooks(
+      where: { Id: { inList: $AudiobookIds } }
+      page: { limit: 1000, offset: 0 }
     ) {
-      Edges {
-        Node {
+      Edges: edges {
+        Node: node {
           Id
           CoverUrl
         }
@@ -348,7 +348,7 @@ function joinPath(base: string, segment: string): string {
 function buildPathCandidates(
   filePath: string,
   savePath?: string | null,
-  torrentName?: string | null
+  torrentName?: string | null,
 ): string[] {
   const candidates = new Set<string>();
   const normalizedFilePath = filePath.replace(/\\/g, "/");
@@ -359,7 +359,7 @@ function buildPathCandidates(
     candidates.add(joinPath(savePath, normalizedFilePath));
     if (torrentName) {
       candidates.add(
-        joinPath(joinPath(savePath, torrentName), normalizedFilePath)
+        joinPath(joinPath(savePath, torrentName), normalizedFilePath),
       );
     }
   }
@@ -370,7 +370,7 @@ function buildPathCandidates(
 function getRelativePath(
   filePath: string,
   savePath?: string | null,
-  torrentName?: string | null
+  torrentName?: string | null,
 ): string {
   const normalized = filePath.replace(/\\/g, "/");
   if (!isAbsolutePath(normalized)) {
@@ -501,7 +501,7 @@ function getTypeGradient(targetType: string): string {
 }
 
 function getStatusColor(
-  status: MatchRowState["status"]
+  status: MatchRowState["status"],
 ): "success" | "danger" | "primary" | "warning" | "default" {
   switch (status) {
     case "applied":
@@ -578,10 +578,7 @@ function MatchCandidateCard({
       <Card className="bg-content2 border border-dashed border-default-300 h-full">
         <CardBody className="flex items-center justify-center py-8">
           <div className="text-center space-y-1">
-            <IconArrowsShuffle
-              size={28}
-              className="text-default-400 mx-auto"
-            />
+            <IconArrowsShuffle size={28} className="text-default-400 mx-auto" />
             <p className="text-sm text-default-500">Awaiting match</p>
           </div>
         </CardBody>
@@ -594,10 +591,7 @@ function MatchCandidateCard({
       <Card className="bg-content2 border border-danger-200 h-full">
         <CardBody className="flex items-center justify-center py-8">
           <div className="text-center space-y-1">
-            <IconAlertTriangle
-              size={28}
-              className="text-danger-400 mx-auto"
-            />
+            <IconAlertTriangle size={28} className="text-danger-400 mx-auto" />
             <p className="text-xs text-danger-400">{error || "Match failed"}</p>
           </div>
         </CardBody>
@@ -616,10 +610,7 @@ function MatchCandidateCard({
             <div className="text-center space-y-1">
               {isUnmatch ? (
                 <>
-                  <IconUnlink
-                    size={28}
-                    className="text-warning-400 mx-auto"
-                  />
+                  <IconUnlink size={28} className="text-warning-400 mx-auto" />
                   <p className="text-sm text-warning-500">
                     Will unmatch current link
                   </p>
@@ -762,8 +753,7 @@ function MatchCandidateCard({
                 ...allCandidates.map((c) => {
                   const key = `${c.TargetType}:${c.TargetId}`;
                   const label =
-                    c.TargetName ??
-                    `${c.TargetType} ${c.TargetId.slice(0, 8)}`;
+                    c.TargetName ?? `${c.TargetType} ${c.TargetId.slice(0, 8)}`;
                   const textVal = `${label} (${(c.Score * 100).toFixed(0)}%)`;
                   return (
                     <SelectItem key={key} textValue={textVal}>
@@ -791,11 +781,7 @@ function MatchCandidateCard({
 }
 
 /** Left side: the filename being matched */
-function FileInfoPanel({
-  row,
-}: {
-  row: MatchRowState;
-}) {
+function FileInfoPanel({ row }: { row: MatchRowState }) {
   const fileName = getFileName(row.filePath);
 
   return (
@@ -817,11 +803,7 @@ function FileInfoPanel({
           )}
         </div>
         <div className="mt-1">
-          <Chip
-            size="sm"
-            variant="flat"
-            color={getStatusColor(row.status)}
-          >
+          <Chip size="sm" variant="flat" color={getStatusColor(row.status)}>
             {getStatusLabel(row.status)}
           </Chip>
         </div>
@@ -849,8 +831,9 @@ export function MediaFilesMatchDialog({
   >({});
   const [isFinding, setIsFinding] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
-  const [selectedLibraryType, setSelectedLibraryType] =
-    useState<string>(ALL_LIBRARY_TYPES_KEY);
+  const [selectedLibraryType, setSelectedLibraryType] = useState<string>(
+    ALL_LIBRARY_TYPES_KEY,
+  );
   const [selectedLibraryId, setSelectedLibraryId] =
     useState<string>(ALL_LIBRARIES_KEY);
   const matchScopeKeyRef = useRef<string | null>(null);
@@ -858,10 +841,10 @@ export function MediaFilesMatchDialog({
   const torrentQueryVariables =
     useMemo<TorrentByInfoHashWithFilesQueryVariables>(
       () => ({
-        Where: { InfoHash: { Eq: torrentInfoHash ?? "" } },
-        Page: { Limit: 1, Offset: 0 },
+        Where: { InfoHash: { eq: torrentInfoHash ?? "" } },
+        Page: { limit: 1, offset: 0 },
       }),
-      [torrentInfoHash]
+      [torrentInfoHash],
     );
 
   const { data: torrentData, loading: torrentLoading } = useQuery(
@@ -871,33 +854,32 @@ export function MediaFilesMatchDialog({
       skip: !isOpen || !torrentInfoHash || (mediaFiles?.length ?? 0) > 0,
       fetchPolicy: "cache-and-network",
       notifyOnNetworkStatusChange: true,
-    }
+    },
   );
-  const { data: librariesData, loading: librariesLoading } = useQuery<
-    TorrentMatchLibrariesQueryData
-  >(TORRENT_MATCH_LIBRARIES_QUERY, {
-    skip: !isOpen,
-    fetchPolicy: "cache-and-network",
-    notifyOnNetworkStatusChange: true,
-  });
+  const { data: librariesData, loading: librariesLoading } =
+    useQuery<TorrentMatchLibrariesQueryData>(TORRENT_MATCH_LIBRARIES_QUERY, {
+      skip: !isOpen,
+      fetchPolicy: "cache-and-network",
+      notifyOnNetworkStatusChange: true,
+    });
 
   const [createUnmatchedMediaFile] = useMutation<
     CreateUnmatchedMediaFileFromTorrentMutation,
     CreateUnmatchedMediaFileFromTorrentMutationVariables
   >(CreateUnmatchedMediaFileFromTorrentDocument);
   const [findMatch] = useMutation<TorrentFindMatchMutationData>(
-    TORRENT_FIND_MATCH_MUTATION
+    TORRENT_FIND_MATCH_MUTATION,
   );
   const [unmatchMediaFile] = useMutation<TorrentUnmatchMediaFileMutationData>(
-    TORRENT_UNMATCH_MEDIA_FILE_MUTATION
+    TORRENT_UNMATCH_MEDIA_FILE_MUTATION,
   );
 
   const torrent = torrentData?.Torrents?.Edges?.[0]?.Node ?? null;
   const torrentFiles = useMemo<TorrentFileNode[]>(() => {
     const files =
-      torrent?.Files?.Edges
-        ?.map((e) => e.Node)
-        .filter((f) => isMatchableMediaFile(f.FilePath)) ?? [];
+      torrent?.Files?.Edges?.map((e) => e.Node).filter((f) =>
+        isMatchableMediaFile(f.FilePath),
+      ) ?? [];
     if (initialFileIndex == null) return files;
     return files.filter((f) => f.FileIndex === initialFileIndex);
   }, [torrent?.Files?.Edges, initialFileIndex]);
@@ -919,7 +901,7 @@ export function MediaFilesMatchDialog({
 
   const allLibraries = useMemo<LibraryNode[]>(
     () => librariesData?.Libraries?.Edges?.map((e) => e.Node) ?? [],
-    [librariesData?.Libraries?.Edges]
+    [librariesData?.Libraries?.Edges],
   );
 
   const availableLibraryTypes = useMemo(
@@ -928,23 +910,20 @@ export function MediaFilesMatchDialog({
         new Set(
           allLibraries
             .map((l) => normalizeLibraryType(l.LibraryType))
-            .filter(Boolean)
-        )
+            .filter(Boolean),
+        ),
       ).sort(),
-    [allLibraries]
+    [allLibraries],
   );
 
-  const librariesByType = useMemo(
-    () => {
-      if (selectedLibraryType === ALL_LIBRARY_TYPES_KEY) {
-        return allLibraries;
-      }
-      return allLibraries.filter(
-        (l) => normalizeLibraryType(l.LibraryType) === selectedLibraryType
-      );
-    },
-    [allLibraries, selectedLibraryType]
-  );
+  const librariesByType = useMemo(() => {
+    if (selectedLibraryType === ALL_LIBRARY_TYPES_KEY) {
+      return allLibraries;
+    }
+    return allLibraries.filter(
+      (l) => normalizeLibraryType(l.LibraryType) === selectedLibraryType,
+    );
+  }, [allLibraries, selectedLibraryType]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -993,9 +972,9 @@ export function MediaFilesMatchDialog({
       const allPathCandidates = Array.from(
         new Set(
           sourceFiles.flatMap((f) =>
-            buildPathCandidates(f.FilePath, savePath, sourceName)
-          )
-        )
+            buildPathCandidates(f.FilePath, savePath, sourceName),
+          ),
+        ),
       );
 
       const mediaByPath = await lookupMediaByPaths(allPathCandidates);
@@ -1005,7 +984,7 @@ export function MediaFilesMatchDialog({
         const candidates = buildPathCandidates(
           f.FilePath,
           savePath,
-          sourceName
+          sourceName,
         );
         let media: MediaLookupNode | null =
           f.MediaFileId != null
@@ -1066,7 +1045,14 @@ export function MediaFilesMatchDialog({
       setRows([]);
       setCandidateArtworkByKey({});
     }
-  }, [isOpen, sourceFiles, lookupMediaByPaths, torrent?.SavePath, torrent?.Name, contextName]);
+  }, [
+    isOpen,
+    sourceFiles,
+    lookupMediaByPaths,
+    torrent?.SavePath,
+    torrent?.Name,
+    contextName,
+  ]);
 
   useEffect(() => {
     void hydrateRows();
@@ -1081,7 +1067,7 @@ export function MediaFilesMatchDialog({
       const pathCandidates = buildPathCandidates(
         row.filePath,
         savePath,
-        sourceName
+        sourceName,
       );
       const mediaByPath = await lookupMediaByPaths(pathCandidates);
       for (const candidate of pathCandidates) {
@@ -1099,33 +1085,33 @@ export function MediaFilesMatchDialog({
             LibraryId: UNMATCHED_LIBRARY_ID,
             Metadata: JSON.stringify({
               SourceType: "torrent",
-              UnmatchedReason:
-                "Created for manual media-file match dialog",
+              UnmatchedReason: "Created for manual media-file match dialog",
             }),
             OriginalName: originalName,
             Path: bestPath,
-            RelativePath: getRelativePath(
-              bestPath,
-              savePath,
-              sourceName
-            ),
+            RelativePath: getRelativePath(bestPath, savePath, sourceName),
             Size: Math.max(0, Math.floor(row.fileSize)),
           },
         },
       });
 
-      const mediaFileId =
-        createResult.data?.CreateMediaFile?.MediaFile?.Id;
+      const mediaFileId = createResult.data?.CreateMediaFile?.MediaFile?.Id;
       if (!createResult.data?.CreateMediaFile?.Success || !mediaFileId) {
         throw new Error(
           createResult.data?.CreateMediaFile?.Error ||
-            "Failed to create media file"
+            "Failed to create media file",
         );
       }
 
       return mediaFileId;
     },
-    [createUnmatchedMediaFile, lookupMediaByPaths, torrent?.SavePath, torrent?.Name, contextName]
+    [
+      createUnmatchedMediaFile,
+      lookupMediaByPaths,
+      torrent?.SavePath,
+      torrent?.Name,
+      contextName,
+    ],
   );
 
   const hydrateCandidateArtwork = useCallback(
@@ -1137,10 +1123,14 @@ export function MediaFilesMatchDialog({
 
       for (const row of matchRows) {
         for (const candidate of row.candidates) {
-          if (candidate.TargetType === "Movie") movieIds.add(candidate.TargetId);
-          if (candidate.TargetType === "Episode") episodeIds.add(candidate.TargetId);
-          if (candidate.TargetType === "Track") trackIds.add(candidate.TargetId);
-          if (candidate.TargetType === "Chapter") chapterIds.add(candidate.TargetId);
+          if (candidate.TargetType === "Movie")
+            movieIds.add(candidate.TargetId);
+          if (candidate.TargetType === "Episode")
+            episodeIds.add(candidate.TargetId);
+          if (candidate.TargetType === "Track")
+            trackIds.add(candidate.TargetId);
+          if (candidate.TargetType === "Chapter")
+            chapterIds.add(candidate.TargetId);
         }
       }
 
@@ -1180,35 +1170,41 @@ export function MediaFilesMatchDialog({
         chapterToAudiobook.set(edge.Node.Id, edge.Node.AudiobookId);
       }
 
-      const secondPass = await apolloClient.query<TorrentMatchArtworkQueryData>({
-        query: TORRENT_MATCH_ARTWORK_QUERY,
-        variables: {
-          MovieIds: [],
-          EpisodeIds: [],
-          ShowIds: Array.from(new Set(episodeToShow.values())),
-          TrackIds: [],
-          AlbumIds: Array.from(new Set(trackToAlbum.values())),
-          ChapterIds: [],
-          AudiobookIds: Array.from(new Set(chapterToAudiobook.values())),
+      const secondPass = await apolloClient.query<TorrentMatchArtworkQueryData>(
+        {
+          query: TORRENT_MATCH_ARTWORK_QUERY,
+          variables: {
+            MovieIds: [],
+            EpisodeIds: [],
+            ShowIds: Array.from(new Set(episodeToShow.values())),
+            TrackIds: [],
+            AlbumIds: Array.from(new Set(trackToAlbum.values())),
+            ChapterIds: [],
+            AudiobookIds: Array.from(new Set(chapterToAudiobook.values())),
+          },
+          fetchPolicy: "network-only",
         },
-        fetchPolicy: "network-only",
-      });
+      );
 
       const moviePoster = new Map<string, string>();
       for (const edge of firstPass.data?.Movies?.Edges ?? []) {
-        if (edge.Node.PosterUrl) moviePoster.set(edge.Node.Id, edge.Node.PosterUrl);
+        if (edge.Node.PosterUrl)
+          moviePoster.set(edge.Node.Id, edge.Node.PosterUrl);
       }
       const showPoster = new Map<string, string>();
       for (const edge of secondPass.data?.Shows?.Edges ?? []) {
-        if (edge.Node.PosterUrl) showPoster.set(edge.Node.Id, edge.Node.PosterUrl);
+        if (edge.Node.PosterUrl)
+          showPoster.set(edge.Node.Id, edge.Node.PosterUrl);
       }
       const albumCover = new Map<string, string>();
       for (const edge of secondPass.data?.Albums?.Edges ?? []) {
-        if (edge.Node.CoverUrl) albumCover.set(edge.Node.Id, edge.Node.CoverUrl);
+        if (edge.Node.CoverUrl)
+          albumCover.set(edge.Node.Id, edge.Node.CoverUrl);
       }
       const audiobookCover = new Map<string, string>();
       for (const edge of secondPass.data?.Audiobooks?.Edges ?? []) {
-        if (edge.Node.CoverUrl) audiobookCover.set(edge.Node.Id, edge.Node.CoverUrl);
+        if (edge.Node.CoverUrl)
+          audiobookCover.set(edge.Node.Id, edge.Node.CoverUrl);
       }
 
       const out: Record<string, string> = {};
@@ -1244,7 +1240,7 @@ export function MediaFilesMatchDialog({
       }
       return out;
     },
-    []
+    [],
   );
 
   const previewMatches = useCallback(async () => {
@@ -1267,7 +1263,12 @@ export function MediaFilesMatchDialog({
       const nextRows = [...rows];
       for (let i = 0; i < nextRows.length; i += 1) {
         const row = nextRows[i];
-        nextRows[i] = { ...row, status: "finding", error: null, candidates: [] };
+        nextRows[i] = {
+          ...row,
+          status: "finding",
+          error: null,
+          candidates: [],
+        };
         setRows([...nextRows]);
 
         try {
@@ -1287,7 +1288,7 @@ export function MediaFilesMatchDialog({
               },
             });
             allCandidates.push(
-              ...(result.data?.MatchMediaFile?.Candidates ?? [])
+              ...(result.data?.MatchMediaFile?.Candidates ?? []),
             );
           }
 
@@ -1376,8 +1377,7 @@ export function MediaFilesMatchDialog({
             nextRows[i] = {
               ...row,
               status: "error",
-              error:
-                result.data?.UnmatchMediaFile?.Reason || "Unmatch failed",
+              error: result.data?.UnmatchMediaFile?.Reason || "Unmatch failed",
             };
             continue;
           }
@@ -1454,25 +1454,18 @@ export function MediaFilesMatchDialog({
       r.status !== "finding" &&
       r.status !== "idle" &&
       r.selectedKey !== DECLINE_KEY &&
-      r.selectedKey !== UNMATCH_KEY
+      r.selectedKey !== UNMATCH_KEY,
   ).length;
   const totalRows = rows.length;
   const progressCount = rows.filter(
-    (r) => r.status !== "idle" && r.status !== "finding"
+    (r) => r.status !== "idle" && r.status !== "finding",
   ).length;
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      size="4xl"
-      scrollBehavior="inside"
-    >
+    <Modal isOpen={isOpen} onClose={onClose} size="4xl" scrollBehavior="inside">
       <ModalContent>
         <ModalHeader className="flex flex-col gap-1">
-          <span>
-            {isSingleFileMode ? "Match File" : "Match Media Files"}
-          </span>
+          <span>{isSingleFileMode ? "Match File" : "Match Media Files"}</span>
           {(contextName ?? torrent?.Name) && (
             <span className="text-xs text-default-500 font-normal truncate">
               {contextName ?? torrent?.Name}
@@ -1497,7 +1490,9 @@ export function MediaFilesMatchDialog({
                     const key = Array.from(keys)[0]?.toString();
                     if (key) setSelectedLibraryType(key);
                   }}
-                  classNames={{ trigger: "bg-content3 border border-default-200" }}
+                  classNames={{
+                    trigger: "bg-content3 border border-default-200",
+                  }}
                 >
                   {[
                     <SelectItem
@@ -1524,10 +1519,15 @@ export function MediaFilesMatchDialog({
                     const key = Array.from(keys)[0]?.toString();
                     if (key) setSelectedLibraryId(key);
                   }}
-                  classNames={{ trigger: "bg-content3 border border-default-200" }}
+                  classNames={{
+                    trigger: "bg-content3 border border-default-200",
+                  }}
                 >
                   {[
-                    <SelectItem key={ALL_LIBRARIES_KEY} textValue="All libraries">
+                    <SelectItem
+                      key={ALL_LIBRARIES_KEY}
+                      textValue="All libraries"
+                    >
                       All libraries
                     </SelectItem>,
                     ...librariesByType.map((library) => (
@@ -1571,7 +1571,7 @@ export function MediaFilesMatchDialog({
                   const selectedCandidate =
                     row.candidates.find(
                       (c) =>
-                        `${c.TargetType}:${c.TargetId}` === row.selectedKey
+                        `${c.TargetType}:${c.TargetId}` === row.selectedKey,
                     ) ?? null;
 
                   return (
@@ -1599,8 +1599,8 @@ export function MediaFilesMatchDialog({
                             prev.map((r) =>
                               r.rowId === row.rowId
                                 ? { ...r, selectedKey: key }
-                                : r
-                            )
+                                : r,
+                            ),
                           )
                         }
                         status={row.status}

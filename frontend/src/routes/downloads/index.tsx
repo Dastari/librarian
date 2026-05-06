@@ -63,7 +63,7 @@ export const Route = createFileRoute("/downloads/")({
 
 function DownloadsPage() {
   const downloadsQueryVariables = useMemo<DownloadsTorrentsQueryVariables>(
-    () => ({ Page: { Limit: 500, Offset: 0 } }),
+    () => ({ Page: { limit: 500, offset: 0 } }),
     [],
   );
   const {
@@ -79,11 +79,9 @@ function DownloadsPage() {
 
   const baseTorrents = useMemo<DownloadTorrent[]>(
     () =>
-      (
-        data?.Torrents?.Edges ??
-        previousData?.Torrents?.Edges ??
-        []
-      ).map(({ Node }) => Node),
+      (data?.Torrents?.Edges ?? previousData?.Torrents?.Edges ?? []).map(
+        ({ Node }) => Node,
+      ),
     [data?.Torrents?.Edges, previousData?.Torrents?.Edges],
   );
 
@@ -119,8 +117,9 @@ function DownloadsPage() {
   const [torrentToLink, setTorrentToLink] = useState<DownloadTorrent | null>(
     null,
   );
-  const [matchTorrentInfoHash, setMatchTorrentInfoHash] =
-    useState<string | null>(null);
+  const [matchTorrentInfoHash, setMatchTorrentInfoHash] = useState<
+    string | null
+  >(null);
   const [matchMediaFiles, setMatchMediaFiles] = useState<MediaFileMatchInput[]>(
     [],
   );
@@ -161,8 +160,14 @@ function DownloadsPage() {
       SavePath: string;
       AddedAt: string;
     }) => {
-      apolloClient.cache.updateQuery<DownloadsTorrentsQuery, DownloadsTorrentsQueryVariables>(
-        { query: DownloadsTorrentsDocument, variables: downloadsQueryVariables },
+      apolloClient.cache.updateQuery<
+        DownloadsTorrentsQuery,
+        DownloadsTorrentsQueryVariables
+      >(
+        {
+          query: DownloadsTorrentsDocument,
+          variables: downloadsQueryVariables,
+        },
         (existing) => {
           if (!existing?.Torrents) {
             return {
@@ -174,7 +179,9 @@ function DownloadsPage() {
           }
 
           const edges = existing.Torrents.Edges ?? [];
-          const idx = edges.findIndex((edge) => edge.Node.InfoHash === torrent.InfoHash);
+          const idx = edges.findIndex(
+            (edge) => edge.Node.InfoHash === torrent.InfoHash,
+          );
 
           if (idx >= 0) {
             const nextEdges = [...edges];
@@ -201,7 +208,8 @@ function DownloadsPage() {
               Edges: [{ Node: torrent }, ...edges],
               PageInfo: {
                 ...existing.Torrents.PageInfo,
-                TotalCount: (existing.Torrents.PageInfo.TotalCount ?? edges.length) + 1,
+                TotalCount:
+                  (existing.Torrents.PageInfo.TotalCount ?? edges.length) + 1,
               },
             },
           };
@@ -213,12 +221,20 @@ function DownloadsPage() {
 
   const removeTorrentFromCache = useCallback(
     (infoHash: string) => {
-      apolloClient.cache.updateQuery<DownloadsTorrentsQuery, DownloadsTorrentsQueryVariables>(
-        { query: DownloadsTorrentsDocument, variables: downloadsQueryVariables },
+      apolloClient.cache.updateQuery<
+        DownloadsTorrentsQuery,
+        DownloadsTorrentsQueryVariables
+      >(
+        {
+          query: DownloadsTorrentsDocument,
+          variables: downloadsQueryVariables,
+        },
         (existing) => {
           if (!existing?.Torrents) return existing;
           const edges = existing.Torrents.Edges ?? [];
-          const nextEdges = edges.filter((edge) => edge.Node.InfoHash !== infoHash);
+          const nextEdges = edges.filter(
+            (edge) => edge.Node.InfoHash !== infoHash,
+          );
           if (nextEdges.length === edges.length) return existing;
           return {
             ...existing,
@@ -577,8 +593,8 @@ function DownloadsPage() {
       >({
         query: TorrentByInfoHashWithFilesDocument,
         variables: {
-          Where: { InfoHash: { Eq: torrent.InfoHash } },
-          Page: { Limit: 1, Offset: 0 },
+          Where: { InfoHash: { eq: torrent.InfoHash } },
+          Page: { limit: 1, offset: 0 },
         },
         fetchPolicy: "network-only",
       });

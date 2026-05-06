@@ -1,26 +1,30 @@
-import { useMemo, useCallback } from 'react'
-import { useQueryState, parseAsString, parseAsStringLiteral } from 'nuqs'
-import { Card, CardBody } from '@heroui/card'
+import { useMemo, useCallback } from "react";
+import { useQueryState, parseAsString, parseAsStringLiteral } from "nuqs";
+import { Card, CardBody } from "@heroui/card";
 import {
   DataTable,
   AlphabetFilter,
   getFirstLetter,
   type DataTableColumn,
-} from '../data-table'
-import type { Track } from '../../lib/graphql/generated/graphql'
-import { useQuery, gql } from '../../lib/graphql/client'
-import { IconMusicBolt, IconCircleCheck, IconDownload } from '@tabler/icons-react'
-import { formatDuration } from '../../lib/format'
-import { MediaItemStatusChip } from '../shared'
+} from "../data-table";
+import type { Track } from "../../lib/graphql/generated/graphql";
+import { useQuery, gql } from "../../lib/graphql/client";
+import {
+  IconMusicBolt,
+  IconCircleCheck,
+  IconDownload,
+} from "@tabler/icons-react";
+import { formatDuration } from "../../lib/format";
+import { MediaItemStatusChip } from "../shared";
 
 // ============================================================================
 // Component Props
 // ============================================================================
 
 interface LibraryTracksTabProps {
-  libraryId: string
+  libraryId: string;
   /** Parent loading state (e.g., library context still loading) */
-  loading?: boolean
+  loading?: boolean;
 }
 
 // ============================================================================
@@ -29,11 +33,11 @@ interface LibraryTracksTabProps {
 
 interface TracksConnectionResponse {
   Tracks: {
-    Edges: Array<{ Node: Track; Cursor: string }>
+    Edges: Array<{ Node: Track; Cursor: string }>;
     PageInfo: {
-      TotalCount: number | null
-    }
-  }
+      TotalCount: number | null;
+    };
+  };
 }
 
 // ============================================================================
@@ -42,16 +46,20 @@ interface TracksConnectionResponse {
 
 // Map column keys to GraphQL sort fields
 const SORT_FIELD_MAP: Record<string, string> = {
-  title: 'Title',
-  trackNumber: 'TrackNumber',
-  artistName: 'ArtistName',
-  duration: 'DurationSecs',
-}
+  title: "Title",
+  trackNumber: "TrackNumber",
+  artistName: "ArtistName",
+  duration: "DurationSecs",
+};
 const TRACKS_QUERY = gql`
-  query LibraryTracks($Where: TrackWhereInput, $OrderBy: [TrackOrderByInput], $Page: PageInput) {
-    Tracks(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
-      Edges {
-        Node {
+  query LibraryTracks(
+    $Where: TrackWhereInput
+    $OrderBy: [TrackOrderByInput!]
+    $Page: PageInput
+  ) {
+    Tracks: tracks(where: $Where, orderBy: $OrderBy, page: $Page) {
+      Edges: edges {
+        Node: node {
           Id
           AlbumId
           LibraryId
@@ -63,58 +71,76 @@ const TRACKS_QUERY = gql`
           ArtistName
           ArtistId
           MediaFileId
-          Status
         }
-        Cursor
+        Cursor: cursor
       }
-      PageInfo {
-        TotalCount
+      PageInfo: pageInfo {
+        TotalCount: totalCount
       }
     }
   }
-`
+`;
 
-export function LibraryTracksTab({ libraryId, loading: _parentLoading }: LibraryTracksTabProps) {
+export function LibraryTracksTab({
+  libraryId,
+  loading: _parentLoading,
+}: LibraryTracksTabProps) {
   // URL-persisted state via nuqs (clean URLs when using defaults)
-  const [selectedLetter, setSelectedLetter] = useQueryState('letter', parseAsString.withDefault(''))
-  const [searchTerm, setSearchTerm] = useQueryState('q', parseAsString.withDefault(''))
-  const [sortColumn, setSortColumn] = useQueryState('sort', parseAsString.withDefault('title'))
+  const [selectedLetter, setSelectedLetter] = useQueryState(
+    "letter",
+    parseAsString.withDefault(""),
+  );
+  const [searchTerm, setSearchTerm] = useQueryState(
+    "q",
+    parseAsString.withDefault(""),
+  );
+  const [sortColumn, setSortColumn] = useQueryState(
+    "sort",
+    parseAsString.withDefault("title"),
+  );
   const [sortDirection, setSortDirection] = useQueryState(
-    'order',
-    parseAsStringLiteral(['asc', 'desc'] as const).withDefault('asc')
-  )
-  
+    "order",
+    parseAsStringLiteral(["asc", "desc"] as const).withDefault("asc"),
+  );
+
   // Normalize selectedLetter: empty string becomes null for the filter logic
-  const normalizedLetter = selectedLetter === '' ? null : selectedLetter
+  const normalizedLetter = selectedLetter === "" ? null : selectedLetter;
 
   // Check if we should skip queries (loading or template ID)
-  const shouldSkipQueries = !libraryId || libraryId.startsWith('template')
+  const shouldSkipQueries = !libraryId || libraryId.startsWith("template");
 
   // Handle sort change from DataTable
-  const handleSortChange = useCallback((column: string, direction: 'asc' | 'desc') => {
-    setSortColumn(column)
-    setSortDirection(direction)
-  }, [setSortColumn, setSortDirection])
+  const handleSortChange = useCallback(
+    (column: string, direction: "asc" | "desc") => {
+      setSortColumn(column);
+      setSortDirection(direction);
+    },
+    [setSortColumn, setSortDirection],
+  );
 
   // Build filter variables for GraphQL query
   const queryVariables = useMemo(() => {
-    const vars: Record<string, unknown> = { Where: { LibraryId: { Eq: libraryId } } }
-    
+    const vars: Record<string, unknown> = {
+      Where: { LibraryId: { eq: libraryId } },
+    };
+
     // Add search filter if there's a search term
     if (searchTerm) {
       vars.Where = {
-        LibraryId: { Eq: libraryId },
-        Title: { Contains: searchTerm },
-      }
+        LibraryId: { eq: libraryId },
+        Title: { contains: searchTerm },
+      };
     }
-    
+
     // Add order by from sort state
-    const graphqlField = SORT_FIELD_MAP[sortColumn || 'title'] || 'Title'
-    vars.OrderBy = [{ [graphqlField]: sortDirection === 'asc' ? 'Asc' : 'Desc' }]
-    vars.Page = { Limit: 5000 }
-    
-    return vars
-  }, [libraryId, searchTerm, sortColumn, sortDirection])
+    const graphqlField = SORT_FIELD_MAP[sortColumn || "title"] || "Title";
+    vars.OrderBy = [
+      { [graphqlField]: sortDirection === "asc" ? "ASC" : "DESC" },
+    ];
+    vars.Page = { limit: 5000 };
+
+    return vars;
+  }, [libraryId, searchTerm, sortColumn, sortDirection]);
 
   const {
     data,
@@ -123,9 +149,9 @@ export function LibraryTracksTab({ libraryId, loading: _parentLoading }: Library
   } = useQuery<TracksConnectionResponse>(TRACKS_QUERY, {
     variables: queryVariables,
     skip: shouldSkipQueries,
-    fetchPolicy: 'cache-and-network',
+    fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: false,
-  })
+  });
 
   const tracks = useMemo(
     () =>
@@ -133,45 +159,53 @@ export function LibraryTracksTab({ libraryId, loading: _parentLoading }: Library
         (edge) => edge.Node,
       ),
     [data?.Tracks?.Edges, previousData?.Tracks?.Edges],
-  )
+  );
 
   const totalCount =
     data?.Tracks?.PageInfo?.TotalCount ??
     previousData?.Tracks?.PageInfo?.TotalCount ??
-    null
+    null;
 
   // Get letters that have tracks (from loaded data)
   const availableLetters = useMemo(() => {
-    const letters = new Set<string>()
+    const letters = new Set<string>();
     tracks.forEach((track) => {
-      letters.add(getFirstLetter(track.Title))
-    })
-    return letters
-  }, [tracks])
+      letters.add(getFirstLetter(track.Title));
+    });
+    return letters;
+  }, [tracks]);
 
   // Filter tracks by selected letter (client-side for alphabet filter)
   const filteredTracks = useMemo(() => {
-    if (!normalizedLetter) return tracks
-    return tracks.filter((track) => getFirstLetter(track.Title) === normalizedLetter)
-  }, [tracks, normalizedLetter])
+    if (!normalizedLetter) return tracks;
+    return tracks.filter(
+      (track) => getFirstLetter(track.Title) === normalizedLetter,
+    );
+  }, [tracks, normalizedLetter]);
 
   // Handle letter change - toggle filter
-  const handleLetterChange = useCallback((letter: string | null) => {
-    setSelectedLetter(normalizedLetter === letter ? '' : (letter ?? ''))
-  }, [normalizedLetter, setSelectedLetter])
+  const handleLetterChange = useCallback(
+    (letter: string | null) => {
+      setSelectedLetter(normalizedLetter === letter ? "" : (letter ?? ""));
+    },
+    [normalizedLetter, setSelectedLetter],
+  );
 
   // Handle search change for server-side filtering
-  const handleSearchChange = useCallback((term: string) => {
-    setSearchTerm(term || '')
-    setSelectedLetter('') // Reset letter filter when searching
-  }, [setSearchTerm, setSelectedLetter])
+  const handleSearchChange = useCallback(
+    (term: string) => {
+      setSearchTerm(term || "");
+      setSelectedLetter(""); // Reset letter filter when searching
+    },
+    [setSearchTerm, setSelectedLetter],
+  );
 
   // Column definitions
   const columns: DataTableColumn<Track>[] = useMemo(
     () => [
       {
-        key: 'title',
-        label: 'TITLE',
+        key: "title",
+        label: "TITLE",
         render: (track) => (
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-default-200 rounded flex items-center justify-center shrink-0">
@@ -187,36 +221,37 @@ export function LibraryTracksTab({ libraryId, loading: _parentLoading }: Library
         ),
       },
       {
-        key: 'trackNumber',
-        label: '#',
+        key: "trackNumber",
+        label: "#",
         width: 60,
         render: (track) => (
           <span className="text-default-500">
-            {(track.DiscNumber ?? 1) > 1 ? `${track.DiscNumber}-` : ''}{track.TrackNumber}
+            {(track.DiscNumber ?? 1) > 1 ? `${track.DiscNumber}-` : ""}
+            {track.TrackNumber}
           </span>
         ),
       },
       {
-        key: 'artistName',
-        label: 'ARTIST',
+        key: "artistName",
+        label: "ARTIST",
         width: 200,
         render: (track) => (
-          <span className="text-default-500">{track.ArtistName || '—'}</span>
+          <span className="text-default-500">{track.ArtistName || "—"}</span>
         ),
       },
       {
-        key: 'duration',
-        label: 'DURATION',
+        key: "duration",
+        label: "DURATION",
         width: 100,
         render: (track) => (
           <span className="text-default-500">
-            {track.DurationSecs ? formatDuration(track.DurationSecs) : '—'}
+            {track.DurationSecs ? formatDuration(track.DurationSecs) : "—"}
           </span>
         ),
       },
       {
-        key: 'status',
-        label: 'STATUS',
+        key: "status",
+        label: "STATUS",
         width: 120,
         sortable: false,
         render: (track) => (
@@ -224,21 +259,20 @@ export function LibraryTracksTab({ libraryId, loading: _parentLoading }: Library
         ),
       },
       {
-        key: 'hasFile',
-        label: 'FILE',
+        key: "hasFile",
+        label: "FILE",
         width: 80,
         sortable: false,
-        render: (track) => (
+        render: (track) =>
           track.MediaFileId ? (
             <IconCircleCheck size={18} className="text-green-400" />
           ) : (
             <IconDownload size={18} className="text-default-400" />
-          )
-        ),
+          ),
       },
     ],
-    []
-  )
+    [],
+  );
 
   return (
     <div className="flex flex-col grow w-full">
@@ -250,7 +284,7 @@ export function LibraryTracksTab({ libraryId, loading: _parentLoading }: Library
           columns={columns}
           getRowKey={(track) => track.Id}
           searchPlaceholder="Search tracks..."
-          sortColumn={sortColumn || 'title'}
+          sortColumn={sortColumn || "title"}
           sortDirection={sortDirection}
           onSortChange={handleSortChange}
           showViewModeToggle={false}
@@ -272,7 +306,10 @@ export function LibraryTracksTab({ libraryId, loading: _parentLoading }: Library
           emptyContent={
             <Card className="bg-content1/50 border-default-300 border-dashed border-2">
               <CardBody className="py-12 text-center">
-                <IconMusicBolt size={48} className="mx-auto mb-4 text-green-400" />
+                <IconMusicBolt
+                  size={48}
+                  className="mx-auto mb-4 text-green-400"
+                />
                 <h3 className="text-lg font-semibold mb-2">No tracks yet</h3>
                 <p className="text-default-500 mb-4">
                   Tracks will appear here as you add albums to your library.
@@ -283,5 +320,5 @@ export function LibraryTracksTab({ libraryId, loading: _parentLoading }: Library
         />
       </div>
     </div>
-  )
+  );
 }

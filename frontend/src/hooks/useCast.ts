@@ -213,7 +213,7 @@ export function useCast(): UseCastResult {
         }),
         apolloClient.query({
           query: CastSettingsDocument,
-          variables: { Page: { Limit: 1, Offset: 0 } },
+          variables: { Page: { limit: 1, offset: 0 } },
           fetchPolicy: "network-only",
         }),
       ]);

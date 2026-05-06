@@ -90,19 +90,19 @@ export function LibraryMoviesTab({
   // URL-persisted state via nuqs (clean URLs when using defaults)
   const [selectedLetter, setSelectedLetter] = useQueryState(
     "letter",
-    parseAsString.withDefault("")
+    parseAsString.withDefault(""),
   );
   const [searchTerm, setSearchTerm] = useQueryState(
     "q",
-    parseAsString.withDefault("")
+    parseAsString.withDefault(""),
   );
   const [sortColumn, setSortColumn] = useQueryState(
     "sort",
-    parseAsString.withDefault("title")
+    parseAsString.withDefault("title"),
   );
   const [sortDirection, setSortDirection] = useQueryState(
     "order",
-    parseAsStringLiteral(["asc", "desc"] as const).withDefault("asc")
+    parseAsStringLiteral(["asc", "desc"] as const).withDefault("asc"),
   );
 
   // Normalize selectedLetter: empty string becomes null for the filter logic
@@ -117,22 +117,22 @@ export function LibraryMoviesTab({
       setSortColumn(column);
       setSortDirection(direction);
     },
-    [setSortColumn, setSortDirection]
+    [setSortColumn, setSortDirection],
   );
 
   // Build filter variables for GraphQL query (PascalCase schema)
   const queryVariables = useMemo(() => {
-    const where: Record<string, unknown> = { LibraryId: { Eq: libraryId } };
+    const where: Record<string, unknown> = { LibraryId: { eq: libraryId } };
     if (searchTerm) {
-      where.Title = { Contains: searchTerm };
+      where.Title = { contains: searchTerm };
     }
     const graphqlField = SORT_FIELD_MAP[sortColumn || "title"] || "SortTitle";
     const orderBy = [
-      { [graphqlField]: sortDirection === "asc" ? "Asc" : "Desc" },
+      { [graphqlField]: sortDirection === "asc" ? "ASC" : "DESC" },
     ];
     return {
       Where: where,
-      Page: { Limit: pageSize, Offset: 0 },
+      Page: { limit: pageSize, offset: 0 },
       OrderBy: orderBy,
     };
   }, [libraryId, searchTerm, sortColumn, sortDirection, pageSize]);
@@ -152,9 +152,9 @@ export function LibraryMoviesTab({
   const movies = useMemo(
     () =>
       (data?.Movies?.Edges ?? previousData?.Movies?.Edges ?? []).map(
-        (edge) => edge.Node
+        (edge) => edge.Node,
       ),
-    [data?.Movies?.Edges, previousData?.Movies?.Edges]
+    [data?.Movies?.Edges, previousData?.Movies?.Edges],
   );
 
   const totalCount =
@@ -183,7 +183,7 @@ export function LibraryMoviesTab({
   const filteredMovies = useMemo(() => {
     if (!normalizedLetter) return movies;
     return movies.filter(
-      (movie) => getFirstLetter(movie.Title) === normalizedLetter
+      (movie) => getFirstLetter(movie.Title) === normalizedLetter,
     );
   }, [movies, normalizedLetter]);
 
@@ -192,7 +192,7 @@ export function LibraryMoviesTab({
     (letter: string | null) => {
       setSelectedLetter(normalizedLetter === letter ? "" : (letter ?? ""));
     },
-    [normalizedLetter, setSelectedLetter]
+    [normalizedLetter, setSelectedLetter],
   );
 
   // Handle search change from DataTable
@@ -201,7 +201,7 @@ export function LibraryMoviesTab({
       setSearchTerm(term || "");
       setSelectedLetter(""); // Reset letter filter on search
     },
-    [setSearchTerm, setSelectedLetter]
+    [setSearchTerm, setSelectedLetter],
   );
 
   // Column definitions
@@ -217,9 +217,9 @@ export function LibraryMoviesTab({
             params={{ movieId: movie.Id }}
             className="flex items-center gap-3 hover:opacity-80"
           >
-            {movie.PosterUrl ? (
+            {movie.CollectionPosterUrl ? (
               <Image
-                src={movie.PosterUrl}
+                src={movie.CollectionPosterUrl}
                 alt={movie.Title}
                 className="w-10 h-14 object-cover rounded"
                 loading="lazy"
@@ -295,15 +295,25 @@ export function LibraryMoviesTab({
         render: (movie) => (
           <Chip
             size="sm"
-            color={movie.MediaFileId ? "success" : movie.Wanted ? "warning" : "danger"}
+            color={
+              movie.MediaFileId
+                ? "success"
+                : movie.Wanted
+                  ? "warning"
+                  : "danger"
+            }
             variant="flat"
           >
-            {movie.MediaFileId ? "Downloaded" : movie.Wanted ? "Wanted" : "Missing"}
+            {movie.MediaFileId
+              ? "Downloaded"
+              : movie.Wanted
+                ? "Wanted"
+                : "Missing"}
           </Chip>
         ),
       },
     ],
-    []
+    [],
   );
 
   // Row actions
@@ -360,7 +370,13 @@ export function LibraryMoviesTab({
         onAction: (movie) => onDeleteMovie(movie.Id, movie.Title),
       },
     ],
-    [onDeleteMovie, session?.isPlaying, session?.movieId, startMoviePlayback, updatePlayback]
+    [
+      onDeleteMovie,
+      session?.isPlaying,
+      session?.movieId,
+      startMoviePlayback,
+      updatePlayback,
+    ],
   );
 
   // Card renderer
@@ -381,7 +397,13 @@ export function LibraryMoviesTab({
         isPlaying={Boolean(session?.isPlaying)}
       />
     ),
-    [onDeleteMovie, session?.isPlaying, session?.movieId, startMoviePlayback, updatePlayback]
+    [
+      onDeleteMovie,
+      session?.isPlaying,
+      session?.movieId,
+      startMoviePlayback,
+      updatePlayback,
+    ],
   );
 
   return (

@@ -45,7 +45,7 @@ function MoviesPage() {
     {
       variables: {
         Filter: {
-          Actions: [ChangeAction.Created, ChangeAction.Updated, ChangeAction.Deleted],
+          actions: [ChangeAction.CREATED, ChangeAction.UPDATED, ChangeAction.DELETED],
         },
       },
       onData: ({ data }) => {

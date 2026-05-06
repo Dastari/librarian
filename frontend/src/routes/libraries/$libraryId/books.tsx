@@ -1,81 +1,99 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { useState, useCallback, useRef } from 'react'
-import { useDisclosure } from '@heroui/modal'
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/modal'
-import { Button } from '@heroui/button'
-import { addToast } from '@heroui/toast'
-import { useLibraryContext } from '../$libraryId'
-import { LibraryAudiobooksTab, AddAudiobookModal } from '../../../components/library'
-import { useMutation, gql } from '../../../lib/graphql/client'
+import { createFileRoute } from "@tanstack/react-router";
+import { useState, useCallback, useRef } from "react";
+import { useDisclosure } from "@heroui/modal";
+import {
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+} from "@heroui/modal";
+import { Button } from "@heroui/button";
+import { addToast } from "@heroui/toast";
+import { useLibraryContext } from "../$libraryId";
+import {
+  LibraryAudiobooksTab,
+  AddAudiobookModal,
+} from "../../../components/library";
+import { useMutation, gql } from "../../../lib/graphql/client";
 
-export const Route = createFileRoute('/libraries/$libraryId/books')({
+export const Route = createFileRoute("/libraries/$libraryId/books")({
   component: AudiobooksPage,
-})
+});
 
 const DELETE_AUDIOBOOK = gql`
   mutation DeleteAudiobook($Id: String!) {
-    DeleteAudiobook(Id: $Id) {
-      Success
-      Error
+    DeleteAudiobook: deleteAudiobook(id: $Id) {
+      Success: success
+      Error: error
     }
   }
-`
+`;
 
 function AudiobooksPage() {
-  const { library, loading } = useLibraryContext()
-  const { isOpen, onOpen, onClose } = useDisclosure()
-  const refreshAudiobooksRef = useRef<(() => void) | null>(null)
+  const { library, loading } = useLibraryContext();
+  const { isOpen, onOpen, onClose } = useDisclosure();
+  const refreshAudiobooksRef = useRef<(() => void) | null>(null);
 
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
 
   const [deleteAudiobook, { loading: isDeleting }] = useMutation<{
-    DeleteAudiobook: { Success: boolean; Error?: string }
-  }>(DELETE_AUDIOBOOK)
+    DeleteAudiobook: { Success: boolean; Error?: string };
+  }>(DELETE_AUDIOBOOK);
 
   const handleAudiobooksRefreshReady = useCallback((refreshFn: () => void) => {
-    refreshAudiobooksRef.current = refreshFn
-  }, [])
+    refreshAudiobooksRef.current = refreshFn;
+  }, []);
 
   const handleAudiobookAdded = useCallback(() => {
-    onClose()
-    refreshAudiobooksRef.current?.()
-  }, [onClose])
+    onClose();
+    refreshAudiobooksRef.current?.();
+  }, [onClose]);
 
-  const handleDeleteAudiobook = useCallback((audiobookId: string, title: string) => {
-    setDeleteTarget({ id: audiobookId, title })
-  }, [])
+  const handleDeleteAudiobook = useCallback(
+    (audiobookId: string, title: string) => {
+      setDeleteTarget({ id: audiobookId, title });
+    },
+    [],
+  );
 
   const confirmDelete = useCallback(async () => {
-    if (!deleteTarget) return
+    if (!deleteTarget) return;
 
     try {
-      const { data } = await deleteAudiobook({ variables: { Id: deleteTarget.id } })
+      const { data } = await deleteAudiobook({
+        variables: { Id: deleteTarget.id },
+      });
 
       if (data?.DeleteAudiobook.Success) {
         addToast({
-          title: 'Audiobook deleted',
+          title: "Audiobook deleted",
           description: `${deleteTarget.title} has been removed from the library.`,
-          color: 'success',
-        })
-        refreshAudiobooksRef.current?.()
+          color: "success",
+        });
+        refreshAudiobooksRef.current?.();
       } else {
         addToast({
-          title: 'Delete failed',
-          description: data?.DeleteAudiobook.Error || 'Failed to delete audiobook',
-          color: 'danger',
-        })
+          title: "Delete failed",
+          description:
+            data?.DeleteAudiobook.Error || "Failed to delete audiobook",
+          color: "danger",
+        });
       }
     } catch (err) {
-      console.error('Failed to delete audiobook:', err)
+      console.error("Failed to delete audiobook:", err);
       addToast({
-        title: 'Delete failed',
-        description: 'An error occurred while deleting the audiobook.',
-        color: 'danger',
-      })
+        title: "Delete failed",
+        description: "An error occurred while deleting the audiobook.",
+        color: "danger",
+      });
     } finally {
-      setDeleteTarget(null)
+      setDeleteTarget(null);
     }
-  }, [deleteAudiobook, deleteTarget])
+  }, [deleteAudiobook, deleteTarget]);
 
   return (
     <>
@@ -98,10 +116,12 @@ function AudiobooksPage() {
           <ModalHeader>Delete Audiobook</ModalHeader>
           <ModalBody>
             <p>
-              Are you sure you want to delete <strong>{deleteTarget?.title}</strong>?
+              Are you sure you want to delete{" "}
+              <strong>{deleteTarget?.title}</strong>?
             </p>
             <p className="text-sm text-default-500 mt-2">
-              This will remove the audiobook from the library. Associated files will not be deleted.
+              This will remove the audiobook from the library. Associated files
+              will not be deleted.
             </p>
           </ModalBody>
           <ModalFooter>
@@ -119,5 +139,5 @@ function AudiobooksPage() {
         </ModalContent>
       </Modal>
     </>
-  )
+  );
 }

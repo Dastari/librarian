@@ -96,8 +96,8 @@ function UsenetSettingsPage() {
         query: SettingsUsenetServersDocument,
         fetchPolicy: "network-only",
         variables: {
-          OrderBy: [{ Priority: "Asc" }],
-          Page: { Limit: 200, Offset: 0 },
+          OrderBy: [{ Priority: "ASC" }],
+          Page: { limit: 200, offset: 0 },
         },
       });
 

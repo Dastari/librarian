@@ -1,15 +1,11 @@
-# Sources: CRUD, search, test, definitions, and priorities
-# Used by codegen for TypedDocumentNode and types
-
-# Fetch all sources
 query Sources(
   $Where: SourceWhereInput
   $OrderBy: [SourceOrderByInput!]
   $Page: PageInput
 ) {
-  Sources(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
-    Edges {
-      Node {
+  Sources: sources(where: $Where, orderBy: $OrderBy, page: $Page) {
+    Edges: edges {
+      Node: node {
         Id
         Name
         SourceType
@@ -32,15 +28,14 @@ query Sources(
         UpdatedAt
       }
     }
-    PageInfo {
-      TotalCount
-      HasNextPage
-      HasPreviousPage
+    PageInfo: pageInfo {
+      TotalCount: totalCount
+      HasNextPage: hasNextPage
+      HasPreviousPage: hasPreviousPage
     }
   }
 }
 
-# Get available source definitions (e.g., IPTorrents)
 query AvailableSourceDefinitions {
   AvailableSourceDefinitions {
     Id
@@ -54,7 +49,6 @@ query AvailableSourceDefinitions {
   }
 }
 
-# Get setting definitions for a specific source definition
 query SourceSettingDefinitions($DefinitionId: String!) {
   SourceSettingDefinitions(DefinitionId: $DefinitionId) {
     Key
@@ -68,7 +62,6 @@ query SourceSettingDefinitions($DefinitionId: String!) {
   }
 }
 
-# Search across sources
 query SearchSources($Input: SearchSourcesInput!) {
   SearchSources(Input: $Input) {
     Sources {
@@ -106,31 +99,27 @@ query SearchSources($Input: SearchSourcesInput!) {
   }
 }
 
-# Create a new source
 mutation CreateSource($Input: CreateSourceInput!) {
-  CreateSource(Input: $Input) {
-    Success
-    Error
+  CreateSource: createSource(input: $Input) {
+    Success: success
+    Error: error
   }
 }
 
-# Update an existing source
 mutation UpdateSource($Id: String!, $Input: UpdateSourceInput!) {
-  UpdateSource(Id: $Id, Input: $Input) {
-    Success
-    Error
+  UpdateSource: updateSource(id: $Id, input: $Input) {
+    Success: success
+    Error: error
   }
 }
 
-# Delete a source
 mutation DeleteSource($Id: String!) {
-  DeleteSource(Id: $Id) {
-    Success
-    Error
+  DeleteSource: deleteSource(id: $Id) {
+    Success: success
+    Error: error
   }
 }
 
-# Test a source connection
 mutation TestSource($Id: String!) {
   TestSource(Id: $Id) {
     Success
@@ -140,7 +129,6 @@ mutation TestSource($Id: String!) {
   }
 }
 
-# Update source priorities (reorder)
 mutation UpdateSourcePriorities($Input: UpdateSourcePrioritiesInput!) {
   UpdateSourcePriorities(Input: $Input) {
     Success

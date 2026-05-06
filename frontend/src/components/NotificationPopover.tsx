@@ -17,18 +17,14 @@ import {
   NotificationChangedDocument,
   UpdateNotificationDocument,
   DeleteNotificationDocument,
-  SortDirection,
+  OrderDirection,
   type NotificationsQuery,
   type UpdateNotificationMutation,
   type UpdateNotificationMutationVariables,
   type DeleteNotificationMutation,
   type DeleteNotificationMutationVariables,
 } from "../lib/graphql/generated/graphql";
-import {
-  useMutation,
-  useQuery,
-  useSubscription,
-} from "../lib/graphql/client";
+import { useMutation, useQuery, useSubscription } from "../lib/graphql/client";
 import { NotificationDetailModal } from "./NotificationDetailModal";
 
 interface NotificationPopoverProps {
@@ -94,11 +90,11 @@ function nodeToNotification(node: NotificationNode): NotificationItem {
   };
 }
 
-const UNREAD_WHERE = { ReadAt: { IsNull: true } } as const;
-const RECENT_ORDER: Array<{ CreatedAt: "Asc" | "Desc" }> = [
-  { CreatedAt: SortDirection.Desc },
+const UNREAD_WHERE = { ReadAt: { isNull: true } } as const;
+const RECENT_ORDER: Array<{ CreatedAt: "ASC" | "DESC" }> = [
+  { CreatedAt: OrderDirection.DESC },
 ];
-const RECENT_PAGE = { Limit: 10, Offset: 0 } as const;
+const RECENT_PAGE = { limit: 10, offset: 0 } as const;
 
 const getNotificationIcon = (type: NotificationType) => {
   switch (type) {
@@ -172,7 +168,9 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
   const isLoading = notificationsQuery.loading;
 
   const handleMarkRead = async (id: string) => {
-    await updateNotification({ variables: { Id: id, Input: { ReadAt: new Date().toISOString() } } });
+    await updateNotification({
+      variables: { Id: id, Input: { ReadAt: new Date().toISOString() } },
+    });
     void notificationsQuery.refetch();
   };
 
@@ -228,13 +226,8 @@ export function NotificationPopover({ trigger }: NotificationPopoverProps) {
 
   return (
     <>
-      <Popover
-        placement="bottom-end"
-        offset={10}
-      >
-        <PopoverTrigger>
-          {trigger}
-        </PopoverTrigger>
+      <Popover placement="bottom-end" offset={10}>
+        <PopoverTrigger>{trigger}</PopoverTrigger>
         <PopoverContent className="w-80 p-0">
           <div className="flex flex-col">
             <div className="flex items-center justify-between px-4 py-3 border-b border-divider">

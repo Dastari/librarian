@@ -73,7 +73,7 @@ export const TORRENT_BY_INFO_HASH_QUERY = `
           UploadedBytes
           SavePath
           AddedAt
-          Files(Page: { Limit: 500 }) {
+          Files(Page: { limit: 500 }) {
             Edges { Node { FileIndex FilePath FileSize DownloadedBytes Progress } }
           }
         }
@@ -246,10 +246,6 @@ export const LLM_PARSER_SETTINGS_QUERY = `
   }
 `;
 
-
-
-
-
 // ============================================================================
 // GraphQL Libraries Query with Counts
 // ============================================================================
@@ -275,7 +271,7 @@ export const LIBRARIES_WITH_COUNTS_QUERY = `
           UpdatedAt
           Shows(
             OrderBy: { UpdatedAt: Desc }
-            Page: { Limit: 8, Offset: 0 }
+            Page: { limit: 8, offset: 0 }
           ) {
             PageInfo {
               TotalCount
@@ -289,7 +285,7 @@ export const LIBRARIES_WITH_COUNTS_QUERY = `
           }
           Movies(
             OrderBy: { UpdatedAt: Desc }
-            Page: { Limit: 8, Offset: 0 }
+            Page: { limit: 8, offset: 0 }
           ) {
             PageInfo {
               TotalCount
@@ -303,7 +299,7 @@ export const LIBRARIES_WITH_COUNTS_QUERY = `
           }
           Albums(
             OrderBy: { UpdatedAt: Desc }
-            Page: { Limit: 8, Offset: 0 }
+            Page: { limit: 8, offset: 0 }
           ) {
             PageInfo {
               TotalCount
@@ -317,7 +313,7 @@ export const LIBRARIES_WITH_COUNTS_QUERY = `
           }
           Audiobooks(
             OrderBy: { UpdatedAt: Desc }
-            Page: { Limit: 8, Offset: 0 }
+            Page: { limit: 8, offset: 0 }
           ) {
             PageInfo {
               TotalCount
@@ -412,7 +408,7 @@ export const ALL_TV_SHOWS_QUERY = `
 
 export const TV_SHOWS_QUERY = `
   query TvShows($libraryId: String!) {
-    Shows(Where: { LibraryId: { Eq: $libraryId } }) {
+    Shows(Where: { LibraryId: { eq: $libraryId } }) {
       Edges {
         Node {
           Id
@@ -446,9 +442,9 @@ export const TV_SHOWS_CONNECTION_QUERY = `
     $Page: PageInput
     $OrderBy: [ShowOrderByInput]
   ) {
-    Shows(Where: $Where, Page: $Page, OrderBy: $OrderBy) {
-      Edges {
-        Node {
+    Shows: shows(where: $Where, page: $Page, orderBy: $OrderBy) {
+      Edges: edges {
+        Node: node {
           Id
           LibraryId
           Name
@@ -458,14 +454,14 @@ export const TV_SHOWS_CONNECTION_QUERY = `
           BackdropUrl
           AutoDownload
         }
-        Cursor
+        Cursor: cursor
       }
-      PageInfo {
-        HasNextPage
-        HasPreviousPage
-        StartCursor
-        EndCursor
-        TotalCount
+      PageInfo: pageInfo {
+        HasNextPage: hasNextPage
+        HasPreviousPage: hasPreviousPage
+        StartCursor: startCursor
+        EndCursor: endCursor
+        TotalCount: totalCount
       }
     }
   }
@@ -495,7 +491,7 @@ export const TV_SHOW_QUERY = `
       CreatedAt
       UpdatedAt
       UserId
-      Episodes(Page: { Limit: 2000 }) {
+      Episodes(Page: { limit: 2000 }) {
         Edges {
           Node {
             Id
@@ -577,7 +573,7 @@ export const ALL_MOVIES_QUERY = `
 
 export const MOVIES_QUERY = `
   query Movies($libraryId: String!) {
-    Movies(Where: { LibraryId: { Eq: $libraryId } }) {
+    Movies(Where: { LibraryId: { eq: $libraryId } }) {
       Edges {
         Node {
           Id
@@ -619,9 +615,9 @@ export const MOVIES_CONNECTION_QUERY = `
     $Page: PageInput
     $OrderBy: [MovieOrderByInput]
   ) {
-    Movies(Where: $Where, Page: $Page, OrderBy: $OrderBy) {
-      Edges {
-        Node {
+    Movies: movies(where: $Where, page: $Page, orderBy: $OrderBy) {
+      Edges: edges {
+        Node: node {
           Id
           LibraryId
           Title
@@ -630,27 +626,25 @@ export const MOVIES_CONNECTION_QUERY = `
           Year
           TmdbId
           ImdbId
-          Status
           Overview
           Runtime
           Genres
           Director
-          PosterUrl
-          BackdropUrl
+          CollectionPosterUrl
           Monitored
           MediaFileId
           Wanted
           TmdbRating
           ReleaseDate
         }
-        Cursor
+        Cursor: cursor
       }
-      PageInfo {
-        HasNextPage
-        HasPreviousPage
-        StartCursor
-        EndCursor
-        TotalCount
+      PageInfo: pageInfo {
+        HasNextPage: hasNextPage
+        HasPreviousPage: hasPreviousPage
+        StartCursor: startCursor
+        EndCursor: endCursor
+        TotalCount: totalCount
       }
     }
   }
@@ -713,7 +707,7 @@ export const SEARCH_MOVIES_QUERY = `
 
 export const ALBUMS_QUERY = `
   query Albums($libraryId: String!) {
-    Albums(Where: { LibraryId: { Eq: $libraryId } }, Page: { Limit: 500, Offset: 0 }) {
+    Albums(Where: { LibraryId: { eq: $libraryId } }, Page: { limit: 500, offset: 0 }) {
       Edges {
         Node {
           Id
@@ -843,7 +837,7 @@ export const ALBUM_WITH_TRACKS_QUERY = `
       HasFiles
       SizeBytes
       Path
-      Tracks(Page: { Limit: 5000, Offset: 0 }) {
+      Tracks(Page: { limit: 5000, offset: 0 }) {
         Edges {
           Node {
             Id
@@ -939,7 +933,7 @@ export const TRACKS_CONNECTION_QUERY = `
 
 export const ARTISTS_QUERY = `
   query Artists($libraryId: String!) {
-    Artists(Where: { LibraryId: { Eq: $libraryId } }, Page: { Limit: 500, Offset: 0 }) {
+    Artists(Where: { LibraryId: { eq: $libraryId } }, Page: { limit: 500, offset: 0 }) {
       Edges {
         Node {
           Id
@@ -988,7 +982,7 @@ export const SEARCH_ALBUMS_QUERY = `
 
 export const AUDIOBOOKS_QUERY = `
   query Audiobooks($libraryId: String!) {
-    Audiobooks(Where: { LibraryId: { Eq: $libraryId } }, Page: { Limit: 500, Offset: 0 }) {
+    Audiobooks(Where: { LibraryId: { eq: $libraryId } }, Page: { limit: 500, offset: 0 }) {
       Edges {
         Node {
           Id
@@ -1063,7 +1057,7 @@ export const AUDIOBOOK_WITH_CHAPTERS_QUERY = `
       HasFiles
       SizeBytes
       Path
-      Chapters(Page: { Limit: 5000, Offset: 0 }) {
+      Chapters(Page: { limit: 5000, offset: 0 }) {
         Edges {
           Node {
             Id
@@ -1085,7 +1079,7 @@ export const AUDIOBOOK_WITH_CHAPTERS_QUERY = `
 
 export const AUDIOBOOK_CHAPTERS_QUERY = `
   query AudiobookChapters($audiobookId: String!) {
-    Chapters(Where: { AudiobookId: { Eq: $audiobookId } }, Page: { Limit: 5000, Offset: 0 }) {
+    Chapters(Where: { AudiobookId: { eq: $audiobookId } }, Page: { limit: 5000, offset: 0 }) {
       Edges {
         Node {
           Id
@@ -1106,7 +1100,7 @@ export const AUDIOBOOK_CHAPTERS_QUERY = `
 
 export const AUDIOBOOK_AUTHORS_QUERY = `
   query AudiobookAuthors($libraryId: String!) {
-    AudiobookAuthors(Where: { LibraryId: { Eq: $libraryId } }, Page: { Limit: 500, Offset: 0 }) {
+    AudiobookAuthors(Where: { LibraryId: { eq: $libraryId } }, Page: { limit: 500, offset: 0 }) {
       Edges {
         Node {
           Id
@@ -1195,7 +1189,7 @@ export const AUDIOBOOK_AUTHORS_CONNECTION_QUERY = `
 
 export const EPISODES_QUERY = `
   query Episodes($tvShowId: String!) {
-    Episodes(Where: { ShowId: { Eq: $tvShowId } }, Page: { Limit: 2000, Offset: 0 }) {
+    Episodes(Where: { ShowId: { eq: $tvShowId } }, Page: { limit: 2000, offset: 0 }) {
       Edges {
         Node {
           Id
@@ -1225,10 +1219,10 @@ export const WANTED_EPISODES_QUERY = `
   query WantedEpisodes($libraryId: String) {
     Episodes(
       Where: {
-        LibraryId: { Eq: $libraryId }
-        Wanted: { Eq: true }
+        LibraryId: { eq: $libraryId }
+        Wanted: { eq: true }
       }
-      Page: { Limit: 2000, Offset: 0 }
+      Page: { limit: 2000, offset: 0 }
     ) {
       Edges {
         Node {

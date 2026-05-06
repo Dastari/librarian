@@ -3,9 +3,12 @@ query ActiveDownloadCount {
 }
 
 query TorrentModalMediaFilesByPaths($Paths: [String!]!) {
-  MediaFiles(Where: { Path: { In: $Paths } }, Page: { Limit: 1000, Offset: 0 }) {
-    Edges {
-      Node {
+  MediaFiles: mediaFiles(
+    where: { Path: { inList: $Paths } }
+    page: { limit: 1000, offset: 0 }
+  ) {
+    Edges: edges {
+      Node: node {
         Id
         Path
         Metadata
@@ -15,9 +18,9 @@ query TorrentModalMediaFilesByPaths($Paths: [String!]!) {
 }
 
 query DownloadsTorrents($Where: TorrentWhereInput, $Page: PageInput) {
-  Torrents(Where: $Where, Page: $Page) {
-    Edges {
-      Node {
+  Torrents: torrents(where: $Where, page: $Page) {
+    Edges: edges {
+      Node: node {
         Id
         InfoHash
         Name
@@ -30,17 +33,17 @@ query DownloadsTorrents($Where: TorrentWhereInput, $Page: PageInput) {
         AddedAt
       }
     }
-    PageInfo {
-      TotalCount
-      HasNextPage
+    PageInfo: pageInfo {
+      TotalCount: totalCount
+      HasNextPage: hasNextPage
     }
   }
 }
 
 query TorrentByInfoHashWithFiles($Where: TorrentWhereInput, $Page: PageInput) {
-  Torrents(Where: $Where, Page: $Page) {
-    Edges {
-      Node {
+  Torrents: torrents(where: $Where, page: $Page) {
+    Edges: edges {
+      Node: node {
         Id
         InfoHash
         Name
@@ -51,9 +54,9 @@ query TorrentByInfoHashWithFiles($Where: TorrentWhereInput, $Page: PageInput) {
         UploadedBytes
         SavePath
         AddedAt
-        Files(Page: { Limit: 500 }) {
-          Edges {
-            Node {
+        Files: files(page: { limit: 500 }) {
+          Edges: edges {
+            Node: node {
               FileIndex
               FilePath
               FileSize
@@ -71,9 +74,9 @@ query PendingFileMatchesBySource(
   $Where: PendingFileMatchWhereInput
   $Page: PageInput
 ) {
-  PendingFileMatches(Where: $Where, Page: $Page) {
-    Edges {
-      Node {
+  PendingFileMatches: pendingFileMatches(where: $Where, page: $Page) {
+    Edges: edges {
+      Node: node {
         Id
         SourceType
         SourceId
@@ -145,10 +148,10 @@ mutation RematchSource(
 }
 
 mutation LinkTorrentToLibrary($Id: String!, $Input: UpdateTorrentInput!) {
-  UpdateTorrent(Id: $Id, Input: $Input) {
-    Success
-    Error
-    Torrent {
+  UpdateTorrent: updateTorrent(id: $Id, input: $Input) {
+    Success: success
+    Error: error
+    Torrent: torrent {
       Id
       LibraryId
     }
@@ -162,10 +165,10 @@ subscription TorrentChanged {
 }
 
 mutation CreateUnmatchedMediaFileFromTorrent($Input: CreateMediaFileInput!) {
-  CreateMediaFile(Input: $Input) {
-    Success
-    Error
-    MediaFile {
+  CreateMediaFile: createMediaFile(input: $Input) {
+    Success: success
+    Error: error
+    MediaFile: mediaFile {
       Id
       Path
       Metadata

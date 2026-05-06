@@ -35,7 +35,7 @@ import {
   AppLogChangedDocument,
   DeleteAppLogsDocument,
   ChangeAction,
-  SortDirection,
+  OrderDirection,
   type AppLogWhereInput,
   type DeleteAppLogsMutation,
   type DeleteAppLogsMutationVariables,
@@ -202,7 +202,7 @@ function LogsSettingsPage() {
       "timestamp",
     ),
   );
-  const [sortDirection, setSortDirection] = useQueryState(
+  const [sortDirection, setOrderDirection] = useQueryState(
     "order",
     parseAsStringLiteral(["asc", "desc"] as const).withDefault("desc"),
   );
@@ -240,36 +240,36 @@ function LogsSettingsPage() {
 
       const currentSource = selectedSourceRef.current;
       const where: AppLogWhereInput | undefined = currentSource
-        ? { Target: { Eq: currentSource } }
+        ? { Target: { eq: currentSource } }
         : undefined;
 
       const currentSortColumn = sortColumnRef.current;
-      const currentSortDirection = sortDirectionRef.current;
+      const currentOrderDirection = sortDirectionRef.current;
       const orderBy =
         currentSortColumn === "timestamp"
           ? [
               {
                 Timestamp:
-                  currentSortDirection === "desc"
-                    ? SortDirection.Desc
-                    : SortDirection.Asc,
+                  currentOrderDirection === "desc"
+                    ? OrderDirection.DESC
+                    : OrderDirection.ASC,
               },
             ]
           : currentSortColumn === "level"
             ? [
                 {
                   Level:
-                    currentSortDirection === "desc"
-                      ? SortDirection.Desc
-                      : SortDirection.Asc,
+                    currentOrderDirection === "desc"
+                      ? OrderDirection.DESC
+                      : OrderDirection.ASC,
                 },
               ]
             : [
                 {
                   Target:
-                    currentSortDirection === "desc"
-                      ? SortDirection.Desc
-                      : SortDirection.Asc,
+                    currentOrderDirection === "desc"
+                      ? OrderDirection.DESC
+                      : OrderDirection.ASC,
                 },
               ];
 
@@ -278,7 +278,7 @@ function LogsSettingsPage() {
         variables: {
           Where: where,
           OrderBy: orderBy,
-          Page: { Limit: pageSize, Offset: offsetRef.current },
+          Page: { limit: pageSize, offset: offsetRef.current },
         },
         fetchPolicy: "network-only",
         errorPolicy: "all",
@@ -360,7 +360,7 @@ function LogsSettingsPage() {
     ).subscribe({
       next: (result) => {
         const event = result.data?.AppLogChanged;
-        if (!event || event.Action !== ChangeAction.Created || !event.AppLog)
+        if (!event || event.Action !== ChangeAction.CREATED || !event.AppLog)
           return;
 
         const node = event.AppLog;
@@ -400,7 +400,7 @@ function LogsSettingsPage() {
         try {
           const result = await deleteAppLogs({
             variables: {
-              Where: { Timestamp: { Gte: "1970-01-01T00:00:00.000Z" } },
+              Where: { Timestamp: { gte: "1970-01-01T00:00:00.000Z" } },
             },
           });
           const payload = result.data?.DeleteAppLogs;
@@ -445,7 +445,7 @@ function LogsSettingsPage() {
     try {
       const result = await deleteAppLogs({
         variables: {
-          Where: { Timestamp: { Lt: isoBefore } },
+          Where: { Timestamp: { lt: isoBefore } },
         },
       });
       const payload = result.data?.DeleteAppLogs;
@@ -587,10 +587,10 @@ function LogsSettingsPage() {
     (column: string | null, direction: "asc" | "desc") => {
       if (column && ["timestamp", "level", "target"].includes(column)) {
         setSortColumn(column as "timestamp" | "level" | "target");
-        setSortDirection(direction);
+        setOrderDirection(direction);
       }
     },
-    [setSortColumn, setSortDirection],
+    [setSortColumn, setOrderDirection],
   );
 
   // Level filter options

@@ -1,13 +1,11 @@
-# Dashboard: Shows and ScheduleCaches using Where/Page API
-
 query DashboardShows(
   $Where: ShowWhereInput
   $Page: PageInput
   $OrderBy: [ShowOrderByInput!]
 ) {
-  Shows(Where: $Where, Page: $Page, OrderBy: $OrderBy) {
-    Edges {
-      Node {
+  Shows: shows(where: $Where, page: $Page, orderBy: $OrderBy) {
+    Edges: edges {
+      Node: node {
         Id
         LibraryId
         Name
@@ -26,10 +24,10 @@ query DashboardShows(
         Genres
         CreatedAt
       }
-      Cursor
+      Cursor: cursor
     }
-    PageInfo {
-      TotalCount
+    PageInfo: pageInfo {
+      TotalCount: totalCount
     }
   }
 }
@@ -39,9 +37,13 @@ query DashboardScheduleCaches(
   $OrderBy: [ScheduleCacheOrderByInput!]
   $Page: PageInput
 ) {
-  ScheduleCaches(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
-    Edges {
-      Node {
+  ScheduleCaches: scheduleCaches(
+    where: $Where
+    orderBy: $OrderBy
+    page: $Page
+  ) {
+    Edges: edges {
+      Node: node {
         Id
         TvmazeEpisodeId
         EpisodeName
@@ -61,10 +63,10 @@ query DashboardScheduleCaches(
         ShowGenres
         CountryCode
       }
-      Cursor
+      Cursor: cursor
     }
-    PageInfo {
-      TotalCount
+    PageInfo: pageInfo {
+      TotalCount: totalCount
     }
   }
 }

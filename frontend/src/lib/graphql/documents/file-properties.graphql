@@ -1,5 +1,5 @@
 query MediaFileProperties($Id: String!) {
-  MediaFile(Id: $Id) {
+  MediaFile: mediaFile(id: $Id) {
     Id
     LibraryId
     Path
@@ -23,13 +23,13 @@ query MediaFileProperties($Id: String!) {
     ContentType
     AddedAt
   }
-  VideoStreams(
-    Where: { MediaFileId: { Eq: $Id } }
-    OrderBy: [{ StreamIndex: Asc }]
-    Page: { Limit: 200, Offset: 0 }
+  VideoStreams: videoStreams(
+    where: { MediaFileId: { eq: $Id } }
+    orderBy: [{ StreamIndex: ASC }]
+    page: { limit: 200, offset: 0 }
   ) {
-    Edges {
-      Node {
+    Edges: edges {
+      Node: node {
         Id
         StreamIndex
         Codec
@@ -48,13 +48,13 @@ query MediaFileProperties($Id: String!) {
       }
     }
   }
-  AudioStreams(
-    Where: { MediaFileId: { Eq: $Id } }
-    OrderBy: [{ StreamIndex: Asc }]
-    Page: { Limit: 200, Offset: 0 }
+  AudioStreams: audioStreams(
+    where: { MediaFileId: { eq: $Id } }
+    orderBy: [{ StreamIndex: ASC }]
+    page: { limit: 200, offset: 0 }
   ) {
-    Edges {
-      Node {
+    Edges: edges {
+      Node: node {
         Id
         StreamIndex
         Codec
@@ -71,13 +71,13 @@ query MediaFileProperties($Id: String!) {
       }
     }
   }
-  Subtitles(
-    Where: { MediaFileId: { Eq: $Id } }
-    OrderBy: [{ CreatedAt: Asc }]
-    Page: { Limit: 200, Offset: 0 }
+  Subtitles: subtitles(
+    where: { MediaFileId: { eq: $Id } }
+    orderBy: [{ CreatedAt: ASC }]
+    page: { limit: 200, offset: 0 }
   ) {
-    Edges {
-      Node {
+    Edges: edges {
+      Node: node {
         Id
         StreamIndex
         SourceType
@@ -92,13 +92,13 @@ query MediaFileProperties($Id: String!) {
       }
     }
   }
-  MediaChapters(
-    Where: { MediaFileId: { Eq: $Id } }
-    OrderBy: [{ ChapterIndex: Asc }]
-    Page: { Limit: 500, Offset: 0 }
+  MediaChapters: mediaChapters(
+    where: { MediaFileId: { eq: $Id } }
+    orderBy: [{ ChapterIndex: ASC }]
+    page: { limit: 500, offset: 0 }
   ) {
-    Edges {
-      Node {
+    Edges: edges {
+      Node: node {
         Id
         ChapterIndex
         StartSecs
@@ -110,9 +110,12 @@ query MediaFileProperties($Id: String!) {
 }
 
 query MediaFileByPathLookup($Path: String!) {
-  MediaFiles(Where: { Path: { Eq: $Path } }, Page: { Limit: 1, Offset: 0 }) {
-    Edges {
-      Node {
+  MediaFiles: mediaFiles(
+    where: { Path: { eq: $Path } }
+    page: { limit: 1, offset: 0 }
+  ) {
+    Edges: edges {
+      Node: node {
         Id
         Path
       }
@@ -121,7 +124,7 @@ query MediaFileByPathLookup($Path: String!) {
 }
 
 query MediaFileMetadata($Id: String!) {
-  MediaFile(Id: $Id) {
+  MediaFile: mediaFile(id: $Id) {
     Id
     Metadata
   }

@@ -340,10 +340,10 @@ function AudiobookDetailPage() {
     (
       mediaFileId: string | null | undefined,
       wanted: boolean,
-      backendStatus: string,
+      backendStatus?: string | null,
     ): AudiobookChapter["status"] => {
       if (mediaFileId) return "downloaded";
-      const normalized = backendStatus.toLowerCase();
+      const normalized = backendStatus?.toLowerCase() ?? "";
       if (normalized === "downloading") return "downloading";
       return wanted ? "wanted" : "missing";
     },
@@ -363,11 +363,7 @@ function AudiobookDetailPage() {
           edge.Node.EndTimeSecs != null ? Math.floor(edge.Node.EndTimeSecs) : 0,
         durationSecs: edge.Node.DurationSecs ?? null,
         mediaFileId: edge.Node.MediaFileId ?? null,
-        status: toChapterStatus(
-          edge.Node.MediaFileId,
-          edge.Node.Wanted,
-          edge.Node.Status,
-        ),
+        status: toChapterStatus(edge.Node.MediaFileId, edge.Node.Wanted),
         wanted: edge.Node.Wanted,
         downloadProgress: null,
       }),
@@ -534,7 +530,10 @@ function AudiobookDetailPage() {
 
       try {
         const { data } = await setChaptersWanted({
-          variables: { AudiobookId: audiobookData.audiobook.id, Wanted: wanted },
+          variables: {
+            AudiobookId: audiobookData.audiobook.id,
+            Wanted: wanted,
+          },
         });
         if (!data?.UpdateChapters?.success) {
           addToast({
@@ -569,7 +568,10 @@ function AudiobookDetailPage() {
   );
 
   const playableChapters = useMemo(
-    () => (audiobookData ? audiobookData.chapters.filter((ch) => !!ch.mediaFileId) : []),
+    () =>
+      audiobookData
+        ? audiobookData.chapters.filter((ch) => !!ch.mediaFileId)
+        : [],
     [audiobookData],
   );
   const handleOpenProperties = useCallback(() => {
@@ -702,9 +704,9 @@ function AudiobookDetailPage() {
               <DropdownMenu
                 aria-label="Audiobook actions menu"
                 onAction={(key) => {
-                if (key === "search") {
-                  handleManualHunt();
-                } else if (key === "refresh") {
+                  if (key === "search") {
+                    handleManualHunt();
+                  } else if (key === "refresh") {
                     void fetchAudiobook();
                   } else if (key === "wanted-on") {
                     void handleSetWantedForAllChapters(true);
@@ -712,10 +714,10 @@ function AudiobookDetailPage() {
                     void handleSetWantedForAllChapters(false);
                   } else if (key === "properties") {
                     handleOpenProperties();
-                } else if (key === "delete") {
-                  onDeleteOpen();
-                }
-              }}
+                  } else if (key === "delete") {
+                    onDeleteOpen();
+                  }
+                }}
               >
                 <DropdownItem
                   key="search"
@@ -742,8 +744,7 @@ function AudiobookDetailPage() {
                   key="wanted-off"
                   startContent={<IconX size={16} />}
                   isDisabled={
-                    chapters.length === 0 ||
-                    chapters.every((ch) => !ch.wanted)
+                    chapters.length === 0 || chapters.every((ch) => !ch.wanted)
                   }
                 >
                   Remove as Wanted

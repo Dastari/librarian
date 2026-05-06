@@ -1,14 +1,12 @@
-# TV Shows: search and add
-
 query SearchTvShows($Query: String!) {
   SearchTvShows(Query: $Query) {
     Provider
     ProviderId
     Name
     Year
-    Status
     Network
     Overview
+    Status
     PosterUrl
     TvdbId
     ImdbId
@@ -22,24 +20,23 @@ mutation AddTvShow($LibraryId: String!, $Input: AddTvShowInput!) {
     Show {
       Id
       Name
-      PosterUrl
     }
     Error
   }
 }
 
 subscription ShowChanged($Filter: SubscriptionFilterInput) {
-  ShowChanged(Filter: $Filter) {
-    Action
-    Id
-    Show {
+  ShowChanged: showChanged(filter: $Filter) {
+    Action: action
+    Id: id
+    Show: show {
       LibraryId
     }
   }
 }
 
 query ShowDetailRoute($Id: String!) {
-  Show(Id: $Id) {
+  Show: show(id: $Id) {
     Id
     LibraryId
     Name
@@ -51,19 +48,19 @@ query ShowDetailRoute($Id: String!) {
     ImdbId
     Overview
     Network
-    Runtime
-    Genres
     PosterUrl
     BackdropUrl
+    Runtime
+    Genres
     AutoDownload
     AutoDownloadMode
     Path
     CreatedAt
     UpdatedAt
     UserId
-    Episodes(Page: { Limit: 2000 }) {
-      Edges {
-        Node {
+    Episodes: episodes(page: { limit: 2000 }) {
+      Edges: edges {
+        Node: node {
           Id
           ShowId
           Season
@@ -78,8 +75,7 @@ query ShowDetailRoute($Id: String!) {
           TvdbId
           MediaFileId
           Wanted
-          Status
-          MediaFile {
+          MediaFile: mediaFile {
             Id
             Size
             Duration
@@ -105,15 +101,16 @@ mutation RefreshShowRoute($Id: String!) {
       Id
       Name
       Overview
-      PosterUrl
-      BackdropUrl
     }
     Error
   }
 }
 
 mutation ShowDetailSetEpisodeWanted($ShowId: String!, $Wanted: Boolean!) {
-  UpdateEpisodes(Where: { ShowId: { Eq: $ShowId } }, Input: { Wanted: $Wanted }) {
+  UpdateEpisodes: updateEpisodes(
+    where: { ShowId: { eq: $ShowId } }
+    input: { Wanted: $Wanted }
+  ) {
     success
     error
     affectedCount

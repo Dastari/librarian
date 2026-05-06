@@ -2,9 +2,9 @@ query OrganizationNamingPatterns(
   $OrderBy: [NamingPatternOrderByInput!]
   $Page: PageInput
 ) {
-  NamingPatterns(OrderBy: $OrderBy, Page: $Page) {
-    Edges {
-      Node {
+  NamingPatterns: namingPatterns(orderBy: $OrderBy, page: $Page) {
+    Edges: edges {
+      Node: node {
         Id
         Name
         Pattern
@@ -18,10 +18,10 @@ query OrganizationNamingPatterns(
 }
 
 mutation OrganizationCreateNamingPattern($Input: CreateNamingPatternInput!) {
-  CreateNamingPattern(Input: $Input) {
-    Success
-    Error
-    NamingPattern {
+  CreateNamingPattern: createNamingPattern(input: $Input) {
+    Success: success
+    Error: error
+    NamingPattern: namingPattern {
       Id
       Name
       Pattern
@@ -37,10 +37,10 @@ mutation OrganizationUpdateNamingPattern(
   $Id: String!
   $Input: UpdateNamingPatternInput!
 ) {
-  UpdateNamingPattern(Id: $Id, Input: $Input) {
-    Success
-    Error
-    NamingPattern {
+  UpdateNamingPattern: updateNamingPattern(id: $Id, input: $Input) {
+    Success: success
+    Error: error
+    NamingPattern: namingPattern {
       Id
       Name
       Pattern
@@ -53,8 +53,8 @@ mutation OrganizationUpdateNamingPattern(
 }
 
 mutation OrganizationDeleteNamingPattern($Id: String!) {
-  DeleteNamingPattern(Id: $Id) {
-    Success
-    Error
+  DeleteNamingPattern: deleteNamingPattern(id: $Id) {
+    Success: success
+    Error: error
   }
 }

@@ -1,13 +1,13 @@
 query ManualMatchShowsByLibrary($LibraryId: String!) {
-  Shows(Where: { LibraryId: { Eq: $LibraryId } }) {
-    Edges {
-      Node {
+  Shows: shows(where: { LibraryId: { eq: $LibraryId } }) {
+    Edges: edges {
+      Node: node {
         Id
         Name
         Year
-        Episodes {
-          Edges {
-            Node {
+        Episodes: episodes {
+          Edges: edges {
+            Node: node {
               Id
               Season
               Episode
@@ -21,9 +21,9 @@ query ManualMatchShowsByLibrary($LibraryId: String!) {
 }
 
 query ManualMatchMoviesByLibrary($LibraryId: String!) {
-  Movies(Where: { LibraryId: { Eq: $LibraryId } }) {
-    Edges {
-      Node {
+  Movies: movies(where: { LibraryId: { eq: $LibraryId } }) {
+    Edges: edges {
+      Node: node {
         Id
         Title
         Year
@@ -33,24 +33,24 @@ query ManualMatchMoviesByLibrary($LibraryId: String!) {
 }
 
 query ManualMatchAlbumsByLibrary($LibraryId: String!) {
-  Albums(
-    Where: { LibraryId: { Eq: $LibraryId } }
-    Page: { Limit: 500, Offset: 0 }
+  Albums: albums(
+    where: { LibraryId: { eq: $LibraryId } }
+    page: { limit: 500, offset: 0 }
   ) {
-    Edges {
-      Node {
+    Edges: edges {
+      Node: node {
         Id
         Name
         Year
       }
     }
   }
-  Tracks(
-    Where: { LibraryId: { Eq: $LibraryId } }
-    Page: { Limit: 5000, Offset: 0 }
+  Tracks: tracks(
+    where: { LibraryId: { eq: $LibraryId } }
+    page: { limit: 5000, offset: 0 }
   ) {
-    Edges {
-      Node {
+    Edges: edges {
+      Node: node {
         Id
         AlbumId
         ArtistName
@@ -62,18 +62,18 @@ query ManualMatchAlbumsByLibrary($LibraryId: String!) {
 }
 
 query ManualMatchAudiobooksByLibrary($LibraryId: String!) {
-  Audiobooks(
-    Where: { LibraryId: { Eq: $LibraryId } }
-    Page: { Limit: 500, Offset: 0 }
+  Audiobooks: audiobooks(
+    where: { LibraryId: { eq: $LibraryId } }
+    page: { limit: 500, offset: 0 }
   ) {
-    Edges {
-      Node {
+    Edges: edges {
+      Node: node {
         Id
         Title
         AuthorName
-        Chapters {
-          Edges {
-            Node {
+        Chapters: chapters {
+          Edges: edges {
+            Node: node {
               Id
               ChapterNumber
               Title

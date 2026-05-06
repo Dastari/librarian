@@ -104,8 +104,12 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
           type: "movie",
           title: movie.Title,
           year: movie.Year ?? null,
-          posterUrl: movie.PosterUrl ?? null,
-          status: movie.Status ?? null,
+          posterUrl: null,
+          status: movie.MediaFileId
+            ? "downloaded"
+            : movie.Wanted
+              ? "wanted"
+              : null,
           libraryId: movie.LibraryId,
         });
       }

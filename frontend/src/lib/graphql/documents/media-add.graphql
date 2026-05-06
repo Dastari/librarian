@@ -1,5 +1,3 @@
-# Media add/search operations used by add-library dialogs
-
 query SearchAlbums(
   $Query: String!
   $IncludeEps: Boolean

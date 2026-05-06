@@ -7,7 +7,12 @@ import { type DataTableColumn, type RowAction } from "../data-table";
 import { FilePropertiesModal } from "../FilePropertiesModal";
 import { MediaItemStatusChip, PlayPauseIndicator } from "../shared";
 import { usePlaybackContext } from "../../contexts/PlaybackContext";
-import { IconInfoCircle, IconMovie, IconPlayerPlay, IconSearch } from "@tabler/icons-react";
+import {
+  IconInfoCircle,
+  IconMovie,
+  IconPlayerPlay,
+  IconSearch,
+} from "@tabler/icons-react";
 import { DetailItemsTable } from "../media/DetailItemsTable";
 import { useQuery } from "../../lib/graphql/client";
 import {
@@ -64,7 +69,10 @@ function formatVideoCodec(codec: string | null): string {
   return codec.toUpperCase();
 }
 
-function formatAudioCodec(codec: string | null, channels: string | null): string {
+function formatAudioCodec(
+  codec: string | null,
+  channels: string | null,
+): string {
   if (!codec) return "";
   const normalized = codec.toLowerCase();
   let name = codec.toUpperCase();
@@ -72,8 +80,10 @@ function formatAudioCodec(codec: string | null, channels: string | null): string
   else if (normalized.includes("atmos")) name = "Atmos";
   else if (normalized.includes("dts")) name = "DTS";
   else if (normalized.includes("aac")) name = "AAC";
-  else if (normalized.includes("ac3") || normalized.includes("ac-3")) name = "AC3";
-  else if (normalized.includes("eac3") || normalized.includes("e-ac-3")) name = "EAC3";
+  else if (normalized.includes("ac3") || normalized.includes("ac-3"))
+    name = "AC3";
+  else if (normalized.includes("eac3") || normalized.includes("e-ac-3"))
+    name = "EAC3";
   else if (normalized.includes("flac")) name = "FLAC";
   else if (normalized.includes("opus")) name = "Opus";
   if (channels) return `${name} ${channels}`;
@@ -90,7 +100,9 @@ export function CollectionMoviesTable({
 }: CollectionMoviesTableProps) {
   const navigate = useNavigate();
   const { startMoviePlayback, session, updatePlayback } = usePlaybackContext();
-  const [propertiesMediaFileId, setPropertiesMediaFileId] = useState<string | null>(null);
+  const [propertiesMediaFileId, setPropertiesMediaFileId] = useState<
+    string | null
+  >(null);
   const {
     isOpen: isPropertiesOpen,
     onOpen: onPropertiesOpen,
@@ -133,11 +145,11 @@ export function CollectionMoviesTable({
     {
       variables: {
         Where: {
-          UserId: { Eq: userId },
-          MediaFileId: { In: mediaFileIds },
+          UserId: { eq: userId },
+          MediaFileId: { inList: mediaFileIds },
         },
-        Page: { Limit: 5000, Offset: 0 },
-        OrderBy: [{ UpdatedAt: "Desc" }],
+        Page: { limit: 5000, offset: 0 },
+        OrderBy: [{ UpdatedAt: "DESC" }],
       },
       skip: !userId || mediaFileIds.length === 0,
       fetchPolicy: "cache-and-network",
@@ -151,6 +163,7 @@ export function CollectionMoviesTable({
     const map = new Map<string, PlaybackProgressNode>();
     for (const edge of progressEdges) {
       const node = edge.Node;
+      if (!node) continue;
       if (!node.MediaFileId) continue;
       if (!map.has(node.MediaFileId)) {
         map.set(node.MediaFileId, node);
@@ -208,12 +221,18 @@ export function CollectionMoviesTable({
         }
         if (isCurrentMovieRow(movie)) {
           return (
-            <span className={isPlaying ? "text-success text-sm" : "text-default-500 text-sm"}>
+            <span
+              className={
+                isPlaying ? "text-success text-sm" : "text-default-500 text-sm"
+              }
+            >
               {isPlaying ? "Playing" : "Paused"}
             </span>
           );
         }
-        const playbackProgress = progressByMediaFile.get(movie.ResolvedMediaFileId);
+        const playbackProgress = progressByMediaFile.get(
+          movie.ResolvedMediaFileId,
+        );
         if (!playbackProgress) {
           return <span className="text-default-400">-</span>;
         }
@@ -255,12 +274,19 @@ export function CollectionMoviesTable({
       label: "Quality",
       width: 120,
       render: (movie) => {
-        if (!movie.ResolvedMediaFileId) return <span className="text-default-400">-</span>;
-        const qualityParts = [movie.Resolution, formatVideoCodec(movie.VideoCodec)].filter(
-          Boolean,
+        if (!movie.ResolvedMediaFileId)
+          return <span className="text-default-400">-</span>;
+        const qualityParts = [
+          movie.Resolution,
+          formatVideoCodec(movie.VideoCodec),
+        ].filter(Boolean);
+        if (qualityParts.length === 0)
+          return <span className="text-default-400">-</span>;
+        return (
+          <span className="text-default-500 text-sm">
+            {qualityParts.join(" · ")}
+          </span>
         );
-        if (qualityParts.length === 0) return <span className="text-default-400">-</span>;
-        return <span className="text-default-500 text-sm">{qualityParts.join(" · ")}</span>;
       },
     },
     {
@@ -268,8 +294,12 @@ export function CollectionMoviesTable({
       label: "Audio",
       width: 100,
       render: (movie) => {
-        if (!movie.ResolvedMediaFileId) return <span className="text-default-400">-</span>;
-        const audioLabel = formatAudioCodec(movie.AudioCodec, movie.AudioChannels);
+        if (!movie.ResolvedMediaFileId)
+          return <span className="text-default-400">-</span>;
+        const audioLabel = formatAudioCodec(
+          movie.AudioCodec,
+          movie.AudioChannels,
+        );
         if (!audioLabel) return <span className="text-default-400">-</span>;
         return <span className="text-default-500 text-sm">{audioLabel}</span>;
       },
@@ -317,7 +347,9 @@ export function CollectionMoviesTable({
       color: "default",
       inDropdown: false,
       isVisible: (movie) =>
-        Boolean(movie.ResolvedMediaFileId) && isCurrentMovieRow(movie) && isPlaying,
+        Boolean(movie.ResolvedMediaFileId) &&
+        isCurrentMovieRow(movie) &&
+        isPlaying,
       onAction: () => {
         void updatePlayback({ isPlaying: false });
       },
@@ -338,13 +370,12 @@ export function CollectionMoviesTable({
           Id: movie.LibraryMovieId,
           Title: movie.Title,
           Year: movie.Year,
-          PosterUrl: movie.PosterUrl,
-          BackdropUrl: null,
+          CollectionPosterUrl: movie.PosterUrl,
         };
         void startMoviePlayback(
           movie.LibraryMovieId,
           movie.ResolvedMediaFileId,
-          playbackMovie as Parameters<typeof startMoviePlayback>[2],
+          playbackMovie as unknown as Parameters<typeof startMoviePlayback>[2],
         );
       },
     },
@@ -425,7 +456,9 @@ export function CollectionMoviesTable({
                   ) : (
                     <p className="font-medium truncate">{item.Title}</p>
                   )}
-                  <p className="text-xs text-default-500">{item.Year ?? "Unknown year"}</p>
+                  <p className="text-xs text-default-500">
+                    {item.Year ?? "Unknown year"}
+                  </p>
                   <MediaItemStatusChip
                     mediaFileId={item.ResolvedMediaFileId}
                     wanted={item.ResolvedWanted}

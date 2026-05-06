@@ -151,11 +151,11 @@ function MovieDetailPage() {
     useQuery(ShowPlaybackProgressByMediaDocument, {
       variables: {
         Where: {
-          UserId: { Eq: userId },
-          MediaFileId: { Eq: movie?.MediaFileId ?? "" },
+          UserId: { eq: userId },
+          MediaFileId: { eq: movie?.MediaFileId ?? "" },
         },
-        Page: { Limit: 1, Offset: 0 },
-        OrderBy: [{ UpdatedAt: "Desc" }],
+        Page: { limit: 1, offset: 0 },
+        OrderBy: [{ UpdatedAt: "DESC" }],
       },
       skip: !userId || !movie?.MediaFileId,
       fetchPolicy: "cache-and-network",
@@ -184,13 +184,21 @@ function MovieDetailPage() {
       collectionPeersData?.MovieCollectionDetails?.Movies ??
       previousCollectionPeersData?.MovieCollectionDetails?.Movies ??
       [],
-    [collectionPeersData?.MovieCollectionDetails?.Movies, previousCollectionPeersData?.MovieCollectionDetails?.Movies],
+    [
+      collectionPeersData?.MovieCollectionDetails?.Movies,
+      previousCollectionPeersData?.MovieCollectionDetails?.Movies,
+    ],
   );
   const otherCollectionMovies = useMemo(
     () =>
       collectionMovies.filter((relatedMovie) => {
-        if (relatedMovie.LibraryMovieId && relatedMovie.LibraryMovieId === movieId) return false;
-        if (movie?.TmdbId != null && relatedMovie.TmdbId === movie.TmdbId) return false;
+        if (
+          relatedMovie.LibraryMovieId &&
+          relatedMovie.LibraryMovieId === movieId
+        )
+          return false;
+        if (movie?.TmdbId != null && relatedMovie.TmdbId === movie.TmdbId)
+          return false;
         return true;
       }),
     [collectionMovies, movie?.TmdbId, movieId],
@@ -534,7 +542,11 @@ function MovieDetailPage() {
             <Chip
               size="sm"
               color={
-                movie.MediaFileId ? "success" : movie.Wanted ? "warning" : "danger"
+                movie.MediaFileId
+                  ? "success"
+                  : movie.Wanted
+                    ? "warning"
+                    : "danger"
               }
               variant="flat"
               startContent={

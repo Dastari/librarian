@@ -9,13 +9,13 @@ import { useQuery, useSubscription } from "../lib/graphql/client";
 import { NotificationPopover } from "./NotificationPopover";
 import { ErrorBoundary } from "./ErrorBoundary";
 
-const UNREAD_WHERE = { ReadAt: { IsNull: true } } as const;
+const UNREAD_WHERE = { ReadAt: { isNull: true } } as const;
 
 function useUnreadNotificationCount() {
   const { data, previousData, refetch } = useQuery(NotificationsDocument, {
     variables: {
       Where: UNREAD_WHERE,
-      Page: { Limit: 1, Offset: 0 },
+      Page: { limit: 1, offset: 0 },
     },
     fetchPolicy: "cache-and-network",
   });

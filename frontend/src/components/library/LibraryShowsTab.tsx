@@ -1,9 +1,9 @@
-import { useMemo, useCallback, useEffect } from 'react'
-import { useQueryState, parseAsString, parseAsStringLiteral } from 'nuqs'
+import { useMemo, useCallback, useEffect } from "react";
+import { useQueryState, parseAsString, parseAsStringLiteral } from "nuqs";
 import { Button } from "@heroui/button";
-import { Image } from '@heroui/image'
-import { Card, CardBody } from '@heroui/card'
-import { Link } from '@tanstack/react-router'
+import { Image } from "@heroui/image";
+import { Card, CardBody } from "@heroui/card";
+import { Link } from "@tanstack/react-router";
 import {
   DataTable,
   AlphabetFilter,
@@ -11,26 +11,31 @@ import {
   type DataTableColumn,
   type RowAction,
   type CardRendererProps,
-} from '../data-table'
-import type { Show } from '../../lib/graphql/generated/graphql'
-import { TV_SHOWS_CONNECTION_QUERY } from '../../lib/graphql'
-import { useQuery, gql } from '../../lib/graphql/client'
-import { IconPlus, IconTrash, IconEye, IconDeviceTv } from '@tabler/icons-react'
-import { TvShowCard } from './TvShowCard'
-import { MediaCardSkeleton } from './MediaCardSkeleton'
+} from "../data-table";
+import type { Show } from "../../lib/graphql/generated/graphql";
+import { TV_SHOWS_CONNECTION_QUERY } from "../../lib/graphql";
+import { useQuery, gql } from "../../lib/graphql/client";
+import {
+  IconPlus,
+  IconTrash,
+  IconEye,
+  IconDeviceTv,
+} from "@tabler/icons-react";
+import { TvShowCard } from "./TvShowCard";
+import { MediaCardSkeleton } from "./MediaCardSkeleton";
 
 // ============================================================================
 // Component Props
 // ============================================================================
 
 interface LibraryShowsTabProps {
-  libraryId: string
+  libraryId: string;
   /** Parent loading state (e.g., library context still loading) */
-  loading?: boolean
-  onDeleteShow: (showId: string, showName: string) => void
-  onAddShow: () => void
+  loading?: boolean;
+  onDeleteShow: (showId: string, showName: string) => void;
+  onAddShow: () => void;
   /** Callback to provide the refresh function to the parent */
-  onRefreshReady?: (refreshFn: () => void) => void
+  onRefreshReady?: (refreshFn: () => void) => void;
 }
 
 // ============================================================================
@@ -39,15 +44,15 @@ interface LibraryShowsTabProps {
 
 interface TvShowsConnectionResponse {
   Shows: {
-    Edges: Array<{ Node: Show; Cursor: string }>
+    Edges: Array<{ Node: Show; Cursor: string }>;
     PageInfo: {
-      HasNextPage: boolean
-      HasPreviousPage: boolean
-      StartCursor: string | null
-      EndCursor: string | null
-      TotalCount: number | null
-    }
-  }
+      HasNextPage: boolean;
+      HasPreviousPage: boolean;
+      StartCursor: string | null;
+      EndCursor: string | null;
+      TotalCount: number | null;
+    };
+  };
 }
 
 // ============================================================================
@@ -62,7 +67,7 @@ const SORT_FIELD_MAP: Record<string, string> = {
 };
 const SHOWS_QUERY = gql`
   ${TV_SHOWS_CONNECTION_QUERY}
-`
+`;
 
 export function LibraryShowsTab({
   libraryId,
@@ -72,34 +77,48 @@ export function LibraryShowsTab({
   onRefreshReady,
 }: LibraryShowsTabProps) {
   // URL-persisted state via nuqs (clean URLs when using defaults)
-  const [selectedLetter, setSelectedLetter] = useQueryState('letter', parseAsString.withDefault(''))
-  const [searchTerm, setSearchTerm] = useQueryState('q', parseAsString.withDefault(''))
-  const [sortColumn, setSortColumn] = useQueryState('sort', parseAsString.withDefault('name'))
+  const [selectedLetter, setSelectedLetter] = useQueryState(
+    "letter",
+    parseAsString.withDefault(""),
+  );
+  const [searchTerm, setSearchTerm] = useQueryState(
+    "q",
+    parseAsString.withDefault(""),
+  );
+  const [sortColumn, setSortColumn] = useQueryState(
+    "sort",
+    parseAsString.withDefault("name"),
+  );
   const [sortDirection, setSortDirection] = useQueryState(
-    'order',
-    parseAsStringLiteral(['asc', 'desc'] as const).withDefault('asc')
-  )
-  
+    "order",
+    parseAsStringLiteral(["asc", "desc"] as const).withDefault("asc"),
+  );
+
   // Normalize selectedLetter: empty string becomes null for the filter logic
-  const normalizedLetter = selectedLetter === '' ? null : selectedLetter
+  const normalizedLetter = selectedLetter === "" ? null : selectedLetter;
 
   // Check if we should skip queries (loading or template ID)
-  const shouldSkipQueries = !libraryId || libraryId.startsWith('template')
+  const shouldSkipQueries = !libraryId || libraryId.startsWith("template");
 
   // Handle sort change from DataTable
-  const handleSortChange = useCallback((column: string, direction: 'asc' | 'desc') => {
-    setSortColumn(column)
-    setSortDirection(direction)
-  }, [setSortColumn, setSortDirection])
+  const handleSortChange = useCallback(
+    (column: string, direction: "asc" | "desc") => {
+      setSortColumn(column);
+      setSortDirection(direction);
+    },
+    [setSortColumn, setSortDirection],
+  );
 
   // Build filter variables for GraphQL query (PascalCase schema)
   const queryVariables = useMemo(() => {
-    const where: Record<string, unknown> = { LibraryId: { Eq: libraryId } }
-    if (searchTerm) where.Name = { Contains: searchTerm }
-    const graphqlField = SORT_FIELD_MAP[sortColumn || 'name'] || 'SortName'
-    const orderBy = [{ [graphqlField]: sortDirection === 'asc' ? 'Asc' : 'Desc' }]
-    return { Where: where, Page: { Limit: 5000 }, OrderBy: orderBy }
-  }, [libraryId, searchTerm, sortColumn, sortDirection])
+    const where: Record<string, unknown> = { LibraryId: { eq: libraryId } };
+    if (searchTerm) where.Name = { contains: searchTerm };
+    const graphqlField = SORT_FIELD_MAP[sortColumn || "name"] || "SortName";
+    const orderBy = [
+      { [graphqlField]: sortDirection === "asc" ? "ASC" : "DESC" },
+    ];
+    return { Where: where, Page: { limit: 5000 }, OrderBy: orderBy };
+  }, [libraryId, searchTerm, sortColumn, sortDirection]);
 
   const {
     data,
@@ -109,9 +128,9 @@ export function LibraryShowsTab({
   } = useQuery<TvShowsConnectionResponse>(SHOWS_QUERY, {
     variables: queryVariables,
     skip: shouldSkipQueries,
-    fetchPolicy: 'cache-and-network',
+    fetchPolicy: "cache-and-network",
     notifyOnNetworkStatusChange: false,
-  })
+  });
 
   const shows = useMemo(
     () =>
@@ -119,47 +138,55 @@ export function LibraryShowsTab({
         (edge) => edge.Node,
       ),
     [data?.Shows?.Edges, previousData?.Shows?.Edges],
-  )
+  );
 
   const totalCount =
     data?.Shows?.PageInfo?.TotalCount ??
     previousData?.Shows?.PageInfo?.TotalCount ??
-    null
+    null;
 
   // Provide refresh function to parent for subscription updates
   useEffect(() => {
     if (onRefreshReady) {
       onRefreshReady(() => {
-        void refetch()
-      })
+        void refetch();
+      });
     }
-  }, [refetch, onRefreshReady])
+  }, [refetch, onRefreshReady]);
 
   // Get letters that have shows (from loaded data)
   const availableLetters = useMemo(() => {
-    const letters = new Set<string>()
+    const letters = new Set<string>();
     shows.forEach((show) => {
-      letters.add(getFirstLetter(show.Name))
-    })
-    return letters
-  }, [shows])
+      letters.add(getFirstLetter(show.Name));
+    });
+    return letters;
+  }, [shows]);
 
   // Filter shows by selected letter (client-side for alphabet filter)
   const filteredShows = useMemo(() => {
-    if (!normalizedLetter) return shows
-    return shows.filter((show) => getFirstLetter(show.Name) === normalizedLetter)
-  }, [shows, normalizedLetter])
+    if (!normalizedLetter) return shows;
+    return shows.filter(
+      (show) => getFirstLetter(show.Name) === normalizedLetter,
+    );
+  }, [shows, normalizedLetter]);
 
   // Handle letter change - toggle filter
-  const handleLetterChange = useCallback((letter: string | null) => {
-    setSelectedLetter(normalizedLetter === letter ? '' : (letter ?? ''))
-  }, [normalizedLetter, setSelectedLetter])
+  const handleLetterChange = useCallback(
+    (letter: string | null) => {
+      setSelectedLetter(normalizedLetter === letter ? "" : (letter ?? ""));
+    },
+    [normalizedLetter, setSelectedLetter],
+  );
 
   // Handle search change for server-side filtering
-  const handleSearchChange = useCallback((term: string) => {
-    setSearchTerm(term || '')
-    setSelectedLetter('') // Reset letter filter when searching
-  }, [setSearchTerm, setSelectedLetter])
+  const handleSearchChange = useCallback(
+    (term: string) => {
+      setSearchTerm(term || "");
+      setSelectedLetter(""); // Reset letter filter when searching
+    },
+    [setSearchTerm, setSelectedLetter],
+  );
 
   // Column definitions
   const columns: DataTableColumn<Show>[] = useMemo(
@@ -205,30 +232,30 @@ export function LibraryShowsTab({
         render: (show) => <span>{show.Network ?? "—"}</span>,
       },
     ],
-    []
+    [],
   );
 
   // Row actions
   const rowActions: RowAction<Show>[] = useMemo(
     () => [
       {
-        key: 'view',
-        label: 'View',
+        key: "view",
+        label: "View",
         icon: <IconEye size={16} />,
         inDropdown: true,
         onAction: () => {},
       },
       {
-        key: 'delete',
-        label: 'Delete',
+        key: "delete",
+        label: "Delete",
         icon: <IconTrash size={16} className="text-red-400" />,
         isDestructive: true,
         inDropdown: true,
         onAction: (show) => onDeleteShow(show.Id, show.Name),
       },
     ],
-    [onDeleteShow]
-  )
+    [onDeleteShow],
+  );
 
   // Card renderer
   const cardRenderer = useCallback(
@@ -238,8 +265,8 @@ export function LibraryShowsTab({
         onDelete={() => onDeleteShow(item.Id, item.Name)}
       />
     ),
-    [onDeleteShow]
-  )
+    [onDeleteShow],
+  );
 
   return (
     <div className="flex flex-col grow w-full">
@@ -251,7 +278,7 @@ export function LibraryShowsTab({
           columns={columns}
           getRowKey={(show) => show.Id}
           searchPlaceholder="Search shows..."
-          sortColumn={sortColumn || 'name'}
+          sortColumn={sortColumn || "name"}
           sortDirection={sortDirection}
           onSortChange={handleSortChange}
           showViewModeToggle
@@ -278,7 +305,10 @@ export function LibraryShowsTab({
           emptyContent={
             <Card className="bg-content1/50 border-default-300 border-dashed border-2">
               <CardBody className="py-12 text-center">
-                <IconDeviceTv size={48} className="mx-auto mb-4 text-blue-400" />
+                <IconDeviceTv
+                  size={48}
+                  className="mx-auto mb-4 text-blue-400"
+                />
                 <h3 className="text-lg font-semibold mb-2">No shows yet</h3>
                 <p className="text-default-500 mb-4">
                   Add TV shows to start tracking episodes.
@@ -298,5 +328,5 @@ export function LibraryShowsTab({
         />
       </div>
     </div>
-  )
+  );
 }

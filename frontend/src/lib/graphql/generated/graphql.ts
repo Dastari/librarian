@@ -1,24 +1,14 @@
-import type { TypedDocumentNode as DocumentNode } from "@apollo/client";
-export type Maybe<T> = T | null;
-export type InputMaybe<T> = Maybe<T>;
-export type Exact<T extends { [key: string]: unknown }> = {
-  [K in keyof T]: T[K];
-};
-export type MakeOptional<T, K extends keyof T> = Omit<T, K> & {
-  [SubKey in K]?: Maybe<T[SubKey]>;
-};
-export type MakeMaybe<T, K extends keyof T> = Omit<T, K> & {
-  [SubKey in K]: Maybe<T[SubKey]>;
-};
-export type MakeEmpty<
-  T extends { [key: string]: unknown },
-  K extends keyof T,
-> = { [_ in K]?: never };
+/** Internal type. DO NOT USE DIRECTLY. */
+type Exact<T extends { [key: string]: unknown }> = { [K in keyof T]: T[K] };
+/** Internal type. DO NOT USE DIRECTLY. */
 export type Incremental<T> =
   | T
   | {
       [P in keyof T]?: P extends " $fragmentName" | "__typename" ? T[P] : never;
     };
+import type { TypedDocumentNode as DocumentNode } from "@apollo/client";
+export type Maybe<T> = T | null;
+export type InputMaybe<T> = Maybe<T>;
 /** All built-in and custom scalars, mapped to their actual values */
 export type Scalars = {
   ID: { input: string; output: string };
@@ -26,6 +16,7 @@ export type Scalars = {
   Boolean: { input: boolean; output: boolean };
   Int: { input: number; output: number };
   Float: { input: number; output: number };
+  JSON: { input: Record<string, unknown>; output: Record<string, unknown> };
 };
 
 export type AddAlbumInput = {
@@ -91,7 +82,6 @@ export type Album = {
   HasFiles: Scalars["Boolean"]["output"];
   Id: Scalars["String"]["output"];
   Label?: Maybe<Scalars["String"]["output"]>;
-  Library?: Maybe<Library>;
   LibraryId: Scalars["String"]["output"];
   MusicbrainzId?: Maybe<Scalars["String"]["output"]>;
   Name: Scalars["String"]["output"];
@@ -104,29 +94,51 @@ export type Album = {
   UpdatedAt: Scalars["String"]["output"];
   UserId: Scalars["String"]["output"];
   Year?: Maybe<Scalars["Int"]["output"]>;
+  /** Get related #graphql_name */
+  library?: Maybe<Library>;
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  tracks: TrackConnection;
+};
+
+/** Album Entity */
+export type AlbumtracksArgs = {
+  orderBy?: InputMaybe<TrackOrderByInput>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<TrackWhereInput>;
 };
 
 /** Event for #struct_name changes (subscriptions) */
 export type AlbumChangedEvent = {
-  Action: ChangeAction;
-  Album?: Maybe<Album>;
-  Id: Scalars["String"]["output"];
+  action: ChangeAction;
+  album?: Maybe<Album>;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type AlbumConnection = {
   /** The edges in this connection */
-  Edges: Array<AlbumEdge>;
+  edges: Array<AlbumEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type AlbumEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: Album;
+  node: Album;
 };
 
 export type AlbumOperationResult = {
@@ -136,20 +148,20 @@ export type AlbumOperationResult = {
 };
 
 export type AlbumOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  Name?: InputMaybe<SortDirection>;
-  ReleaseDate?: InputMaybe<SortDirection>;
-  SizeBytes?: InputMaybe<SortDirection>;
-  SortName?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
-  Year?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  Name?: InputMaybe<OrderDirection>;
+  ReleaseDate?: InputMaybe<OrderDirection>;
+  SizeBytes?: InputMaybe<OrderDirection>;
+  SortName?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
+  Year?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type AlbumResult = {
-  Album?: Maybe<Album>;
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
+  album?: Maybe<Album>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Search result for MusicBrainz album search. */
@@ -166,8 +178,6 @@ export type AlbumSearchResult = {
 
 export type AlbumWhereInput = {
   AlbumType?: InputMaybe<StringFilter>;
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<AlbumWhereInput>>;
   ArtistId?: InputMaybe<StringFilter>;
   AutoDownload?: InputMaybe<BoolFilter>;
   Country?: InputMaybe<StringFilter>;
@@ -179,10 +189,6 @@ export type AlbumWhereInput = {
   LibraryId?: InputMaybe<StringFilter>;
   MusicbrainzId?: InputMaybe<StringFilter>;
   Name?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<AlbumWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<AlbumWhereInput>>;
   ReleaseDate?: InputMaybe<DateFilter>;
   SizeBytes?: InputMaybe<IntFilter>;
   TotalDurationSecs?: InputMaybe<IntFilter>;
@@ -190,6 +196,12 @@ export type AlbumWhereInput = {
   UpdatedAt?: InputMaybe<DateFilter>;
   UserId?: InputMaybe<StringFilter>;
   Year?: InputMaybe<IntFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<AlbumWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<AlbumWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<AlbumWhereInput>>;
 };
 
 export type AnalyzeMediaFileResult = {
@@ -198,7 +210,6 @@ export type AnalyzeMediaFileResult = {
   Success: Scalars["Boolean"]["output"];
 };
 
-/** AppLog Entity - application logs */
 export type AppLog = {
   CreatedAt: Scalars["String"]["output"];
   Fields?: Maybe<Scalars["String"]["output"]>;
@@ -213,59 +224,62 @@ export type AppLog = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type AppLogChangedEvent = {
-  Action: ChangeAction;
-  AppLog?: Maybe<AppLog>;
-  Id: Scalars["String"]["output"];
+  action: ChangeAction;
+  appLog?: Maybe<AppLog>;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type AppLogConnection = {
   /** The edges in this connection */
-  Edges: Array<AppLogEdge>;
+  edges: Array<AppLogEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type AppLogEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: AppLog;
+  node: AppLog;
 };
 
 export type AppLogOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  Level?: InputMaybe<SortDirection>;
-  Target?: InputMaybe<SortDirection>;
-  Timestamp?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  Level?: InputMaybe<OrderDirection>;
+  Target?: InputMaybe<OrderDirection>;
+  Timestamp?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type AppLogResult = {
-  AppLog?: Maybe<AppLog>;
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
+  appLog?: Maybe<AppLog>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type AppLogWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<AppLogWhereInput>>;
   CreatedAt?: InputMaybe<DateFilter>;
   Id?: InputMaybe<StringFilter>;
   Level?: InputMaybe<StringFilter>;
   Message?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<AppLogWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<AppLogWhereInput>>;
   SpanId?: InputMaybe<StringFilter>;
   SpanName?: InputMaybe<StringFilter>;
   Target?: InputMaybe<StringFilter>;
   Timestamp?: InputMaybe<DateFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<AppLogWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<AppLogWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<AppLogWhereInput>>;
 };
 
-/** AppSetting Entity - application settings */
 export type AppSetting = {
   Category: Scalars["String"]["output"];
   CreatedAt: Scalars["String"]["output"];
@@ -278,66 +292,61 @@ export type AppSetting = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type AppSettingChangedEvent = {
-  Action: ChangeAction;
-  AppSetting?: Maybe<AppSetting>;
-  Id: Scalars["String"]["output"];
+  action: ChangeAction;
+  appSetting?: Maybe<AppSetting>;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type AppSettingConnection = {
   /** The edges in this connection */
-  Edges: Array<AppSettingEdge>;
+  edges: Array<AppSettingEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type AppSettingEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: AppSetting;
+  node: AppSetting;
 };
 
 export type AppSettingOrderByInput = {
-  Category?: InputMaybe<SortDirection>;
-  CreatedAt?: InputMaybe<SortDirection>;
-  Key?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  Category?: InputMaybe<OrderDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  Key?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type AppSettingResult = {
-  AppSetting?: Maybe<AppSetting>;
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
+  appSetting?: Maybe<AppSetting>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type AppSettingWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<AppSettingWhereInput>>;
   Category?: InputMaybe<StringFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   Id?: InputMaybe<StringFilter>;
   Key?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<AppSettingWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<AppSettingWhereInput>>;
   UpdatedAt?: InputMaybe<DateFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<AppSettingWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<AppSettingWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<AppSettingWhereInput>>;
 };
 
 export type Artist = {
   AlbumCount?: Maybe<Scalars["Int"]["output"]>;
-  /**
-   * Get related #graphql_name with optional filtering, sorting, and pagination.
-   *
-   * When no arguments are provided, uses DataLoader to batch queries and
-   * avoid N+1 when loading relations for multiple parent entities.
-   * When filter/sort/pagination arguments are provided, uses direct
-   * database query for full SQL support.
-   */
-  Albums: AlbumConnection;
   Bio?: Maybe<Scalars["String"]["output"]>;
   CreatedAt: Scalars["String"]["output"];
   Disambiguation?: Maybe<Scalars["String"]["output"]>;
@@ -351,69 +360,82 @@ export type Artist = {
   TrackCount?: Maybe<Scalars["Int"]["output"]>;
   UpdatedAt: Scalars["String"]["output"];
   UserId: Scalars["String"]["output"];
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  albums: AlbumConnection;
 };
 
-export type ArtistAlbumsArgs = {
-  OrderBy?: InputMaybe<AlbumOrderByInput>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<AlbumWhereInput>;
+export type ArtistalbumsArgs = {
+  orderBy?: InputMaybe<AlbumOrderByInput>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<AlbumWhereInput>;
 };
 
 /** Event for #struct_name changes (subscriptions) */
 export type ArtistChangedEvent = {
-  Action: ChangeAction;
-  Artist?: Maybe<Artist>;
-  Id: Scalars["String"]["output"];
+  action: ChangeAction;
+  artist?: Maybe<Artist>;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type ArtistConnection = {
   /** The edges in this connection */
-  Edges: Array<ArtistEdge>;
+  edges: Array<ArtistEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type ArtistEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: Artist;
+  node: Artist;
 };
 
 export type ArtistOrderByInput = {
-  AlbumCount?: InputMaybe<SortDirection>;
-  CreatedAt?: InputMaybe<SortDirection>;
-  Name?: InputMaybe<SortDirection>;
-  SortName?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  AlbumCount?: InputMaybe<OrderDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  Name?: InputMaybe<OrderDirection>;
+  SortName?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type ArtistResult = {
-  Artist?: Maybe<Artist>;
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
+  artist?: Maybe<Artist>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type ArtistWhereInput = {
   AlbumCount?: InputMaybe<IntFilter>;
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<ArtistWhereInput>>;
   CreatedAt?: InputMaybe<DateFilter>;
   Id?: InputMaybe<StringFilter>;
   LibraryId?: InputMaybe<StringFilter>;
   MusicbrainzId?: InputMaybe<StringFilter>;
   Name?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<ArtistWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<ArtistWhereInput>>;
   TotalDurationSecs?: InputMaybe<IntFilter>;
   TrackCount?: InputMaybe<IntFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   UserId?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<ArtistWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<ArtistWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<ArtistWhereInput>>;
 };
 
 export type ArtworkCache = {
@@ -429,49 +451,52 @@ export type ArtworkCache = {
   SourceUrl?: Maybe<Scalars["String"]["output"]>;
   UpdatedAt: Scalars["String"]["output"];
   Width?: Maybe<Scalars["Int"]["output"]>;
+  data: Array<Scalars["Int"]["output"]>;
 };
 
 /** Event for #struct_name changes (subscriptions) */
 export type ArtworkCacheChangedEvent = {
-  Action: ChangeAction;
-  ArtworkCache?: Maybe<ArtworkCache>;
-  Id: Scalars["String"]["output"];
+  action: ChangeAction;
+  artworkCache?: Maybe<ArtworkCache>;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type ArtworkCacheConnection = {
   /** The edges in this connection */
-  Edges: Array<ArtworkCacheEdge>;
+  edges: Array<ArtworkCacheEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type ArtworkCacheEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: ArtworkCache;
+  node: ArtworkCache;
 };
 
 export type ArtworkCacheOrderByInput = {
-  ArtworkType?: InputMaybe<SortDirection>;
-  CreatedAt?: InputMaybe<SortDirection>;
-  EntityType?: InputMaybe<SortDirection>;
-  SizeBytes?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  ArtworkType?: InputMaybe<OrderDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  EntityType?: InputMaybe<OrderDirection>;
+  SizeBytes?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type ArtworkCacheResult = {
-  ArtworkCache?: Maybe<ArtworkCache>;
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
+  artworkCache?: Maybe<ArtworkCache>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type ArtworkCacheWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<ArtworkCacheWhereInput>>;
   ArtworkType?: InputMaybe<StringFilter>;
   ContentHash?: InputMaybe<StringFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
@@ -480,13 +505,15 @@ export type ArtworkCacheWhereInput = {
   Height?: InputMaybe<IntFilter>;
   Id?: InputMaybe<StringFilter>;
   MimeType?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<ArtworkCacheWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<ArtworkCacheWhereInput>>;
   SizeBytes?: InputMaybe<IntFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   Width?: InputMaybe<IntFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<ArtworkCacheWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<ArtworkCacheWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<ArtworkCacheWhereInput>>;
 };
 
 export type AudioStream = {
@@ -510,42 +537,44 @@ export type AudioStream = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type AudioStreamChangedEvent = {
-  Action: ChangeAction;
-  AudioStream?: Maybe<AudioStream>;
-  Id: Scalars["String"]["output"];
+  action: ChangeAction;
+  audioStream?: Maybe<AudioStream>;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type AudioStreamConnection = {
   /** The edges in this connection */
-  Edges: Array<AudioStreamEdge>;
+  edges: Array<AudioStreamEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type AudioStreamEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: AudioStream;
+  node: AudioStream;
 };
 
 export type AudioStreamOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  StreamIndex?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  StreamIndex?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type AudioStreamResult = {
-  AudioStream?: Maybe<AudioStream>;
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
+  audioStream?: Maybe<AudioStream>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type AudioStreamWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<AudioStreamWhereInput>>;
   BitDepth?: InputMaybe<IntFilter>;
   Bitrate?: InputMaybe<IntFilter>;
   Channels?: InputMaybe<IntFilter>;
@@ -556,12 +585,14 @@ export type AudioStreamWhereInput = {
   IsDefault?: InputMaybe<BoolFilter>;
   Language?: InputMaybe<StringFilter>;
   MediaFileId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<AudioStreamWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<AudioStreamWhereInput>>;
   SampleRate?: InputMaybe<IntFilter>;
   StreamIndex?: InputMaybe<IntFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<AudioStreamWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<AudioStreamWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<AudioStreamWhereInput>>;
 };
 
 export type Audiobook = {
@@ -571,15 +602,6 @@ export type Audiobook = {
   AutoDownload: Scalars["Boolean"]["output"];
   AutoDownloadMode: AutoDownloadMode;
   ChapterCount?: Maybe<Scalars["Int"]["output"]>;
-  /**
-   * Get related #graphql_name with optional filtering, sorting, and pagination.
-   *
-   * When no arguments are provided, uses DataLoader to batch queries and
-   * avoid N+1 when loading relations for multiple parent entities.
-   * When filter/sort/pagination arguments are provided, uses direct
-   * database query for full SQL support.
-   */
-  Chapters: ChapterConnection;
   CoverUrl?: Maybe<Scalars["String"]["output"]>;
   CreatedAt: Scalars["String"]["output"];
   Description?: Maybe<Scalars["String"]["output"]>;
@@ -600,35 +622,48 @@ export type Audiobook = {
   TotalDurationSecs?: Maybe<Scalars["Int"]["output"]>;
   UpdatedAt: Scalars["String"]["output"];
   UserId: Scalars["String"]["output"];
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  chapters: ChapterConnection;
 };
 
-export type AudiobookChaptersArgs = {
-  OrderBy?: InputMaybe<ChapterOrderByInput>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<ChapterWhereInput>;
+export type AudiobookchaptersArgs = {
+  orderBy?: InputMaybe<ChapterOrderByInput>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<ChapterWhereInput>;
 };
 
 /** Event for #struct_name changes (subscriptions) */
 export type AudiobookChangedEvent = {
-  Action: ChangeAction;
-  Audiobook?: Maybe<Audiobook>;
-  Id: Scalars["String"]["output"];
+  action: ChangeAction;
+  audiobook?: Maybe<Audiobook>;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type AudiobookConnection = {
   /** The edges in this connection */
-  Edges: Array<AudiobookEdge>;
+  edges: Array<AudiobookEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type AudiobookEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: Audiobook;
+  node: Audiobook;
 };
 
 export type AudiobookOperationResult = {
@@ -638,21 +673,21 @@ export type AudiobookOperationResult = {
 };
 
 export type AudiobookOrderByInput = {
-  AuthorName?: InputMaybe<SortDirection>;
-  CreatedAt?: InputMaybe<SortDirection>;
-  PublishedDate?: InputMaybe<SortDirection>;
-  SizeBytes?: InputMaybe<SortDirection>;
-  SortTitle?: InputMaybe<SortDirection>;
-  Title?: InputMaybe<SortDirection>;
-  TotalDurationSecs?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  AuthorName?: InputMaybe<OrderDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  PublishedDate?: InputMaybe<OrderDirection>;
+  SizeBytes?: InputMaybe<OrderDirection>;
+  SortTitle?: InputMaybe<OrderDirection>;
+  Title?: InputMaybe<OrderDirection>;
+  TotalDurationSecs?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type AudiobookResult = {
-  Audiobook?: Maybe<Audiobook>;
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
+  audiobook?: Maybe<Audiobook>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Search result for OpenLibrary audiobook search. */
@@ -668,8 +703,6 @@ export type AudiobookSearchResult = {
 };
 
 export type AudiobookWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<AudiobookWhereInput>>;
   Asin?: InputMaybe<StringFilter>;
   AudibleId?: InputMaybe<StringFilter>;
   AuthorName?: InputMaybe<StringFilter>;
@@ -683,10 +716,6 @@ export type AudiobookWhereInput = {
   Language?: InputMaybe<StringFilter>;
   LibraryId?: InputMaybe<StringFilter>;
   NarratorName?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<AudiobookWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<AudiobookWhereInput>>;
   PublishedDate?: InputMaybe<DateFilter>;
   Publisher?: InputMaybe<StringFilter>;
   SizeBytes?: InputMaybe<IntFilter>;
@@ -694,6 +723,12 @@ export type AudiobookWhereInput = {
   TotalDurationSecs?: InputMaybe<IntFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   UserId?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<AudiobookWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<AudiobookWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<AudiobookWhereInput>>;
 };
 
 export type AuthPayload = {
@@ -703,26 +738,19 @@ export type AuthPayload = {
   User?: Maybe<AuthenticatedUser>;
 };
 
-/** Token pair returned after successful authentication */
 export type AuthTokens = {
-  /** Short-lived access token */
-  AccessToken: Scalars["String"]["output"];
-  /** Access token expiration in seconds */
-  ExpiresIn: Scalars["Int"]["output"];
-  /** Long-lived refresh token */
-  RefreshToken: Scalars["String"]["output"];
-  /** Token type (always "Bearer") */
-  TokenType: Scalars["String"]["output"];
+  accessToken: Scalars["String"]["output"];
+  expiresIn: Scalars["Int"]["output"];
+  refreshToken: Scalars["String"]["output"];
+  tokenType: Scalars["String"]["output"];
 };
 
-/** User info returned after successful authentication */
 export type AuthenticatedUser = {
-  AvatarUrl?: Maybe<Scalars["String"]["output"]>;
-  DisplayName?: Maybe<Scalars["String"]["output"]>;
-  Email?: Maybe<Scalars["String"]["output"]>;
-  Id: Scalars["String"]["output"];
-  Role: Scalars["String"]["output"];
-  Username: Scalars["String"]["output"];
+  displayName?: Maybe<Scalars["String"]["output"]>;
+  email?: Maybe<Scalars["String"]["output"]>;
+  id: Scalars["String"]["output"];
+  role: Scalars["String"]["output"];
+  username: Scalars["String"]["output"];
 };
 
 /** Auto-download mode for media items */
@@ -737,14 +765,10 @@ export const AutoDownloadMode = {
 
 export type AutoDownloadMode =
   (typeof AutoDownloadMode)[keyof typeof AutoDownloadMode];
-/** Filter for boolean fields */
 export type BoolFilter = {
-  /** Equals */
-  Eq?: InputMaybe<Scalars["Boolean"]["input"]>;
-  /** Is null */
-  IsNull?: InputMaybe<Scalars["Boolean"]["input"]>;
-  /** Not equals (opposite of eq) */
-  Ne?: InputMaybe<Scalars["Boolean"]["input"]>;
+  eq?: InputMaybe<Scalars["Boolean"]["input"]>;
+  isNull?: InputMaybe<Scalars["Boolean"]["input"]>;
+  ne?: InputMaybe<Scalars["Boolean"]["input"]>;
 };
 
 /** A single file or directory entry (PascalCase for GraphQL). */
@@ -807,25 +831,29 @@ export type CastDevice = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type CastDeviceChangedEvent = {
-  Action: ChangeAction;
-  CastDevice?: Maybe<CastDevice>;
-  Id: Scalars["String"]["output"];
+  action: ChangeAction;
+  castDevice?: Maybe<CastDevice>;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type CastDeviceConnection = {
   /** The edges in this connection */
-  Edges: Array<CastDeviceEdge>;
+  edges: Array<CastDeviceEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type CastDeviceEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: CastDevice;
+  node: CastDevice;
 };
 
 export type CastDeviceOperationResult = {
@@ -835,23 +863,21 @@ export type CastDeviceOperationResult = {
 };
 
 export type CastDeviceOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  LastSeenAt?: InputMaybe<SortDirection>;
-  Name?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  LastSeenAt?: InputMaybe<OrderDirection>;
+  Name?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type CastDeviceResult = {
-  CastDevice?: Maybe<CastDevice>;
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
+  castDevice?: Maybe<CastDevice>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type CastDeviceWhereInput = {
   Address?: InputMaybe<StringFilter>;
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<CastDeviceWhereInput>>;
   CreatedAt?: InputMaybe<DateFilter>;
   DeviceType?: InputMaybe<StringFilter>;
   Id?: InputMaybe<StringFilter>;
@@ -860,12 +886,14 @@ export type CastDeviceWhereInput = {
   LastSeenAt?: InputMaybe<DateFilter>;
   Model?: InputMaybe<StringFilter>;
   Name?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<CastDeviceWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<CastDeviceWhereInput>>;
   Port?: InputMaybe<IntFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<CastDeviceWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<CastDeviceWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<CastDeviceWhereInput>>;
 };
 
 export type CastMediaInput = {
@@ -895,25 +923,29 @@ export type CastSession = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type CastSessionChangedEvent = {
-  Action: ChangeAction;
-  CastSession?: Maybe<CastSession>;
-  Id: Scalars["String"]["output"];
+  action: ChangeAction;
+  castSession?: Maybe<CastSession>;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type CastSessionConnection = {
   /** The edges in this connection */
-  Edges: Array<CastSessionEdge>;
+  edges: Array<CastSessionEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type CastSessionEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: CastSession;
+  node: CastSession;
 };
 
 export type CastSessionOperationResult = {
@@ -923,21 +955,19 @@ export type CastSessionOperationResult = {
 };
 
 export type CastSessionOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  StartedAt?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  StartedAt?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type CastSessionResult = {
-  CastSession?: Maybe<CastSession>;
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
+  castSession?: Maybe<CastSession>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type CastSessionWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<CastSessionWhereInput>>;
   CreatedAt?: InputMaybe<DateFilter>;
   CurrentPosition?: InputMaybe<IntFilter>;
   DeviceId?: InputMaybe<StringFilter>;
@@ -948,14 +978,16 @@ export type CastSessionWhereInput = {
   IsMuted?: InputMaybe<BoolFilter>;
   LastPosition?: InputMaybe<IntFilter>;
   MediaFileId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<CastSessionWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<CastSessionWhereInput>>;
   PlayerState?: InputMaybe<StringFilter>;
   StartedAt?: InputMaybe<DateFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   Volume?: InputMaybe<IntFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<CastSessionWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<CastSessionWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<CastSessionWhereInput>>;
 };
 
 export type CastSetting = {
@@ -971,64 +1003,79 @@ export type CastSetting = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type CastSettingChangedEvent = {
-  Action: ChangeAction;
-  CastSetting?: Maybe<CastSetting>;
-  Id: Scalars["String"]["output"];
+  action: ChangeAction;
+  castSetting?: Maybe<CastSetting>;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type CastSettingConnection = {
   /** The edges in this connection */
-  Edges: Array<CastSettingEdge>;
+  edges: Array<CastSettingEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type CastSettingEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: CastSetting;
+  node: CastSetting;
 };
 
 export type CastSettingOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type CastSettingResult = {
-  CastSetting?: Maybe<CastSetting>;
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
+  castSetting?: Maybe<CastSetting>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type CastSettingWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<CastSettingWhereInput>>;
   AutoDiscoveryEnabled?: InputMaybe<BoolFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   DefaultVolume?: InputMaybe<IntFilter>;
   DiscoveryIntervalSeconds?: InputMaybe<IntFilter>;
   Id?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<CastSettingWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<CastSettingWhereInput>>;
   PreferredQuality?: InputMaybe<StringFilter>;
   TranscodeIncompatible?: InputMaybe<BoolFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<CastSettingWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<CastSettingWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<CastSettingWhereInput>>;
 };
 
-/** Type of change for subscription events. */
+export type CastSettingsOperationResult = {
+  error?: Maybe<Scalars["String"]["output"]>;
+  settings?: Maybe<LegacyCastSettings>;
+  success: Scalars["Boolean"]["output"];
+};
+
 export const ChangeAction = {
-  Created: "Created",
-  Deleted: "Deleted",
-  Updated: "Updated",
+  CREATED: "CREATED",
+  DELETED: "DELETED",
+  UPDATED: "UPDATED",
 } as const;
 
 export type ChangeAction = (typeof ChangeAction)[keyof typeof ChangeAction];
+export const ChangeKind = {
+  DIRECT: "DIRECT",
+  PROPAGATED: "PROPAGATED",
+} as const;
+
+export type ChangeKind = (typeof ChangeKind)[keyof typeof ChangeKind];
 export type Chapter = {
   AudiobookId: Scalars["String"]["output"];
   ChapterNumber: Scalars["Int"]["output"];
@@ -1038,57 +1085,55 @@ export type Chapter = {
   Id: Scalars["String"]["output"];
   MediaFileId?: Maybe<Scalars["String"]["output"]>;
   StartTimeSecs: Scalars["Float"]["output"];
-  /**
-   * Computed status based on playback, file availability, and download state
-   *
-   * Returns one of: PLAYING, PAUSED, AVAILABLE, DOWNLOADING, WANTED, MISSING
-   */
-  Status: ContentStatus;
   Title?: Maybe<Scalars["String"]["output"]>;
   UpdatedAt: Scalars["String"]["output"];
   Wanted: Scalars["Boolean"]["output"];
+  /** Get related #graphql_name */
+  mediaFile?: Maybe<MediaFile>;
 };
 
 /** Event for #struct_name changes (subscriptions) */
 export type ChapterChangedEvent = {
-  Action: ChangeAction;
-  Chapter?: Maybe<Chapter>;
-  Id: Scalars["String"]["output"];
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  chapter?: Maybe<Chapter>;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type ChapterConnection = {
   /** The edges in this connection */
-  Edges: Array<ChapterEdge>;
+  edges: Array<ChapterEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type ChapterEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: Chapter;
+  node: Chapter;
 };
 
 export type ChapterOrderByInput = {
-  ChapterNumber?: InputMaybe<SortDirection>;
-  CreatedAt?: InputMaybe<SortDirection>;
-  Title?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  ChapterNumber?: InputMaybe<OrderDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  Title?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type ChapterResult = {
-  Chapter?: Maybe<Chapter>;
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
+  chapter?: Maybe<Chapter>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type ChapterWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<ChapterWhereInput>>;
   AudiobookId?: InputMaybe<StringFilter>;
   ChapterNumber?: InputMaybe<IntFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
@@ -1096,14 +1141,16 @@ export type ChapterWhereInput = {
   EndTimeSecs?: InputMaybe<IntFilter>;
   Id?: InputMaybe<StringFilter>;
   MediaFileId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<ChapterWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<ChapterWhereInput>>;
   StartTimeSecs?: InputMaybe<IntFilter>;
   Title?: InputMaybe<StringFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   Wanted?: InputMaybe<BoolFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<ChapterWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<ChapterWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<ChapterWhereInput>>;
 };
 
 export type Collection = {
@@ -1111,10 +1158,16 @@ export type Collection = {
   CreatedAt: Scalars["String"]["output"];
   Id: Scalars["String"]["output"];
   LastSyncedAt?: Maybe<Scalars["String"]["output"]>;
-  /** Get related #graphql_name */
-  Library?: Maybe<Library>;
   LibraryId: Scalars["String"]["output"];
   MovieCount: Scalars["Int"]["output"];
+  Name: Scalars["String"]["output"];
+  Overview?: Maybe<Scalars["String"]["output"]>;
+  PosterUrl?: Maybe<Scalars["String"]["output"]>;
+  TmdbCollectionId: Scalars["Int"]["output"];
+  UpdatedAt: Scalars["String"]["output"];
+  UserId: Scalars["String"]["output"];
+  /** Get related #graphql_name */
+  library?: Maybe<Library>;
   /**
    * Get related #graphql_name with optional filtering, sorting, and pagination.
    *
@@ -1123,75 +1176,73 @@ export type Collection = {
    * When filter/sort/pagination arguments are provided, uses direct
    * database query for full SQL support.
    */
-  Movies: MovieConnection;
-  Name: Scalars["String"]["output"];
-  Overview?: Maybe<Scalars["String"]["output"]>;
-  PosterUrl?: Maybe<Scalars["String"]["output"]>;
-  TmdbCollectionId: Scalars["Int"]["output"];
-  UpdatedAt: Scalars["String"]["output"];
-  UserId: Scalars["String"]["output"];
+  movies: MovieConnection;
 };
 
-export type CollectionMoviesArgs = {
-  OrderBy?: InputMaybe<MovieOrderByInput>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<MovieWhereInput>;
+export type CollectionmoviesArgs = {
+  orderBy?: InputMaybe<MovieOrderByInput>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<MovieWhereInput>;
 };
 
 /** Event for #struct_name changes (subscriptions) */
 export type CollectionChangedEvent = {
-  Action: ChangeAction;
-  Collection?: Maybe<Collection>;
-  Id: Scalars["String"]["output"];
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  collection?: Maybe<Collection>;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type CollectionConnection = {
   /** The edges in this connection */
-  Edges: Array<CollectionEdge>;
+  edges: Array<CollectionEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type CollectionEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: Collection;
+  node: Collection;
 };
 
 export type CollectionOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  LastSyncedAt?: InputMaybe<SortDirection>;
-  MovieCount?: InputMaybe<SortDirection>;
-  Name?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  LastSyncedAt?: InputMaybe<OrderDirection>;
+  MovieCount?: InputMaybe<OrderDirection>;
+  Name?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type CollectionResult = {
-  Collection?: Maybe<Collection>;
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
+  collection?: Maybe<Collection>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type CollectionWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<CollectionWhereInput>>;
   CreatedAt?: InputMaybe<DateFilter>;
   Id?: InputMaybe<StringFilter>;
   LastSyncedAt?: InputMaybe<DateFilter>;
   LibraryId?: InputMaybe<StringFilter>;
   MovieCount?: InputMaybe<IntFilter>;
   Name?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<CollectionWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<CollectionWhereInput>>;
   TmdbCollectionId?: InputMaybe<IntFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   UserId?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<CollectionWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<CollectionWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<CollectionWhereInput>>;
 };
 
 export type ConfigureNetworkPathInput = {
@@ -1203,30 +1254,12 @@ export type ConfigureNetworkPathInput = {
   Username?: InputMaybe<Scalars["String"]["input"]>;
 };
 
-/** Content status for playable media items (episodes, movies, tracks, chapters) */
-export const ContentStatus = {
-  /** Content file is available (has media file) */
-  AVAILABLE: "AVAILABLE",
-  /** Content is currently downloading */
-  DOWNLOADING: "DOWNLOADING",
-  /** Content is missing (no file, not wanted) */
-  MISSING: "MISSING",
-  /** Content playback is paused */
-  PAUSED: "PAUSED",
-  /** Content is currently being played */
-  PLAYING: "PLAYING",
-  /** Content is wanted but not yet downloaded */
-  WANTED: "WANTED",
-} as const;
-
-export type ContentStatus = (typeof ContentStatus)[keyof typeof ContentStatus];
 export type CopyFilesInput = {
   Destination: Scalars["String"]["input"];
   Overwrite?: InputMaybe<Scalars["Boolean"]["input"]>;
   Sources: Array<Scalars["String"]["input"]>;
 };
 
-/** Input for creating a new #struct_name */
 export type CreateAlbumInput = {
   AlbumType?: InputMaybe<Scalars["String"]["input"]>;
   ArtistId: Scalars["String"]["input"];
@@ -1235,7 +1268,7 @@ export type CreateAlbumInput = {
   Country?: InputMaybe<Scalars["String"]["input"]>;
   CoverUrl?: InputMaybe<Scalars["String"]["input"]>;
   DiscCount?: InputMaybe<Scalars["Int"]["input"]>;
-  Genres: Array<Scalars["String"]["input"]>;
+  Genres: Scalars["JSON"]["input"];
   HasFiles: Scalars["Boolean"]["input"];
   Label?: InputMaybe<Scalars["String"]["input"]>;
   LibraryId: Scalars["String"]["input"];
@@ -1251,7 +1284,6 @@ export type CreateAlbumInput = {
   Year?: InputMaybe<Scalars["Int"]["input"]>;
 };
 
-/** Input for creating a new #struct_name */
 export type CreateAppLogInput = {
   Fields?: InputMaybe<Scalars["String"]["input"]>;
   Level: Scalars["String"]["input"];
@@ -1262,7 +1294,6 @@ export type CreateAppLogInput = {
   Timestamp: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateAppSettingInput = {
   Category: Scalars["String"]["input"];
   Description?: InputMaybe<Scalars["String"]["input"]>;
@@ -1270,7 +1301,6 @@ export type CreateAppSettingInput = {
   Value: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateArtistInput = {
   AlbumCount?: InputMaybe<Scalars["Int"]["input"]>;
   Bio?: InputMaybe<Scalars["String"]["input"]>;
@@ -1285,7 +1315,6 @@ export type CreateArtistInput = {
   UserId: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateArtworkCacheInput = {
   ArtworkType: Scalars["String"]["input"];
   ContentHash: Scalars["String"]["input"];
@@ -1298,7 +1327,6 @@ export type CreateArtworkCacheInput = {
   Width?: InputMaybe<Scalars["Int"]["input"]>;
 };
 
-/** Input for creating a new #struct_name */
 export type CreateAudioStreamInput = {
   BitDepth?: InputMaybe<Scalars["Int"]["input"]>;
   Bitrate?: InputMaybe<Scalars["Int"]["input"]>;
@@ -1316,7 +1344,6 @@ export type CreateAudioStreamInput = {
   Title?: InputMaybe<Scalars["String"]["input"]>;
 };
 
-/** Input for creating a new #struct_name */
 export type CreateAudiobookInput = {
   Asin?: InputMaybe<Scalars["String"]["input"]>;
   AudibleId?: InputMaybe<Scalars["String"]["input"]>;
@@ -1332,7 +1359,7 @@ export type CreateAudiobookInput = {
   Language?: InputMaybe<Scalars["String"]["input"]>;
   LibraryId: Scalars["String"]["input"];
   NarratorName?: InputMaybe<Scalars["String"]["input"]>;
-  Narrators: Array<Scalars["String"]["input"]>;
+  Narrators: Scalars["JSON"]["input"];
   Path?: InputMaybe<Scalars["String"]["input"]>;
   PublishedDate?: InputMaybe<Scalars["String"]["input"]>;
   Publisher?: InputMaybe<Scalars["String"]["input"]>;
@@ -1343,7 +1370,6 @@ export type CreateAudiobookInput = {
   UserId: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateCastDeviceInput = {
   Address: Scalars["String"]["input"];
   DeviceType: Scalars["String"]["input"];
@@ -1355,7 +1381,6 @@ export type CreateCastDeviceInput = {
   Port: Scalars["Int"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateCastSessionInput = {
   CurrentPosition: Scalars["Float"]["input"];
   DeviceId?: InputMaybe<Scalars["String"]["input"]>;
@@ -1371,7 +1396,6 @@ export type CreateCastSessionInput = {
   Volume: Scalars["Float"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateCastSettingInput = {
   AutoDiscoveryEnabled: Scalars["Boolean"]["input"];
   DefaultVolume: Scalars["Float"]["input"];
@@ -1380,7 +1404,6 @@ export type CreateCastSettingInput = {
   TranscodeIncompatible: Scalars["Boolean"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateChapterInput = {
   AudiobookId: Scalars["String"]["input"];
   ChapterNumber: Scalars["Int"]["input"];
@@ -1392,7 +1415,6 @@ export type CreateChapterInput = {
   Wanted: Scalars["Boolean"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateCollectionInput = {
   BackdropUrl?: InputMaybe<Scalars["String"]["input"]>;
   LastSyncedAt?: InputMaybe<Scalars["String"]["input"]>;
@@ -1409,7 +1431,6 @@ export type CreateDirectoryInput = {
   Path: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateEpisodeInput = {
   AbsoluteNumber?: InputMaybe<Scalars["Int"]["input"]>;
   AirDate?: InputMaybe<Scalars["String"]["input"]>;
@@ -1426,14 +1447,13 @@ export type CreateEpisodeInput = {
   Wanted: Scalars["Boolean"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateInviteTokenInput = {
   AccessLevel: Scalars["String"]["input"];
   ApplyRestrictions: Scalars["Boolean"]["input"];
   CreatedBy: Scalars["String"]["input"];
   ExpiresAt?: InputMaybe<Scalars["String"]["input"]>;
   IsActive: Scalars["Boolean"]["input"];
-  LibraryIds: Array<Scalars["String"]["input"]>;
+  LibraryIds: Scalars["JSON"]["input"];
   MaxUses?: InputMaybe<Scalars["Int"]["input"]>;
   RestrictionsTemplate?: InputMaybe<Scalars["String"]["input"]>;
   Role: Scalars["String"]["input"];
@@ -1441,7 +1461,6 @@ export type CreateInviteTokenInput = {
   UseCount: Scalars["Int"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateLibraryInput = {
   AutoOrganize: Scalars["Boolean"]["input"];
   AutoScan: Scalars["Boolean"]["input"];
@@ -1458,7 +1477,6 @@ export type CreateLibraryInput = {
   WatchForChanges: Scalars["Boolean"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateMediaChapterInput = {
   ChapterIndex: Scalars["Int"]["input"];
   EndSecs: Scalars["Float"]["input"];
@@ -1467,7 +1485,6 @@ export type CreateMediaChapterInput = {
   Title?: InputMaybe<Scalars["String"]["input"]>;
 };
 
-/** Input for creating a new #struct_name */
 export type CreateMediaFileInput = {
   AddedAt: Scalars["String"]["input"];
   AnalyzedAt?: InputMaybe<Scalars["String"]["input"]>;
@@ -1495,7 +1512,6 @@ export type CreateMediaFileInput = {
   Width?: InputMaybe<Scalars["Int"]["input"]>;
 };
 
-/** Input for creating a new #struct_name */
 export type CreateMetadataCacheInput = {
   CacheKey: Scalars["String"]["input"];
   FetchedAt: Scalars["String"]["input"];
@@ -1505,7 +1521,6 @@ export type CreateMetadataCacheInput = {
   Provider: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateMovieCastCreditInput = {
   CastOrder?: InputMaybe<Scalars["Int"]["input"]>;
   CharacterName?: InputMaybe<Scalars["String"]["input"]>;
@@ -1513,16 +1528,15 @@ export type CreateMovieCastCreditInput = {
   PersonId: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateMovieInput = {
-  CastNames: Array<Scalars["String"]["input"]>;
+  CastNames: Scalars["JSON"]["input"];
   Certification?: InputMaybe<Scalars["String"]["input"]>;
   CollectionId?: InputMaybe<Scalars["Int"]["input"]>;
   CollectionName?: InputMaybe<Scalars["String"]["input"]>;
   CollectionPosterUrl?: InputMaybe<Scalars["String"]["input"]>;
   Director?: InputMaybe<Scalars["String"]["input"]>;
   DownloadStatus?: InputMaybe<Scalars["String"]["input"]>;
-  Genres: Array<Scalars["String"]["input"]>;
+  Genres: Scalars["JSON"]["input"];
   HasFile: Scalars["Boolean"]["input"];
   ImdbId?: InputMaybe<Scalars["String"]["input"]>;
   LibraryId: Scalars["String"]["input"];
@@ -1530,11 +1544,11 @@ export type CreateMovieInput = {
   Monitored: Scalars["Boolean"]["input"];
   OriginalTitle?: InputMaybe<Scalars["String"]["input"]>;
   Overview?: InputMaybe<Scalars["String"]["input"]>;
-  ProductionCountries: Array<Scalars["String"]["input"]>;
+  ProductionCountries: Scalars["JSON"]["input"];
   ReleaseDate?: InputMaybe<Scalars["String"]["input"]>;
   Runtime?: InputMaybe<Scalars["Int"]["input"]>;
   SortTitle?: InputMaybe<Scalars["String"]["input"]>;
-  SpokenLanguages: Array<Scalars["String"]["input"]>;
+  SpokenLanguages: Scalars["JSON"]["input"];
   Tagline?: InputMaybe<Scalars["String"]["input"]>;
   Title: Scalars["String"]["input"];
   TmdbId?: InputMaybe<Scalars["Int"]["input"]>;
@@ -1546,7 +1560,6 @@ export type CreateMovieInput = {
   Year?: InputMaybe<Scalars["Int"]["input"]>;
 };
 
-/** Input for creating a new #struct_name */
 export type CreateNamingPatternInput = {
   Description?: InputMaybe<Scalars["String"]["input"]>;
   IsDefault: Scalars["Boolean"]["input"];
@@ -1557,7 +1570,6 @@ export type CreateNamingPatternInput = {
   UserId: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateNotificationInput = {
   ActionData?: InputMaybe<Scalars["String"]["input"]>;
   ActionType?: InputMaybe<Scalars["String"]["input"]>;
@@ -1575,7 +1587,6 @@ export type CreateNotificationInput = {
   UserId: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreatePendingFileMatchInput = {
   ChapterId?: InputMaybe<Scalars["String"]["input"]>;
   CopiedAt?: InputMaybe<Scalars["String"]["input"]>;
@@ -1602,14 +1613,12 @@ export type CreatePendingFileMatchInput = {
   VerificationStatus?: InputMaybe<Scalars["String"]["input"]>;
 };
 
-/** Input for creating a new #struct_name */
 export type CreatePersonInput = {
   Name: Scalars["String"]["input"];
   ProfileUrl?: InputMaybe<Scalars["String"]["input"]>;
   TmdbPersonId: Scalars["Int"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreatePlaybackProgressInput = {
   CurrentPosition: Scalars["Float"]["input"];
   Duration?: InputMaybe<Scalars["Float"]["input"]>;
@@ -1620,7 +1629,6 @@ export type CreatePlaybackProgressInput = {
   WatchedAt?: InputMaybe<Scalars["String"]["input"]>;
 };
 
-/** Input for creating a new #struct_name */
 export type CreatePlaybackSessionInput = {
   AlbumId?: InputMaybe<Scalars["String"]["input"]>;
   AudiobookId?: InputMaybe<Scalars["String"]["input"]>;
@@ -1641,17 +1649,23 @@ export type CreatePlaybackSessionInput = {
   Volume: Scalars["Float"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateRefreshTokenInput = {
-  DeviceInfo?: InputMaybe<Scalars["String"]["input"]>;
   ExpiresAt: Scalars["String"]["input"];
+  Id: Scalars["String"]["input"];
   IpAddress?: InputMaybe<Scalars["String"]["input"]>;
   LastUsedAt?: InputMaybe<Scalars["String"]["input"]>;
+  ReplacedByTokenId?: InputMaybe<Scalars["String"]["input"]>;
+  RevocationReason?: InputMaybe<Scalars["String"]["input"]>;
+  RevokedAt?: InputMaybe<Scalars["String"]["input"]>;
+  Scopes: Scalars["JSON"]["input"];
+  Session: Scalars["String"]["input"];
+  SessionFamilyId: Scalars["String"]["input"];
+  SessionId: Scalars["String"]["input"];
   TokenHash: Scalars["String"]["input"];
+  UserAgent?: InputMaybe<Scalars["String"]["input"]>;
   UserId: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateRssFeedInput = {
   ConsecutiveFailures?: InputMaybe<Scalars["Int"]["input"]>;
   Enabled: Scalars["Boolean"]["input"];
@@ -1666,7 +1680,6 @@ export type CreateRssFeedInput = {
   UserId: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateRssFeedItemInput = {
   Description?: InputMaybe<Scalars["String"]["input"]>;
   FeedId: Scalars["String"]["input"];
@@ -1690,7 +1703,6 @@ export type CreateRssFeedItemInput = {
   TorrentId?: InputMaybe<Scalars["String"]["input"]>;
 };
 
-/** Input for creating a new #struct_name */
 export type CreateScheduleCacheInput = {
   AirDate: Scalars["String"]["input"];
   AirStamp?: InputMaybe<Scalars["String"]["input"]>;
@@ -1702,7 +1714,7 @@ export type CreateScheduleCacheInput = {
   EpisodeType?: InputMaybe<Scalars["String"]["input"]>;
   Runtime?: InputMaybe<Scalars["Int"]["input"]>;
   Season: Scalars["Int"]["input"];
-  ShowGenres: Array<Scalars["String"]["input"]>;
+  ShowGenres: Scalars["JSON"]["input"];
   ShowName: Scalars["String"]["input"];
   ShowNetwork?: InputMaybe<Scalars["String"]["input"]>;
   ShowPosterUrl?: InputMaybe<Scalars["String"]["input"]>;
@@ -1711,7 +1723,6 @@ export type CreateScheduleCacheInput = {
   TvmazeShowId: Scalars["Int"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateScheduleSyncStateInput = {
   CountryCode: Scalars["String"]["input"];
   LastSyncDays: Scalars["Int"]["input"];
@@ -1719,13 +1730,12 @@ export type CreateScheduleSyncStateInput = {
   SyncError?: InputMaybe<Scalars["String"]["input"]>;
 };
 
-/** Input for creating a new #struct_name */
 export type CreateShowInput = {
   AutoDownload: Scalars["Boolean"]["input"];
   AutoDownloadMode: AutoDownloadMode;
   BackdropUrl?: InputMaybe<Scalars["String"]["input"]>;
   ContentRating?: InputMaybe<Scalars["String"]["input"]>;
-  Genres: Array<Scalars["String"]["input"]>;
+  Genres: Scalars["JSON"]["input"];
   ImdbId?: InputMaybe<Scalars["String"]["input"]>;
   LibraryId: Scalars["String"]["input"];
   Name: Scalars["String"]["input"];
@@ -1742,9 +1752,7 @@ export type CreateShowInput = {
   Year?: InputMaybe<Scalars["Int"]["input"]>;
 };
 
-/** Input for creating a new #struct_name */
 export type CreateSourceInput = {
-  Credentials: Scalars["String"]["input"];
   DefinitionId: Scalars["String"]["input"];
   Enabled: Scalars["Boolean"]["input"];
   ErrorCount: Scalars["Int"]["input"];
@@ -1762,19 +1770,18 @@ export type CreateSourceInput = {
   SupportsMusicSearch: Scalars["Boolean"]["input"];
   SupportsSearch: Scalars["Boolean"]["input"];
   SupportsTvSearch: Scalars["Boolean"]["input"];
+  credentials: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateSourcePriorityRuleInput = {
   Enabled: Scalars["Boolean"]["input"];
   LibraryId?: InputMaybe<Scalars["String"]["input"]>;
   LibraryType?: InputMaybe<Scalars["String"]["input"]>;
-  PriorityOrder: Array<Scalars["String"]["input"]>;
+  PriorityOrder: Scalars["JSON"]["input"];
   SearchAllSources: Scalars["Boolean"]["input"];
   UserId: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateSubtitleInput = {
   Codec?: InputMaybe<Scalars["String"]["input"]>;
   CodecLongName?: InputMaybe<Scalars["String"]["input"]>;
@@ -1792,7 +1799,6 @@ export type CreateSubtitleInput = {
   Title?: InputMaybe<Scalars["String"]["input"]>;
 };
 
-/** Input for creating a new #struct_name */
 export type CreateTorrentFileInput = {
   DownloadedBytes: Scalars["Int"]["input"];
   FileIndex: Scalars["Int"]["input"];
@@ -1805,13 +1811,12 @@ export type CreateTorrentFileInput = {
   TorrentId: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateTorrentInput = {
   AddedAt: Scalars["String"]["input"];
   CompletedAt?: InputMaybe<Scalars["String"]["input"]>;
   DownloadPath?: InputMaybe<Scalars["String"]["input"]>;
   DownloadedBytes: Scalars["Int"]["input"];
-  ExcludedFiles: Array<Scalars["Int"]["input"]>;
+  ExcludedFiles: Scalars["JSON"]["input"];
   InfoHash: Scalars["String"]["input"];
   LibraryId?: InputMaybe<Scalars["String"]["input"]>;
   MagnetUri?: InputMaybe<Scalars["String"]["input"]>;
@@ -1830,14 +1835,12 @@ export type CreateTorrentInput = {
   UserId: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateTorznabCategoryInput = {
   Description?: InputMaybe<Scalars["String"]["input"]>;
   Name: Scalars["String"]["input"];
-  ParentId?: InputMaybe<Scalars["Int"]["input"]>;
+  ParentId?: InputMaybe<Scalars["String"]["input"]>;
 };
 
-/** Input for creating a new #struct_name */
 export type CreateTrackInput = {
   AlbumId: Scalars["String"]["input"];
   ArtistId?: InputMaybe<Scalars["String"]["input"]>;
@@ -1854,7 +1857,6 @@ export type CreateTrackInput = {
   Wanted: Scalars["Boolean"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateUsenetDownloadInput = {
   AlbumId?: InputMaybe<Scalars["String"]["input"]>;
   AudiobookId?: InputMaybe<Scalars["String"]["input"]>;
@@ -1880,7 +1882,6 @@ export type CreateUsenetDownloadInput = {
   UserId: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateUsenetServerInput = {
   Connections: Scalars["Int"]["input"];
   Enabled: Scalars["Boolean"]["input"];
@@ -1899,7 +1900,6 @@ export type CreateUsenetServerInput = {
   Username?: InputMaybe<Scalars["String"]["input"]>;
 };
 
-/** Input for creating a new #struct_name */
 export type CreateUserInput = {
   AvatarUrl?: InputMaybe<Scalars["String"]["input"]>;
   DisplayName?: InputMaybe<Scalars["String"]["input"]>;
@@ -1910,7 +1910,6 @@ export type CreateUserInput = {
   Username: Scalars["String"]["input"];
 };
 
-/** Input for creating a new #struct_name */
 export type CreateVideoStreamInput = {
   AspectRatio?: InputMaybe<Scalars["String"]["input"]>;
   AvgFrameRate?: InputMaybe<Scalars["String"]["input"]>;
@@ -1934,135 +1933,116 @@ export type CreateVideoStreamInput = {
   Width: Scalars["Int"]["input"];
 };
 
-/** Filter for date/timestamp fields */
 export type DateFilter = {
-  /** Between two dates (inclusive) */
-  Between?: InputMaybe<DateRange>;
-  /** Equals */
-  Eq?: InputMaybe<Scalars["String"]["input"]>;
-  /** After (greater than) */
-  Gt?: InputMaybe<Scalars["String"]["input"]>;
-  /** After or on (greater than or equal) */
-  Gte?: InputMaybe<Scalars["String"]["input"]>;
-  /** Greater than or equal to relative date */
-  GteRelative?: InputMaybe<RelativeDate>;
-  /** In the future (after today) */
-  InFuture?: InputMaybe<Scalars["Boolean"]["input"]>;
-  /** In the past (before today) */
-  InPast?: InputMaybe<Scalars["Boolean"]["input"]>;
-  /** Is null */
-  IsNull?: InputMaybe<Scalars["Boolean"]["input"]>;
-  /** Is today */
-  IsToday?: InputMaybe<Scalars["Boolean"]["input"]>;
-  /** Before (less than) */
-  Lt?: InputMaybe<Scalars["String"]["input"]>;
-  /** Before or on (less than or equal) */
-  Lte?: InputMaybe<Scalars["String"]["input"]>;
-  /** Less than or equal to relative date */
-  LteRelative?: InputMaybe<RelativeDate>;
-  /** Not equals */
-  Ne?: InputMaybe<Scalars["String"]["input"]>;
-  /** Within the last N days (inclusive of today) */
-  RecentDays?: InputMaybe<Scalars["Int"]["input"]>;
-  /** Within the next N days (inclusive of today) */
-  WithinDays?: InputMaybe<Scalars["Int"]["input"]>;
+  between?: InputMaybe<DateRangeInput>;
+  eq?: InputMaybe<Scalars["String"]["input"]>;
+  gt?: InputMaybe<Scalars["String"]["input"]>;
+  gte?: InputMaybe<Scalars["String"]["input"]>;
+  gteRelative?: InputMaybe<RelativeDateInput>;
+  inFuture?: InputMaybe<Scalars["Boolean"]["input"]>;
+  inPast?: InputMaybe<Scalars["Boolean"]["input"]>;
+  isNull?: InputMaybe<Scalars["Boolean"]["input"]>;
+  isToday?: InputMaybe<Scalars["Boolean"]["input"]>;
+  lt?: InputMaybe<Scalars["String"]["input"]>;
+  lte?: InputMaybe<Scalars["String"]["input"]>;
+  lteRelative?: InputMaybe<RelativeDateInput>;
+  ne?: InputMaybe<Scalars["String"]["input"]>;
+  recentDays?: InputMaybe<Scalars["Int"]["input"]>;
+  withinDays?: InputMaybe<Scalars["Int"]["input"]>;
 };
 
-/** Date range for between queries */
-export type DateRange = {
-  /** End of range (inclusive) */
-  End?: InputMaybe<Scalars["String"]["input"]>;
-  /** Start of range (inclusive) */
-  Start?: InputMaybe<Scalars["String"]["input"]>;
+export type DateRangeInput = {
+  end?: InputMaybe<Scalars["String"]["input"]>;
+  start?: InputMaybe<Scalars["String"]["input"]>;
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteAlbumsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteAppLogsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteAppSettingsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteArtistsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteArtworkCachesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteAudioStreamsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteAudiobooksResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteCastDevicesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteCastSessionsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteCastSettingsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteChaptersResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteCollectionsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteEpisodesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
@@ -2074,210 +2054,210 @@ export type DeleteFilesInput = {
 
 /** Result of bulk delete by Where filter */
 export type DeleteInviteTokensResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteLibrariesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteMediaChaptersResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteMediaFilesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteMetadataCachesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteMovieCastCreditsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteMoviesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteNamingPatternsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteNotificationsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeletePendingFileMatchesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeletePeopleResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeletePlaybackProgressesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeletePlaybackSessionsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteRefreshTokensResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteRssFeedItemsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteRssFeedsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteScheduleCachesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteScheduleSyncStatesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteShowsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteSourcePriorityRulesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteSourcesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteSubtitlesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteTorrentFilesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteTorrentsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteTorznabCategoriesResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteTracksResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteUsenetDownloadsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteUsenetServersResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteUsersResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
 
 /** Result of bulk delete by Where filter */
 export type DeleteVideoStreamsResult = {
-  DeletedCount: Scalars["Int"]["output"];
+  deletedCount: Scalars["Int"]["output"];
   error?: Maybe<Scalars["String"]["output"]>;
   success: Scalars["Boolean"]["output"];
 };
@@ -2288,78 +2268,71 @@ export type Episode = {
   CreatedAt: Scalars["String"]["output"];
   Episode: Scalars["Int"]["output"];
   Id: Scalars["String"]["output"];
-  MediaFile?: Maybe<MediaFile>;
   MediaFileId?: Maybe<Scalars["String"]["output"]>;
   Overview?: Maybe<Scalars["String"]["output"]>;
   Runtime?: Maybe<Scalars["Int"]["output"]>;
   Season: Scalars["Int"]["output"];
   ShowId: Scalars["String"]["output"];
-  /**
-   * Computed status based on playback, file availability, and download state
-   *
-   * Returns one of: PLAYING, PAUSED, AVAILABLE, DOWNLOADING, WANTED, MISSING
-   */
-  Status: ContentStatus;
   Title?: Maybe<Scalars["String"]["output"]>;
   TmdbId?: Maybe<Scalars["Int"]["output"]>;
   TvdbId?: Maybe<Scalars["Int"]["output"]>;
   TvmazeId?: Maybe<Scalars["Int"]["output"]>;
   UpdatedAt: Scalars["String"]["output"];
   Wanted: Scalars["Boolean"]["output"];
+  /** Get related #graphql_name */
+  mediaFile?: Maybe<MediaFile>;
 };
 
 /** Event for #struct_name changes (subscriptions) */
 export type EpisodeChangedEvent = {
-  Action: ChangeAction;
-  Episode?: Maybe<Episode>;
-  Id: Scalars["String"]["output"];
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  episode?: Maybe<Episode>;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type EpisodeConnection = {
   /** The edges in this connection */
-  Edges: Array<EpisodeEdge>;
+  edges: Array<EpisodeEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type EpisodeEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: Episode;
+  node: Episode;
 };
 
 export type EpisodeOrderByInput = {
-  AirDate?: InputMaybe<SortDirection>;
-  CreatedAt?: InputMaybe<SortDirection>;
-  Episode?: InputMaybe<SortDirection>;
-  Season?: InputMaybe<SortDirection>;
-  Title?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  AirDate?: InputMaybe<OrderDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  Episode?: InputMaybe<OrderDirection>;
+  Season?: InputMaybe<OrderDirection>;
+  Title?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type EpisodeResult = {
-  Episode?: Maybe<Episode>;
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
+  episode?: Maybe<Episode>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type EpisodeWhereInput = {
   AbsoluteNumber?: InputMaybe<IntFilter>;
   AirDate?: InputMaybe<DateFilter>;
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<EpisodeWhereInput>>;
   CreatedAt?: InputMaybe<DateFilter>;
   Episode?: InputMaybe<IntFilter>;
   Id?: InputMaybe<StringFilter>;
   MediaFileId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<EpisodeWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<EpisodeWhereInput>>;
   Runtime?: InputMaybe<IntFilter>;
   Season?: InputMaybe<IntFilter>;
   ShowId?: InputMaybe<StringFilter>;
@@ -2369,6 +2342,12 @@ export type EpisodeWhereInput = {
   TvmazeId?: InputMaybe<IntFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   Wanted?: InputMaybe<BoolFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<EpisodeWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<EpisodeWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<EpisodeWhereInput>>;
 };
 
 export type FileOperationPayload = {
@@ -2396,26 +2375,16 @@ export type FilesystemRuntimeInfo = {
   SupportsUncCredentials: Scalars["Boolean"]["output"];
 };
 
-/** Filter for integer fields */
 export type IntFilter = {
-  /** Equals */
-  Eq?: InputMaybe<Scalars["Int"]["input"]>;
-  /** Greater than */
-  Gt?: InputMaybe<Scalars["Int"]["input"]>;
-  /** Greater than or equal */
-  Gte?: InputMaybe<Scalars["Int"]["input"]>;
-  /** In list */
-  In?: InputMaybe<Array<Scalars["Int"]["input"]>>;
-  /** Is null */
-  IsNull?: InputMaybe<Scalars["Boolean"]["input"]>;
-  /** Less than */
-  Lt?: InputMaybe<Scalars["Int"]["input"]>;
-  /** Less than or equal */
-  Lte?: InputMaybe<Scalars["Int"]["input"]>;
-  /** Not equals */
-  Ne?: InputMaybe<Scalars["Int"]["input"]>;
-  /** Not in list */
-  NotIn?: InputMaybe<Array<Scalars["Int"]["input"]>>;
+  eq?: InputMaybe<Scalars["Int"]["input"]>;
+  gt?: InputMaybe<Scalars["Int"]["input"]>;
+  gte?: InputMaybe<Scalars["Int"]["input"]>;
+  inList?: InputMaybe<Array<Scalars["Int"]["input"]>>;
+  isNull?: InputMaybe<Scalars["Boolean"]["input"]>;
+  lt?: InputMaybe<Scalars["Int"]["input"]>;
+  lte?: InputMaybe<Scalars["Int"]["input"]>;
+  ne?: InputMaybe<Scalars["Int"]["input"]>;
+  notIn?: InputMaybe<Array<Scalars["Int"]["input"]>>;
 };
 
 export type InviteToken = {
@@ -2436,42 +2405,44 @@ export type InviteToken = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type InviteTokenChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  InviteToken?: Maybe<InviteToken>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  inviteToken?: Maybe<InviteToken>;
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type InviteTokenConnection = {
   /** The edges in this connection */
-  Edges: Array<InviteTokenEdge>;
+  edges: Array<InviteTokenEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type InviteTokenEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: InviteToken;
+  node: InviteToken;
 };
 
 export type InviteTokenOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type InviteTokenResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  InviteToken?: Maybe<InviteToken>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  inviteToken?: Maybe<InviteToken>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type InviteTokenWhereInput = {
   AccessLevel?: InputMaybe<StringFilter>;
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<InviteTokenWhereInput>>;
   ApplyRestrictions?: InputMaybe<BoolFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   CreatedBy?: InputMaybe<StringFilter>;
@@ -2479,13 +2450,15 @@ export type InviteTokenWhereInput = {
   Id?: InputMaybe<StringFilter>;
   IsActive?: InputMaybe<BoolFilter>;
   MaxUses?: InputMaybe<IntFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<InviteTokenWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<InviteTokenWhereInput>>;
   Role?: InputMaybe<StringFilter>;
   Token?: InputMaybe<StringFilter>;
   UseCount?: InputMaybe<IntFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<InviteTokenWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<InviteTokenWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<InviteTokenWhereInput>>;
 };
 
 export type LegacyAddCastDeviceInput = {
@@ -2522,6 +2495,32 @@ export type LegacyCastSession = {
   volume: Scalars["Float"]["output"];
 };
 
+export type LegacyCastSettings = {
+  autoDiscoveryEnabled: Scalars["Boolean"]["output"];
+  defaultVolume: Scalars["Float"]["output"];
+  discoveryIntervalSeconds: Scalars["Int"]["output"];
+  preferredQuality?: Maybe<Scalars["String"]["output"]>;
+  transcodeIncompatible: Scalars["Boolean"]["output"];
+};
+
+export type LegacyUpdateCastDeviceInput = {
+  address?: InputMaybe<Scalars["String"]["input"]>;
+  deviceType?: InputMaybe<Scalars["String"]["input"]>;
+  isFavorite?: InputMaybe<Scalars["Boolean"]["input"]>;
+  isManual?: InputMaybe<Scalars["Boolean"]["input"]>;
+  model?: InputMaybe<Scalars["String"]["input"]>;
+  name?: InputMaybe<Scalars["String"]["input"]>;
+  port?: InputMaybe<Scalars["Int"]["input"]>;
+};
+
+export type LegacyUpdateCastSettingsInput = {
+  autoDiscoveryEnabled?: InputMaybe<Scalars["Boolean"]["input"]>;
+  defaultVolume?: InputMaybe<Scalars["Float"]["input"]>;
+  discoveryIntervalSeconds?: InputMaybe<Scalars["Int"]["input"]>;
+  preferredQuality?: InputMaybe<Scalars["String"]["input"]>;
+  transcodeIncompatible?: InputMaybe<Scalars["Boolean"]["input"]>;
+};
+
 /**
  * Library entity representing a media library.
  *
@@ -2529,64 +2528,22 @@ export type LegacyCastSession = {
  * by the GraphQLRelations macro and use DataLoader for N+1 prevention.
  */
 export type Library = {
-  /**
-   * Get related #graphql_name with optional filtering, sorting, and pagination.
-   *
-   * When no arguments are provided, uses DataLoader to batch queries and
-   * avoid N+1 when loading relations for multiple parent entities.
-   * When filter/sort/pagination arguments are provided, uses direct
-   * database query for full SQL support.
-   */
-  Albums: AlbumConnection;
-  /**
-   * Get related #graphql_name with optional filtering, sorting, and pagination.
-   *
-   * When no arguments are provided, uses DataLoader to batch queries and
-   * avoid N+1 when loading relations for multiple parent entities.
-   * When filter/sort/pagination arguments are provided, uses direct
-   * database query for full SQL support.
-   */
-  Audiobooks: AudiobookConnection;
   AutoOrganize: Scalars["Boolean"]["output"];
   AutoScan: Scalars["Boolean"]["output"];
-  /**
-   * Get related #graphql_name with optional filtering, sorting, and pagination.
-   *
-   * When no arguments are provided, uses DataLoader to batch queries and
-   * avoid N+1 when loading relations for multiple parent entities.
-   * When filter/sort/pagination arguments are provided, uses direct
-   * database query for full SQL support.
-   */
-  Collections: CollectionConnection;
   Color?: Maybe<Scalars["String"]["output"]>;
   CreatedAt: Scalars["String"]["output"];
   Icon?: Maybe<Scalars["String"]["output"]>;
   Id: Scalars["String"]["output"];
   LastScannedAt?: Maybe<Scalars["String"]["output"]>;
   LibraryType: Scalars["String"]["output"];
-  /**
-   * Get related #graphql_name with optional filtering, sorting, and pagination.
-   *
-   * When no arguments are provided, uses DataLoader to batch queries and
-   * avoid N+1 when loading relations for multiple parent entities.
-   * When filter/sort/pagination arguments are provided, uses direct
-   * database query for full SQL support.
-   */
-  MediaFiles: MediaFileConnection;
-  /**
-   * Get related #graphql_name with optional filtering, sorting, and pagination.
-   *
-   * When no arguments are provided, uses DataLoader to batch queries and
-   * avoid N+1 when loading relations for multiple parent entities.
-   * When filter/sort/pagination arguments are provided, uses direct
-   * database query for full SQL support.
-   */
-  Movies: MovieConnection;
   Name: Scalars["String"]["output"];
   NamingPattern: Scalars["String"]["output"];
   Path: Scalars["String"]["output"];
   ScanIntervalMinutes: Scalars["Int"]["output"];
   Scanning: Scalars["Boolean"]["output"];
+  UpdatedAt: Scalars["String"]["output"];
+  UserId: Scalars["String"]["output"];
+  WatchForChanges: Scalars["Boolean"]["output"];
   /**
    * Get related #graphql_name with optional filtering, sorting, and pagination.
    *
@@ -2595,10 +2552,52 @@ export type Library = {
    * When filter/sort/pagination arguments are provided, uses direct
    * database query for full SQL support.
    */
-  Shows: ShowConnection;
-  UpdatedAt: Scalars["String"]["output"];
-  UserId: Scalars["String"]["output"];
-  WatchForChanges: Scalars["Boolean"]["output"];
+  albums: AlbumConnection;
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  audiobooks: AudiobookConnection;
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  collections: CollectionConnection;
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  mediaFiles: MediaFileConnection;
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  movies: MovieConnection;
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  shows: ShowConnection;
 };
 
 /**
@@ -2607,10 +2606,10 @@ export type Library = {
  * Relations (Shows, Movies, Artists, etc.) are automatically generated
  * by the GraphQLRelations macro and use DataLoader for N+1 prevention.
  */
-export type LibraryAlbumsArgs = {
-  OrderBy?: InputMaybe<AlbumOrderByInput>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<AlbumWhereInput>;
+export type LibraryalbumsArgs = {
+  orderBy?: InputMaybe<AlbumOrderByInput>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<AlbumWhereInput>;
 };
 
 /**
@@ -2619,10 +2618,10 @@ export type LibraryAlbumsArgs = {
  * Relations (Shows, Movies, Artists, etc.) are automatically generated
  * by the GraphQLRelations macro and use DataLoader for N+1 prevention.
  */
-export type LibraryAudiobooksArgs = {
-  OrderBy?: InputMaybe<AudiobookOrderByInput>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<AudiobookWhereInput>;
+export type LibraryaudiobooksArgs = {
+  orderBy?: InputMaybe<AudiobookOrderByInput>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<AudiobookWhereInput>;
 };
 
 /**
@@ -2631,10 +2630,10 @@ export type LibraryAudiobooksArgs = {
  * Relations (Shows, Movies, Artists, etc.) are automatically generated
  * by the GraphQLRelations macro and use DataLoader for N+1 prevention.
  */
-export type LibraryCollectionsArgs = {
-  OrderBy?: InputMaybe<CollectionOrderByInput>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<CollectionWhereInput>;
+export type LibrarycollectionsArgs = {
+  orderBy?: InputMaybe<CollectionOrderByInput>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<CollectionWhereInput>;
 };
 
 /**
@@ -2643,10 +2642,10 @@ export type LibraryCollectionsArgs = {
  * Relations (Shows, Movies, Artists, etc.) are automatically generated
  * by the GraphQLRelations macro and use DataLoader for N+1 prevention.
  */
-export type LibraryMediaFilesArgs = {
-  OrderBy?: InputMaybe<MediaFileOrderByInput>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<MediaFileWhereInput>;
+export type LibrarymediaFilesArgs = {
+  orderBy?: InputMaybe<MediaFileOrderByInput>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<MediaFileWhereInput>;
 };
 
 /**
@@ -2655,10 +2654,10 @@ export type LibraryMediaFilesArgs = {
  * Relations (Shows, Movies, Artists, etc.) are automatically generated
  * by the GraphQLRelations macro and use DataLoader for N+1 prevention.
  */
-export type LibraryMoviesArgs = {
-  OrderBy?: InputMaybe<MovieOrderByInput>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<MovieWhereInput>;
+export type LibrarymoviesArgs = {
+  orderBy?: InputMaybe<MovieOrderByInput>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<MovieWhereInput>;
 };
 
 /**
@@ -2667,42 +2666,46 @@ export type LibraryMoviesArgs = {
  * Relations (Shows, Movies, Artists, etc.) are automatically generated
  * by the GraphQLRelations macro and use DataLoader for N+1 prevention.
  */
-export type LibraryShowsArgs = {
-  OrderBy?: InputMaybe<ShowOrderByInput>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<ShowWhereInput>;
+export type LibraryshowsArgs = {
+  orderBy?: InputMaybe<ShowOrderByInput>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<ShowWhereInput>;
 };
 
 /** Event for #struct_name changes (subscriptions) */
 export type LibraryChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  Library?: Maybe<Library>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  library?: Maybe<Library>;
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type LibraryConnection = {
   /** The edges in this connection */
-  Edges: Array<LibraryEdge>;
+  edges: Array<LibraryEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type LibraryEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: Library;
+  node: Library;
 };
 
 export type LibraryOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  Id?: InputMaybe<SortDirection>;
-  LastScannedAt?: InputMaybe<SortDirection>;
-  LibraryType?: InputMaybe<SortDirection>;
-  Name?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  Id?: InputMaybe<OrderDirection>;
+  LastScannedAt?: InputMaybe<OrderDirection>;
+  LibraryType?: InputMaybe<OrderDirection>;
+  Name?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 export type LibraryPathAvailability = {
@@ -2723,14 +2726,12 @@ export type LibraryPathAvailabilityInput = {
 
 /** Result type for #struct_name mutations */
 export type LibraryResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Library?: Maybe<Library>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  library?: Maybe<Library>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type LibraryWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<LibraryWhereInput>>;
   AutoOrganize?: InputMaybe<BoolFilter>;
   AutoScan?: InputMaybe<BoolFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
@@ -2739,16 +2740,18 @@ export type LibraryWhereInput = {
   LibraryType?: InputMaybe<StringFilter>;
   Name?: InputMaybe<StringFilter>;
   NamingPattern?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<LibraryWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<LibraryWhereInput>>;
   Path?: InputMaybe<StringFilter>;
   ScanIntervalMinutes?: InputMaybe<IntFilter>;
   Scanning?: InputMaybe<BoolFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   UserId?: InputMaybe<StringFilter>;
   WatchForChanges?: InputMaybe<BoolFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<LibraryWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<LibraryWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<LibraryWhereInput>>;
 };
 
 /** Live torrent (from torrent client, not DB) */
@@ -2863,53 +2866,57 @@ export type MediaChapter = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type MediaChapterChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  MediaChapter?: Maybe<MediaChapter>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  mediaChapter?: Maybe<MediaChapter>;
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type MediaChapterConnection = {
   /** The edges in this connection */
-  Edges: Array<MediaChapterEdge>;
+  edges: Array<MediaChapterEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type MediaChapterEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: MediaChapter;
+  node: MediaChapter;
 };
 
 export type MediaChapterOrderByInput = {
-  ChapterIndex?: InputMaybe<SortDirection>;
-  CreatedAt?: InputMaybe<SortDirection>;
+  ChapterIndex?: InputMaybe<OrderDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type MediaChapterResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  MediaChapter?: Maybe<MediaChapter>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  mediaChapter?: Maybe<MediaChapter>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type MediaChapterWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<MediaChapterWhereInput>>;
   ChapterIndex?: InputMaybe<IntFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   EndSecs?: InputMaybe<IntFilter>;
   Id?: InputMaybe<StringFilter>;
   MediaFileId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<MediaChapterWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<MediaChapterWhereInput>>;
   StartSecs?: InputMaybe<IntFilter>;
   Title?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<MediaChapterWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<MediaChapterWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<MediaChapterWhereInput>>;
 };
 
 export type MediaFile = {
@@ -2942,48 +2949,50 @@ export type MediaFile = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type MediaFileChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  MediaFile?: Maybe<MediaFile>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  mediaFile?: Maybe<MediaFile>;
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type MediaFileConnection = {
   /** The edges in this connection */
-  Edges: Array<MediaFileEdge>;
+  edges: Array<MediaFileEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type MediaFileEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: MediaFile;
+  node: MediaFile;
 };
 
 export type MediaFileOrderByInput = {
-  AddedAt?: InputMaybe<SortDirection>;
-  AnalyzedAt?: InputMaybe<SortDirection>;
-  Duration?: InputMaybe<SortDirection>;
-  Path?: InputMaybe<SortDirection>;
-  Resolution?: InputMaybe<SortDirection>;
-  Size?: InputMaybe<SortDirection>;
+  AddedAt?: InputMaybe<OrderDirection>;
+  AnalyzedAt?: InputMaybe<OrderDirection>;
+  Duration?: InputMaybe<OrderDirection>;
+  Path?: InputMaybe<OrderDirection>;
+  Resolution?: InputMaybe<OrderDirection>;
+  Size?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type MediaFileResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  MediaFile?: Maybe<MediaFile>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  mediaFile?: Maybe<MediaFile>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type MediaFileWhereInput = {
   AddedAt?: InputMaybe<DateFilter>;
   AnalyzedAt?: InputMaybe<DateFilter>;
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<MediaFileWhereInput>>;
   AudioChannels?: InputMaybe<StringFilter>;
   AudioCodec?: InputMaybe<StringFilter>;
   Bitrate?: InputMaybe<IntFilter>;
@@ -2998,16 +3007,18 @@ export type MediaFileWhereInput = {
   IsHdr?: InputMaybe<BoolFilter>;
   LibraryId?: InputMaybe<StringFilter>;
   MovieId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<MediaFileWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<MediaFileWhereInput>>;
   Path?: InputMaybe<StringFilter>;
   Resolution?: InputMaybe<StringFilter>;
   Size?: InputMaybe<IntFilter>;
   TrackId?: InputMaybe<StringFilter>;
   VideoCodec?: InputMaybe<StringFilter>;
   Width?: InputMaybe<IntFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<MediaFileWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<MediaFileWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<MediaFileWhereInput>>;
 };
 
 export type MetadataCache = {
@@ -3024,57 +3035,61 @@ export type MetadataCache = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type MetadataCacheChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  MetadataCache?: Maybe<MetadataCache>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  metadataCache?: Maybe<MetadataCache>;
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type MetadataCacheConnection = {
   /** The edges in this connection */
-  Edges: Array<MetadataCacheEdge>;
+  edges: Array<MetadataCacheEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type MetadataCacheEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: MetadataCache;
+  node: MetadataCache;
 };
 
 export type MetadataCacheOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  FetchedAt?: InputMaybe<SortDirection>;
-  Operation?: InputMaybe<SortDirection>;
-  Provider?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  FetchedAt?: InputMaybe<OrderDirection>;
+  Operation?: InputMaybe<OrderDirection>;
+  Provider?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type MetadataCacheResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  MetadataCache?: Maybe<MetadataCache>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  metadataCache?: Maybe<MetadataCache>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type MetadataCacheWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<MetadataCacheWhereInput>>;
   CacheKey?: InputMaybe<StringFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   FetchedAt?: InputMaybe<DateFilter>;
   Id?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<MetadataCacheWhereInput>;
   Operation?: InputMaybe<StringFilter>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<MetadataCacheWhereInput>>;
   PayloadVersion?: InputMaybe<IntFilter>;
   Provider?: InputMaybe<StringFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<MetadataCacheWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<MetadataCacheWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<MetadataCacheWhereInput>>;
 };
 
 export type MoveFilesInput = {
@@ -3084,8 +3099,6 @@ export type MoveFilesInput = {
 };
 
 export type Movie = {
-  /** Get backdrop URL, preferring cached version if available */
-  BackdropUrl?: Maybe<Scalars["String"]["output"]>;
   CastNames: Array<Scalars["String"]["output"]>;
   Certification?: Maybe<Scalars["String"]["output"]>;
   CollectionId?: Maybe<Scalars["Int"]["output"]>;
@@ -3099,24 +3112,15 @@ export type Movie = {
   Id: Scalars["String"]["output"];
   ImdbId?: Maybe<Scalars["String"]["output"]>;
   LibraryId: Scalars["String"]["output"];
-  MediaFile?: Maybe<MediaFile>;
   MediaFileId?: Maybe<Scalars["String"]["output"]>;
   Monitored: Scalars["Boolean"]["output"];
   OriginalTitle?: Maybe<Scalars["String"]["output"]>;
   Overview?: Maybe<Scalars["String"]["output"]>;
-  /** Get poster URL, preferring cached version if available */
-  PosterUrl?: Maybe<Scalars["String"]["output"]>;
   ProductionCountries: Array<Scalars["String"]["output"]>;
   ReleaseDate?: Maybe<Scalars["String"]["output"]>;
   Runtime?: Maybe<Scalars["Int"]["output"]>;
   SortTitle?: Maybe<Scalars["String"]["output"]>;
   SpokenLanguages: Array<Scalars["String"]["output"]>;
-  /**
-   * Computed status based on playback, file availability, and download state
-   *
-   * Returns one of: PLAYING, PAUSED, AVAILABLE, DOWNLOADING, WANTED, MISSING
-   */
-  Status: ContentStatus;
   Tagline?: Maybe<Scalars["String"]["output"]>;
   Title: Scalars["String"]["output"];
   TmdbId?: Maybe<Scalars["Int"]["output"]>;
@@ -3127,6 +3131,8 @@ export type Movie = {
   UserId: Scalars["String"]["output"];
   Wanted: Scalars["Boolean"]["output"];
   Year?: Maybe<Scalars["Int"]["output"]>;
+  /** Get related #graphql_name */
+  mediaFile?: Maybe<MediaFile>;
 };
 
 export type MovieCastCredit = {
@@ -3134,70 +3140,80 @@ export type MovieCastCredit = {
   CharacterName?: Maybe<Scalars["String"]["output"]>;
   CreatedAt: Scalars["String"]["output"];
   Id: Scalars["String"]["output"];
-  Movie?: Maybe<Movie>;
   MovieId: Scalars["String"]["output"];
-  Person?: Maybe<Person>;
   PersonId: Scalars["String"]["output"];
   UpdatedAt: Scalars["String"]["output"];
+  /** Get related #graphql_name */
+  movie?: Maybe<Movie>;
+  /** Get related #graphql_name */
+  person?: Maybe<Person>;
 };
 
 /** Event for #struct_name changes (subscriptions) */
 export type MovieCastCreditChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  MovieCastCredit?: Maybe<MovieCastCredit>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  movieCastCredit?: Maybe<MovieCastCredit>;
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type MovieCastCreditConnection = {
   /** The edges in this connection */
-  Edges: Array<MovieCastCreditEdge>;
+  edges: Array<MovieCastCreditEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type MovieCastCreditEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: MovieCastCredit;
+  node: MovieCastCredit;
 };
 
 export type MovieCastCreditOrderByInput = {
-  CastOrder?: InputMaybe<SortDirection>;
-  CreatedAt?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CastOrder?: InputMaybe<OrderDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type MovieCastCreditResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  MovieCastCredit?: Maybe<MovieCastCredit>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  movieCastCredit?: Maybe<MovieCastCredit>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type MovieCastCreditWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<MovieCastCreditWhereInput>>;
   CastOrder?: InputMaybe<IntFilter>;
   CharacterName?: InputMaybe<StringFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   Id?: InputMaybe<StringFilter>;
   MovieId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<MovieCastCreditWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<MovieCastCreditWhereInput>>;
   PersonId?: InputMaybe<StringFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<MovieCastCreditWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<MovieCastCreditWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<MovieCastCreditWhereInput>>;
 };
 
 /** Event for #struct_name changes (subscriptions) */
 export type MovieChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  Movie?: Maybe<Movie>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  movie?: Maybe<Movie>;
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Full TMDB collection details with local overlay */
@@ -3250,17 +3266,17 @@ export type MovieCollectionSearchResult = {
 /** Connection containing edges and page info */
 export type MovieConnection = {
   /** The edges in this connection */
-  Edges: Array<MovieEdge>;
+  edges: Array<MovieEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type MovieEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: Movie;
+  node: Movie;
 };
 
 /** Result of movie operations */
@@ -3271,20 +3287,20 @@ export type MovieOperationResult = {
 };
 
 export type MovieOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  ReleaseDate?: InputMaybe<SortDirection>;
-  Runtime?: InputMaybe<SortDirection>;
-  SortTitle?: InputMaybe<SortDirection>;
-  Title?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
-  Year?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  ReleaseDate?: InputMaybe<OrderDirection>;
+  Runtime?: InputMaybe<OrderDirection>;
+  SortTitle?: InputMaybe<OrderDirection>;
+  Title?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
+  Year?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type MovieResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Movie?: Maybe<Movie>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  movie?: Maybe<Movie>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Movie search result from TMDB */
@@ -3303,8 +3319,6 @@ export type MovieSearchResult = {
 };
 
 export type MovieWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<MovieWhereInput>>;
   Certification?: InputMaybe<StringFilter>;
   CollectionId?: InputMaybe<IntFilter>;
   CollectionName?: InputMaybe<StringFilter>;
@@ -3317,10 +3331,6 @@ export type MovieWhereInput = {
   LibraryId?: InputMaybe<StringFilter>;
   MediaFileId?: InputMaybe<StringFilter>;
   Monitored?: InputMaybe<BoolFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<MovieWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<MovieWhereInput>>;
   ReleaseDate?: InputMaybe<DateFilter>;
   Runtime?: InputMaybe<IntFilter>;
   Title?: InputMaybe<StringFilter>;
@@ -3331,6 +3341,12 @@ export type MovieWhereInput = {
   UserId?: InputMaybe<StringFilter>;
   Wanted?: InputMaybe<BoolFilter>;
   Year?: InputMaybe<IntFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<MovieWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<MovieWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<MovieWhereInput>>;
 };
 
 export type MutationRoot = {
@@ -3357,266 +3373,8 @@ export type MutationRoot = {
   CastStop: CastActionResult;
   ConfigureNetworkPath: NetworkPathConfigPayload;
   CopyFiles: FileOperationPayload;
-  /** Create a new #struct_name_str */
-  CreateAlbum: AlbumResult;
-  /** Create a new #struct_name_str */
-  CreateAppLog: AppLogResult;
-  /** Create a new #struct_name_str */
-  CreateAppSetting: AppSettingResult;
-  /** Create a new #struct_name_str */
-  CreateArtist: ArtistResult;
-  /** Create a new #struct_name_str */
-  CreateArtworkCache: ArtworkCacheResult;
-  /** Create a new #struct_name_str */
-  CreateAudioStream: AudioStreamResult;
-  /** Create a new #struct_name_str */
-  CreateAudiobook: AudiobookResult;
-  /** Create a new #struct_name_str */
-  CreateCastDevice: CastDeviceResult;
-  /** Create a new #struct_name_str */
-  CreateCastSession: CastSessionResult;
-  /** Create a new #struct_name_str */
-  CreateCastSetting: CastSettingResult;
-  /** Create a new #struct_name_str */
-  CreateChapter: ChapterResult;
-  /** Create a new #struct_name_str */
-  CreateCollection: CollectionResult;
   CreateDirectory: FileOperationPayload;
-  /** Create a new #struct_name_str */
-  CreateEpisode: EpisodeResult;
-  /** Create a new #struct_name_str */
-  CreateInviteToken: InviteTokenResult;
-  /** Create a new #struct_name_str */
-  CreateLibrary: LibraryResult;
-  /** Create a new #struct_name_str */
-  CreateMediaChapter: MediaChapterResult;
-  /** Create a new #struct_name_str */
-  CreateMediaFile: MediaFileResult;
-  /** Create a new #struct_name_str */
-  CreateMetadataCache: MetadataCacheResult;
-  /** Create a new #struct_name_str */
-  CreateMovie: MovieResult;
-  /** Create a new #struct_name_str */
-  CreateMovieCastCredit: MovieCastCreditResult;
-  /** Create a new #struct_name_str */
-  CreateNamingPattern: NamingPatternResult;
-  /** Create a new #struct_name_str */
-  CreateNotification: NotificationResult;
-  /** Create a new #struct_name_str */
-  CreatePendingFileMatch: PendingFileMatchResult;
-  /** Create a new #struct_name_str */
-  CreatePerson: PersonResult;
-  /** Create a new #struct_name_str */
-  CreatePlaybackProgress: PlaybackProgressResult;
-  /** Create a new #struct_name_str */
-  CreatePlaybackSession: PlaybackSessionResult;
-  /** Create a new #struct_name_str */
-  CreateRefreshToken: RefreshTokenResult;
-  /** Create a new #struct_name_str */
-  CreateRssFeed: RssFeedResult;
-  /** Create a new #struct_name_str */
-  CreateRssFeedItem: RssFeedItemResult;
-  /** Create a new #struct_name_str */
-  CreateScheduleCache: ScheduleCacheResult;
-  /** Create a new #struct_name_str */
-  CreateScheduleSyncState: ScheduleSyncStateResult;
-  /** Create a new #struct_name_str */
-  CreateShow: ShowResult;
-  /** Create a new #struct_name_str */
-  CreateSource: SourceResult;
-  /** Create a new #struct_name_str */
-  CreateSourcePriorityRule: SourcePriorityRuleResult;
-  /** Create a new #struct_name_str */
-  CreateSubtitle: SubtitleResult;
-  /** Create a new #struct_name_str */
-  CreateTorrent: TorrentResult;
-  /** Create a new #struct_name_str */
-  CreateTorrentFile: TorrentFileResult;
-  /** Create a new #struct_name_str */
-  CreateTorznabCategory: TorznabCategoryResult;
-  /** Create a new #struct_name_str */
-  CreateTrack: TrackResult;
-  /** Create a new #struct_name_str */
-  CreateUsenetDownload: UsenetDownloadResult;
-  /** Create a new #struct_name_str */
-  CreateUsenetServer: UsenetServerResult;
-  /** Create a new #struct_name_str */
-  CreateUser: UserResult;
-  /** Create a new #struct_name_str */
-  CreateVideoStream: VideoStreamResult;
-  /** Delete a #struct_name_str */
-  DeleteAlbum: AlbumResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteAlbums: DeleteAlbumsResult;
-  /** Delete a #struct_name_str */
-  DeleteAppLog: AppLogResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteAppLogs: DeleteAppLogsResult;
-  /** Delete a #struct_name_str */
-  DeleteAppSetting: AppSettingResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteAppSettings: DeleteAppSettingsResult;
-  /** Delete a #struct_name_str */
-  DeleteArtist: ArtistResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteArtists: DeleteArtistsResult;
-  /** Delete a #struct_name_str */
-  DeleteArtworkCache: ArtworkCacheResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteArtworkCaches: DeleteArtworkCachesResult;
-  /** Delete a #struct_name_str */
-  DeleteAudioStream: AudioStreamResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteAudioStreams: DeleteAudioStreamsResult;
-  /** Delete a #struct_name_str */
-  DeleteAudiobook: AudiobookResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteAudiobooks: DeleteAudiobooksResult;
-  /** Delete a #struct_name_str */
-  DeleteCastDevice: CastDeviceResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteCastDevices: DeleteCastDevicesResult;
-  /** Delete a #struct_name_str */
-  DeleteCastSession: CastSessionResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteCastSessions: DeleteCastSessionsResult;
-  /** Delete a #struct_name_str */
-  DeleteCastSetting: CastSettingResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteCastSettings: DeleteCastSettingsResult;
-  /** Delete a #struct_name_str */
-  DeleteChapter: ChapterResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteChapters: DeleteChaptersResult;
-  /** Delete a #struct_name_str */
-  DeleteCollection: CollectionResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteCollections: DeleteCollectionsResult;
-  /** Delete a #struct_name_str */
-  DeleteEpisode: EpisodeResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteEpisodes: DeleteEpisodesResult;
   DeleteFiles: FileOperationPayload;
-  /** Delete a #struct_name_str */
-  DeleteInviteToken: InviteTokenResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteInviteTokens: DeleteInviteTokensResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteLibraries: DeleteLibrariesResult;
-  /** Delete a #struct_name_str */
-  DeleteLibrary: LibraryResult;
-  /** Delete a #struct_name_str */
-  DeleteMediaChapter: MediaChapterResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteMediaChapters: DeleteMediaChaptersResult;
-  /** Delete a #struct_name_str */
-  DeleteMediaFile: MediaFileResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteMediaFiles: DeleteMediaFilesResult;
-  /** Delete a #struct_name_str */
-  DeleteMetadataCache: MetadataCacheResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteMetadataCaches: DeleteMetadataCachesResult;
-  /** Delete a #struct_name_str */
-  DeleteMovie: MovieResult;
-  /** Delete a #struct_name_str */
-  DeleteMovieCastCredit: MovieCastCreditResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteMovieCastCredits: DeleteMovieCastCreditsResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteMovies: DeleteMoviesResult;
-  /** Delete a #struct_name_str */
-  DeleteNamingPattern: NamingPatternResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteNamingPatterns: DeleteNamingPatternsResult;
-  /** Delete a #struct_name_str */
-  DeleteNotification: NotificationResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteNotifications: DeleteNotificationsResult;
-  /** Delete a #struct_name_str */
-  DeletePendingFileMatch: PendingFileMatchResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeletePendingFileMatches: DeletePendingFileMatchesResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeletePeople: DeletePeopleResult;
-  /** Delete a #struct_name_str */
-  DeletePerson: PersonResult;
-  /** Delete a #struct_name_str */
-  DeletePlaybackProgress: PlaybackProgressResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeletePlaybackProgresses: DeletePlaybackProgressesResult;
-  /** Delete a #struct_name_str */
-  DeletePlaybackSession: PlaybackSessionResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeletePlaybackSessions: DeletePlaybackSessionsResult;
-  /** Delete a #struct_name_str */
-  DeleteRefreshToken: RefreshTokenResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteRefreshTokens: DeleteRefreshTokensResult;
-  /** Delete a #struct_name_str */
-  DeleteRssFeed: RssFeedResult;
-  /** Delete a #struct_name_str */
-  DeleteRssFeedItem: RssFeedItemResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteRssFeedItems: DeleteRssFeedItemsResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteRssFeeds: DeleteRssFeedsResult;
-  /** Delete a #struct_name_str */
-  DeleteScheduleCache: ScheduleCacheResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteScheduleCaches: DeleteScheduleCachesResult;
-  /** Delete a #struct_name_str */
-  DeleteScheduleSyncState: ScheduleSyncStateResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteScheduleSyncStates: DeleteScheduleSyncStatesResult;
-  /** Delete a #struct_name_str */
-  DeleteShow: ShowResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteShows: DeleteShowsResult;
-  /** Delete a #struct_name_str */
-  DeleteSource: SourceResult;
-  /** Delete a #struct_name_str */
-  DeleteSourcePriorityRule: SourcePriorityRuleResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteSourcePriorityRules: DeleteSourcePriorityRulesResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteSources: DeleteSourcesResult;
-  /** Delete a #struct_name_str */
-  DeleteSubtitle: SubtitleResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteSubtitles: DeleteSubtitlesResult;
-  /** Delete a #struct_name_str */
-  DeleteTorrent: TorrentResult;
-  /** Delete a #struct_name_str */
-  DeleteTorrentFile: TorrentFileResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteTorrentFiles: DeleteTorrentFilesResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteTorrents: DeleteTorrentsResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteTorznabCategories: DeleteTorznabCategoriesResult;
-  /** Delete a #struct_name_str */
-  DeleteTorznabCategory: TorznabCategoryResult;
-  /** Delete a #struct_name_str */
-  DeleteTrack: TrackResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteTracks: DeleteTracksResult;
-  /** Delete a #struct_name_str */
-  DeleteUsenetDownload: UsenetDownloadResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteUsenetDownloads: DeleteUsenetDownloadsResult;
-  /** Delete a #struct_name_str */
-  DeleteUsenetServer: UsenetServerResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteUsenetServers: DeleteUsenetServersResult;
-  /** Delete a #struct_name_str */
-  DeleteUser: UserResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteUsers: DeleteUsersResult;
-  /** Delete a #struct_name_str */
-  DeleteVideoStream: VideoStreamResult;
-  /** Delete multiple #plural_name matching the given Where filter */
-  DeleteVideoStreams: DeleteVideoStreamsResult;
   DiscoverCastDevices: Array<LegacyCastDevice>;
   Login: AuthPayload;
   Logout: LogoutPayload;
@@ -3659,180 +3417,440 @@ export type MutationRoot = {
   /** Test a source connection */
   TestSource: SourceTestConnectionResult;
   UnmatchMediaFile: UnmatchMediaFileResult;
-  /** Update an existing #struct_name_str */
-  UpdateAlbum: AlbumResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateAlbums: UpdateAlbumsResult;
-  /** Update an existing #struct_name_str */
-  UpdateAppLog: AppLogResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateAppLogs: UpdateAppLogsResult;
-  /** Update an existing #struct_name_str */
-  UpdateAppSetting: AppSettingResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateAppSettings: UpdateAppSettingsResult;
-  /** Update an existing #struct_name_str */
-  UpdateArtist: ArtistResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateArtists: UpdateArtistsResult;
-  /** Update an existing #struct_name_str */
-  UpdateArtworkCache: ArtworkCacheResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateArtworkCaches: UpdateArtworkCachesResult;
-  /** Update an existing #struct_name_str */
-  UpdateAudioStream: AudioStreamResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateAudioStreams: UpdateAudioStreamsResult;
-  /** Update an existing #struct_name_str */
-  UpdateAudiobook: AudiobookResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateAudiobooks: UpdateAudiobooksResult;
-  /** Update an existing #struct_name_str */
-  UpdateCastDevice: CastDeviceResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateCastDevices: UpdateCastDevicesResult;
-  /** Update an existing #struct_name_str */
-  UpdateCastSession: CastSessionResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateCastSessions: UpdateCastSessionsResult;
-  /** Update an existing #struct_name_str */
-  UpdateCastSetting: CastSettingResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateCastSettings: UpdateCastSettingsResult;
-  /** Update an existing #struct_name_str */
-  UpdateChapter: ChapterResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateChapters: UpdateChaptersResult;
-  /** Update an existing #struct_name_str */
-  UpdateCollection: CollectionResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateCollections: UpdateCollectionsResult;
-  /** Update an existing #struct_name_str */
-  UpdateEpisode: EpisodeResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateEpisodes: UpdateEpisodesResult;
-  /** Update an existing #struct_name_str */
-  UpdateInviteToken: InviteTokenResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateInviteTokens: UpdateInviteTokensResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateLibraries: UpdateLibrariesResult;
-  /** Update an existing #struct_name_str */
-  UpdateLibrary: LibraryResult;
-  /** Update an existing #struct_name_str */
-  UpdateMediaChapter: MediaChapterResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateMediaChapters: UpdateMediaChaptersResult;
-  /** Update an existing #struct_name_str */
-  UpdateMediaFile: MediaFileResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateMediaFiles: UpdateMediaFilesResult;
-  /** Update an existing #struct_name_str */
-  UpdateMetadataCache: MetadataCacheResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateMetadataCaches: UpdateMetadataCachesResult;
-  /** Update an existing #struct_name_str */
-  UpdateMovie: MovieResult;
-  /** Update an existing #struct_name_str */
-  UpdateMovieCastCredit: MovieCastCreditResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateMovieCastCredits: UpdateMovieCastCreditsResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateMovies: UpdateMoviesResult;
-  /** Update an existing #struct_name_str */
-  UpdateNamingPattern: NamingPatternResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateNamingPatterns: UpdateNamingPatternsResult;
-  /** Update an existing #struct_name_str */
-  UpdateNotification: NotificationResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateNotifications: UpdateNotificationsResult;
-  /** Update an existing #struct_name_str */
-  UpdatePendingFileMatch: PendingFileMatchResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdatePendingFileMatches: UpdatePendingFileMatchesResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdatePeople: UpdatePeopleResult;
-  /** Update an existing #struct_name_str */
-  UpdatePerson: PersonResult;
-  /** Update an existing #struct_name_str */
-  UpdatePlaybackProgress: PlaybackProgressResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdatePlaybackProgresses: UpdatePlaybackProgressesResult;
-  /** Update an existing #struct_name_str */
-  UpdatePlaybackSession: PlaybackSessionResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdatePlaybackSessions: UpdatePlaybackSessionsResult;
-  /** Update an existing #struct_name_str */
-  UpdateRefreshToken: RefreshTokenResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateRefreshTokens: UpdateRefreshTokensResult;
-  /** Update an existing #struct_name_str */
-  UpdateRssFeed: RssFeedResult;
-  /** Update an existing #struct_name_str */
-  UpdateRssFeedItem: RssFeedItemResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateRssFeedItems: UpdateRssFeedItemsResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateRssFeeds: UpdateRssFeedsResult;
-  /** Update an existing #struct_name_str */
-  UpdateScheduleCache: ScheduleCacheResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateScheduleCaches: UpdateScheduleCachesResult;
-  /** Update an existing #struct_name_str */
-  UpdateScheduleSyncState: ScheduleSyncStateResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateScheduleSyncStates: UpdateScheduleSyncStatesResult;
-  /** Update an existing #struct_name_str */
-  UpdateShow: ShowResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateShows: UpdateShowsResult;
-  /** Update an existing #struct_name_str */
-  UpdateSource: SourceResult;
+  UpdateCastDevice: CastDeviceOperationResult;
+  UpdateCastSettings: CastSettingsOperationResult;
   /** Update source priorities (reorder) */
   UpdateSourcePriorities: SourceMutationResult;
+  /** Create a new #struct_name_str */
+  createAlbum: AlbumResult;
+  /** Create a new #struct_name_str */
+  createAppLog: AppLogResult;
+  /** Create a new #struct_name_str */
+  createAppSetting: AppSettingResult;
+  /** Create a new #struct_name_str */
+  createArtist: ArtistResult;
+  /** Create a new #struct_name_str */
+  createArtworkCache: ArtworkCacheResult;
+  /** Create a new #struct_name_str */
+  createAudioStream: AudioStreamResult;
+  /** Create a new #struct_name_str */
+  createAudiobook: AudiobookResult;
+  /** Create a new #struct_name_str */
+  createCastDevice: CastDeviceResult;
+  /** Create a new #struct_name_str */
+  createCastSession: CastSessionResult;
+  /** Create a new #struct_name_str */
+  createCastSetting: CastSettingResult;
+  /** Create a new #struct_name_str */
+  createChapter: ChapterResult;
+  /** Create a new #struct_name_str */
+  createCollection: CollectionResult;
+  /** Create a new #struct_name_str */
+  createEpisode: EpisodeResult;
+  /** Create a new #struct_name_str */
+  createInviteToken: InviteTokenResult;
+  /** Create a new #struct_name_str */
+  createLibrary: LibraryResult;
+  /** Create a new #struct_name_str */
+  createMediaChapter: MediaChapterResult;
+  /** Create a new #struct_name_str */
+  createMediaFile: MediaFileResult;
+  /** Create a new #struct_name_str */
+  createMetadataCache: MetadataCacheResult;
+  /** Create a new #struct_name_str */
+  createMovie: MovieResult;
+  /** Create a new #struct_name_str */
+  createMovieCastCredit: MovieCastCreditResult;
+  /** Create a new #struct_name_str */
+  createNamingPattern: NamingPatternResult;
+  /** Create a new #struct_name_str */
+  createNotification: NotificationResult;
+  /** Create a new #struct_name_str */
+  createPendingFileMatch: PendingFileMatchResult;
+  /** Create a new #struct_name_str */
+  createPerson: PersonResult;
+  /** Create a new #struct_name_str */
+  createPlaybackProgress: PlaybackProgressResult;
+  /** Create a new #struct_name_str */
+  createPlaybackSession: PlaybackSessionResult;
+  /** Create a new #struct_name_str */
+  createRefreshToken: RefreshTokenResult;
+  /** Create a new #struct_name_str */
+  createRssFeed: RssFeedResult;
+  /** Create a new #struct_name_str */
+  createRssFeedItem: RssFeedItemResult;
+  /** Create a new #struct_name_str */
+  createScheduleCache: ScheduleCacheResult;
+  /** Create a new #struct_name_str */
+  createScheduleSyncState: ScheduleSyncStateResult;
+  /** Create a new #struct_name_str */
+  createShow: ShowResult;
+  /** Create a new #struct_name_str */
+  createSource: SourceResult;
+  /** Create a new #struct_name_str */
+  createSourcePriorityRule: SourcePriorityRuleResult;
+  /** Create a new #struct_name_str */
+  createSubtitle: SubtitleResult;
+  /** Create a new #struct_name_str */
+  createTorrent: TorrentResult;
+  /** Create a new #struct_name_str */
+  createTorrentFile: TorrentFileResult;
+  /** Create a new #struct_name_str */
+  createTorznabCategory: TorznabCategoryResult;
+  /** Create a new #struct_name_str */
+  createTrack: TrackResult;
+  /** Create a new #struct_name_str */
+  createUsenetDownload: UsenetDownloadResult;
+  /** Create a new #struct_name_str */
+  createUsenetServer: UsenetServerResult;
+  /** Create a new #struct_name_str */
+  createUser: UserResult;
+  /** Create a new #struct_name_str */
+  createVideoStream: VideoStreamResult;
+  /** Delete a #struct_name_str */
+  deleteAlbum: AlbumResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteAlbums: DeleteAlbumsResult;
+  /** Delete a #struct_name_str */
+  deleteAppLog: AppLogResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteAppLogs: DeleteAppLogsResult;
+  /** Delete a #struct_name_str */
+  deleteAppSetting: AppSettingResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteAppSettings: DeleteAppSettingsResult;
+  /** Delete a #struct_name_str */
+  deleteArtist: ArtistResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteArtists: DeleteArtistsResult;
+  /** Delete a #struct_name_str */
+  deleteArtworkCache: ArtworkCacheResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteArtworkCaches: DeleteArtworkCachesResult;
+  /** Delete a #struct_name_str */
+  deleteAudioStream: AudioStreamResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteAudioStreams: DeleteAudioStreamsResult;
+  /** Delete a #struct_name_str */
+  deleteAudiobook: AudiobookResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteAudiobooks: DeleteAudiobooksResult;
+  /** Delete a #struct_name_str */
+  deleteCastDevice: CastDeviceResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteCastDevices: DeleteCastDevicesResult;
+  /** Delete a #struct_name_str */
+  deleteCastSession: CastSessionResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteCastSessions: DeleteCastSessionsResult;
+  /** Delete a #struct_name_str */
+  deleteCastSetting: CastSettingResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteCastSettings: DeleteCastSettingsResult;
+  /** Delete a #struct_name_str */
+  deleteChapter: ChapterResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteChapters: DeleteChaptersResult;
+  /** Delete a #struct_name_str */
+  deleteCollection: CollectionResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteCollections: DeleteCollectionsResult;
+  /** Delete a #struct_name_str */
+  deleteEpisode: EpisodeResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteEpisodes: DeleteEpisodesResult;
+  /** Delete a #struct_name_str */
+  deleteInviteToken: InviteTokenResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteInviteTokens: DeleteInviteTokensResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteLibraries: DeleteLibrariesResult;
+  /** Delete a #struct_name_str */
+  deleteLibrary: LibraryResult;
+  /** Delete a #struct_name_str */
+  deleteMediaChapter: MediaChapterResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteMediaChapters: DeleteMediaChaptersResult;
+  /** Delete a #struct_name_str */
+  deleteMediaFile: MediaFileResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteMediaFiles: DeleteMediaFilesResult;
+  /** Delete a #struct_name_str */
+  deleteMetadataCache: MetadataCacheResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteMetadataCaches: DeleteMetadataCachesResult;
+  /** Delete a #struct_name_str */
+  deleteMovie: MovieResult;
+  /** Delete a #struct_name_str */
+  deleteMovieCastCredit: MovieCastCreditResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteMovieCastCredits: DeleteMovieCastCreditsResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteMovies: DeleteMoviesResult;
+  /** Delete a #struct_name_str */
+  deleteNamingPattern: NamingPatternResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteNamingPatterns: DeleteNamingPatternsResult;
+  /** Delete a #struct_name_str */
+  deleteNotification: NotificationResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteNotifications: DeleteNotificationsResult;
+  /** Delete a #struct_name_str */
+  deletePendingFileMatch: PendingFileMatchResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deletePendingFileMatches: DeletePendingFileMatchesResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deletePeople: DeletePeopleResult;
+  /** Delete a #struct_name_str */
+  deletePerson: PersonResult;
+  /** Delete a #struct_name_str */
+  deletePlaybackProgress: PlaybackProgressResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deletePlaybackProgresses: DeletePlaybackProgressesResult;
+  /** Delete a #struct_name_str */
+  deletePlaybackSession: PlaybackSessionResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deletePlaybackSessions: DeletePlaybackSessionsResult;
+  /** Delete a #struct_name_str */
+  deleteRefreshToken: RefreshTokenResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteRefreshTokens: DeleteRefreshTokensResult;
+  /** Delete a #struct_name_str */
+  deleteRssFeed: RssFeedResult;
+  /** Delete a #struct_name_str */
+  deleteRssFeedItem: RssFeedItemResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteRssFeedItems: DeleteRssFeedItemsResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteRssFeeds: DeleteRssFeedsResult;
+  /** Delete a #struct_name_str */
+  deleteScheduleCache: ScheduleCacheResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteScheduleCaches: DeleteScheduleCachesResult;
+  /** Delete a #struct_name_str */
+  deleteScheduleSyncState: ScheduleSyncStateResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteScheduleSyncStates: DeleteScheduleSyncStatesResult;
+  /** Delete a #struct_name_str */
+  deleteShow: ShowResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteShows: DeleteShowsResult;
+  /** Delete a #struct_name_str */
+  deleteSource: SourceResult;
+  /** Delete a #struct_name_str */
+  deleteSourcePriorityRule: SourcePriorityRuleResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteSourcePriorityRules: DeleteSourcePriorityRulesResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteSources: DeleteSourcesResult;
+  /** Delete a #struct_name_str */
+  deleteSubtitle: SubtitleResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteSubtitles: DeleteSubtitlesResult;
+  /** Delete a #struct_name_str */
+  deleteTorrent: TorrentResult;
+  /** Delete a #struct_name_str */
+  deleteTorrentFile: TorrentFileResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteTorrentFiles: DeleteTorrentFilesResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteTorrents: DeleteTorrentsResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteTorznabCategories: DeleteTorznabCategoriesResult;
+  /** Delete a #struct_name_str */
+  deleteTorznabCategory: TorznabCategoryResult;
+  /** Delete a #struct_name_str */
+  deleteTrack: TrackResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteTracks: DeleteTracksResult;
+  /** Delete a #struct_name_str */
+  deleteUsenetDownload: UsenetDownloadResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteUsenetDownloads: DeleteUsenetDownloadsResult;
+  /** Delete a #struct_name_str */
+  deleteUsenetServer: UsenetServerResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteUsenetServers: DeleteUsenetServersResult;
+  /** Delete a #struct_name_str */
+  deleteUser: UserResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteUsers: DeleteUsersResult;
+  /** Delete a #struct_name_str */
+  deleteVideoStream: VideoStreamResult;
+  /** Delete multiple #plural_name matching the given Where filter */
+  deleteVideoStreams: DeleteVideoStreamsResult;
   /** Update an existing #struct_name_str */
-  UpdateSourcePriorityRule: SourcePriorityRuleResult;
+  updateAlbum: AlbumResult;
   /** Update multiple #plural_name matching the given Where filter */
-  UpdateSourcePriorityRules: UpdateSourcePriorityRulesResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateSources: UpdateSourcesResult;
+  updateAlbums: UpdateAlbumsResult;
   /** Update an existing #struct_name_str */
-  UpdateSubtitle: SubtitleResult;
+  updateAppLog: AppLogResult;
   /** Update multiple #plural_name matching the given Where filter */
-  UpdateSubtitles: UpdateSubtitlesResult;
+  updateAppLogs: UpdateAppLogsResult;
   /** Update an existing #struct_name_str */
-  UpdateTorrent: TorrentResult;
+  updateAppSetting: AppSettingResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateAppSettings: UpdateAppSettingsResult;
   /** Update an existing #struct_name_str */
-  UpdateTorrentFile: TorrentFileResult;
+  updateArtist: ArtistResult;
   /** Update multiple #plural_name matching the given Where filter */
-  UpdateTorrentFiles: UpdateTorrentFilesResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateTorrents: UpdateTorrentsResult;
-  /** Update multiple #plural_name matching the given Where filter */
-  UpdateTorznabCategories: UpdateTorznabCategoriesResult;
+  updateArtists: UpdateArtistsResult;
   /** Update an existing #struct_name_str */
-  UpdateTorznabCategory: TorznabCategoryResult;
-  /** Update an existing #struct_name_str */
-  UpdateTrack: TrackResult;
+  updateArtworkCache: ArtworkCacheResult;
   /** Update multiple #plural_name matching the given Where filter */
-  UpdateTracks: UpdateTracksResult;
+  updateArtworkCaches: UpdateArtworkCachesResult;
   /** Update an existing #struct_name_str */
-  UpdateUsenetDownload: UsenetDownloadResult;
+  updateAudioStream: AudioStreamResult;
   /** Update multiple #plural_name matching the given Where filter */
-  UpdateUsenetDownloads: UpdateUsenetDownloadsResult;
+  updateAudioStreams: UpdateAudioStreamsResult;
   /** Update an existing #struct_name_str */
-  UpdateUsenetServer: UsenetServerResult;
+  updateAudiobook: AudiobookResult;
   /** Update multiple #plural_name matching the given Where filter */
-  UpdateUsenetServers: UpdateUsenetServersResult;
+  updateAudiobooks: UpdateAudiobooksResult;
   /** Update an existing #struct_name_str */
-  UpdateUser: UserResult;
+  updateCastDevice: CastDeviceResult;
   /** Update multiple #plural_name matching the given Where filter */
-  UpdateUsers: UpdateUsersResult;
+  updateCastDevices: UpdateCastDevicesResult;
   /** Update an existing #struct_name_str */
-  UpdateVideoStream: VideoStreamResult;
+  updateCastSession: CastSessionResult;
   /** Update multiple #plural_name matching the given Where filter */
-  UpdateVideoStreams: UpdateVideoStreamsResult;
+  updateCastSessions: UpdateCastSessionsResult;
+  /** Update an existing #struct_name_str */
+  updateCastSetting: CastSettingResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateCastSettings: UpdateCastSettingsResult;
+  /** Update an existing #struct_name_str */
+  updateChapter: ChapterResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateChapters: UpdateChaptersResult;
+  /** Update an existing #struct_name_str */
+  updateCollection: CollectionResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateCollections: UpdateCollectionsResult;
+  /** Update an existing #struct_name_str */
+  updateEpisode: EpisodeResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateEpisodes: UpdateEpisodesResult;
+  /** Update an existing #struct_name_str */
+  updateInviteToken: InviteTokenResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateInviteTokens: UpdateInviteTokensResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateLibraries: UpdateLibrariesResult;
+  /** Update an existing #struct_name_str */
+  updateLibrary: LibraryResult;
+  /** Update an existing #struct_name_str */
+  updateMediaChapter: MediaChapterResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateMediaChapters: UpdateMediaChaptersResult;
+  /** Update an existing #struct_name_str */
+  updateMediaFile: MediaFileResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateMediaFiles: UpdateMediaFilesResult;
+  /** Update an existing #struct_name_str */
+  updateMetadataCache: MetadataCacheResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateMetadataCaches: UpdateMetadataCachesResult;
+  /** Update an existing #struct_name_str */
+  updateMovie: MovieResult;
+  /** Update an existing #struct_name_str */
+  updateMovieCastCredit: MovieCastCreditResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateMovieCastCredits: UpdateMovieCastCreditsResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateMovies: UpdateMoviesResult;
+  /** Update an existing #struct_name_str */
+  updateNamingPattern: NamingPatternResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateNamingPatterns: UpdateNamingPatternsResult;
+  /** Update an existing #struct_name_str */
+  updateNotification: NotificationResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateNotifications: UpdateNotificationsResult;
+  /** Update an existing #struct_name_str */
+  updatePendingFileMatch: PendingFileMatchResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updatePendingFileMatches: UpdatePendingFileMatchesResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updatePeople: UpdatePeopleResult;
+  /** Update an existing #struct_name_str */
+  updatePerson: PersonResult;
+  /** Update an existing #struct_name_str */
+  updatePlaybackProgress: PlaybackProgressResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updatePlaybackProgresses: UpdatePlaybackProgressesResult;
+  /** Update an existing #struct_name_str */
+  updatePlaybackSession: PlaybackSessionResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updatePlaybackSessions: UpdatePlaybackSessionsResult;
+  /** Update an existing #struct_name_str */
+  updateRefreshToken: RefreshTokenResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateRefreshTokens: UpdateRefreshTokensResult;
+  /** Update an existing #struct_name_str */
+  updateRssFeed: RssFeedResult;
+  /** Update an existing #struct_name_str */
+  updateRssFeedItem: RssFeedItemResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateRssFeedItems: UpdateRssFeedItemsResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateRssFeeds: UpdateRssFeedsResult;
+  /** Update an existing #struct_name_str */
+  updateScheduleCache: ScheduleCacheResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateScheduleCaches: UpdateScheduleCachesResult;
+  /** Update an existing #struct_name_str */
+  updateScheduleSyncState: ScheduleSyncStateResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateScheduleSyncStates: UpdateScheduleSyncStatesResult;
+  /** Update an existing #struct_name_str */
+  updateShow: ShowResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateShows: UpdateShowsResult;
+  /** Update an existing #struct_name_str */
+  updateSource: SourceResult;
+  /** Update an existing #struct_name_str */
+  updateSourcePriorityRule: SourcePriorityRuleResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateSourcePriorityRules: UpdateSourcePriorityRulesResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateSources: UpdateSourcesResult;
+  /** Update an existing #struct_name_str */
+  updateSubtitle: SubtitleResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateSubtitles: UpdateSubtitlesResult;
+  /** Update an existing #struct_name_str */
+  updateTorrent: TorrentResult;
+  /** Update an existing #struct_name_str */
+  updateTorrentFile: TorrentFileResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateTorrentFiles: UpdateTorrentFilesResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateTorrents: UpdateTorrentsResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateTorznabCategories: UpdateTorznabCategoriesResult;
+  /** Update an existing #struct_name_str */
+  updateTorznabCategory: TorznabCategoryResult;
+  /** Update an existing #struct_name_str */
+  updateTrack: TrackResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateTracks: UpdateTracksResult;
+  /** Update an existing #struct_name_str */
+  updateUsenetDownload: UsenetDownloadResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateUsenetDownloads: UpdateUsenetDownloadsResult;
+  /** Update an existing #struct_name_str */
+  updateUsenetServer: UsenetServerResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateUsenetServers: UpdateUsenetServersResult;
+  /** Update an existing #struct_name_str */
+  updateUser: UserResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateUsers: UpdateUsersResult;
+  /** Update an existing #struct_name_str */
+  updateVideoStream: VideoStreamResult;
+  /** Update multiple #plural_name matching the given Where filter */
+  updateVideoStreams: UpdateVideoStreamsResult;
 };
 
 export type MutationRootAddAlbumArgs = {
@@ -3910,528 +3928,12 @@ export type MutationRootCopyFilesArgs = {
   Input: CopyFilesInput;
 };
 
-export type MutationRootCreateAlbumArgs = {
-  Input: CreateAlbumInput;
-};
-
-export type MutationRootCreateAppLogArgs = {
-  Input: CreateAppLogInput;
-};
-
-export type MutationRootCreateAppSettingArgs = {
-  Input: CreateAppSettingInput;
-};
-
-export type MutationRootCreateArtistArgs = {
-  Input: CreateArtistInput;
-};
-
-export type MutationRootCreateArtworkCacheArgs = {
-  Input: CreateArtworkCacheInput;
-};
-
-export type MutationRootCreateAudioStreamArgs = {
-  Input: CreateAudioStreamInput;
-};
-
-export type MutationRootCreateAudiobookArgs = {
-  Input: CreateAudiobookInput;
-};
-
-export type MutationRootCreateCastDeviceArgs = {
-  Input: CreateCastDeviceInput;
-};
-
-export type MutationRootCreateCastSessionArgs = {
-  Input: CreateCastSessionInput;
-};
-
-export type MutationRootCreateCastSettingArgs = {
-  Input: CreateCastSettingInput;
-};
-
-export type MutationRootCreateChapterArgs = {
-  Input: CreateChapterInput;
-};
-
-export type MutationRootCreateCollectionArgs = {
-  Input: CreateCollectionInput;
-};
-
 export type MutationRootCreateDirectoryArgs = {
   Input: CreateDirectoryInput;
 };
 
-export type MutationRootCreateEpisodeArgs = {
-  Input: CreateEpisodeInput;
-};
-
-export type MutationRootCreateInviteTokenArgs = {
-  Input: CreateInviteTokenInput;
-};
-
-export type MutationRootCreateLibraryArgs = {
-  Input: CreateLibraryInput;
-};
-
-export type MutationRootCreateMediaChapterArgs = {
-  Input: CreateMediaChapterInput;
-};
-
-export type MutationRootCreateMediaFileArgs = {
-  Input: CreateMediaFileInput;
-};
-
-export type MutationRootCreateMetadataCacheArgs = {
-  Input: CreateMetadataCacheInput;
-};
-
-export type MutationRootCreateMovieArgs = {
-  Input: CreateMovieInput;
-};
-
-export type MutationRootCreateMovieCastCreditArgs = {
-  Input: CreateMovieCastCreditInput;
-};
-
-export type MutationRootCreateNamingPatternArgs = {
-  Input: CreateNamingPatternInput;
-};
-
-export type MutationRootCreateNotificationArgs = {
-  Input: CreateNotificationInput;
-};
-
-export type MutationRootCreatePendingFileMatchArgs = {
-  Input: CreatePendingFileMatchInput;
-};
-
-export type MutationRootCreatePersonArgs = {
-  Input: CreatePersonInput;
-};
-
-export type MutationRootCreatePlaybackProgressArgs = {
-  Input: CreatePlaybackProgressInput;
-};
-
-export type MutationRootCreatePlaybackSessionArgs = {
-  Input: CreatePlaybackSessionInput;
-};
-
-export type MutationRootCreateRefreshTokenArgs = {
-  Input: CreateRefreshTokenInput;
-};
-
-export type MutationRootCreateRssFeedArgs = {
-  Input: CreateRssFeedInput;
-};
-
-export type MutationRootCreateRssFeedItemArgs = {
-  Input: CreateRssFeedItemInput;
-};
-
-export type MutationRootCreateScheduleCacheArgs = {
-  Input: CreateScheduleCacheInput;
-};
-
-export type MutationRootCreateScheduleSyncStateArgs = {
-  Input: CreateScheduleSyncStateInput;
-};
-
-export type MutationRootCreateShowArgs = {
-  Input: CreateShowInput;
-};
-
-export type MutationRootCreateSourceArgs = {
-  Input: CreateSourceInput;
-};
-
-export type MutationRootCreateSourcePriorityRuleArgs = {
-  Input: CreateSourcePriorityRuleInput;
-};
-
-export type MutationRootCreateSubtitleArgs = {
-  Input: CreateSubtitleInput;
-};
-
-export type MutationRootCreateTorrentArgs = {
-  Input: CreateTorrentInput;
-};
-
-export type MutationRootCreateTorrentFileArgs = {
-  Input: CreateTorrentFileInput;
-};
-
-export type MutationRootCreateTorznabCategoryArgs = {
-  Input: CreateTorznabCategoryInput;
-};
-
-export type MutationRootCreateTrackArgs = {
-  Input: CreateTrackInput;
-};
-
-export type MutationRootCreateUsenetDownloadArgs = {
-  Input: CreateUsenetDownloadInput;
-};
-
-export type MutationRootCreateUsenetServerArgs = {
-  Input: CreateUsenetServerInput;
-};
-
-export type MutationRootCreateUserArgs = {
-  Input: CreateUserInput;
-};
-
-export type MutationRootCreateVideoStreamArgs = {
-  Input: CreateVideoStreamInput;
-};
-
-export type MutationRootDeleteAlbumArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteAlbumsArgs = {
-  Where?: InputMaybe<AlbumWhereInput>;
-};
-
-export type MutationRootDeleteAppLogArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteAppLogsArgs = {
-  Where?: InputMaybe<AppLogWhereInput>;
-};
-
-export type MutationRootDeleteAppSettingArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteAppSettingsArgs = {
-  Where?: InputMaybe<AppSettingWhereInput>;
-};
-
-export type MutationRootDeleteArtistArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteArtistsArgs = {
-  Where?: InputMaybe<ArtistWhereInput>;
-};
-
-export type MutationRootDeleteArtworkCacheArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteArtworkCachesArgs = {
-  Where?: InputMaybe<ArtworkCacheWhereInput>;
-};
-
-export type MutationRootDeleteAudioStreamArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteAudioStreamsArgs = {
-  Where?: InputMaybe<AudioStreamWhereInput>;
-};
-
-export type MutationRootDeleteAudiobookArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteAudiobooksArgs = {
-  Where?: InputMaybe<AudiobookWhereInput>;
-};
-
-export type MutationRootDeleteCastDeviceArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteCastDevicesArgs = {
-  Where?: InputMaybe<CastDeviceWhereInput>;
-};
-
-export type MutationRootDeleteCastSessionArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteCastSessionsArgs = {
-  Where?: InputMaybe<CastSessionWhereInput>;
-};
-
-export type MutationRootDeleteCastSettingArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteCastSettingsArgs = {
-  Where?: InputMaybe<CastSettingWhereInput>;
-};
-
-export type MutationRootDeleteChapterArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteChaptersArgs = {
-  Where?: InputMaybe<ChapterWhereInput>;
-};
-
-export type MutationRootDeleteCollectionArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteCollectionsArgs = {
-  Where?: InputMaybe<CollectionWhereInput>;
-};
-
-export type MutationRootDeleteEpisodeArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteEpisodesArgs = {
-  Where?: InputMaybe<EpisodeWhereInput>;
-};
-
 export type MutationRootDeleteFilesArgs = {
   Input: DeleteFilesInput;
-};
-
-export type MutationRootDeleteInviteTokenArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteInviteTokensArgs = {
-  Where?: InputMaybe<InviteTokenWhereInput>;
-};
-
-export type MutationRootDeleteLibrariesArgs = {
-  Where?: InputMaybe<LibraryWhereInput>;
-};
-
-export type MutationRootDeleteLibraryArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteMediaChapterArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteMediaChaptersArgs = {
-  Where?: InputMaybe<MediaChapterWhereInput>;
-};
-
-export type MutationRootDeleteMediaFileArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteMediaFilesArgs = {
-  Where?: InputMaybe<MediaFileWhereInput>;
-};
-
-export type MutationRootDeleteMetadataCacheArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteMetadataCachesArgs = {
-  Where?: InputMaybe<MetadataCacheWhereInput>;
-};
-
-export type MutationRootDeleteMovieArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteMovieCastCreditArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteMovieCastCreditsArgs = {
-  Where?: InputMaybe<MovieCastCreditWhereInput>;
-};
-
-export type MutationRootDeleteMoviesArgs = {
-  Where?: InputMaybe<MovieWhereInput>;
-};
-
-export type MutationRootDeleteNamingPatternArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteNamingPatternsArgs = {
-  Where?: InputMaybe<NamingPatternWhereInput>;
-};
-
-export type MutationRootDeleteNotificationArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteNotificationsArgs = {
-  Where?: InputMaybe<NotificationWhereInput>;
-};
-
-export type MutationRootDeletePendingFileMatchArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeletePendingFileMatchesArgs = {
-  Where?: InputMaybe<PendingFileMatchWhereInput>;
-};
-
-export type MutationRootDeletePeopleArgs = {
-  Where?: InputMaybe<PersonWhereInput>;
-};
-
-export type MutationRootDeletePersonArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeletePlaybackProgressArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeletePlaybackProgressesArgs = {
-  Where?: InputMaybe<PlaybackProgressWhereInput>;
-};
-
-export type MutationRootDeletePlaybackSessionArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeletePlaybackSessionsArgs = {
-  Where?: InputMaybe<PlaybackSessionWhereInput>;
-};
-
-export type MutationRootDeleteRefreshTokenArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteRefreshTokensArgs = {
-  Where?: InputMaybe<RefreshTokenWhereInput>;
-};
-
-export type MutationRootDeleteRssFeedArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteRssFeedItemArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteRssFeedItemsArgs = {
-  Where?: InputMaybe<RssFeedItemWhereInput>;
-};
-
-export type MutationRootDeleteRssFeedsArgs = {
-  Where?: InputMaybe<RssFeedWhereInput>;
-};
-
-export type MutationRootDeleteScheduleCacheArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteScheduleCachesArgs = {
-  Where?: InputMaybe<ScheduleCacheWhereInput>;
-};
-
-export type MutationRootDeleteScheduleSyncStateArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteScheduleSyncStatesArgs = {
-  Where?: InputMaybe<ScheduleSyncStateWhereInput>;
-};
-
-export type MutationRootDeleteShowArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteShowsArgs = {
-  Where?: InputMaybe<ShowWhereInput>;
-};
-
-export type MutationRootDeleteSourceArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteSourcePriorityRuleArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteSourcePriorityRulesArgs = {
-  Where?: InputMaybe<SourcePriorityRuleWhereInput>;
-};
-
-export type MutationRootDeleteSourcesArgs = {
-  Where?: InputMaybe<SourceWhereInput>;
-};
-
-export type MutationRootDeleteSubtitleArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteSubtitlesArgs = {
-  Where?: InputMaybe<SubtitleWhereInput>;
-};
-
-export type MutationRootDeleteTorrentArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteTorrentFileArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteTorrentFilesArgs = {
-  Where?: InputMaybe<TorrentFileWhereInput>;
-};
-
-export type MutationRootDeleteTorrentsArgs = {
-  Where?: InputMaybe<TorrentWhereInput>;
-};
-
-export type MutationRootDeleteTorznabCategoriesArgs = {
-  Where?: InputMaybe<TorznabCategoryWhereInput>;
-};
-
-export type MutationRootDeleteTorznabCategoryArgs = {
-  Id: Scalars["Int"]["input"];
-};
-
-export type MutationRootDeleteTrackArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteTracksArgs = {
-  Where?: InputMaybe<TrackWhereInput>;
-};
-
-export type MutationRootDeleteUsenetDownloadArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteUsenetDownloadsArgs = {
-  Where?: InputMaybe<UsenetDownloadWhereInput>;
-};
-
-export type MutationRootDeleteUsenetServerArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteUsenetServersArgs = {
-  Where?: InputMaybe<UsenetServerWhereInput>;
-};
-
-export type MutationRootDeleteUserArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteUsersArgs = {
-  Where?: InputMaybe<UserWhereInput>;
-};
-
-export type MutationRootDeleteVideoStreamArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type MutationRootDeleteVideoStreamsArgs = {
-  Where?: InputMaybe<VideoStreamWhereInput>;
 };
 
 export type MutationRootLoginArgs = {
@@ -4535,438 +4037,963 @@ export type MutationRootUnmatchMediaFileArgs = {
   MediaFileId: Scalars["String"]["input"];
 };
 
-export type MutationRootUpdateAlbumArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateAlbumInput;
-};
-
-export type MutationRootUpdateAlbumsArgs = {
-  Input: UpdateAlbumInput;
-  Where?: InputMaybe<AlbumWhereInput>;
-};
-
-export type MutationRootUpdateAppLogArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateAppLogInput;
-};
-
-export type MutationRootUpdateAppLogsArgs = {
-  Input: UpdateAppLogInput;
-  Where?: InputMaybe<AppLogWhereInput>;
-};
-
-export type MutationRootUpdateAppSettingArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateAppSettingInput;
-};
-
-export type MutationRootUpdateAppSettingsArgs = {
-  Input: UpdateAppSettingInput;
-  Where?: InputMaybe<AppSettingWhereInput>;
-};
-
-export type MutationRootUpdateArtistArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateArtistInput;
-};
-
-export type MutationRootUpdateArtistsArgs = {
-  Input: UpdateArtistInput;
-  Where?: InputMaybe<ArtistWhereInput>;
-};
-
-export type MutationRootUpdateArtworkCacheArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateArtworkCacheInput;
-};
-
-export type MutationRootUpdateArtworkCachesArgs = {
-  Input: UpdateArtworkCacheInput;
-  Where?: InputMaybe<ArtworkCacheWhereInput>;
-};
-
-export type MutationRootUpdateAudioStreamArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateAudioStreamInput;
-};
-
-export type MutationRootUpdateAudioStreamsArgs = {
-  Input: UpdateAudioStreamInput;
-  Where?: InputMaybe<AudioStreamWhereInput>;
-};
-
-export type MutationRootUpdateAudiobookArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateAudiobookInput;
-};
-
-export type MutationRootUpdateAudiobooksArgs = {
-  Input: UpdateAudiobookInput;
-  Where?: InputMaybe<AudiobookWhereInput>;
-};
-
 export type MutationRootUpdateCastDeviceArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateCastDeviceInput;
-};
-
-export type MutationRootUpdateCastDevicesArgs = {
-  Input: UpdateCastDeviceInput;
-  Where?: InputMaybe<CastDeviceWhereInput>;
-};
-
-export type MutationRootUpdateCastSessionArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateCastSessionInput;
-};
-
-export type MutationRootUpdateCastSessionsArgs = {
-  Input: UpdateCastSessionInput;
-  Where?: InputMaybe<CastSessionWhereInput>;
-};
-
-export type MutationRootUpdateCastSettingArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateCastSettingInput;
+  id: Scalars["String"]["input"];
+  input: LegacyUpdateCastDeviceInput;
 };
 
 export type MutationRootUpdateCastSettingsArgs = {
-  Input: UpdateCastSettingInput;
-  Where?: InputMaybe<CastSettingWhereInput>;
-};
-
-export type MutationRootUpdateChapterArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateChapterInput;
-};
-
-export type MutationRootUpdateChaptersArgs = {
-  Input: UpdateChapterInput;
-  Where?: InputMaybe<ChapterWhereInput>;
-};
-
-export type MutationRootUpdateCollectionArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateCollectionInput;
-};
-
-export type MutationRootUpdateCollectionsArgs = {
-  Input: UpdateCollectionInput;
-  Where?: InputMaybe<CollectionWhereInput>;
-};
-
-export type MutationRootUpdateEpisodeArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateEpisodeInput;
-};
-
-export type MutationRootUpdateEpisodesArgs = {
-  Input: UpdateEpisodeInput;
-  Where?: InputMaybe<EpisodeWhereInput>;
-};
-
-export type MutationRootUpdateInviteTokenArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateInviteTokenInput;
-};
-
-export type MutationRootUpdateInviteTokensArgs = {
-  Input: UpdateInviteTokenInput;
-  Where?: InputMaybe<InviteTokenWhereInput>;
-};
-
-export type MutationRootUpdateLibrariesArgs = {
-  Input: UpdateLibraryInput;
-  Where?: InputMaybe<LibraryWhereInput>;
-};
-
-export type MutationRootUpdateLibraryArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateLibraryInput;
-};
-
-export type MutationRootUpdateMediaChapterArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateMediaChapterInput;
-};
-
-export type MutationRootUpdateMediaChaptersArgs = {
-  Input: UpdateMediaChapterInput;
-  Where?: InputMaybe<MediaChapterWhereInput>;
-};
-
-export type MutationRootUpdateMediaFileArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateMediaFileInput;
-};
-
-export type MutationRootUpdateMediaFilesArgs = {
-  Input: UpdateMediaFileInput;
-  Where?: InputMaybe<MediaFileWhereInput>;
-};
-
-export type MutationRootUpdateMetadataCacheArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateMetadataCacheInput;
-};
-
-export type MutationRootUpdateMetadataCachesArgs = {
-  Input: UpdateMetadataCacheInput;
-  Where?: InputMaybe<MetadataCacheWhereInput>;
-};
-
-export type MutationRootUpdateMovieArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateMovieInput;
-};
-
-export type MutationRootUpdateMovieCastCreditArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateMovieCastCreditInput;
-};
-
-export type MutationRootUpdateMovieCastCreditsArgs = {
-  Input: UpdateMovieCastCreditInput;
-  Where?: InputMaybe<MovieCastCreditWhereInput>;
-};
-
-export type MutationRootUpdateMoviesArgs = {
-  Input: UpdateMovieInput;
-  Where?: InputMaybe<MovieWhereInput>;
-};
-
-export type MutationRootUpdateNamingPatternArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateNamingPatternInput;
-};
-
-export type MutationRootUpdateNamingPatternsArgs = {
-  Input: UpdateNamingPatternInput;
-  Where?: InputMaybe<NamingPatternWhereInput>;
-};
-
-export type MutationRootUpdateNotificationArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateNotificationInput;
-};
-
-export type MutationRootUpdateNotificationsArgs = {
-  Input: UpdateNotificationInput;
-  Where?: InputMaybe<NotificationWhereInput>;
-};
-
-export type MutationRootUpdatePendingFileMatchArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdatePendingFileMatchInput;
-};
-
-export type MutationRootUpdatePendingFileMatchesArgs = {
-  Input: UpdatePendingFileMatchInput;
-  Where?: InputMaybe<PendingFileMatchWhereInput>;
-};
-
-export type MutationRootUpdatePeopleArgs = {
-  Input: UpdatePersonInput;
-  Where?: InputMaybe<PersonWhereInput>;
-};
-
-export type MutationRootUpdatePersonArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdatePersonInput;
-};
-
-export type MutationRootUpdatePlaybackProgressArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdatePlaybackProgressInput;
-};
-
-export type MutationRootUpdatePlaybackProgressesArgs = {
-  Input: UpdatePlaybackProgressInput;
-  Where?: InputMaybe<PlaybackProgressWhereInput>;
-};
-
-export type MutationRootUpdatePlaybackSessionArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdatePlaybackSessionInput;
-};
-
-export type MutationRootUpdatePlaybackSessionsArgs = {
-  Input: UpdatePlaybackSessionInput;
-  Where?: InputMaybe<PlaybackSessionWhereInput>;
-};
-
-export type MutationRootUpdateRefreshTokenArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateRefreshTokenInput;
-};
-
-export type MutationRootUpdateRefreshTokensArgs = {
-  Input: UpdateRefreshTokenInput;
-  Where?: InputMaybe<RefreshTokenWhereInput>;
-};
-
-export type MutationRootUpdateRssFeedArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateRssFeedInput;
-};
-
-export type MutationRootUpdateRssFeedItemArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateRssFeedItemInput;
-};
-
-export type MutationRootUpdateRssFeedItemsArgs = {
-  Input: UpdateRssFeedItemInput;
-  Where?: InputMaybe<RssFeedItemWhereInput>;
-};
-
-export type MutationRootUpdateRssFeedsArgs = {
-  Input: UpdateRssFeedInput;
-  Where?: InputMaybe<RssFeedWhereInput>;
-};
-
-export type MutationRootUpdateScheduleCacheArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateScheduleCacheInput;
-};
-
-export type MutationRootUpdateScheduleCachesArgs = {
-  Input: UpdateScheduleCacheInput;
-  Where?: InputMaybe<ScheduleCacheWhereInput>;
-};
-
-export type MutationRootUpdateScheduleSyncStateArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateScheduleSyncStateInput;
-};
-
-export type MutationRootUpdateScheduleSyncStatesArgs = {
-  Input: UpdateScheduleSyncStateInput;
-  Where?: InputMaybe<ScheduleSyncStateWhereInput>;
-};
-
-export type MutationRootUpdateShowArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateShowInput;
-};
-
-export type MutationRootUpdateShowsArgs = {
-  Input: UpdateShowInput;
-  Where?: InputMaybe<ShowWhereInput>;
-};
-
-export type MutationRootUpdateSourceArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateSourceInput;
+  input: LegacyUpdateCastSettingsInput;
 };
 
 export type MutationRootUpdateSourcePrioritiesArgs = {
   Input: UpdateSourcePrioritiesInput;
 };
 
-export type MutationRootUpdateSourcePriorityRuleArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateSourcePriorityRuleInput;
+export type MutationRootcreateAlbumArgs = {
+  input: CreateAlbumInput;
 };
 
-export type MutationRootUpdateSourcePriorityRulesArgs = {
-  Input: UpdateSourcePriorityRuleInput;
-  Where?: InputMaybe<SourcePriorityRuleWhereInput>;
+export type MutationRootcreateAppLogArgs = {
+  input: CreateAppLogInput;
 };
 
-export type MutationRootUpdateSourcesArgs = {
-  Input: UpdateSourceInput;
-  Where?: InputMaybe<SourceWhereInput>;
+export type MutationRootcreateAppSettingArgs = {
+  input: CreateAppSettingInput;
 };
 
-export type MutationRootUpdateSubtitleArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateSubtitleInput;
+export type MutationRootcreateArtistArgs = {
+  input: CreateArtistInput;
 };
 
-export type MutationRootUpdateSubtitlesArgs = {
-  Input: UpdateSubtitleInput;
-  Where?: InputMaybe<SubtitleWhereInput>;
+export type MutationRootcreateArtworkCacheArgs = {
+  input: CreateArtworkCacheInput;
 };
 
-export type MutationRootUpdateTorrentArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateTorrentInput;
+export type MutationRootcreateAudioStreamArgs = {
+  input: CreateAudioStreamInput;
 };
 
-export type MutationRootUpdateTorrentFileArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateTorrentFileInput;
+export type MutationRootcreateAudiobookArgs = {
+  input: CreateAudiobookInput;
 };
 
-export type MutationRootUpdateTorrentFilesArgs = {
-  Input: UpdateTorrentFileInput;
-  Where?: InputMaybe<TorrentFileWhereInput>;
+export type MutationRootcreateCastDeviceArgs = {
+  input: CreateCastDeviceInput;
 };
 
-export type MutationRootUpdateTorrentsArgs = {
-  Input: UpdateTorrentInput;
-  Where?: InputMaybe<TorrentWhereInput>;
+export type MutationRootcreateCastSessionArgs = {
+  input: CreateCastSessionInput;
 };
 
-export type MutationRootUpdateTorznabCategoriesArgs = {
-  Input: UpdateTorznabCategoryInput;
-  Where?: InputMaybe<TorznabCategoryWhereInput>;
+export type MutationRootcreateCastSettingArgs = {
+  input: CreateCastSettingInput;
 };
 
-export type MutationRootUpdateTorznabCategoryArgs = {
-  Id: Scalars["Int"]["input"];
-  Input: UpdateTorznabCategoryInput;
+export type MutationRootcreateChapterArgs = {
+  input: CreateChapterInput;
 };
 
-export type MutationRootUpdateTrackArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateTrackInput;
+export type MutationRootcreateCollectionArgs = {
+  input: CreateCollectionInput;
 };
 
-export type MutationRootUpdateTracksArgs = {
-  Input: UpdateTrackInput;
-  Where?: InputMaybe<TrackWhereInput>;
+export type MutationRootcreateEpisodeArgs = {
+  input: CreateEpisodeInput;
 };
 
-export type MutationRootUpdateUsenetDownloadArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateUsenetDownloadInput;
+export type MutationRootcreateInviteTokenArgs = {
+  input: CreateInviteTokenInput;
 };
 
-export type MutationRootUpdateUsenetDownloadsArgs = {
-  Input: UpdateUsenetDownloadInput;
-  Where?: InputMaybe<UsenetDownloadWhereInput>;
+export type MutationRootcreateLibraryArgs = {
+  input: CreateLibraryInput;
 };
 
-export type MutationRootUpdateUsenetServerArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateUsenetServerInput;
+export type MutationRootcreateMediaChapterArgs = {
+  input: CreateMediaChapterInput;
 };
 
-export type MutationRootUpdateUsenetServersArgs = {
-  Input: UpdateUsenetServerInput;
-  Where?: InputMaybe<UsenetServerWhereInput>;
+export type MutationRootcreateMediaFileArgs = {
+  input: CreateMediaFileInput;
 };
 
-export type MutationRootUpdateUserArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateUserInput;
+export type MutationRootcreateMetadataCacheArgs = {
+  input: CreateMetadataCacheInput;
 };
 
-export type MutationRootUpdateUsersArgs = {
-  Input: UpdateUserInput;
-  Where?: InputMaybe<UserWhereInput>;
+export type MutationRootcreateMovieArgs = {
+  input: CreateMovieInput;
 };
 
-export type MutationRootUpdateVideoStreamArgs = {
-  Id: Scalars["String"]["input"];
-  Input: UpdateVideoStreamInput;
+export type MutationRootcreateMovieCastCreditArgs = {
+  input: CreateMovieCastCreditInput;
 };
 
-export type MutationRootUpdateVideoStreamsArgs = {
-  Input: UpdateVideoStreamInput;
-  Where?: InputMaybe<VideoStreamWhereInput>;
+export type MutationRootcreateNamingPatternArgs = {
+  input: CreateNamingPatternInput;
+};
+
+export type MutationRootcreateNotificationArgs = {
+  input: CreateNotificationInput;
+};
+
+export type MutationRootcreatePendingFileMatchArgs = {
+  input: CreatePendingFileMatchInput;
+};
+
+export type MutationRootcreatePersonArgs = {
+  input: CreatePersonInput;
+};
+
+export type MutationRootcreatePlaybackProgressArgs = {
+  input: CreatePlaybackProgressInput;
+};
+
+export type MutationRootcreatePlaybackSessionArgs = {
+  input: CreatePlaybackSessionInput;
+};
+
+export type MutationRootcreateRefreshTokenArgs = {
+  input: CreateRefreshTokenInput;
+};
+
+export type MutationRootcreateRssFeedArgs = {
+  input: CreateRssFeedInput;
+};
+
+export type MutationRootcreateRssFeedItemArgs = {
+  input: CreateRssFeedItemInput;
+};
+
+export type MutationRootcreateScheduleCacheArgs = {
+  input: CreateScheduleCacheInput;
+};
+
+export type MutationRootcreateScheduleSyncStateArgs = {
+  input: CreateScheduleSyncStateInput;
+};
+
+export type MutationRootcreateShowArgs = {
+  input: CreateShowInput;
+};
+
+export type MutationRootcreateSourceArgs = {
+  input: CreateSourceInput;
+};
+
+export type MutationRootcreateSourcePriorityRuleArgs = {
+  input: CreateSourcePriorityRuleInput;
+};
+
+export type MutationRootcreateSubtitleArgs = {
+  input: CreateSubtitleInput;
+};
+
+export type MutationRootcreateTorrentArgs = {
+  input: CreateTorrentInput;
+};
+
+export type MutationRootcreateTorrentFileArgs = {
+  input: CreateTorrentFileInput;
+};
+
+export type MutationRootcreateTorznabCategoryArgs = {
+  input: CreateTorznabCategoryInput;
+};
+
+export type MutationRootcreateTrackArgs = {
+  input: CreateTrackInput;
+};
+
+export type MutationRootcreateUsenetDownloadArgs = {
+  input: CreateUsenetDownloadInput;
+};
+
+export type MutationRootcreateUsenetServerArgs = {
+  input: CreateUsenetServerInput;
+};
+
+export type MutationRootcreateUserArgs = {
+  input: CreateUserInput;
+};
+
+export type MutationRootcreateVideoStreamArgs = {
+  input: CreateVideoStreamInput;
+};
+
+export type MutationRootdeleteAlbumArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteAlbumsArgs = {
+  where?: InputMaybe<AlbumWhereInput>;
+};
+
+export type MutationRootdeleteAppLogArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteAppLogsArgs = {
+  where?: InputMaybe<AppLogWhereInput>;
+};
+
+export type MutationRootdeleteAppSettingArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteAppSettingsArgs = {
+  where?: InputMaybe<AppSettingWhereInput>;
+};
+
+export type MutationRootdeleteArtistArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteArtistsArgs = {
+  where?: InputMaybe<ArtistWhereInput>;
+};
+
+export type MutationRootdeleteArtworkCacheArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteArtworkCachesArgs = {
+  where?: InputMaybe<ArtworkCacheWhereInput>;
+};
+
+export type MutationRootdeleteAudioStreamArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteAudioStreamsArgs = {
+  where?: InputMaybe<AudioStreamWhereInput>;
+};
+
+export type MutationRootdeleteAudiobookArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteAudiobooksArgs = {
+  where?: InputMaybe<AudiobookWhereInput>;
+};
+
+export type MutationRootdeleteCastDeviceArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteCastDevicesArgs = {
+  where?: InputMaybe<CastDeviceWhereInput>;
+};
+
+export type MutationRootdeleteCastSessionArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteCastSessionsArgs = {
+  where?: InputMaybe<CastSessionWhereInput>;
+};
+
+export type MutationRootdeleteCastSettingArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteCastSettingsArgs = {
+  where?: InputMaybe<CastSettingWhereInput>;
+};
+
+export type MutationRootdeleteChapterArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteChaptersArgs = {
+  where?: InputMaybe<ChapterWhereInput>;
+};
+
+export type MutationRootdeleteCollectionArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteCollectionsArgs = {
+  where?: InputMaybe<CollectionWhereInput>;
+};
+
+export type MutationRootdeleteEpisodeArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteEpisodesArgs = {
+  where?: InputMaybe<EpisodeWhereInput>;
+};
+
+export type MutationRootdeleteInviteTokenArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteInviteTokensArgs = {
+  where?: InputMaybe<InviteTokenWhereInput>;
+};
+
+export type MutationRootdeleteLibrariesArgs = {
+  where?: InputMaybe<LibraryWhereInput>;
+};
+
+export type MutationRootdeleteLibraryArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteMediaChapterArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteMediaChaptersArgs = {
+  where?: InputMaybe<MediaChapterWhereInput>;
+};
+
+export type MutationRootdeleteMediaFileArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteMediaFilesArgs = {
+  where?: InputMaybe<MediaFileWhereInput>;
+};
+
+export type MutationRootdeleteMetadataCacheArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteMetadataCachesArgs = {
+  where?: InputMaybe<MetadataCacheWhereInput>;
+};
+
+export type MutationRootdeleteMovieArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteMovieCastCreditArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteMovieCastCreditsArgs = {
+  where?: InputMaybe<MovieCastCreditWhereInput>;
+};
+
+export type MutationRootdeleteMoviesArgs = {
+  where?: InputMaybe<MovieWhereInput>;
+};
+
+export type MutationRootdeleteNamingPatternArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteNamingPatternsArgs = {
+  where?: InputMaybe<NamingPatternWhereInput>;
+};
+
+export type MutationRootdeleteNotificationArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteNotificationsArgs = {
+  where?: InputMaybe<NotificationWhereInput>;
+};
+
+export type MutationRootdeletePendingFileMatchArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeletePendingFileMatchesArgs = {
+  where?: InputMaybe<PendingFileMatchWhereInput>;
+};
+
+export type MutationRootdeletePeopleArgs = {
+  where?: InputMaybe<PersonWhereInput>;
+};
+
+export type MutationRootdeletePersonArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeletePlaybackProgressArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeletePlaybackProgressesArgs = {
+  where?: InputMaybe<PlaybackProgressWhereInput>;
+};
+
+export type MutationRootdeletePlaybackSessionArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeletePlaybackSessionsArgs = {
+  where?: InputMaybe<PlaybackSessionWhereInput>;
+};
+
+export type MutationRootdeleteRefreshTokenArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteRefreshTokensArgs = {
+  where?: InputMaybe<RefreshTokenWhereInput>;
+};
+
+export type MutationRootdeleteRssFeedArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteRssFeedItemArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteRssFeedItemsArgs = {
+  where?: InputMaybe<RssFeedItemWhereInput>;
+};
+
+export type MutationRootdeleteRssFeedsArgs = {
+  where?: InputMaybe<RssFeedWhereInput>;
+};
+
+export type MutationRootdeleteScheduleCacheArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteScheduleCachesArgs = {
+  where?: InputMaybe<ScheduleCacheWhereInput>;
+};
+
+export type MutationRootdeleteScheduleSyncStateArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteScheduleSyncStatesArgs = {
+  where?: InputMaybe<ScheduleSyncStateWhereInput>;
+};
+
+export type MutationRootdeleteShowArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteShowsArgs = {
+  where?: InputMaybe<ShowWhereInput>;
+};
+
+export type MutationRootdeleteSourceArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteSourcePriorityRuleArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteSourcePriorityRulesArgs = {
+  where?: InputMaybe<SourcePriorityRuleWhereInput>;
+};
+
+export type MutationRootdeleteSourcesArgs = {
+  where?: InputMaybe<SourceWhereInput>;
+};
+
+export type MutationRootdeleteSubtitleArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteSubtitlesArgs = {
+  where?: InputMaybe<SubtitleWhereInput>;
+};
+
+export type MutationRootdeleteTorrentArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteTorrentFileArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteTorrentFilesArgs = {
+  where?: InputMaybe<TorrentFileWhereInput>;
+};
+
+export type MutationRootdeleteTorrentsArgs = {
+  where?: InputMaybe<TorrentWhereInput>;
+};
+
+export type MutationRootdeleteTorznabCategoriesArgs = {
+  where?: InputMaybe<TorznabCategoryWhereInput>;
+};
+
+export type MutationRootdeleteTorznabCategoryArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteTrackArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteTracksArgs = {
+  where?: InputMaybe<TrackWhereInput>;
+};
+
+export type MutationRootdeleteUsenetDownloadArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteUsenetDownloadsArgs = {
+  where?: InputMaybe<UsenetDownloadWhereInput>;
+};
+
+export type MutationRootdeleteUsenetServerArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteUsenetServersArgs = {
+  where?: InputMaybe<UsenetServerWhereInput>;
+};
+
+export type MutationRootdeleteUserArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteUsersArgs = {
+  where?: InputMaybe<UserWhereInput>;
+};
+
+export type MutationRootdeleteVideoStreamArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type MutationRootdeleteVideoStreamsArgs = {
+  where?: InputMaybe<VideoStreamWhereInput>;
+};
+
+export type MutationRootupdateAlbumArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateAlbumInput;
+};
+
+export type MutationRootupdateAlbumsArgs = {
+  input: UpdateAlbumInput;
+  where?: InputMaybe<AlbumWhereInput>;
+};
+
+export type MutationRootupdateAppLogArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateAppLogInput;
+};
+
+export type MutationRootupdateAppLogsArgs = {
+  input: UpdateAppLogInput;
+  where?: InputMaybe<AppLogWhereInput>;
+};
+
+export type MutationRootupdateAppSettingArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateAppSettingInput;
+};
+
+export type MutationRootupdateAppSettingsArgs = {
+  input: UpdateAppSettingInput;
+  where?: InputMaybe<AppSettingWhereInput>;
+};
+
+export type MutationRootupdateArtistArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateArtistInput;
+};
+
+export type MutationRootupdateArtistsArgs = {
+  input: UpdateArtistInput;
+  where?: InputMaybe<ArtistWhereInput>;
+};
+
+export type MutationRootupdateArtworkCacheArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateArtworkCacheInput;
+};
+
+export type MutationRootupdateArtworkCachesArgs = {
+  input: UpdateArtworkCacheInput;
+  where?: InputMaybe<ArtworkCacheWhereInput>;
+};
+
+export type MutationRootupdateAudioStreamArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateAudioStreamInput;
+};
+
+export type MutationRootupdateAudioStreamsArgs = {
+  input: UpdateAudioStreamInput;
+  where?: InputMaybe<AudioStreamWhereInput>;
+};
+
+export type MutationRootupdateAudiobookArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateAudiobookInput;
+};
+
+export type MutationRootupdateAudiobooksArgs = {
+  input: UpdateAudiobookInput;
+  where?: InputMaybe<AudiobookWhereInput>;
+};
+
+export type MutationRootupdateCastDeviceArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateCastDeviceInput;
+};
+
+export type MutationRootupdateCastDevicesArgs = {
+  input: UpdateCastDeviceInput;
+  where?: InputMaybe<CastDeviceWhereInput>;
+};
+
+export type MutationRootupdateCastSessionArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateCastSessionInput;
+};
+
+export type MutationRootupdateCastSessionsArgs = {
+  input: UpdateCastSessionInput;
+  where?: InputMaybe<CastSessionWhereInput>;
+};
+
+export type MutationRootupdateCastSettingArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateCastSettingInput;
+};
+
+export type MutationRootupdateCastSettingsArgs = {
+  input: UpdateCastSettingInput;
+  where?: InputMaybe<CastSettingWhereInput>;
+};
+
+export type MutationRootupdateChapterArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateChapterInput;
+};
+
+export type MutationRootupdateChaptersArgs = {
+  input: UpdateChapterInput;
+  where?: InputMaybe<ChapterWhereInput>;
+};
+
+export type MutationRootupdateCollectionArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateCollectionInput;
+};
+
+export type MutationRootupdateCollectionsArgs = {
+  input: UpdateCollectionInput;
+  where?: InputMaybe<CollectionWhereInput>;
+};
+
+export type MutationRootupdateEpisodeArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateEpisodeInput;
+};
+
+export type MutationRootupdateEpisodesArgs = {
+  input: UpdateEpisodeInput;
+  where?: InputMaybe<EpisodeWhereInput>;
+};
+
+export type MutationRootupdateInviteTokenArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateInviteTokenInput;
+};
+
+export type MutationRootupdateInviteTokensArgs = {
+  input: UpdateInviteTokenInput;
+  where?: InputMaybe<InviteTokenWhereInput>;
+};
+
+export type MutationRootupdateLibrariesArgs = {
+  input: UpdateLibraryInput;
+  where?: InputMaybe<LibraryWhereInput>;
+};
+
+export type MutationRootupdateLibraryArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateLibraryInput;
+};
+
+export type MutationRootupdateMediaChapterArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateMediaChapterInput;
+};
+
+export type MutationRootupdateMediaChaptersArgs = {
+  input: UpdateMediaChapterInput;
+  where?: InputMaybe<MediaChapterWhereInput>;
+};
+
+export type MutationRootupdateMediaFileArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateMediaFileInput;
+};
+
+export type MutationRootupdateMediaFilesArgs = {
+  input: UpdateMediaFileInput;
+  where?: InputMaybe<MediaFileWhereInput>;
+};
+
+export type MutationRootupdateMetadataCacheArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateMetadataCacheInput;
+};
+
+export type MutationRootupdateMetadataCachesArgs = {
+  input: UpdateMetadataCacheInput;
+  where?: InputMaybe<MetadataCacheWhereInput>;
+};
+
+export type MutationRootupdateMovieArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateMovieInput;
+};
+
+export type MutationRootupdateMovieCastCreditArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateMovieCastCreditInput;
+};
+
+export type MutationRootupdateMovieCastCreditsArgs = {
+  input: UpdateMovieCastCreditInput;
+  where?: InputMaybe<MovieCastCreditWhereInput>;
+};
+
+export type MutationRootupdateMoviesArgs = {
+  input: UpdateMovieInput;
+  where?: InputMaybe<MovieWhereInput>;
+};
+
+export type MutationRootupdateNamingPatternArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateNamingPatternInput;
+};
+
+export type MutationRootupdateNamingPatternsArgs = {
+  input: UpdateNamingPatternInput;
+  where?: InputMaybe<NamingPatternWhereInput>;
+};
+
+export type MutationRootupdateNotificationArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateNotificationInput;
+};
+
+export type MutationRootupdateNotificationsArgs = {
+  input: UpdateNotificationInput;
+  where?: InputMaybe<NotificationWhereInput>;
+};
+
+export type MutationRootupdatePendingFileMatchArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdatePendingFileMatchInput;
+};
+
+export type MutationRootupdatePendingFileMatchesArgs = {
+  input: UpdatePendingFileMatchInput;
+  where?: InputMaybe<PendingFileMatchWhereInput>;
+};
+
+export type MutationRootupdatePeopleArgs = {
+  input: UpdatePersonInput;
+  where?: InputMaybe<PersonWhereInput>;
+};
+
+export type MutationRootupdatePersonArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdatePersonInput;
+};
+
+export type MutationRootupdatePlaybackProgressArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdatePlaybackProgressInput;
+};
+
+export type MutationRootupdatePlaybackProgressesArgs = {
+  input: UpdatePlaybackProgressInput;
+  where?: InputMaybe<PlaybackProgressWhereInput>;
+};
+
+export type MutationRootupdatePlaybackSessionArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdatePlaybackSessionInput;
+};
+
+export type MutationRootupdatePlaybackSessionsArgs = {
+  input: UpdatePlaybackSessionInput;
+  where?: InputMaybe<PlaybackSessionWhereInput>;
+};
+
+export type MutationRootupdateRefreshTokenArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateRefreshTokenInput;
+};
+
+export type MutationRootupdateRefreshTokensArgs = {
+  input: UpdateRefreshTokenInput;
+  where?: InputMaybe<RefreshTokenWhereInput>;
+};
+
+export type MutationRootupdateRssFeedArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateRssFeedInput;
+};
+
+export type MutationRootupdateRssFeedItemArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateRssFeedItemInput;
+};
+
+export type MutationRootupdateRssFeedItemsArgs = {
+  input: UpdateRssFeedItemInput;
+  where?: InputMaybe<RssFeedItemWhereInput>;
+};
+
+export type MutationRootupdateRssFeedsArgs = {
+  input: UpdateRssFeedInput;
+  where?: InputMaybe<RssFeedWhereInput>;
+};
+
+export type MutationRootupdateScheduleCacheArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateScheduleCacheInput;
+};
+
+export type MutationRootupdateScheduleCachesArgs = {
+  input: UpdateScheduleCacheInput;
+  where?: InputMaybe<ScheduleCacheWhereInput>;
+};
+
+export type MutationRootupdateScheduleSyncStateArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateScheduleSyncStateInput;
+};
+
+export type MutationRootupdateScheduleSyncStatesArgs = {
+  input: UpdateScheduleSyncStateInput;
+  where?: InputMaybe<ScheduleSyncStateWhereInput>;
+};
+
+export type MutationRootupdateShowArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateShowInput;
+};
+
+export type MutationRootupdateShowsArgs = {
+  input: UpdateShowInput;
+  where?: InputMaybe<ShowWhereInput>;
+};
+
+export type MutationRootupdateSourceArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateSourceInput;
+};
+
+export type MutationRootupdateSourcePriorityRuleArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateSourcePriorityRuleInput;
+};
+
+export type MutationRootupdateSourcePriorityRulesArgs = {
+  input: UpdateSourcePriorityRuleInput;
+  where?: InputMaybe<SourcePriorityRuleWhereInput>;
+};
+
+export type MutationRootupdateSourcesArgs = {
+  input: UpdateSourceInput;
+  where?: InputMaybe<SourceWhereInput>;
+};
+
+export type MutationRootupdateSubtitleArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateSubtitleInput;
+};
+
+export type MutationRootupdateSubtitlesArgs = {
+  input: UpdateSubtitleInput;
+  where?: InputMaybe<SubtitleWhereInput>;
+};
+
+export type MutationRootupdateTorrentArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateTorrentInput;
+};
+
+export type MutationRootupdateTorrentFileArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateTorrentFileInput;
+};
+
+export type MutationRootupdateTorrentFilesArgs = {
+  input: UpdateTorrentFileInput;
+  where?: InputMaybe<TorrentFileWhereInput>;
+};
+
+export type MutationRootupdateTorrentsArgs = {
+  input: UpdateTorrentInput;
+  where?: InputMaybe<TorrentWhereInput>;
+};
+
+export type MutationRootupdateTorznabCategoriesArgs = {
+  input: UpdateTorznabCategoryInput;
+  where?: InputMaybe<TorznabCategoryWhereInput>;
+};
+
+export type MutationRootupdateTorznabCategoryArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateTorznabCategoryInput;
+};
+
+export type MutationRootupdateTrackArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateTrackInput;
+};
+
+export type MutationRootupdateTracksArgs = {
+  input: UpdateTrackInput;
+  where?: InputMaybe<TrackWhereInput>;
+};
+
+export type MutationRootupdateUsenetDownloadArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateUsenetDownloadInput;
+};
+
+export type MutationRootupdateUsenetDownloadsArgs = {
+  input: UpdateUsenetDownloadInput;
+  where?: InputMaybe<UsenetDownloadWhereInput>;
+};
+
+export type MutationRootupdateUsenetServerArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateUsenetServerInput;
+};
+
+export type MutationRootupdateUsenetServersArgs = {
+  input: UpdateUsenetServerInput;
+  where?: InputMaybe<UsenetServerWhereInput>;
+};
+
+export type MutationRootupdateUserArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateUserInput;
+};
+
+export type MutationRootupdateUsersArgs = {
+  input: UpdateUserInput;
+  where?: InputMaybe<UserWhereInput>;
+};
+
+export type MutationRootupdateVideoStreamArgs = {
+  id: Scalars["String"]["input"];
+  input: UpdateVideoStreamInput;
+};
+
+export type MutationRootupdateVideoStreamsArgs = {
+  input: UpdateVideoStreamInput;
+  where?: InputMaybe<VideoStreamWhereInput>;
 };
 
 export type NamingPattern = {
@@ -4984,56 +5011,60 @@ export type NamingPattern = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type NamingPatternChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  NamingPattern?: Maybe<NamingPattern>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  namingPattern?: Maybe<NamingPattern>;
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type NamingPatternConnection = {
   /** The edges in this connection */
-  Edges: Array<NamingPatternEdge>;
+  edges: Array<NamingPatternEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type NamingPatternEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: NamingPattern;
+  node: NamingPattern;
 };
 
 export type NamingPatternOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  LibraryType?: InputMaybe<SortDirection>;
-  Name?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  LibraryType?: InputMaybe<OrderDirection>;
+  Name?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type NamingPatternResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  NamingPattern?: Maybe<NamingPattern>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  namingPattern?: Maybe<NamingPattern>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type NamingPatternWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<NamingPatternWhereInput>>;
   CreatedAt?: InputMaybe<DateFilter>;
   Id?: InputMaybe<StringFilter>;
   IsDefault?: InputMaybe<BoolFilter>;
   IsSystem?: InputMaybe<BoolFilter>;
   LibraryType?: InputMaybe<StringFilter>;
   Name?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<NamingPatternWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<NamingPatternWhereInput>>;
   UpdatedAt?: InputMaybe<DateFilter>;
   UserId?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<NamingPatternWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<NamingPatternWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<NamingPatternWhereInput>>;
 };
 
 export type NetworkPathConfigPayload = {
@@ -5067,55 +5098,53 @@ export type Notification = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type NotificationChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  Notification?: Maybe<Notification>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  notification?: Maybe<Notification>;
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type NotificationConnection = {
   /** The edges in this connection */
-  Edges: Array<NotificationEdge>;
+  edges: Array<NotificationEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type NotificationEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: Notification;
+  node: Notification;
 };
 
 export type NotificationOrderByInput = {
-  Category?: InputMaybe<SortDirection>;
-  CreatedAt?: InputMaybe<SortDirection>;
-  NotificationType?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  Category?: InputMaybe<OrderDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  NotificationType?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type NotificationResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Notification?: Maybe<Notification>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  notification?: Maybe<Notification>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type NotificationWhereInput = {
   ActionType?: InputMaybe<StringFilter>;
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<NotificationWhereInput>>;
   Category?: InputMaybe<StringFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   Id?: InputMaybe<StringFilter>;
   LibraryId?: InputMaybe<StringFilter>;
   MediaFileId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<NotificationWhereInput>;
   NotificationType?: InputMaybe<StringFilter>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<NotificationWhereInput>>;
   PendingMatchId?: InputMaybe<StringFilter>;
   ReadAt?: InputMaybe<DateFilter>;
   Resolution?: InputMaybe<StringFilter>;
@@ -5124,8 +5153,21 @@ export type NotificationWhereInput = {
   TorrentId?: InputMaybe<StringFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   UserId?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<NotificationWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<NotificationWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<NotificationWhereInput>>;
 };
 
+export const OrderDirection = {
+  ASC: "ASC",
+  DESC: "DESC",
+} as const;
+
+export type OrderDirection =
+  (typeof OrderDirection)[keyof typeof OrderDirection];
 export type OrganizeMediaFileInput = {
   MediaFileId: Scalars["String"]["input"];
 };
@@ -5137,26 +5179,17 @@ export type OrganizeMediaFileResult = {
   Success: Scalars["Boolean"]["output"];
 };
 
-/** Information about pagination in a connection */
 export type PageInfo = {
-  /** Cursor of the last item in this page */
-  EndCursor?: Maybe<Scalars["String"]["output"]>;
-  /** When paginating forwards, are there more items? */
-  HasNextPage: Scalars["Boolean"]["output"];
-  /** When paginating backwards, are there more items? */
-  HasPreviousPage: Scalars["Boolean"]["output"];
-  /** Cursor of the first item in this page */
-  StartCursor?: Maybe<Scalars["String"]["output"]>;
-  /** Total count of items (if available) */
-  TotalCount?: Maybe<Scalars["Int"]["output"]>;
+  endCursor?: Maybe<Scalars["String"]["output"]>;
+  hasNextPage: Scalars["Boolean"]["output"];
+  hasPreviousPage: Scalars["Boolean"]["output"];
+  startCursor?: Maybe<Scalars["String"]["output"]>;
+  totalCount?: Maybe<Scalars["Int"]["output"]>;
 };
 
-/** Pagination input for offset-based pagination. */
 export type PageInput = {
-  /** Maximum number of items to return (default: 25) */
-  Limit?: InputMaybe<Scalars["Int"]["input"]>;
-  /** Number of items to skip */
-  Offset?: InputMaybe<Scalars["Int"]["input"]>;
+  limit?: InputMaybe<Scalars["Int"]["input"]>;
+  offset?: InputMaybe<Scalars["Int"]["input"]>;
 };
 
 export type PendingFileMatch = {
@@ -5190,43 +5223,45 @@ export type PendingFileMatch = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type PendingFileMatchChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  PendingFileMatch?: Maybe<PendingFileMatch>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  pendingFileMatch?: Maybe<PendingFileMatch>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type PendingFileMatchConnection = {
   /** The edges in this connection */
-  Edges: Array<PendingFileMatchEdge>;
+  edges: Array<PendingFileMatchEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type PendingFileMatchEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: PendingFileMatch;
+  node: PendingFileMatch;
 };
 
 export type PendingFileMatchOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  FileSize?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  FileSize?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type PendingFileMatchResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  PendingFileMatch?: Maybe<PendingFileMatch>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  pendingFileMatch?: Maybe<PendingFileMatch>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type PendingFileMatchWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<PendingFileMatchWhereInput>>;
   ChapterId?: InputMaybe<StringFilter>;
   CopiedAt?: InputMaybe<DateFilter>;
   CopyAttempts?: InputMaybe<IntFilter>;
@@ -5238,10 +5273,6 @@ export type PendingFileMatchWhereInput = {
   MatchConfidence?: InputMaybe<IntFilter>;
   MatchType?: InputMaybe<StringFilter>;
   MovieId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<PendingFileMatchWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<PendingFileMatchWhereInput>>;
   ParsedAudio?: InputMaybe<StringFilter>;
   ParsedCodec?: InputMaybe<StringFilter>;
   ParsedResolution?: InputMaybe<StringFilter>;
@@ -5254,6 +5285,12 @@ export type PendingFileMatchWhereInput = {
   UpdatedAt?: InputMaybe<DateFilter>;
   UserId?: InputMaybe<StringFilter>;
   VerificationStatus?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<PendingFileMatchWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<PendingFileMatchWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<PendingFileMatchWhereInput>>;
 };
 
 export type Person = {
@@ -5267,52 +5304,56 @@ export type Person = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type PersonChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  Person?: Maybe<Person>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  person?: Maybe<Person>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type PersonConnection = {
   /** The edges in this connection */
-  Edges: Array<PersonEdge>;
+  edges: Array<PersonEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type PersonEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: Person;
+  node: Person;
 };
 
 export type PersonOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  Name?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  Name?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type PersonResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Person?: Maybe<Person>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  person?: Maybe<Person>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type PersonWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<PersonWhereInput>>;
   CreatedAt?: InputMaybe<DateFilter>;
   Id?: InputMaybe<StringFilter>;
   Name?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<PersonWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<PersonWhereInput>>;
   TmdbPersonId?: InputMaybe<IntFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<PersonWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<PersonWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<PersonWhereInput>>;
 };
 
 export type PlaybackProgress = {
@@ -5330,56 +5371,60 @@ export type PlaybackProgress = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type PlaybackProgressChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  PlaybackProgress?: Maybe<PlaybackProgress>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  playbackProgress?: Maybe<PlaybackProgress>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type PlaybackProgressConnection = {
   /** The edges in this connection */
-  Edges: Array<PlaybackProgressEdge>;
+  edges: Array<PlaybackProgressEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type PlaybackProgressEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: PlaybackProgress;
+  node: PlaybackProgress;
 };
 
 export type PlaybackProgressOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type PlaybackProgressResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  PlaybackProgress?: Maybe<PlaybackProgress>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  playbackProgress?: Maybe<PlaybackProgress>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type PlaybackProgressWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<PlaybackProgressWhereInput>>;
   CreatedAt?: InputMaybe<DateFilter>;
   CurrentPosition?: InputMaybe<IntFilter>;
   Duration?: InputMaybe<IntFilter>;
   Id?: InputMaybe<StringFilter>;
   IsWatched?: InputMaybe<BoolFilter>;
   MediaFileId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<PlaybackProgressWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<PlaybackProgressWhereInput>>;
   ProgressPercent?: InputMaybe<IntFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   UserId?: InputMaybe<StringFilter>;
   WatchedAt?: InputMaybe<DateFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<PlaybackProgressWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<PlaybackProgressWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<PlaybackProgressWhereInput>>;
 };
 
 export type PlaybackSession = {
@@ -5407,45 +5452,47 @@ export type PlaybackSession = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type PlaybackSessionChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  PlaybackSession?: Maybe<PlaybackSession>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  playbackSession?: Maybe<PlaybackSession>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type PlaybackSessionConnection = {
   /** The edges in this connection */
-  Edges: Array<PlaybackSessionEdge>;
+  edges: Array<PlaybackSessionEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type PlaybackSessionEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: PlaybackSession;
+  node: PlaybackSession;
 };
 
 export type PlaybackSessionOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  LastUpdatedAt?: InputMaybe<SortDirection>;
-  StartedAt?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  LastUpdatedAt?: InputMaybe<OrderDirection>;
+  StartedAt?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type PlaybackSessionResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  PlaybackSession?: Maybe<PlaybackSession>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  playbackSession?: Maybe<PlaybackSession>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type PlaybackSessionWhereInput = {
   AlbumId?: InputMaybe<StringFilter>;
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<PlaybackSessionWhereInput>>;
   AudiobookId?: InputMaybe<StringFilter>;
   CompletedAt?: InputMaybe<DateFilter>;
   ContentType?: InputMaybe<StringFilter>;
@@ -5459,16 +5506,18 @@ export type PlaybackSessionWhereInput = {
   LastUpdatedAt?: InputMaybe<DateFilter>;
   MediaFileId?: InputMaybe<StringFilter>;
   MovieId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<PlaybackSessionWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<PlaybackSessionWhereInput>>;
   StartedAt?: InputMaybe<DateFilter>;
   TrackId?: InputMaybe<StringFilter>;
   TvShowId?: InputMaybe<StringFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   UserId?: InputMaybe<StringFilter>;
   Volume?: InputMaybe<IntFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<PlaybackSessionWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<PlaybackSessionWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<PlaybackSessionWhereInput>>;
 };
 
 /** Result of processing matched files from a source */
@@ -5483,71 +5532,11 @@ export type ProcessSourceResult = {
 export type QueryRoot = {
   /** Count of active (downloading/checking) torrents */
   ActiveDownloadCount: Scalars["Int"]["output"];
-  /** Get a single #struct_name_str by ID */
-  Album?: Maybe<Album>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  Albums: AlbumConnection;
-  /** Get a single #struct_name_str by ID */
-  AppLog?: Maybe<AppLog>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  AppLogs: AppLogConnection;
-  /** Get a single #struct_name_str by ID */
-  AppSetting?: Maybe<AppSetting>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  AppSettings: AppSettingConnection;
-  /** Get a single #struct_name_str by ID */
-  Artist?: Maybe<Artist>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  Artists: ArtistConnection;
-  /** Get a single #struct_name_str by ID */
-  ArtworkCache?: Maybe<ArtworkCache>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  ArtworkCaches: ArtworkCacheConnection;
-  /** Get a single #struct_name_str by ID */
-  AudioStream?: Maybe<AudioStream>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  AudioStreams: AudioStreamConnection;
-  /** Get a single #struct_name_str by ID */
-  Audiobook?: Maybe<Audiobook>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  Audiobooks: AudiobookConnection;
   /** Get available source definitions (e.g., IPTorrents, Newznab, etc.) */
   AvailableSourceDefinitions: Array<SourceDefinitionInfo>;
   /** Browse a directory on the server. Requires authentication. */
   BrowseDirectory: BrowseDirectoryResult;
-  /** Get a single #struct_name_str by ID */
-  CastDevice?: Maybe<CastDevice>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  CastDevices: CastDeviceConnection;
-  /** Get a single #struct_name_str by ID */
-  CastSession?: Maybe<CastSession>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  CastSessions: CastSessionConnection;
-  /** Get a single #struct_name_str by ID */
-  CastSetting?: Maybe<CastSetting>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  CastSettings: CastSettingConnection;
-  /** Get a single #struct_name_str by ID */
-  Chapter?: Maybe<Chapter>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  Chapters: ChapterConnection;
-  /** Get a single #struct_name_str by ID */
-  Collection?: Maybe<Collection>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  Collections: CollectionConnection;
-  /** Get a single #struct_name_str by ID */
-  Episode?: Maybe<Episode>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  Episodes: EpisodeConnection;
   FilesystemRuntimeInfo: FilesystemRuntimeInfo;
-  /** Get a single #struct_name_str by ID */
-  InviteToken?: Maybe<InviteToken>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  InviteTokens: InviteTokenConnection;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  Libraries: LibraryConnection;
-  /** Get a single #struct_name_str by ID */
-  Library?: Maybe<Library>;
   LibraryPathAvailability: Array<LibraryPathAvailability>;
   /** Get a single live torrent by numeric id */
   LiveTorrent?: Maybe<LiveTorrent>;
@@ -5555,76 +5544,10 @@ export type QueryRoot = {
   LiveTorrents: Array<LiveTorrent>;
   /** Current authenticated user (requires valid JWT). Returns null if not authenticated. */
   Me?: Maybe<MeUser>;
-  /** Get a single #struct_name_str by ID */
-  MediaChapter?: Maybe<MediaChapter>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  MediaChapters: MediaChapterConnection;
-  /** Get a single #struct_name_str by ID */
-  MediaFile?: Maybe<MediaFile>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  MediaFiles: MediaFileConnection;
-  /** Get a single #struct_name_str by ID */
-  MetadataCache?: Maybe<MetadataCache>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  MetadataCaches: MetadataCacheConnection;
-  /** Get a single #struct_name_str by ID */
-  Movie?: Maybe<Movie>;
-  /** Get a single #struct_name_str by ID */
-  MovieCastCredit?: Maybe<MovieCastCredit>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  MovieCastCredits: MovieCastCreditConnection;
   /** Get full collection details from TMDB with library state overlay. */
   MovieCollectionDetails: MovieCollectionDetails;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  Movies: MovieConnection;
-  /** Get a single #struct_name_str by ID */
-  NamingPattern?: Maybe<NamingPattern>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  NamingPatterns: NamingPatternConnection;
   /** True if no admin user exists yet (first-time setup required). */
   NeedsSetup: Scalars["Boolean"]["output"];
-  /** Get a single #struct_name_str by ID */
-  Notification?: Maybe<Notification>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  Notifications: NotificationConnection;
-  /** Get a single #struct_name_str by ID */
-  PendingFileMatch?: Maybe<PendingFileMatch>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  PendingFileMatches: PendingFileMatchConnection;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  People: PersonConnection;
-  /** Get a single #struct_name_str by ID */
-  Person?: Maybe<Person>;
-  /** Get a single #struct_name_str by ID */
-  PlaybackProgress?: Maybe<PlaybackProgress>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  PlaybackProgresses: PlaybackProgressConnection;
-  /** Get a single #struct_name_str by ID */
-  PlaybackSession?: Maybe<PlaybackSession>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  PlaybackSessions: PlaybackSessionConnection;
-  /** Get a single #struct_name_str by ID */
-  RefreshToken?: Maybe<RefreshToken>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  RefreshTokens: RefreshTokenConnection;
-  /** Get a single #struct_name_str by ID */
-  RssFeed?: Maybe<RssFeed>;
-  /** Get a single #struct_name_str by ID */
-  RssFeedItem?: Maybe<RssFeedItem>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  RssFeedItems: RssFeedItemConnection;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  RssFeeds: RssFeedConnection;
-  /** Get a single #struct_name_str by ID */
-  ScheduleCache?: Maybe<ScheduleCache>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  ScheduleCaches: ScheduleCacheConnection;
-  /** Get a single #struct_name_str by ID */
-  ScheduleSyncState?: Maybe<ScheduleSyncState>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  ScheduleSyncStates: ScheduleSyncStateConnection;
-  /** List in-code schema migrations applied by backend schema sync. */
-  SchemaMigrations: Array<SchemaMigrationEntry>;
   /** Search albums on MusicBrainz. */
   SearchAlbums: Array<AlbumSearchResult>;
   /** Search audiobooks on OpenLibrary. */
@@ -5637,210 +5560,184 @@ export type QueryRoot = {
   SearchSources: SourceSearchResultSet;
   /** Search for TV shows on TVMaze */
   SearchTvShows: Array<TvShowSearchResult>;
-  /** Get a single #struct_name_str by ID */
-  Show?: Maybe<Show>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  Shows: ShowConnection;
-  /** Get a single #struct_name_str by ID */
-  Source?: Maybe<Source>;
-  /** Get a single #struct_name_str by ID */
-  SourcePriorityRule?: Maybe<SourcePriorityRule>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  SourcePriorityRules: SourcePriorityRuleConnection;
   /** Get setting definitions for a source definition */
   SourceSettingDefinitions: Array<SourceSettingDefinition>;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  Sources: SourceConnection;
   /** Get a single #struct_name_str by ID */
-  Subtitle?: Maybe<Subtitle>;
+  album?: Maybe<Album>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  Subtitles: SubtitleConnection;
+  albums: AlbumConnection;
   /** Get a single #struct_name_str by ID */
-  Torrent?: Maybe<Torrent>;
+  appLog?: Maybe<AppLog>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  appLogs: AppLogConnection;
   /** Get a single #struct_name_str by ID */
-  TorrentFile?: Maybe<TorrentFile>;
+  appSetting?: Maybe<AppSetting>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  TorrentFiles: TorrentFileConnection;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  Torrents: TorrentConnection;
-  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  TorznabCategories: TorznabCategoryConnection;
+  appSettings: AppSettingConnection;
   /** Get a single #struct_name_str by ID */
-  TorznabCategory?: Maybe<TorznabCategory>;
-  /** Get a single #struct_name_str by ID */
-  Track?: Maybe<Track>;
+  artist?: Maybe<Artist>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  Tracks: TrackConnection;
+  artists: ArtistConnection;
   /** Get a single #struct_name_str by ID */
-  UsenetDownload?: Maybe<UsenetDownload>;
+  artworkCache?: Maybe<ArtworkCache>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  UsenetDownloads: UsenetDownloadConnection;
+  artworkCaches: ArtworkCacheConnection;
   /** Get a single #struct_name_str by ID */
-  UsenetServer?: Maybe<UsenetServer>;
+  audioStream?: Maybe<AudioStream>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  UsenetServers: UsenetServerConnection;
+  audioStreams: AudioStreamConnection;
   /** Get a single #struct_name_str by ID */
-  User?: Maybe<User>;
+  audiobook?: Maybe<Audiobook>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  Users: UserConnection;
+  audiobooks: AudiobookConnection;
   /** Get a single #struct_name_str by ID */
-  VideoStream?: Maybe<VideoStream>;
+  castDevice?: Maybe<CastDevice>;
   /** Get a list of #plural_name with optional filtering, sorting, and pagination */
-  VideoStreams: VideoStreamConnection;
-};
-
-export type QueryRootAlbumArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootAlbumsArgs = {
-  OrderBy?: InputMaybe<Array<AlbumOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<AlbumWhereInput>;
-};
-
-export type QueryRootAppLogArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootAppLogsArgs = {
-  OrderBy?: InputMaybe<Array<AppLogOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<AppLogWhereInput>;
-};
-
-export type QueryRootAppSettingArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootAppSettingsArgs = {
-  OrderBy?: InputMaybe<Array<AppSettingOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<AppSettingWhereInput>;
-};
-
-export type QueryRootArtistArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootArtistsArgs = {
-  OrderBy?: InputMaybe<Array<ArtistOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<ArtistWhereInput>;
-};
-
-export type QueryRootArtworkCacheArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootArtworkCachesArgs = {
-  OrderBy?: InputMaybe<Array<ArtworkCacheOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<ArtworkCacheWhereInput>;
-};
-
-export type QueryRootAudioStreamArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootAudioStreamsArgs = {
-  OrderBy?: InputMaybe<Array<AudioStreamOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<AudioStreamWhereInput>;
-};
-
-export type QueryRootAudiobookArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootAudiobooksArgs = {
-  OrderBy?: InputMaybe<Array<AudiobookOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<AudiobookWhereInput>;
+  castDevices: CastDeviceConnection;
+  /** Get a single #struct_name_str by ID */
+  castSession?: Maybe<CastSession>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  castSessions: CastSessionConnection;
+  /** Get a single #struct_name_str by ID */
+  castSetting?: Maybe<CastSetting>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  castSettings: CastSettingConnection;
+  /** Get a single #struct_name_str by ID */
+  chapter?: Maybe<Chapter>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  chapters: ChapterConnection;
+  /** Get a single #struct_name_str by ID */
+  collection?: Maybe<Collection>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  collections: CollectionConnection;
+  /** Get a single #struct_name_str by ID */
+  episode?: Maybe<Episode>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  episodes: EpisodeConnection;
+  /** Get a single #struct_name_str by ID */
+  inviteToken?: Maybe<InviteToken>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  inviteTokens: InviteTokenConnection;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  libraries: LibraryConnection;
+  /** Get a single #struct_name_str by ID */
+  library?: Maybe<Library>;
+  /** Get a single #struct_name_str by ID */
+  mediaChapter?: Maybe<MediaChapter>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  mediaChapters: MediaChapterConnection;
+  /** Get a single #struct_name_str by ID */
+  mediaFile?: Maybe<MediaFile>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  mediaFiles: MediaFileConnection;
+  /** Get a single #struct_name_str by ID */
+  metadataCache?: Maybe<MetadataCache>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  metadataCaches: MetadataCacheConnection;
+  /** Get a single #struct_name_str by ID */
+  movie?: Maybe<Movie>;
+  /** Get a single #struct_name_str by ID */
+  movieCastCredit?: Maybe<MovieCastCredit>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  movieCastCredits: MovieCastCreditConnection;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  movies: MovieConnection;
+  /** Get a single #struct_name_str by ID */
+  namingPattern?: Maybe<NamingPattern>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  namingPatterns: NamingPatternConnection;
+  /** Get a single #struct_name_str by ID */
+  notification?: Maybe<Notification>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  notifications: NotificationConnection;
+  /** Get a single #struct_name_str by ID */
+  pendingFileMatch?: Maybe<PendingFileMatch>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  pendingFileMatches: PendingFileMatchConnection;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  people: PersonConnection;
+  /** Get a single #struct_name_str by ID */
+  person?: Maybe<Person>;
+  /** Get a single #struct_name_str by ID */
+  playbackProgress?: Maybe<PlaybackProgress>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  playbackProgresses: PlaybackProgressConnection;
+  /** Get a single #struct_name_str by ID */
+  playbackSession?: Maybe<PlaybackSession>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  playbackSessions: PlaybackSessionConnection;
+  /** Get a single #struct_name_str by ID */
+  refreshToken?: Maybe<RefreshToken>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  refreshTokens: RefreshTokenConnection;
+  /** Get a single #struct_name_str by ID */
+  rssFeed?: Maybe<RssFeed>;
+  /** Get a single #struct_name_str by ID */
+  rssFeedItem?: Maybe<RssFeedItem>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  rssFeedItems: RssFeedItemConnection;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  rssFeeds: RssFeedConnection;
+  /** Get a single #struct_name_str by ID */
+  scheduleCache?: Maybe<ScheduleCache>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  scheduleCaches: ScheduleCacheConnection;
+  /** Get a single #struct_name_str by ID */
+  scheduleSyncState?: Maybe<ScheduleSyncState>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  scheduleSyncStates: ScheduleSyncStateConnection;
+  /** Get a single #struct_name_str by ID */
+  show?: Maybe<Show>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  shows: ShowConnection;
+  /** Get a single #struct_name_str by ID */
+  source?: Maybe<Source>;
+  /** Get a single #struct_name_str by ID */
+  sourcePriorityRule?: Maybe<SourcePriorityRule>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  sourcePriorityRules: SourcePriorityRuleConnection;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  sources: SourceConnection;
+  /** Get a single #struct_name_str by ID */
+  subtitle?: Maybe<Subtitle>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  subtitles: SubtitleConnection;
+  /** Get a single #struct_name_str by ID */
+  torrent?: Maybe<Torrent>;
+  /** Get a single #struct_name_str by ID */
+  torrentFile?: Maybe<TorrentFile>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  torrentFiles: TorrentFileConnection;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  torrents: TorrentConnection;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  torznabCategories: TorznabCategoryConnection;
+  /** Get a single #struct_name_str by ID */
+  torznabCategory?: Maybe<TorznabCategory>;
+  /** Get a single #struct_name_str by ID */
+  track?: Maybe<Track>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  tracks: TrackConnection;
+  /** Get a single #struct_name_str by ID */
+  usenetDownload?: Maybe<UsenetDownload>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  usenetDownloads: UsenetDownloadConnection;
+  /** Get a single #struct_name_str by ID */
+  usenetServer?: Maybe<UsenetServer>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  usenetServers: UsenetServerConnection;
+  /** Get a single #struct_name_str by ID */
+  user?: Maybe<User>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  users: UserConnection;
+  /** Get a single #struct_name_str by ID */
+  videoStream?: Maybe<VideoStream>;
+  /** Get a list of #plural_name with optional filtering, sorting, and pagination */
+  videoStreams: VideoStreamConnection;
 };
 
 export type QueryRootBrowseDirectoryArgs = {
   Input?: InputMaybe<BrowseDirectoryInput>;
-};
-
-export type QueryRootCastDeviceArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootCastDevicesArgs = {
-  OrderBy?: InputMaybe<Array<CastDeviceOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<CastDeviceWhereInput>;
-};
-
-export type QueryRootCastSessionArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootCastSessionsArgs = {
-  OrderBy?: InputMaybe<Array<CastSessionOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<CastSessionWhereInput>;
-};
-
-export type QueryRootCastSettingArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootCastSettingsArgs = {
-  OrderBy?: InputMaybe<Array<CastSettingOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<CastSettingWhereInput>;
-};
-
-export type QueryRootChapterArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootChaptersArgs = {
-  OrderBy?: InputMaybe<Array<ChapterOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<ChapterWhereInput>;
-};
-
-export type QueryRootCollectionArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootCollectionsArgs = {
-  OrderBy?: InputMaybe<Array<CollectionOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<CollectionWhereInput>;
-};
-
-export type QueryRootEpisodeArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootEpisodesArgs = {
-  OrderBy?: InputMaybe<Array<EpisodeOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<EpisodeWhereInput>;
-};
-
-export type QueryRootInviteTokenArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootInviteTokensArgs = {
-  OrderBy?: InputMaybe<Array<InviteTokenOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<InviteTokenWhereInput>;
-};
-
-export type QueryRootLibrariesArgs = {
-  OrderBy?: InputMaybe<Array<LibraryOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<LibraryWhereInput>;
-};
-
-export type QueryRootLibraryArgs = {
-  Id: Scalars["String"]["input"];
 };
 
 export type QueryRootLibraryPathAvailabilityArgs = {
@@ -5851,169 +5748,9 @@ export type QueryRootLiveTorrentArgs = {
   Id: Scalars["Int"]["input"];
 };
 
-export type QueryRootMediaChapterArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootMediaChaptersArgs = {
-  OrderBy?: InputMaybe<Array<MediaChapterOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<MediaChapterWhereInput>;
-};
-
-export type QueryRootMediaFileArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootMediaFilesArgs = {
-  OrderBy?: InputMaybe<Array<MediaFileOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<MediaFileWhereInput>;
-};
-
-export type QueryRootMetadataCacheArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootMetadataCachesArgs = {
-  OrderBy?: InputMaybe<Array<MetadataCacheOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<MetadataCacheWhereInput>;
-};
-
-export type QueryRootMovieArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootMovieCastCreditArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootMovieCastCreditsArgs = {
-  OrderBy?: InputMaybe<Array<MovieCastCreditOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<MovieCastCreditWhereInput>;
-};
-
 export type QueryRootMovieCollectionDetailsArgs = {
   CollectionId: Scalars["Int"]["input"];
   LibraryId: Scalars["String"]["input"];
-};
-
-export type QueryRootMoviesArgs = {
-  OrderBy?: InputMaybe<Array<MovieOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<MovieWhereInput>;
-};
-
-export type QueryRootNamingPatternArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootNamingPatternsArgs = {
-  OrderBy?: InputMaybe<Array<NamingPatternOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<NamingPatternWhereInput>;
-};
-
-export type QueryRootNotificationArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootNotificationsArgs = {
-  OrderBy?: InputMaybe<Array<NotificationOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<NotificationWhereInput>;
-};
-
-export type QueryRootPendingFileMatchArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootPendingFileMatchesArgs = {
-  OrderBy?: InputMaybe<Array<PendingFileMatchOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<PendingFileMatchWhereInput>;
-};
-
-export type QueryRootPeopleArgs = {
-  OrderBy?: InputMaybe<Array<PersonOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<PersonWhereInput>;
-};
-
-export type QueryRootPersonArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootPlaybackProgressArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootPlaybackProgressesArgs = {
-  OrderBy?: InputMaybe<Array<PlaybackProgressOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<PlaybackProgressWhereInput>;
-};
-
-export type QueryRootPlaybackSessionArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootPlaybackSessionsArgs = {
-  OrderBy?: InputMaybe<Array<PlaybackSessionOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<PlaybackSessionWhereInput>;
-};
-
-export type QueryRootRefreshTokenArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootRefreshTokensArgs = {
-  OrderBy?: InputMaybe<Array<RefreshTokenOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<RefreshTokenWhereInput>;
-};
-
-export type QueryRootRssFeedArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootRssFeedItemArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootRssFeedItemsArgs = {
-  OrderBy?: InputMaybe<Array<RssFeedItemOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<RssFeedItemWhereInput>;
-};
-
-export type QueryRootRssFeedsArgs = {
-  OrderBy?: InputMaybe<Array<RssFeedOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<RssFeedWhereInput>;
-};
-
-export type QueryRootScheduleCacheArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootScheduleCachesArgs = {
-  OrderBy?: InputMaybe<Array<ScheduleCacheOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<ScheduleCacheWhereInput>;
-};
-
-export type QueryRootScheduleSyncStateArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootScheduleSyncStatesArgs = {
-  OrderBy?: InputMaybe<Array<ScheduleSyncStateOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<ScheduleSyncStateWhereInput>;
 };
 
 export type QueryRootSearchAlbumsArgs = {
@@ -6046,162 +5783,483 @@ export type QueryRootSearchTvShowsArgs = {
   Query: Scalars["String"]["input"];
 };
 
-export type QueryRootShowArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootShowsArgs = {
-  OrderBy?: InputMaybe<Array<ShowOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<ShowWhereInput>;
-};
-
-export type QueryRootSourceArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootSourcePriorityRuleArgs = {
-  Id: Scalars["String"]["input"];
-};
-
-export type QueryRootSourcePriorityRulesArgs = {
-  OrderBy?: InputMaybe<Array<SourcePriorityRuleOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<SourcePriorityRuleWhereInput>;
-};
-
 export type QueryRootSourceSettingDefinitionsArgs = {
   DefinitionId: Scalars["String"]["input"];
 };
 
-export type QueryRootSourcesArgs = {
-  OrderBy?: InputMaybe<Array<SourceOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<SourceWhereInput>;
+export type QueryRootalbumArgs = {
+  id: Scalars["String"]["input"];
 };
 
-export type QueryRootSubtitleArgs = {
-  Id: Scalars["String"]["input"];
+export type QueryRootalbumsArgs = {
+  orderBy?: InputMaybe<Array<AlbumOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<AlbumWhereInput>;
 };
 
-export type QueryRootSubtitlesArgs = {
-  OrderBy?: InputMaybe<Array<SubtitleOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<SubtitleWhereInput>;
+export type QueryRootappLogArgs = {
+  id: Scalars["String"]["input"];
 };
 
-export type QueryRootTorrentArgs = {
-  Id: Scalars["String"]["input"];
+export type QueryRootappLogsArgs = {
+  orderBy?: InputMaybe<Array<AppLogOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<AppLogWhereInput>;
 };
 
-export type QueryRootTorrentFileArgs = {
-  Id: Scalars["String"]["input"];
+export type QueryRootappSettingArgs = {
+  id: Scalars["String"]["input"];
 };
 
-export type QueryRootTorrentFilesArgs = {
-  OrderBy?: InputMaybe<Array<TorrentFileOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<TorrentFileWhereInput>;
+export type QueryRootappSettingsArgs = {
+  orderBy?: InputMaybe<Array<AppSettingOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<AppSettingWhereInput>;
 };
 
-export type QueryRootTorrentsArgs = {
-  OrderBy?: InputMaybe<Array<TorrentOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<TorrentWhereInput>;
+export type QueryRootartistArgs = {
+  id: Scalars["String"]["input"];
 };
 
-export type QueryRootTorznabCategoriesArgs = {
-  OrderBy?: InputMaybe<Array<TorznabCategoryOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<TorznabCategoryWhereInput>;
+export type QueryRootartistsArgs = {
+  orderBy?: InputMaybe<Array<ArtistOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<ArtistWhereInput>;
 };
 
-export type QueryRootTorznabCategoryArgs = {
-  Id: Scalars["Int"]["input"];
+export type QueryRootartworkCacheArgs = {
+  id: Scalars["String"]["input"];
 };
 
-export type QueryRootTrackArgs = {
-  Id: Scalars["String"]["input"];
+export type QueryRootartworkCachesArgs = {
+  orderBy?: InputMaybe<Array<ArtworkCacheOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<ArtworkCacheWhereInput>;
 };
 
-export type QueryRootTracksArgs = {
-  OrderBy?: InputMaybe<Array<TrackOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<TrackWhereInput>;
+export type QueryRootaudioStreamArgs = {
+  id: Scalars["String"]["input"];
 };
 
-export type QueryRootUsenetDownloadArgs = {
-  Id: Scalars["String"]["input"];
+export type QueryRootaudioStreamsArgs = {
+  orderBy?: InputMaybe<Array<AudioStreamOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<AudioStreamWhereInput>;
 };
 
-export type QueryRootUsenetDownloadsArgs = {
-  OrderBy?: InputMaybe<Array<UsenetDownloadOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<UsenetDownloadWhereInput>;
+export type QueryRootaudiobookArgs = {
+  id: Scalars["String"]["input"];
 };
 
-export type QueryRootUsenetServerArgs = {
-  Id: Scalars["String"]["input"];
+export type QueryRootaudiobooksArgs = {
+  orderBy?: InputMaybe<Array<AudiobookOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<AudiobookWhereInput>;
 };
 
-export type QueryRootUsenetServersArgs = {
-  OrderBy?: InputMaybe<Array<UsenetServerOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<UsenetServerWhereInput>;
+export type QueryRootcastDeviceArgs = {
+  id: Scalars["String"]["input"];
 };
 
-export type QueryRootUserArgs = {
-  Id: Scalars["String"]["input"];
+export type QueryRootcastDevicesArgs = {
+  orderBy?: InputMaybe<Array<CastDeviceOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<CastDeviceWhereInput>;
 };
 
-export type QueryRootUsersArgs = {
-  OrderBy?: InputMaybe<Array<UserOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<UserWhereInput>;
+export type QueryRootcastSessionArgs = {
+  id: Scalars["String"]["input"];
 };
 
-export type QueryRootVideoStreamArgs = {
-  Id: Scalars["String"]["input"];
+export type QueryRootcastSessionsArgs = {
+  orderBy?: InputMaybe<Array<CastSessionOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<CastSessionWhereInput>;
 };
 
-export type QueryRootVideoStreamsArgs = {
-  OrderBy?: InputMaybe<Array<VideoStreamOrderByInput>>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<VideoStreamWhereInput>;
+export type QueryRootcastSettingArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootcastSettingsArgs = {
+  orderBy?: InputMaybe<Array<CastSettingOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<CastSettingWhereInput>;
+};
+
+export type QueryRootchapterArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootchaptersArgs = {
+  orderBy?: InputMaybe<Array<ChapterOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<ChapterWhereInput>;
+};
+
+export type QueryRootcollectionArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootcollectionsArgs = {
+  orderBy?: InputMaybe<Array<CollectionOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<CollectionWhereInput>;
+};
+
+export type QueryRootepisodeArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootepisodesArgs = {
+  orderBy?: InputMaybe<Array<EpisodeOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<EpisodeWhereInput>;
+};
+
+export type QueryRootinviteTokenArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootinviteTokensArgs = {
+  orderBy?: InputMaybe<Array<InviteTokenOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<InviteTokenWhereInput>;
+};
+
+export type QueryRootlibrariesArgs = {
+  orderBy?: InputMaybe<Array<LibraryOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<LibraryWhereInput>;
+};
+
+export type QueryRootlibraryArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootmediaChapterArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootmediaChaptersArgs = {
+  orderBy?: InputMaybe<Array<MediaChapterOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<MediaChapterWhereInput>;
+};
+
+export type QueryRootmediaFileArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootmediaFilesArgs = {
+  orderBy?: InputMaybe<Array<MediaFileOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<MediaFileWhereInput>;
+};
+
+export type QueryRootmetadataCacheArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootmetadataCachesArgs = {
+  orderBy?: InputMaybe<Array<MetadataCacheOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<MetadataCacheWhereInput>;
+};
+
+export type QueryRootmovieArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootmovieCastCreditArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootmovieCastCreditsArgs = {
+  orderBy?: InputMaybe<Array<MovieCastCreditOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<MovieCastCreditWhereInput>;
+};
+
+export type QueryRootmoviesArgs = {
+  orderBy?: InputMaybe<Array<MovieOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<MovieWhereInput>;
+};
+
+export type QueryRootnamingPatternArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootnamingPatternsArgs = {
+  orderBy?: InputMaybe<Array<NamingPatternOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<NamingPatternWhereInput>;
+};
+
+export type QueryRootnotificationArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootnotificationsArgs = {
+  orderBy?: InputMaybe<Array<NotificationOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<NotificationWhereInput>;
+};
+
+export type QueryRootpendingFileMatchArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootpendingFileMatchesArgs = {
+  orderBy?: InputMaybe<Array<PendingFileMatchOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<PendingFileMatchWhereInput>;
+};
+
+export type QueryRootpeopleArgs = {
+  orderBy?: InputMaybe<Array<PersonOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<PersonWhereInput>;
+};
+
+export type QueryRootpersonArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootplaybackProgressArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootplaybackProgressesArgs = {
+  orderBy?: InputMaybe<Array<PlaybackProgressOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<PlaybackProgressWhereInput>;
+};
+
+export type QueryRootplaybackSessionArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootplaybackSessionsArgs = {
+  orderBy?: InputMaybe<Array<PlaybackSessionOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<PlaybackSessionWhereInput>;
+};
+
+export type QueryRootrefreshTokenArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootrefreshTokensArgs = {
+  orderBy?: InputMaybe<Array<RefreshTokenOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<RefreshTokenWhereInput>;
+};
+
+export type QueryRootrssFeedArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootrssFeedItemArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootrssFeedItemsArgs = {
+  orderBy?: InputMaybe<Array<RssFeedItemOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<RssFeedItemWhereInput>;
+};
+
+export type QueryRootrssFeedsArgs = {
+  orderBy?: InputMaybe<Array<RssFeedOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<RssFeedWhereInput>;
+};
+
+export type QueryRootscheduleCacheArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootscheduleCachesArgs = {
+  orderBy?: InputMaybe<Array<ScheduleCacheOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<ScheduleCacheWhereInput>;
+};
+
+export type QueryRootscheduleSyncStateArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootscheduleSyncStatesArgs = {
+  orderBy?: InputMaybe<Array<ScheduleSyncStateOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<ScheduleSyncStateWhereInput>;
+};
+
+export type QueryRootshowArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootshowsArgs = {
+  orderBy?: InputMaybe<Array<ShowOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<ShowWhereInput>;
+};
+
+export type QueryRootsourceArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootsourcePriorityRuleArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootsourcePriorityRulesArgs = {
+  orderBy?: InputMaybe<Array<SourcePriorityRuleOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<SourcePriorityRuleWhereInput>;
+};
+
+export type QueryRootsourcesArgs = {
+  orderBy?: InputMaybe<Array<SourceOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<SourceWhereInput>;
+};
+
+export type QueryRootsubtitleArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootsubtitlesArgs = {
+  orderBy?: InputMaybe<Array<SubtitleOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<SubtitleWhereInput>;
+};
+
+export type QueryRoottorrentArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRoottorrentFileArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRoottorrentFilesArgs = {
+  orderBy?: InputMaybe<Array<TorrentFileOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<TorrentFileWhereInput>;
+};
+
+export type QueryRoottorrentsArgs = {
+  orderBy?: InputMaybe<Array<TorrentOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<TorrentWhereInput>;
+};
+
+export type QueryRoottorznabCategoriesArgs = {
+  orderBy?: InputMaybe<Array<TorznabCategoryOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<TorznabCategoryWhereInput>;
+};
+
+export type QueryRoottorznabCategoryArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRoottrackArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRoottracksArgs = {
+  orderBy?: InputMaybe<Array<TrackOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<TrackWhereInput>;
+};
+
+export type QueryRootusenetDownloadArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootusenetDownloadsArgs = {
+  orderBy?: InputMaybe<Array<UsenetDownloadOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<UsenetDownloadWhereInput>;
+};
+
+export type QueryRootusenetServerArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootusenetServersArgs = {
+  orderBy?: InputMaybe<Array<UsenetServerOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<UsenetServerWhereInput>;
+};
+
+export type QueryRootuserArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootusersArgs = {
+  orderBy?: InputMaybe<Array<UserOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<UserWhereInput>;
+};
+
+export type QueryRootvideoStreamArgs = {
+  id: Scalars["String"]["input"];
+};
+
+export type QueryRootvideoStreamsArgs = {
+  orderBy?: InputMaybe<Array<VideoStreamOrderByInput>>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<VideoStreamWhereInput>;
 };
 
 export type RefreshToken = {
   CreatedAt: Scalars["String"]["output"];
-  DeviceInfo?: Maybe<Scalars["String"]["output"]>;
   ExpiresAt: Scalars["String"]["output"];
   Id: Scalars["String"]["output"];
   IpAddress?: Maybe<Scalars["String"]["output"]>;
   LastUsedAt?: Maybe<Scalars["String"]["output"]>;
+  ReplacedByTokenId?: Maybe<Scalars["String"]["output"]>;
+  RevocationReason?: Maybe<Scalars["String"]["output"]>;
+  RevokedAt?: Maybe<Scalars["String"]["output"]>;
+  Scopes: Array<Scalars["String"]["output"]>;
+  Session: Scalars["String"]["output"];
+  SessionFamilyId: Scalars["String"]["output"];
+  SessionId: Scalars["String"]["output"];
   TokenHash: Scalars["String"]["output"];
+  UserAgent?: Maybe<Scalars["String"]["output"]>;
   UserId: Scalars["String"]["output"];
 };
 
 /** Event for #struct_name changes (subscriptions) */
 export type RefreshTokenChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  RefreshToken?: Maybe<RefreshToken>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  refreshToken?: Maybe<RefreshToken>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type RefreshTokenConnection = {
   /** The edges in this connection */
-  Edges: Array<RefreshTokenEdge>;
+  edges: Array<RefreshTokenEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type RefreshTokenEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: RefreshToken;
+  node: RefreshToken;
 };
 
 /** GraphQL input for refresh token mutation. */
@@ -6210,30 +6268,33 @@ export type RefreshTokenInput = {
 };
 
 export type RefreshTokenOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  ExpiresAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  ExpiresAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type RefreshTokenResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  RefreshToken?: Maybe<RefreshToken>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  refreshToken?: Maybe<RefreshToken>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type RefreshTokenWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<RefreshTokenWhereInput>>;
   CreatedAt?: InputMaybe<DateFilter>;
   ExpiresAt?: InputMaybe<DateFilter>;
   Id?: InputMaybe<StringFilter>;
   LastUsedAt?: InputMaybe<DateFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<RefreshTokenWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<RefreshTokenWhereInput>>;
+  RevokedAt?: InputMaybe<DateFilter>;
+  SessionFamilyId?: InputMaybe<StringFilter>;
+  SessionId?: InputMaybe<StringFilter>;
   TokenHash?: InputMaybe<StringFilter>;
   UserId?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<RefreshTokenWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<RefreshTokenWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<RefreshTokenWhereInput>>;
 };
 
 /** GraphQL input for user registration (PascalCase field names). */
@@ -6243,14 +6304,8 @@ export type RegisterUserInput = {
   Password: Scalars["String"]["input"];
 };
 
-/** Relative date specification for date arithmetic */
-export type RelativeDate = {
-  /** Number of days ago (positive = past) */
-  DaysAgo?: InputMaybe<Scalars["Int"]["input"]>;
-  /** Number of days from now (positive = future) */
-  DaysFromNow?: InputMaybe<Scalars["Int"]["input"]>;
-  /** Use today's date */
-  Today?: InputMaybe<Scalars["Boolean"]["input"]>;
+export type RelativeDateInput = {
+  days: Scalars["Int"]["input"];
 };
 
 /** Result of re-matching files for a source */
@@ -6284,25 +6339,29 @@ export type RssFeed = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type RssFeedChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  RssFeed?: Maybe<RssFeed>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  rssFeed?: Maybe<RssFeed>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type RssFeedConnection = {
   /** The edges in this connection */
-  Edges: Array<RssFeedEdge>;
+  edges: Array<RssFeedEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type RssFeedEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: RssFeed;
+  node: RssFeed;
 };
 
 export type RssFeedItem = {
@@ -6331,51 +6390,49 @@ export type RssFeedItem = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type RssFeedItemChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  RssFeedItem?: Maybe<RssFeedItem>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  rssFeedItem?: Maybe<RssFeedItem>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type RssFeedItemConnection = {
   /** The edges in this connection */
-  Edges: Array<RssFeedItemEdge>;
+  edges: Array<RssFeedItemEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type RssFeedItemEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: RssFeedItem;
+  node: RssFeedItem;
 };
 
 export type RssFeedItemOrderByInput = {
-  PubDate?: InputMaybe<SortDirection>;
-  SeenAt?: InputMaybe<SortDirection>;
-  Title?: InputMaybe<SortDirection>;
+  PubDate?: InputMaybe<OrderDirection>;
+  SeenAt?: InputMaybe<OrderDirection>;
+  Title?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type RssFeedItemResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  RssFeedItem?: Maybe<RssFeedItem>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  rssFeedItem?: Maybe<RssFeedItem>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type RssFeedItemWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<RssFeedItemWhereInput>>;
   FeedId?: InputMaybe<StringFilter>;
   Guid?: InputMaybe<StringFilter>;
   Id?: InputMaybe<StringFilter>;
   LinkHash?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<RssFeedItemWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<RssFeedItemWhereInput>>;
   ParsedAudio?: InputMaybe<StringFilter>;
   ParsedCodec?: InputMaybe<StringFilter>;
   ParsedEpisode?: InputMaybe<IntFilter>;
@@ -6390,25 +6447,29 @@ export type RssFeedItemWhereInput = {
   Title?: InputMaybe<StringFilter>;
   TitleHash?: InputMaybe<StringFilter>;
   TorrentId?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<RssFeedItemWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<RssFeedItemWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<RssFeedItemWhereInput>>;
 };
 
 export type RssFeedOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  LastPolledAt?: InputMaybe<SortDirection>;
-  Name?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  LastPolledAt?: InputMaybe<OrderDirection>;
+  Name?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type RssFeedResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  RssFeed?: Maybe<RssFeed>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  rssFeed?: Maybe<RssFeed>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type RssFeedWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<RssFeedWhereInput>>;
   ConsecutiveFailures?: InputMaybe<IntFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   Enabled?: InputMaybe<BoolFilter>;
@@ -6417,15 +6478,17 @@ export type RssFeedWhereInput = {
   LastSuccessfulAt?: InputMaybe<DateFilter>;
   LibraryId?: InputMaybe<StringFilter>;
   Name?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<RssFeedWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<RssFeedWhereInput>>;
   PollIntervalMinutes?: InputMaybe<IntFilter>;
   PostDownloadAction?: InputMaybe<StringFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   Url?: InputMaybe<StringFilter>;
   UserId?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<RssFeedWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<RssFeedWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<RssFeedWhereInput>>;
 };
 
 export type ScanLibraryResult = {
@@ -6459,59 +6522,57 @@ export type ScheduleCache = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type ScheduleCacheChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  ScheduleCache?: Maybe<ScheduleCache>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  scheduleCache?: Maybe<ScheduleCache>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type ScheduleCacheConnection = {
   /** The edges in this connection */
-  Edges: Array<ScheduleCacheEdge>;
+  edges: Array<ScheduleCacheEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type ScheduleCacheEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: ScheduleCache;
+  node: ScheduleCache;
 };
 
 export type ScheduleCacheOrderByInput = {
-  AirDate?: InputMaybe<SortDirection>;
-  CreatedAt?: InputMaybe<SortDirection>;
-  EpisodeName?: InputMaybe<SortDirection>;
-  EpisodeNumber?: InputMaybe<SortDirection>;
-  Season?: InputMaybe<SortDirection>;
-  ShowName?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  AirDate?: InputMaybe<OrderDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  EpisodeName?: InputMaybe<OrderDirection>;
+  EpisodeNumber?: InputMaybe<OrderDirection>;
+  Season?: InputMaybe<OrderDirection>;
+  ShowName?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type ScheduleCacheResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  ScheduleCache?: Maybe<ScheduleCache>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  scheduleCache?: Maybe<ScheduleCache>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type ScheduleCacheWhereInput = {
   AirDate?: InputMaybe<DateFilter>;
   AirStamp?: InputMaybe<DateFilter>;
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<ScheduleCacheWhereInput>>;
   CountryCode?: InputMaybe<StringFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   EpisodeName?: InputMaybe<StringFilter>;
   EpisodeNumber?: InputMaybe<IntFilter>;
   EpisodeType?: InputMaybe<StringFilter>;
   Id?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<ScheduleCacheWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<ScheduleCacheWhereInput>>;
   Runtime?: InputMaybe<IntFilter>;
   Season?: InputMaybe<IntFilter>;
   ShowName?: InputMaybe<StringFilter>;
@@ -6519,6 +6580,12 @@ export type ScheduleCacheWhereInput = {
   TvmazeEpisodeId?: InputMaybe<IntFilter>;
   TvmazeShowId?: InputMaybe<IntFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<ScheduleCacheWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<ScheduleCacheWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<ScheduleCacheWhereInput>>;
 };
 
 export type ScheduleSyncState = {
@@ -6533,60 +6600,58 @@ export type ScheduleSyncState = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type ScheduleSyncStateChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  ScheduleSyncState?: Maybe<ScheduleSyncState>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  scheduleSyncState?: Maybe<ScheduleSyncState>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type ScheduleSyncStateConnection = {
   /** The edges in this connection */
-  Edges: Array<ScheduleSyncStateEdge>;
+  edges: Array<ScheduleSyncStateEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type ScheduleSyncStateEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: ScheduleSyncState;
+  node: ScheduleSyncState;
 };
 
 export type ScheduleSyncStateOrderByInput = {
-  CountryCode?: InputMaybe<SortDirection>;
-  CreatedAt?: InputMaybe<SortDirection>;
-  LastSyncedAt?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CountryCode?: InputMaybe<OrderDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  LastSyncedAt?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type ScheduleSyncStateResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  ScheduleSyncState?: Maybe<ScheduleSyncState>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  scheduleSyncState?: Maybe<ScheduleSyncState>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type ScheduleSyncStateWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<ScheduleSyncStateWhereInput>>;
   CountryCode?: InputMaybe<StringFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   Id?: InputMaybe<StringFilter>;
   LastSyncDays?: InputMaybe<IntFilter>;
   LastSyncedAt?: InputMaybe<DateFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<ScheduleSyncStateWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<ScheduleSyncStateWhereInput>>;
   UpdatedAt?: InputMaybe<DateFilter>;
-};
-
-export type SchemaMigrationEntry = {
-  AppliedAt: Scalars["String"]["output"];
-  Description?: Maybe<Scalars["String"]["output"]>;
-  Id: Scalars["String"]["output"];
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<ScheduleSyncStateWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<ScheduleSyncStateWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<ScheduleSyncStateWhereInput>>;
 };
 
 /** Input for searching sources */
@@ -6620,20 +6685,9 @@ export type Show = {
   BackdropUrl?: Maybe<Scalars["String"]["output"]>;
   ContentRating?: Maybe<Scalars["String"]["output"]>;
   CreatedAt: Scalars["String"]["output"];
-  /**
-   * Get related #graphql_name with optional filtering, sorting, and pagination.
-   *
-   * When no arguments are provided, uses DataLoader to batch queries and
-   * avoid N+1 when loading relations for multiple parent entities.
-   * When filter/sort/pagination arguments are provided, uses direct
-   * database query for full SQL support.
-   */
-  Episodes: EpisodeConnection;
   Genres: Array<Scalars["String"]["output"]>;
   Id: Scalars["String"]["output"];
   ImdbId?: Maybe<Scalars["String"]["output"]>;
-  /** Get related #graphql_name */
-  Library?: Maybe<Library>;
   LibraryId: Scalars["String"]["output"];
   Name: Scalars["String"]["output"];
   Network?: Maybe<Scalars["String"]["output"]>;
@@ -6648,6 +6702,17 @@ export type Show = {
   UpdatedAt: Scalars["String"]["output"];
   UserId: Scalars["String"]["output"];
   Year?: Maybe<Scalars["Int"]["output"]>;
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  episodes: EpisodeConnection;
+  /** Get related #graphql_name */
+  library?: Maybe<Library>;
 };
 
 /**
@@ -6664,53 +6729,55 @@ export type Show = {
  * }
  * ```
  */
-export type ShowEpisodesArgs = {
-  OrderBy?: InputMaybe<EpisodeOrderByInput>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<EpisodeWhereInput>;
+export type ShowepisodesArgs = {
+  orderBy?: InputMaybe<EpisodeOrderByInput>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<EpisodeWhereInput>;
 };
 
 /** Event for #struct_name changes (subscriptions) */
 export type ShowChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  Show?: Maybe<Show>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  show?: Maybe<Show>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type ShowConnection = {
   /** The edges in this connection */
-  Edges: Array<ShowEdge>;
+  edges: Array<ShowEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type ShowEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: Show;
+  node: Show;
 };
 
 export type ShowOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  Name?: InputMaybe<SortDirection>;
-  SortName?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
-  Year?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  Name?: InputMaybe<OrderDirection>;
+  SortName?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
+  Year?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type ShowResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Show?: Maybe<Show>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  show?: Maybe<Show>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type ShowWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<ShowWhereInput>>;
   AutoDownload?: InputMaybe<BoolFilter>;
   ContentRating?: InputMaybe<StringFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
@@ -6719,10 +6786,6 @@ export type ShowWhereInput = {
   LibraryId?: InputMaybe<StringFilter>;
   Name?: InputMaybe<StringFilter>;
   Network?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<ShowWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<ShowWhereInput>>;
   Runtime?: InputMaybe<IntFilter>;
   TmdbId?: InputMaybe<IntFilter>;
   TvdbId?: InputMaybe<IntFilter>;
@@ -6730,28 +6793,18 @@ export type ShowWhereInput = {
   UpdatedAt?: InputMaybe<DateFilter>;
   UserId?: InputMaybe<StringFilter>;
   Year?: InputMaybe<IntFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<ShowWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<ShowWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<ShowWhereInput>>;
 };
 
-/** Fuzzy matching filter for string similarity */
-export type SimilarFilter = {
-  /**
-   * Minimum similarity threshold (0.0-1.0, default 0.6)
-   * 1.0 = exact match, 0.0 = any match
-   */
-  Threshold?: InputMaybe<Scalars["Float"]["input"]>;
-  /** The text to match against */
-  Value: Scalars["String"]["input"];
+export type SimilarityInput = {
+  value: Scalars["String"]["input"];
 };
 
-/** Sort direction for ORDER BY clauses. */
-export const SortDirection = {
-  /** Ascending order (A-Z, 1-9, oldest-newest) */
-  Asc: "Asc",
-  /** Descending order (Z-A, 9-1, newest-oldest) */
-  Desc: "Desc",
-} as const;
-
-export type SortDirection = (typeof SortDirection)[keyof typeof SortDirection];
 export type Source = {
   CreatedAt: Scalars["String"]["output"];
   DefinitionId: Scalars["String"]["output"];
@@ -6777,17 +6830,21 @@ export type Source = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type SourceChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  Source?: Maybe<Source>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  source?: Maybe<Source>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Connection containing edges and page info */
 export type SourceConnection = {
   /** The edges in this connection */
-  Edges: Array<SourceEdge>;
+  edges: Array<SourceEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Information about an available source definition (e.g., IPTorrents) */
@@ -6805,9 +6862,9 @@ export type SourceDefinitionInfo = {
 /** Edge containing a node and cursor */
 export type SourceEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: Source;
+  node: Source;
 };
 
 /** Generic success/error result for source mutations */
@@ -6817,11 +6874,11 @@ export type SourceMutationResult = {
 };
 
 export type SourceOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  Name?: InputMaybe<SortDirection>;
-  Priority?: InputMaybe<SortDirection>;
-  SourceType?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  Name?: InputMaybe<OrderDirection>;
+  Priority?: InputMaybe<OrderDirection>;
+  SourceType?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 export type SourcePriorityRule = {
@@ -6838,54 +6895,58 @@ export type SourcePriorityRule = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type SourcePriorityRuleChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  SourcePriorityRule?: Maybe<SourcePriorityRule>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
+  sourcePriorityRule?: Maybe<SourcePriorityRule>;
 };
 
 /** Connection containing edges and page info */
 export type SourcePriorityRuleConnection = {
   /** The edges in this connection */
-  Edges: Array<SourcePriorityRuleEdge>;
+  edges: Array<SourcePriorityRuleEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type SourcePriorityRuleEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: SourcePriorityRule;
+  node: SourcePriorityRule;
 };
 
 export type SourcePriorityRuleOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type SourcePriorityRuleResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  SourcePriorityRule?: Maybe<SourcePriorityRule>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  sourcePriorityRule?: Maybe<SourcePriorityRule>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type SourcePriorityRuleWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<SourcePriorityRuleWhereInput>>;
   CreatedAt?: InputMaybe<DateFilter>;
   Enabled?: InputMaybe<BoolFilter>;
   Id?: InputMaybe<StringFilter>;
   LibraryId?: InputMaybe<StringFilter>;
   LibraryType?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<SourcePriorityRuleWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<SourcePriorityRuleWhereInput>>;
   SearchAllSources?: InputMaybe<BoolFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   UserId?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<SourcePriorityRuleWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<SourcePriorityRuleWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<SourcePriorityRuleWhereInput>>;
 };
 
 /** A single release from a source search */
@@ -6914,9 +6975,9 @@ export type SourceReleaseInfo = {
 
 /** Result type for #struct_name mutations */
 export type SourceResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Source?: Maybe<Source>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  source?: Maybe<Source>;
+  success: Scalars["Boolean"]["output"];
 };
 
 /** Results from a single source */
@@ -6961,8 +7022,6 @@ export type SourceTestConnectionResult = {
 };
 
 export type SourceWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<SourceWhereInput>>;
   CreatedAt?: InputMaybe<DateFilter>;
   DefinitionId?: InputMaybe<StringFilter>;
   Enabled?: InputMaybe<BoolFilter>;
@@ -6972,10 +7031,6 @@ export type SourceWhereInput = {
   LastSuccessAt?: InputMaybe<DateFilter>;
   MediaTypes?: InputMaybe<StringFilter>;
   Name?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<SourceWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<SourceWhereInput>>;
   Priority?: InputMaybe<IntFilter>;
   SourceType?: InputMaybe<StringFilter>;
   SupportsBookSearch?: InputMaybe<BoolFilter>;
@@ -6984,307 +7039,297 @@ export type SourceWhereInput = {
   SupportsSearch?: InputMaybe<BoolFilter>;
   SupportsTvSearch?: InputMaybe<BoolFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<SourceWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<SourceWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<SourceWhereInput>>;
 };
 
-/** Filter for string fields */
 export type StringFilter = {
-  /** Contains substring (case-insensitive) */
-  Contains?: InputMaybe<Scalars["String"]["input"]>;
-  /** Ends with */
-  EndsWith?: InputMaybe<Scalars["String"]["input"]>;
-  /** Equals */
-  Eq?: InputMaybe<Scalars["String"]["input"]>;
-  /** In list */
-  In?: InputMaybe<Array<Scalars["String"]["input"]>>;
-  /** Is null */
-  IsNull?: InputMaybe<Scalars["Boolean"]["input"]>;
-  /** Not equals */
-  Ne?: InputMaybe<Scalars["String"]["input"]>;
-  /** Not in list */
-  NotIn?: InputMaybe<Array<Scalars["String"]["input"]>>;
-  /**
-   * Fuzzy/similar match with optional threshold (0.0-1.0, default 0.6)
-   * Uses normalized Levenshtein distance for scoring
-   */
-  Similar?: InputMaybe<SimilarFilter>;
-  /** Starts with */
-  StartsWith?: InputMaybe<Scalars["String"]["input"]>;
+  contains?: InputMaybe<Scalars["String"]["input"]>;
+  endsWith?: InputMaybe<Scalars["String"]["input"]>;
+  eq?: InputMaybe<Scalars["String"]["input"]>;
+  inList?: InputMaybe<Array<Scalars["String"]["input"]>>;
+  isNull?: InputMaybe<Scalars["Boolean"]["input"]>;
+  ne?: InputMaybe<Scalars["String"]["input"]>;
+  notIn?: InputMaybe<Array<Scalars["String"]["input"]>>;
+  similar?: InputMaybe<SimilarityInput>;
+  startsWith?: InputMaybe<Scalars["String"]["input"]>;
 };
 
-/** Input for entity change subscriptions. */
 export type SubscriptionFilterInput = {
-  /** Only receive events of these types */
-  Actions?: InputMaybe<Array<ChangeAction>>;
-  /** Only receive events for entities matching this ID */
-  Id?: InputMaybe<Scalars["String"]["input"]>;
+  actions?: InputMaybe<Array<ChangeAction>>;
+  dummy?: InputMaybe<Scalars["Boolean"]["input"]>;
 };
 
 export type SubscriptionRoot = {
-  /** Subscribe to #struct_name_str changes */
-  AlbumChanged: AlbumChangedEvent;
-  /** Subscribe to #struct_name_str changes */
-  AppLogChanged: AppLogChangedEvent;
-  /** Subscribe to #struct_name_str changes */
-  AppSettingChanged: AppSettingChangedEvent;
-  /** Subscribe to #struct_name_str changes */
-  ArtistChanged: ArtistChangedEvent;
-  /** Subscribe to #struct_name_str changes */
-  ArtworkCacheChanged: ArtworkCacheChangedEvent;
-  /** Subscribe to #struct_name_str changes */
-  AudioStreamChanged: AudioStreamChangedEvent;
-  /** Subscribe to #struct_name_str changes */
-  AudiobookChanged: AudiobookChangedEvent;
-  /** Subscribe to #struct_name_str changes */
-  CastDeviceChanged: CastDeviceChangedEvent;
-  /** Subscribe to #struct_name_str changes */
-  CastSessionChanged: CastSessionChangedEvent;
-  /** Subscribe to #struct_name_str changes */
-  CastSettingChanged: CastSettingChangedEvent;
-  /** Subscribe to #struct_name_str changes */
-  ChapterChanged: ChapterChangedEvent;
-  /** Subscribe to #struct_name_str changes */
-  CollectionChanged: CollectionChangedEvent;
-  /** Subscribe to #struct_name_str changes */
-  EpisodeChanged: EpisodeChangedEvent;
   /**
    * Subscribe to filesystem change events (create/delete/copy/move/rename).
    * Fires when any filesystem mutation completes. Optional path filter.
    */
   FilesystemChanged: FilesystemChangeEvent;
   /** Subscribe to #struct_name_str changes */
-  InviteTokenChanged: InviteTokenChangedEvent;
+  albumChanged: AlbumChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  LibraryChanged: LibraryChangedEvent;
+  appLogChanged: AppLogChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  MediaChapterChanged: MediaChapterChangedEvent;
+  appSettingChanged: AppSettingChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  MediaFileChanged: MediaFileChangedEvent;
+  artistChanged: ArtistChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  MetadataCacheChanged: MetadataCacheChangedEvent;
+  artworkCacheChanged: ArtworkCacheChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  MovieCastCreditChanged: MovieCastCreditChangedEvent;
+  audioStreamChanged: AudioStreamChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  MovieChanged: MovieChangedEvent;
+  audiobookChanged: AudiobookChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  NamingPatternChanged: NamingPatternChangedEvent;
+  castDeviceChanged: CastDeviceChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  NotificationChanged: NotificationChangedEvent;
+  castSessionChanged: CastSessionChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  PendingFileMatchChanged: PendingFileMatchChangedEvent;
+  castSettingChanged: CastSettingChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  PersonChanged: PersonChangedEvent;
+  chapterChanged: ChapterChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  PlaybackProgressChanged: PlaybackProgressChangedEvent;
+  collectionChanged: CollectionChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  PlaybackSessionChanged: PlaybackSessionChangedEvent;
+  episodeChanged: EpisodeChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  RefreshTokenChanged: RefreshTokenChangedEvent;
+  inviteTokenChanged: InviteTokenChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  RssFeedChanged: RssFeedChangedEvent;
+  libraryChanged: LibraryChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  RssFeedItemChanged: RssFeedItemChangedEvent;
+  mediaChapterChanged: MediaChapterChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  ScheduleCacheChanged: ScheduleCacheChangedEvent;
+  mediaFileChanged: MediaFileChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  ScheduleSyncStateChanged: ScheduleSyncStateChangedEvent;
+  metadataCacheChanged: MetadataCacheChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  ShowChanged: ShowChangedEvent;
+  movieCastCreditChanged: MovieCastCreditChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  SourceChanged: SourceChangedEvent;
+  movieChanged: MovieChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  SourcePriorityRuleChanged: SourcePriorityRuleChangedEvent;
+  namingPatternChanged: NamingPatternChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  SubtitleChanged: SubtitleChangedEvent;
+  notificationChanged: NotificationChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  TorrentFileChanged: TorrentFileChangedEvent;
+  pendingFileMatchChanged: PendingFileMatchChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  TorznabCategoryChanged: TorznabCategoryChangedEvent;
+  personChanged: PersonChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  TrackChanged: TrackChangedEvent;
+  playbackProgressChanged: PlaybackProgressChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  UsenetDownloadChanged: UsenetDownloadChangedEvent;
+  playbackSessionChanged: PlaybackSessionChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  UsenetServerChanged: UsenetServerChangedEvent;
+  refreshTokenChanged: RefreshTokenChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  UserChanged: UserChangedEvent;
+  rssFeedChanged: RssFeedChangedEvent;
   /** Subscribe to #struct_name_str changes */
-  VideoStreamChanged: VideoStreamChangedEvent;
+  rssFeedItemChanged: RssFeedItemChangedEvent;
+  /** Subscribe to #struct_name_str changes */
+  scheduleCacheChanged: ScheduleCacheChangedEvent;
+  /** Subscribe to #struct_name_str changes */
+  scheduleSyncStateChanged: ScheduleSyncStateChangedEvent;
+  /** Subscribe to #struct_name_str changes */
+  showChanged: ShowChangedEvent;
+  /** Subscribe to #struct_name_str changes */
+  sourceChanged: SourceChangedEvent;
+  /** Subscribe to #struct_name_str changes */
+  sourcePriorityRuleChanged: SourcePriorityRuleChangedEvent;
+  /** Subscribe to #struct_name_str changes */
+  subtitleChanged: SubtitleChangedEvent;
   torrentAdded: TorrentAddedEvent;
   torrentCompleted: TorrentCompletedEvent;
+  /** Subscribe to #struct_name_str changes */
+  torrentFileChanged: TorrentFileChangedEvent;
   torrentProgress: TorrentProgress;
   torrentRemoved: TorrentRemovedEvent;
-};
-
-export type SubscriptionRootAlbumChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
-};
-
-export type SubscriptionRootAppLogChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
-};
-
-export type SubscriptionRootAppSettingChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
-};
-
-export type SubscriptionRootArtistChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
-};
-
-export type SubscriptionRootArtworkCacheChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
-};
-
-export type SubscriptionRootAudioStreamChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
-};
-
-export type SubscriptionRootAudiobookChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
-};
-
-export type SubscriptionRootCastDeviceChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
-};
-
-export type SubscriptionRootCastSessionChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
-};
-
-export type SubscriptionRootCastSettingChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
-};
-
-export type SubscriptionRootChapterChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
-};
-
-export type SubscriptionRootCollectionChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
-};
-
-export type SubscriptionRootEpisodeChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+  /** Subscribe to #struct_name_str changes */
+  torznabCategoryChanged: TorznabCategoryChangedEvent;
+  /** Subscribe to #struct_name_str changes */
+  trackChanged: TrackChangedEvent;
+  /** Subscribe to #struct_name_str changes */
+  usenetDownloadChanged: UsenetDownloadChangedEvent;
+  /** Subscribe to #struct_name_str changes */
+  usenetServerChanged: UsenetServerChangedEvent;
+  /** Subscribe to #struct_name_str changes */
+  userChanged: UserChangedEvent;
+  /** Subscribe to #struct_name_str changes */
+  videoStreamChanged: VideoStreamChangedEvent;
 };
 
 export type SubscriptionRootFilesystemChangedArgs = {
   Path?: InputMaybe<Scalars["String"]["input"]>;
 };
 
-export type SubscriptionRootInviteTokenChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootalbumChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootLibraryChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootappLogChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootMediaChapterChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootappSettingChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootMediaFileChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootartistChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootMetadataCacheChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootartworkCacheChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootMovieCastCreditChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootaudioStreamChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootMovieChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootaudiobookChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootNamingPatternChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootcastDeviceChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootNotificationChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootcastSessionChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootPendingFileMatchChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootcastSettingChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootPersonChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootchapterChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootPlaybackProgressChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootcollectionChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootPlaybackSessionChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootepisodeChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootRefreshTokenChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootinviteTokenChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootRssFeedChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootlibraryChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootRssFeedItemChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootmediaChapterChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootScheduleCacheChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootmediaFileChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootScheduleSyncStateChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootmetadataCacheChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootShowChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootmovieCastCreditChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootSourceChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootmovieChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootSourcePriorityRuleChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootnamingPatternChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootSubtitleChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootnotificationChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootTorrentFileChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootpendingFileMatchChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootTorznabCategoryChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootpersonChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootTrackChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootplaybackProgressChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootUsenetDownloadChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootplaybackSessionChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootUsenetServerChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootrefreshTokenChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootUserChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootrssFeedChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
-export type SubscriptionRootVideoStreamChangedArgs = {
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+export type SubscriptionRootrssFeedItemChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRootscheduleCacheChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRootscheduleSyncStateChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRootshowChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRootsourceChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRootsourcePriorityRuleChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRootsubtitleChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRoottorrentFileChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRoottorznabCategoryChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRoottrackChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRootusenetDownloadChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRootusenetServerChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRootuserChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
+};
+
+export type SubscriptionRootvideoStreamChangedArgs = {
+  filter?: InputMaybe<SubscriptionFilterInput>;
 };
 
 export type Subtitle = {
@@ -7309,42 +7354,44 @@ export type Subtitle = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type SubtitleChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  Subtitle?: Maybe<Subtitle>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
+  subtitle?: Maybe<Subtitle>;
 };
 
 /** Connection containing edges and page info */
 export type SubtitleConnection = {
   /** The edges in this connection */
-  Edges: Array<SubtitleEdge>;
+  edges: Array<SubtitleEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type SubtitleEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: Subtitle;
+  node: Subtitle;
 };
 
 export type SubtitleOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type SubtitleResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Subtitle?: Maybe<Subtitle>;
-  Success: Scalars["Boolean"]["output"];
+  error?: Maybe<Scalars["String"]["output"]>;
+  subtitle?: Maybe<Subtitle>;
+  success: Scalars["Boolean"]["output"];
 };
 
 export type SubtitleWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<SubtitleWhereInput>>;
   Codec?: InputMaybe<StringFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   DownloadedAt?: InputMaybe<DateFilter>;
@@ -7354,14 +7401,16 @@ export type SubtitleWhereInput = {
   IsHearingImpaired?: InputMaybe<BoolFilter>;
   Language?: InputMaybe<StringFilter>;
   MediaFileId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<SubtitleWhereInput>;
   OpensubtitlesId?: InputMaybe<StringFilter>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<SubtitleWhereInput>>;
   SourceType?: InputMaybe<StringFilter>;
   StreamIndex?: InputMaybe<IntFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<SubtitleWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<SubtitleWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<SubtitleWhereInput>>;
 };
 
 export type Torrent = {
@@ -7371,15 +7420,6 @@ export type Torrent = {
   DownloadPath?: Maybe<Scalars["String"]["output"]>;
   DownloadedBytes: Scalars["Int"]["output"];
   ExcludedFiles: Array<Scalars["Int"]["output"]>;
-  /**
-   * Get related #graphql_name with optional filtering, sorting, and pagination.
-   *
-   * When no arguments are provided, uses DataLoader to batch queries and
-   * avoid N+1 when loading relations for multiple parent entities.
-   * When filter/sort/pagination arguments are provided, uses direct
-   * database query for full SQL support.
-   */
-  Files: TorrentFileConnection;
   Id: Scalars["String"]["output"];
   InfoHash: Scalars["String"]["output"];
   LibraryId?: Maybe<Scalars["String"]["output"]>;
@@ -7398,12 +7438,21 @@ export type Torrent = {
   UpdatedAt: Scalars["String"]["output"];
   UploadedBytes: Scalars["Int"]["output"];
   UserId: Scalars["String"]["output"];
+  /**
+   * Get related #graphql_name with optional filtering, sorting, and pagination.
+   *
+   * When no arguments are provided, uses DataLoader to batch queries and
+   * avoid N+1 when loading relations for multiple parent entities.
+   * When filter/sort/pagination arguments are provided, uses direct
+   * database query for full SQL support.
+   */
+  files: TorrentFileConnection;
 };
 
-export type TorrentFilesArgs = {
-  OrderBy?: InputMaybe<TorrentFileOrderByInput>;
-  Page?: InputMaybe<PageInput>;
-  Where?: InputMaybe<TorrentFileWhereInput>;
+export type TorrentfilesArgs = {
+  orderBy?: InputMaybe<TorrentFileOrderByInput>;
+  page?: InputMaybe<PageInput>;
+  where?: InputMaybe<TorrentFileWhereInput>;
 };
 
 /** Result of pause/resume/remove */
@@ -7427,17 +7476,17 @@ export type TorrentCompletedEvent = {
 /** Connection containing edges and page info */
 export type TorrentConnection = {
   /** The edges in this connection */
-  Edges: Array<TorrentEdge>;
+  edges: Array<TorrentEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type TorrentEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: Torrent;
+  node: Torrent;
 };
 
 export type TorrentFile = {
@@ -7457,45 +7506,47 @@ export type TorrentFile = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type TorrentFileChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  TorrentFile?: Maybe<TorrentFile>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
+  torrentFile?: Maybe<TorrentFile>;
 };
 
 /** Connection containing edges and page info */
 export type TorrentFileConnection = {
   /** The edges in this connection */
-  Edges: Array<TorrentFileEdge>;
+  edges: Array<TorrentFileEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type TorrentFileEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: TorrentFile;
+  node: TorrentFile;
 };
 
 export type TorrentFileOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  FileIndex?: InputMaybe<SortDirection>;
-  FileSize?: InputMaybe<SortDirection>;
-  Progress?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  FileIndex?: InputMaybe<OrderDirection>;
+  FileSize?: InputMaybe<OrderDirection>;
+  Progress?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type TorrentFileResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
-  TorrentFile?: Maybe<TorrentFile>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+  torrentFile?: Maybe<TorrentFile>;
 };
 
 export type TorrentFileWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<TorrentFileWhereInput>>;
   CreatedAt?: InputMaybe<DateFilter>;
   DownloadedBytes?: InputMaybe<IntFilter>;
   FileIndex?: InputMaybe<IntFilter>;
@@ -7504,24 +7555,26 @@ export type TorrentFileWhereInput = {
   Id?: InputMaybe<StringFilter>;
   IsExcluded?: InputMaybe<BoolFilter>;
   MediaFileId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<TorrentFileWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<TorrentFileWhereInput>>;
   Progress?: InputMaybe<IntFilter>;
   RelativePath?: InputMaybe<StringFilter>;
   TorrentId?: InputMaybe<StringFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<TorrentFileWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<TorrentFileWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<TorrentFileWhereInput>>;
 };
 
 export type TorrentOrderByInput = {
-  AddedAt?: InputMaybe<SortDirection>;
-  CreatedAt?: InputMaybe<SortDirection>;
-  Name?: InputMaybe<SortDirection>;
-  Progress?: InputMaybe<SortDirection>;
-  State?: InputMaybe<SortDirection>;
-  TotalBytes?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  AddedAt?: InputMaybe<OrderDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  Name?: InputMaybe<OrderDirection>;
+  Progress?: InputMaybe<OrderDirection>;
+  State?: InputMaybe<OrderDirection>;
+  TotalBytes?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 export type TorrentProgress = {
@@ -7541,15 +7594,13 @@ export type TorrentRemovedEvent = {
 
 /** Result type for #struct_name mutations */
 export type TorrentResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
-  Torrent?: Maybe<Torrent>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+  torrent?: Maybe<Torrent>;
 };
 
 export type TorrentWhereInput = {
   AddedAt?: InputMaybe<DateFilter>;
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<TorrentWhereInput>>;
   CompletedAt?: InputMaybe<DateFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   DownloadedBytes?: InputMaybe<IntFilter>;
@@ -7557,10 +7608,6 @@ export type TorrentWhereInput = {
   InfoHash?: InputMaybe<StringFilter>;
   LibraryId?: InputMaybe<StringFilter>;
   Name?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<TorrentWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<TorrentWhereInput>>;
   PostProcessStatus?: InputMaybe<StringFilter>;
   ProcessedAt?: InputMaybe<DateFilter>;
   Progress?: InputMaybe<IntFilter>;
@@ -7572,60 +7619,70 @@ export type TorrentWhereInput = {
   UpdatedAt?: InputMaybe<DateFilter>;
   UploadedBytes?: InputMaybe<IntFilter>;
   UserId?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<TorrentWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<TorrentWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<TorrentWhereInput>>;
 };
 
 export type TorznabCategory = {
   Description?: Maybe<Scalars["String"]["output"]>;
-  Id: Scalars["Int"]["output"];
+  Id: Scalars["String"]["output"];
   Name: Scalars["String"]["output"];
-  ParentId?: Maybe<Scalars["Int"]["output"]>;
+  ParentId?: Maybe<Scalars["String"]["output"]>;
 };
 
 /** Event for #struct_name changes (subscriptions) */
 export type TorznabCategoryChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["Int"]["output"];
-  TorznabCategory?: Maybe<TorznabCategory>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
+  torznabCategory?: Maybe<TorznabCategory>;
 };
 
 /** Connection containing edges and page info */
 export type TorznabCategoryConnection = {
   /** The edges in this connection */
-  Edges: Array<TorznabCategoryEdge>;
+  edges: Array<TorznabCategoryEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type TorznabCategoryEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: TorznabCategory;
+  node: TorznabCategory;
 };
 
 export type TorznabCategoryOrderByInput = {
-  Id?: InputMaybe<SortDirection>;
-  Name?: InputMaybe<SortDirection>;
+  Id?: InputMaybe<OrderDirection>;
+  Name?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type TorznabCategoryResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
-  TorznabCategory?: Maybe<TorznabCategory>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+  torznabCategory?: Maybe<TorznabCategory>;
 };
 
 export type TorznabCategoryWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<TorznabCategoryWhereInput>>;
-  Id?: InputMaybe<IntFilter>;
+  Id?: InputMaybe<StringFilter>;
   Name?: InputMaybe<StringFilter>;
+  ParentId?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<TorznabCategoryWhereInput>>;
   /** Logical NOT of condition */
-  Not?: InputMaybe<TorznabCategoryWhereInput>;
+  not?: InputMaybe<TorznabCategoryWhereInput>;
   /** Logical OR of conditions */
-  Or?: InputMaybe<Array<TorznabCategoryWhereInput>>;
-  ParentId?: InputMaybe<IntFilter>;
+  or?: InputMaybe<Array<TorznabCategoryWhereInput>>;
 };
 
 export type Track = {
@@ -7641,61 +7698,59 @@ export type Track = {
   LibraryId: Scalars["String"]["output"];
   MediaFileId?: Maybe<Scalars["String"]["output"]>;
   MusicbrainzId?: Maybe<Scalars["String"]["output"]>;
-  /**
-   * Computed status based on playback, file availability, and download state
-   *
-   * Returns one of: PLAYING, PAUSED, AVAILABLE, DOWNLOADING, WANTED, MISSING
-   */
-  Status: ContentStatus;
   Title: Scalars["String"]["output"];
   TrackNumber: Scalars["Int"]["output"];
   UpdatedAt: Scalars["String"]["output"];
   Wanted: Scalars["Boolean"]["output"];
+  /** Get related #graphql_name */
+  mediaFile?: Maybe<MediaFile>;
 };
 
 /** Event for #struct_name changes (subscriptions) */
 export type TrackChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  Track?: Maybe<Track>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
+  track?: Maybe<Track>;
 };
 
 /** Connection containing edges and page info */
 export type TrackConnection = {
   /** The edges in this connection */
-  Edges: Array<TrackEdge>;
+  edges: Array<TrackEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type TrackEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: Track;
+  node: Track;
 };
 
 export type TrackOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  DiscNumber?: InputMaybe<SortDirection>;
-  DurationSecs?: InputMaybe<SortDirection>;
-  Title?: InputMaybe<SortDirection>;
-  TrackNumber?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  DiscNumber?: InputMaybe<OrderDirection>;
+  DurationSecs?: InputMaybe<OrderDirection>;
+  Title?: InputMaybe<OrderDirection>;
+  TrackNumber?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type TrackResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
-  Track?: Maybe<Track>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+  track?: Maybe<Track>;
 };
 
 export type TrackWhereInput = {
   AlbumId?: InputMaybe<StringFilter>;
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<TrackWhereInput>>;
   ArtistId?: InputMaybe<StringFilter>;
   ArtistName?: InputMaybe<StringFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
@@ -7707,14 +7762,16 @@ export type TrackWhereInput = {
   LibraryId?: InputMaybe<StringFilter>;
   MediaFileId?: InputMaybe<StringFilter>;
   MusicbrainzId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<TrackWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<TrackWhereInput>>;
   Title?: InputMaybe<StringFilter>;
   TrackNumber?: InputMaybe<IntFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   Wanted?: InputMaybe<BoolFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<TrackWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<TrackWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<TrackWhereInput>>;
 };
 
 /** Result of TV show operations */
@@ -7744,7 +7801,6 @@ export type UnmatchMediaFileResult = {
   Success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateAlbumInput = {
   AlbumType?: InputMaybe<Scalars["String"]["input"]>;
   ArtistId?: InputMaybe<Scalars["String"]["input"]>;
@@ -7753,7 +7809,7 @@ export type UpdateAlbumInput = {
   Country?: InputMaybe<Scalars["String"]["input"]>;
   CoverUrl?: InputMaybe<Scalars["String"]["input"]>;
   DiscCount?: InputMaybe<Scalars["Int"]["input"]>;
-  Genres?: InputMaybe<Array<Scalars["String"]["input"]>>;
+  Genres?: InputMaybe<Scalars["JSON"]["input"]>;
   HasFiles?: InputMaybe<Scalars["Boolean"]["input"]>;
   Label?: InputMaybe<Scalars["String"]["input"]>;
   LibraryId?: InputMaybe<Scalars["String"]["input"]>;
@@ -7776,7 +7832,6 @@ export type UpdateAlbumsResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateAppLogInput = {
   Fields?: InputMaybe<Scalars["String"]["input"]>;
   Level?: InputMaybe<Scalars["String"]["input"]>;
@@ -7794,7 +7849,6 @@ export type UpdateAppLogsResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateAppSettingInput = {
   Category?: InputMaybe<Scalars["String"]["input"]>;
   Description?: InputMaybe<Scalars["String"]["input"]>;
@@ -7809,7 +7863,6 @@ export type UpdateAppSettingsResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateArtistInput = {
   AlbumCount?: InputMaybe<Scalars["Int"]["input"]>;
   Bio?: InputMaybe<Scalars["String"]["input"]>;
@@ -7831,7 +7884,6 @@ export type UpdateArtistsResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateArtworkCacheInput = {
   ArtworkType?: InputMaybe<Scalars["String"]["input"]>;
   ContentHash?: InputMaybe<Scalars["String"]["input"]>;
@@ -7851,7 +7903,6 @@ export type UpdateArtworkCachesResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateAudioStreamInput = {
   BitDepth?: InputMaybe<Scalars["Int"]["input"]>;
   Bitrate?: InputMaybe<Scalars["Int"]["input"]>;
@@ -7876,7 +7927,6 @@ export type UpdateAudioStreamsResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateAudiobookInput = {
   Asin?: InputMaybe<Scalars["String"]["input"]>;
   AudibleId?: InputMaybe<Scalars["String"]["input"]>;
@@ -7892,7 +7942,7 @@ export type UpdateAudiobookInput = {
   Language?: InputMaybe<Scalars["String"]["input"]>;
   LibraryId?: InputMaybe<Scalars["String"]["input"]>;
   NarratorName?: InputMaybe<Scalars["String"]["input"]>;
-  Narrators?: InputMaybe<Array<Scalars["String"]["input"]>>;
+  Narrators?: InputMaybe<Scalars["JSON"]["input"]>;
   Path?: InputMaybe<Scalars["String"]["input"]>;
   PublishedDate?: InputMaybe<Scalars["String"]["input"]>;
   Publisher?: InputMaybe<Scalars["String"]["input"]>;
@@ -7910,7 +7960,6 @@ export type UpdateAudiobooksResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateCastDeviceInput = {
   Address?: InputMaybe<Scalars["String"]["input"]>;
   DeviceType?: InputMaybe<Scalars["String"]["input"]>;
@@ -7929,7 +7978,6 @@ export type UpdateCastDevicesResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateCastSessionInput = {
   CurrentPosition?: InputMaybe<Scalars["Float"]["input"]>;
   DeviceId?: InputMaybe<Scalars["String"]["input"]>;
@@ -7952,7 +8000,6 @@ export type UpdateCastSessionsResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateCastSettingInput = {
   AutoDiscoveryEnabled?: InputMaybe<Scalars["Boolean"]["input"]>;
   DefaultVolume?: InputMaybe<Scalars["Float"]["input"]>;
@@ -7968,7 +8015,6 @@ export type UpdateCastSettingsResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateChapterInput = {
   AudiobookId?: InputMaybe<Scalars["String"]["input"]>;
   ChapterNumber?: InputMaybe<Scalars["Int"]["input"]>;
@@ -7987,7 +8033,6 @@ export type UpdateChaptersResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateCollectionInput = {
   BackdropUrl?: InputMaybe<Scalars["String"]["input"]>;
   LastSyncedAt?: InputMaybe<Scalars["String"]["input"]>;
@@ -8007,7 +8052,6 @@ export type UpdateCollectionsResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateEpisodeInput = {
   AbsoluteNumber?: InputMaybe<Scalars["Int"]["input"]>;
   AirDate?: InputMaybe<Scalars["String"]["input"]>;
@@ -8031,14 +8075,13 @@ export type UpdateEpisodesResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateInviteTokenInput = {
   AccessLevel?: InputMaybe<Scalars["String"]["input"]>;
   ApplyRestrictions?: InputMaybe<Scalars["Boolean"]["input"]>;
   CreatedBy?: InputMaybe<Scalars["String"]["input"]>;
   ExpiresAt?: InputMaybe<Scalars["String"]["input"]>;
   IsActive?: InputMaybe<Scalars["Boolean"]["input"]>;
-  LibraryIds?: InputMaybe<Array<Scalars["String"]["input"]>>;
+  LibraryIds?: InputMaybe<Scalars["JSON"]["input"]>;
   MaxUses?: InputMaybe<Scalars["Int"]["input"]>;
   RestrictionsTemplate?: InputMaybe<Scalars["String"]["input"]>;
   Role?: InputMaybe<Scalars["String"]["input"]>;
@@ -8060,7 +8103,6 @@ export type UpdateLibrariesResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateLibraryInput = {
   AutoOrganize?: InputMaybe<Scalars["Boolean"]["input"]>;
   AutoScan?: InputMaybe<Scalars["Boolean"]["input"]>;
@@ -8077,7 +8119,6 @@ export type UpdateLibraryInput = {
   WatchForChanges?: InputMaybe<Scalars["Boolean"]["input"]>;
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateMediaChapterInput = {
   ChapterIndex?: InputMaybe<Scalars["Int"]["input"]>;
   EndSecs?: InputMaybe<Scalars["Float"]["input"]>;
@@ -8093,7 +8134,6 @@ export type UpdateMediaChaptersResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateMediaFileInput = {
   AddedAt?: InputMaybe<Scalars["String"]["input"]>;
   AnalyzedAt?: InputMaybe<Scalars["String"]["input"]>;
@@ -8128,7 +8168,6 @@ export type UpdateMediaFilesResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateMetadataCacheInput = {
   CacheKey?: InputMaybe<Scalars["String"]["input"]>;
   FetchedAt?: InputMaybe<Scalars["String"]["input"]>;
@@ -8145,7 +8184,6 @@ export type UpdateMetadataCachesResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateMovieCastCreditInput = {
   CastOrder?: InputMaybe<Scalars["Int"]["input"]>;
   CharacterName?: InputMaybe<Scalars["String"]["input"]>;
@@ -8160,16 +8198,15 @@ export type UpdateMovieCastCreditsResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateMovieInput = {
-  CastNames?: InputMaybe<Array<Scalars["String"]["input"]>>;
+  CastNames?: InputMaybe<Scalars["JSON"]["input"]>;
   Certification?: InputMaybe<Scalars["String"]["input"]>;
   CollectionId?: InputMaybe<Scalars["Int"]["input"]>;
   CollectionName?: InputMaybe<Scalars["String"]["input"]>;
   CollectionPosterUrl?: InputMaybe<Scalars["String"]["input"]>;
   Director?: InputMaybe<Scalars["String"]["input"]>;
   DownloadStatus?: InputMaybe<Scalars["String"]["input"]>;
-  Genres?: InputMaybe<Array<Scalars["String"]["input"]>>;
+  Genres?: InputMaybe<Scalars["JSON"]["input"]>;
   HasFile?: InputMaybe<Scalars["Boolean"]["input"]>;
   ImdbId?: InputMaybe<Scalars["String"]["input"]>;
   LibraryId?: InputMaybe<Scalars["String"]["input"]>;
@@ -8177,11 +8214,11 @@ export type UpdateMovieInput = {
   Monitored?: InputMaybe<Scalars["Boolean"]["input"]>;
   OriginalTitle?: InputMaybe<Scalars["String"]["input"]>;
   Overview?: InputMaybe<Scalars["String"]["input"]>;
-  ProductionCountries?: InputMaybe<Array<Scalars["String"]["input"]>>;
+  ProductionCountries?: InputMaybe<Scalars["JSON"]["input"]>;
   ReleaseDate?: InputMaybe<Scalars["String"]["input"]>;
   Runtime?: InputMaybe<Scalars["Int"]["input"]>;
   SortTitle?: InputMaybe<Scalars["String"]["input"]>;
-  SpokenLanguages?: InputMaybe<Array<Scalars["String"]["input"]>>;
+  SpokenLanguages?: InputMaybe<Scalars["JSON"]["input"]>;
   Tagline?: InputMaybe<Scalars["String"]["input"]>;
   Title?: InputMaybe<Scalars["String"]["input"]>;
   TmdbId?: InputMaybe<Scalars["Int"]["input"]>;
@@ -8200,7 +8237,6 @@ export type UpdateMoviesResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateNamingPatternInput = {
   Description?: InputMaybe<Scalars["String"]["input"]>;
   IsDefault?: InputMaybe<Scalars["Boolean"]["input"]>;
@@ -8218,7 +8254,6 @@ export type UpdateNamingPatternsResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateNotificationInput = {
   ActionData?: InputMaybe<Scalars["String"]["input"]>;
   ActionType?: InputMaybe<Scalars["String"]["input"]>;
@@ -8243,7 +8278,6 @@ export type UpdateNotificationsResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdatePendingFileMatchInput = {
   ChapterId?: InputMaybe<Scalars["String"]["input"]>;
   CopiedAt?: InputMaybe<Scalars["String"]["input"]>;
@@ -8284,14 +8318,12 @@ export type UpdatePeopleResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdatePersonInput = {
   Name?: InputMaybe<Scalars["String"]["input"]>;
   ProfileUrl?: InputMaybe<Scalars["String"]["input"]>;
   TmdbPersonId?: InputMaybe<Scalars["Int"]["input"]>;
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdatePlaybackProgressInput = {
   CurrentPosition?: InputMaybe<Scalars["Float"]["input"]>;
   Duration?: InputMaybe<Scalars["Float"]["input"]>;
@@ -8309,7 +8341,6 @@ export type UpdatePlaybackProgressesResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdatePlaybackSessionInput = {
   AlbumId?: InputMaybe<Scalars["String"]["input"]>;
   AudiobookId?: InputMaybe<Scalars["String"]["input"]>;
@@ -8337,13 +8368,19 @@ export type UpdatePlaybackSessionsResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateRefreshTokenInput = {
-  DeviceInfo?: InputMaybe<Scalars["String"]["input"]>;
   ExpiresAt?: InputMaybe<Scalars["String"]["input"]>;
   IpAddress?: InputMaybe<Scalars["String"]["input"]>;
   LastUsedAt?: InputMaybe<Scalars["String"]["input"]>;
+  ReplacedByTokenId?: InputMaybe<Scalars["String"]["input"]>;
+  RevocationReason?: InputMaybe<Scalars["String"]["input"]>;
+  RevokedAt?: InputMaybe<Scalars["String"]["input"]>;
+  Scopes?: InputMaybe<Scalars["JSON"]["input"]>;
+  Session?: InputMaybe<Scalars["String"]["input"]>;
+  SessionFamilyId?: InputMaybe<Scalars["String"]["input"]>;
+  SessionId?: InputMaybe<Scalars["String"]["input"]>;
   TokenHash?: InputMaybe<Scalars["String"]["input"]>;
+  UserAgent?: InputMaybe<Scalars["String"]["input"]>;
   UserId?: InputMaybe<Scalars["String"]["input"]>;
 };
 
@@ -8354,7 +8391,6 @@ export type UpdateRefreshTokensResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateRssFeedInput = {
   ConsecutiveFailures?: InputMaybe<Scalars["Int"]["input"]>;
   Enabled?: InputMaybe<Scalars["Boolean"]["input"]>;
@@ -8369,7 +8405,6 @@ export type UpdateRssFeedInput = {
   UserId?: InputMaybe<Scalars["String"]["input"]>;
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateRssFeedItemInput = {
   Description?: InputMaybe<Scalars["String"]["input"]>;
   FeedId?: InputMaybe<Scalars["String"]["input"]>;
@@ -8407,7 +8442,6 @@ export type UpdateRssFeedsResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateScheduleCacheInput = {
   AirDate?: InputMaybe<Scalars["String"]["input"]>;
   AirStamp?: InputMaybe<Scalars["String"]["input"]>;
@@ -8419,7 +8453,7 @@ export type UpdateScheduleCacheInput = {
   EpisodeType?: InputMaybe<Scalars["String"]["input"]>;
   Runtime?: InputMaybe<Scalars["Int"]["input"]>;
   Season?: InputMaybe<Scalars["Int"]["input"]>;
-  ShowGenres?: InputMaybe<Array<Scalars["String"]["input"]>>;
+  ShowGenres?: InputMaybe<Scalars["JSON"]["input"]>;
   ShowName?: InputMaybe<Scalars["String"]["input"]>;
   ShowNetwork?: InputMaybe<Scalars["String"]["input"]>;
   ShowPosterUrl?: InputMaybe<Scalars["String"]["input"]>;
@@ -8435,7 +8469,6 @@ export type UpdateScheduleCachesResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateScheduleSyncStateInput = {
   CountryCode?: InputMaybe<Scalars["String"]["input"]>;
   LastSyncDays?: InputMaybe<Scalars["Int"]["input"]>;
@@ -8450,13 +8483,12 @@ export type UpdateScheduleSyncStatesResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateShowInput = {
   AutoDownload?: InputMaybe<Scalars["Boolean"]["input"]>;
   AutoDownloadMode?: InputMaybe<AutoDownloadMode>;
   BackdropUrl?: InputMaybe<Scalars["String"]["input"]>;
   ContentRating?: InputMaybe<Scalars["String"]["input"]>;
-  Genres?: InputMaybe<Array<Scalars["String"]["input"]>>;
+  Genres?: InputMaybe<Scalars["JSON"]["input"]>;
   ImdbId?: InputMaybe<Scalars["String"]["input"]>;
   LibraryId?: InputMaybe<Scalars["String"]["input"]>;
   Name?: InputMaybe<Scalars["String"]["input"]>;
@@ -8480,9 +8512,7 @@ export type UpdateShowsResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateSourceInput = {
-  Credentials?: InputMaybe<Scalars["String"]["input"]>;
   DefinitionId?: InputMaybe<Scalars["String"]["input"]>;
   Enabled?: InputMaybe<Scalars["Boolean"]["input"]>;
   ErrorCount?: InputMaybe<Scalars["Int"]["input"]>;
@@ -8500,6 +8530,7 @@ export type UpdateSourceInput = {
   SupportsMusicSearch?: InputMaybe<Scalars["Boolean"]["input"]>;
   SupportsSearch?: InputMaybe<Scalars["Boolean"]["input"]>;
   SupportsTvSearch?: InputMaybe<Scalars["Boolean"]["input"]>;
+  credentials?: InputMaybe<Scalars["String"]["input"]>;
 };
 
 /** Input for updating source priorities */
@@ -8508,12 +8539,11 @@ export type UpdateSourcePrioritiesInput = {
   SourceIds: Array<Scalars["String"]["input"]>;
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateSourcePriorityRuleInput = {
   Enabled?: InputMaybe<Scalars["Boolean"]["input"]>;
   LibraryId?: InputMaybe<Scalars["String"]["input"]>;
   LibraryType?: InputMaybe<Scalars["String"]["input"]>;
-  PriorityOrder?: InputMaybe<Array<Scalars["String"]["input"]>>;
+  PriorityOrder?: InputMaybe<Scalars["JSON"]["input"]>;
   SearchAllSources?: InputMaybe<Scalars["Boolean"]["input"]>;
   UserId?: InputMaybe<Scalars["String"]["input"]>;
 };
@@ -8532,7 +8562,6 @@ export type UpdateSourcesResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateSubtitleInput = {
   Codec?: InputMaybe<Scalars["String"]["input"]>;
   CodecLongName?: InputMaybe<Scalars["String"]["input"]>;
@@ -8557,7 +8586,6 @@ export type UpdateSubtitlesResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateTorrentFileInput = {
   DownloadedBytes?: InputMaybe<Scalars["Int"]["input"]>;
   FileIndex?: InputMaybe<Scalars["Int"]["input"]>;
@@ -8577,13 +8605,12 @@ export type UpdateTorrentFilesResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateTorrentInput = {
   AddedAt?: InputMaybe<Scalars["String"]["input"]>;
   CompletedAt?: InputMaybe<Scalars["String"]["input"]>;
   DownloadPath?: InputMaybe<Scalars["String"]["input"]>;
   DownloadedBytes?: InputMaybe<Scalars["Int"]["input"]>;
-  ExcludedFiles?: InputMaybe<Array<Scalars["Int"]["input"]>>;
+  ExcludedFiles?: InputMaybe<Scalars["JSON"]["input"]>;
   InfoHash?: InputMaybe<Scalars["String"]["input"]>;
   LibraryId?: InputMaybe<Scalars["String"]["input"]>;
   MagnetUri?: InputMaybe<Scalars["String"]["input"]>;
@@ -8616,14 +8643,12 @@ export type UpdateTorznabCategoriesResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateTorznabCategoryInput = {
   Description?: InputMaybe<Scalars["String"]["input"]>;
   Name?: InputMaybe<Scalars["String"]["input"]>;
-  ParentId?: InputMaybe<Scalars["Int"]["input"]>;
+  ParentId?: InputMaybe<Scalars["String"]["input"]>;
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateTrackInput = {
   AlbumId?: InputMaybe<Scalars["String"]["input"]>;
   ArtistId?: InputMaybe<Scalars["String"]["input"]>;
@@ -8647,7 +8672,6 @@ export type UpdateTracksResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateUsenetDownloadInput = {
   AlbumId?: InputMaybe<Scalars["String"]["input"]>;
   AudiobookId?: InputMaybe<Scalars["String"]["input"]>;
@@ -8680,7 +8704,6 @@ export type UpdateUsenetDownloadsResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateUsenetServerInput = {
   Connections?: InputMaybe<Scalars["Int"]["input"]>;
   Enabled?: InputMaybe<Scalars["Boolean"]["input"]>;
@@ -8706,7 +8729,6 @@ export type UpdateUsenetServersResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateUserInput = {
   AvatarUrl?: InputMaybe<Scalars["String"]["input"]>;
   DisplayName?: InputMaybe<Scalars["String"]["input"]>;
@@ -8724,7 +8746,6 @@ export type UpdateUsersResult = {
   success: Scalars["Boolean"]["output"];
 };
 
-/** Input for updating an existing #struct_name */
 export type UpdateVideoStreamInput = {
   AspectRatio?: InputMaybe<Scalars["String"]["input"]>;
   AvgFrameRate?: InputMaybe<Scalars["String"]["input"]>;
@@ -8785,46 +8806,48 @@ export type UsenetDownload = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type UsenetDownloadChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  UsenetDownload?: Maybe<UsenetDownload>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
+  usenetDownload?: Maybe<UsenetDownload>;
 };
 
 /** Connection containing edges and page info */
 export type UsenetDownloadConnection = {
   /** The edges in this connection */
-  Edges: Array<UsenetDownloadEdge>;
+  edges: Array<UsenetDownloadEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type UsenetDownloadEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: UsenetDownload;
+  node: UsenetDownload;
 };
 
 export type UsenetDownloadOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  NzbName?: InputMaybe<SortDirection>;
-  SizeBytes?: InputMaybe<SortDirection>;
-  State?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  NzbName?: InputMaybe<OrderDirection>;
+  SizeBytes?: InputMaybe<OrderDirection>;
+  State?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type UsenetDownloadResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
-  UsenetDownload?: Maybe<UsenetDownload>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+  usenetDownload?: Maybe<UsenetDownload>;
 };
 
 export type UsenetDownloadWhereInput = {
   AlbumId?: InputMaybe<StringFilter>;
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<UsenetDownloadWhereInput>>;
   AudiobookId?: InputMaybe<StringFilter>;
   CompletedAt?: InputMaybe<DateFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
@@ -8836,18 +8859,20 @@ export type UsenetDownloadWhereInput = {
   IndexerId?: InputMaybe<StringFilter>;
   LibraryId?: InputMaybe<StringFilter>;
   MovieId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<UsenetDownloadWhereInput>;
   NzbHash?: InputMaybe<StringFilter>;
   NzbName?: InputMaybe<StringFilter>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<UsenetDownloadWhereInput>>;
   PostProcessStatus?: InputMaybe<StringFilter>;
   RetryCount?: InputMaybe<IntFilter>;
   SizeBytes?: InputMaybe<IntFilter>;
   State?: InputMaybe<StringFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   UserId?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<UsenetDownloadWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<UsenetDownloadWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<UsenetDownloadWhereInput>>;
 };
 
 export type UsenetServer = {
@@ -8873,44 +8898,46 @@ export type UsenetServer = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type UsenetServerChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  UsenetServer?: Maybe<UsenetServer>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
+  usenetServer?: Maybe<UsenetServer>;
 };
 
 /** Connection containing edges and page info */
 export type UsenetServerConnection = {
   /** The edges in this connection */
-  Edges: Array<UsenetServerEdge>;
+  edges: Array<UsenetServerEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type UsenetServerEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: UsenetServer;
+  node: UsenetServer;
 };
 
 export type UsenetServerOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  Name?: InputMaybe<SortDirection>;
-  Priority?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  Name?: InputMaybe<OrderDirection>;
+  Priority?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type UsenetServerResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
-  UsenetServer?: Maybe<UsenetServer>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+  usenetServer?: Maybe<UsenetServer>;
 };
 
 export type UsenetServerWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<UsenetServerWhereInput>>;
   Connections?: InputMaybe<IntFilter>;
   CreatedAt?: InputMaybe<DateFilter>;
   Enabled?: InputMaybe<BoolFilter>;
@@ -8919,16 +8946,18 @@ export type UsenetServerWhereInput = {
   Id?: InputMaybe<StringFilter>;
   LastSuccessAt?: InputMaybe<DateFilter>;
   Name?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<UsenetServerWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<UsenetServerWhereInput>>;
   Port?: InputMaybe<IntFilter>;
   Priority?: InputMaybe<IntFilter>;
   RetentionDays?: InputMaybe<IntFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   UseSsl?: InputMaybe<BoolFilter>;
   UserId?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<UsenetServerWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<UsenetServerWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<UsenetServerWhereInput>>;
 };
 
 export type User = {
@@ -8942,62 +8971,67 @@ export type User = {
   Role: Scalars["String"]["output"];
   UpdatedAt: Scalars["String"]["output"];
   Username: Scalars["String"]["output"];
+  passwordHash: Scalars["String"]["output"];
 };
 
 /** Event for #struct_name changes (subscriptions) */
 export type UserChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  User?: Maybe<User>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
+  user?: Maybe<User>;
 };
 
 /** Connection containing edges and page info */
 export type UserConnection = {
   /** The edges in this connection */
-  Edges: Array<UserEdge>;
+  edges: Array<UserEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type UserEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: User;
+  node: User;
 };
 
 export type UserOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  LastLoginAt?: InputMaybe<SortDirection>;
-  Role?: InputMaybe<SortDirection>;
-  UpdatedAt?: InputMaybe<SortDirection>;
-  Username?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  LastLoginAt?: InputMaybe<OrderDirection>;
+  Role?: InputMaybe<OrderDirection>;
+  UpdatedAt?: InputMaybe<OrderDirection>;
+  Username?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type UserResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
-  User?: Maybe<User>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+  user?: Maybe<User>;
 };
 
 export type UserWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<UserWhereInput>>;
   CreatedAt?: InputMaybe<DateFilter>;
   DisplayName?: InputMaybe<StringFilter>;
   Email?: InputMaybe<StringFilter>;
   Id?: InputMaybe<StringFilter>;
   IsActive?: InputMaybe<BoolFilter>;
   LastLoginAt?: InputMaybe<DateFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<UserWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<UserWhereInput>>;
   Role?: InputMaybe<StringFilter>;
   UpdatedAt?: InputMaybe<DateFilter>;
   Username?: InputMaybe<StringFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<UserWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<UserWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<UserWhereInput>>;
 };
 
 export type VideoStream = {
@@ -9027,42 +9061,44 @@ export type VideoStream = {
 
 /** Event for #struct_name changes (subscriptions) */
 export type VideoStreamChangedEvent = {
-  Action: ChangeAction;
-  Id: Scalars["String"]["output"];
-  VideoStream?: Maybe<VideoStream>;
+  action: ChangeAction;
+  changeKind: ChangeKind;
+  id: Scalars["String"]["output"];
+  path: Array<Scalars["String"]["output"]>;
+  sourceEntity?: Maybe<Scalars["String"]["output"]>;
+  sourceId?: Maybe<Scalars["String"]["output"]>;
+  videoStream?: Maybe<VideoStream>;
 };
 
 /** Connection containing edges and page info */
 export type VideoStreamConnection = {
   /** The edges in this connection */
-  Edges: Array<VideoStreamEdge>;
+  edges: Array<VideoStreamEdge>;
   /** Pagination information */
-  PageInfo: PageInfo;
+  pageInfo: PageInfo;
 };
 
 /** Edge containing a node and cursor */
 export type VideoStreamEdge = {
   /** A cursor for pagination */
-  Cursor: Scalars["String"]["output"];
+  cursor: Scalars["String"]["output"];
   /** The item at the end of the edge */
-  Node: VideoStream;
+  node: VideoStream;
 };
 
 export type VideoStreamOrderByInput = {
-  CreatedAt?: InputMaybe<SortDirection>;
-  StreamIndex?: InputMaybe<SortDirection>;
+  CreatedAt?: InputMaybe<OrderDirection>;
+  StreamIndex?: InputMaybe<OrderDirection>;
 };
 
 /** Result type for #struct_name mutations */
 export type VideoStreamResult = {
-  Error?: Maybe<Scalars["String"]["output"]>;
-  Success: Scalars["Boolean"]["output"];
-  VideoStream?: Maybe<VideoStream>;
+  error?: Maybe<Scalars["String"]["output"]>;
+  success: Scalars["Boolean"]["output"];
+  videoStream?: Maybe<VideoStream>;
 };
 
 export type VideoStreamWhereInput = {
-  /** Logical AND of conditions */
-  And?: InputMaybe<Array<VideoStreamWhereInput>>;
   BitDepth?: InputMaybe<IntFilter>;
   Bitrate?: InputMaybe<IntFilter>;
   Codec?: InputMaybe<StringFilter>;
@@ -9073,16 +9109,18 @@ export type VideoStreamWhereInput = {
   IsDefault?: InputMaybe<BoolFilter>;
   Language?: InputMaybe<StringFilter>;
   MediaFileId?: InputMaybe<StringFilter>;
-  /** Logical NOT of condition */
-  Not?: InputMaybe<VideoStreamWhereInput>;
-  /** Logical OR of conditions */
-  Or?: InputMaybe<Array<VideoStreamWhereInput>>;
   StreamIndex?: InputMaybe<IntFilter>;
   Width?: InputMaybe<IntFilter>;
+  /** Logical AND of conditions */
+  and?: InputMaybe<Array<VideoStreamWhereInput>>;
+  /** Logical NOT of condition */
+  not?: InputMaybe<VideoStreamWhereInput>;
+  /** Logical OR of conditions */
+  or?: InputMaybe<Array<VideoStreamWhereInput>>;
 };
 
 export type PlaybackSyncIntervalQueryVariables = Exact<{
-  Key: Scalars["String"]["input"];
+  Key: string;
 }>;
 
 export type PlaybackSyncIntervalQuery = {
@@ -9122,21 +9160,21 @@ export type CreateAppSettingMutationVariables = Exact<{
 export type CreateAppSettingMutation = {
   CreateAppSetting: {
     Success: boolean;
-    Error?: string | null;
-    AppSetting?: { Id: string; Key: string; Value: string } | null;
+    Error: string | null;
+    AppSetting: { Id: string; Key: string; Value: string } | null;
   };
 };
 
 export type UpdateAppSettingMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
   Input: UpdateAppSettingInput;
 }>;
 
 export type UpdateAppSettingMutation = {
   UpdateAppSetting: {
     Success: boolean;
-    Error?: string | null;
-    AppSetting?: { Id: string; Key: string; Value: string } | null;
+    Error: string | null;
+    AppSetting: { Id: string; Key: string; Value: string } | null;
   };
 };
 
@@ -9147,12 +9185,12 @@ export type NeedsSetupQuery = { NeedsSetup: boolean };
 export type MeQueryVariables = Exact<{ [key: string]: never }>;
 
 export type MeQuery = {
-  Me?: {
+  Me: {
     Id: string;
-    Email?: string | null;
+    Email: string | null;
     Username: string;
     Role: string;
-    DisplayName?: string | null;
+    DisplayName: string | null;
   } | null;
 };
 
@@ -9163,15 +9201,15 @@ export type LoginMutationVariables = Exact<{
 export type LoginMutation = {
   Login: {
     Success: boolean;
-    Error?: string | null;
-    User?: {
+    Error: string | null;
+    User: {
       Id: string;
-      Email?: string | null;
+      Email: string | null;
       Username: string;
       Role: string;
-      DisplayName?: string | null;
+      DisplayName: string | null;
     } | null;
-    Tokens?: {
+    Tokens: {
       AccessToken: string;
       RefreshToken: string;
       ExpiresIn: number;
@@ -9187,15 +9225,15 @@ export type RegisterMutationVariables = Exact<{
 export type RegisterMutation = {
   Register: {
     Success: boolean;
-    Error?: string | null;
-    User?: {
+    Error: string | null;
+    User: {
       Id: string;
-      Email?: string | null;
+      Email: string | null;
       Username: string;
       Role: string;
-      DisplayName?: string | null;
+      DisplayName: string | null;
     } | null;
-    Tokens?: {
+    Tokens: {
       AccessToken: string;
       RefreshToken: string;
       ExpiresIn: number;
@@ -9211,8 +9249,8 @@ export type RefreshTokenMutationVariables = Exact<{
 export type RefreshTokenMutation = {
   RefreshToken: {
     Success: boolean;
-    Error?: string | null;
-    Tokens?: {
+    Error: string | null;
+    Tokens: {
       AccessToken: string;
       RefreshToken: string;
       ExpiresIn: number;
@@ -9226,13 +9264,17 @@ export type LogoutMutationVariables = Exact<{
 }>;
 
 export type LogoutMutation = {
-  Logout: { Success: boolean; Error?: string | null };
+  Logout: { Success: boolean; Error: string | null };
 };
 
 export type CastDevicesQueryVariables = Exact<{
-  Where?: InputMaybe<CastDeviceWhereInput>;
-  OrderBy?: InputMaybe<Array<CastDeviceOrderByInput> | CastDeviceOrderByInput>;
-  Page?: InputMaybe<PageInput>;
+  Where?: CastDeviceWhereInput | null | undefined;
+  OrderBy?:
+    | Array<CastDeviceOrderByInput>
+    | CastDeviceOrderByInput
+    | null
+    | undefined;
+  Page?: PageInput | null | undefined;
 }>;
 
 export type CastDevicesQuery = {
@@ -9244,23 +9286,25 @@ export type CastDevicesQuery = {
         Name: string;
         Address: string;
         Port: number;
-        Model?: string | null;
+        Model: string | null;
         DeviceType: string;
         IsFavorite: boolean;
         IsManual: boolean;
-        LastSeenAt?: string | null;
+        LastSeenAt: string | null;
       };
     }>;
-    PageInfo: { HasNextPage: boolean; TotalCount?: number | null };
+    PageInfo: { HasNextPage: boolean; TotalCount: number | null };
   };
 };
 
 export type CastSessionsQueryVariables = Exact<{
-  Where?: InputMaybe<CastSessionWhereInput>;
-  OrderBy?: InputMaybe<
-    Array<CastSessionOrderByInput> | CastSessionOrderByInput
-  >;
-  Page?: InputMaybe<PageInput>;
+  Where?: CastSessionWhereInput | null | undefined;
+  OrderBy?:
+    | Array<CastSessionOrderByInput>
+    | CastSessionOrderByInput
+    | null
+    | undefined;
+  Page?: PageInput | null | undefined;
 }>;
 
 export type CastSessionsQuery = {
@@ -9269,28 +9313,30 @@ export type CastSessionsQuery = {
       Cursor: string;
       Node: {
         Id: string;
-        DeviceId?: string | null;
-        MediaFileId?: string | null;
-        EpisodeId?: string | null;
+        DeviceId: string | null;
+        MediaFileId: string | null;
+        EpisodeId: string | null;
         StreamUrl: string;
         PlayerState: string;
         CurrentPosition: number;
-        Duration?: number | null;
+        Duration: number | null;
         Volume: number;
         IsMuted: boolean;
         StartedAt: string;
       };
     }>;
-    PageInfo: { HasNextPage: boolean; TotalCount?: number | null };
+    PageInfo: { HasNextPage: boolean; TotalCount: number | null };
   };
 };
 
 export type CastSettingsQueryVariables = Exact<{
-  Where?: InputMaybe<CastSettingWhereInput>;
-  OrderBy?: InputMaybe<
-    Array<CastSettingOrderByInput> | CastSettingOrderByInput
-  >;
-  Page?: InputMaybe<PageInput>;
+  Where?: CastSettingWhereInput | null | undefined;
+  OrderBy?:
+    | Array<CastSettingOrderByInput>
+    | CastSettingOrderByInput
+    | null
+    | undefined;
+  Page?: PageInput | null | undefined;
 }>;
 
 export type CastSettingsQuery = {
@@ -9303,10 +9349,10 @@ export type CastSettingsQuery = {
         DiscoveryIntervalSeconds: number;
         DefaultVolume: number;
         TranscodeIncompatible: boolean;
-        PreferredQuality?: string | null;
+        PreferredQuality: string | null;
       };
     }>;
-    PageInfo: { HasNextPage: boolean; TotalCount?: number | null };
+    PageInfo: { HasNextPage: boolean; TotalCount: number | null };
   };
 };
 
@@ -9317,50 +9363,50 @@ export type CreateCastDeviceMutationVariables = Exact<{
 export type CreateCastDeviceMutation = {
   CreateCastDevice: {
     Success: boolean;
-    Error?: string | null;
-    CastDevice?: {
+    Error: string | null;
+    CastDevice: {
       Id: string;
       Name: string;
       Address: string;
       Port: number;
-      Model?: string | null;
+      Model: string | null;
       DeviceType: string;
       IsFavorite: boolean;
       IsManual: boolean;
-      LastSeenAt?: string | null;
+      LastSeenAt: string | null;
     } | null;
   };
 };
 
 export type UpdateCastDeviceMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
   Input: UpdateCastDeviceInput;
 }>;
 
 export type UpdateCastDeviceMutation = {
   UpdateCastDevice: {
     Success: boolean;
-    Error?: string | null;
-    CastDevice?: {
+    Error: string | null;
+    CastDevice: {
       Id: string;
       Name: string;
       Address: string;
       Port: number;
-      Model?: string | null;
+      Model: string | null;
       DeviceType: string;
       IsFavorite: boolean;
       IsManual: boolean;
-      LastSeenAt?: string | null;
+      LastSeenAt: string | null;
     } | null;
   };
 };
 
 export type DeleteCastDeviceMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type DeleteCastDeviceMutation = {
-  DeleteCastDevice: { Success: boolean; Error?: string | null };
+  DeleteCastDevice: { Success: boolean; Error: string | null };
 };
 
 export type CreateCastSettingMutationVariables = Exact<{
@@ -9370,34 +9416,34 @@ export type CreateCastSettingMutationVariables = Exact<{
 export type CreateCastSettingMutation = {
   CreateCastSetting: {
     Success: boolean;
-    Error?: string | null;
-    CastSetting?: {
+    Error: string | null;
+    CastSetting: {
       Id: string;
       AutoDiscoveryEnabled: boolean;
       DiscoveryIntervalSeconds: number;
       DefaultVolume: number;
       TranscodeIncompatible: boolean;
-      PreferredQuality?: string | null;
+      PreferredQuality: string | null;
     } | null;
   };
 };
 
 export type UpdateCastSettingMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
   Input: UpdateCastSettingInput;
 }>;
 
 export type UpdateCastSettingMutation = {
   UpdateCastSetting: {
     Success: boolean;
-    Error?: string | null;
-    CastSetting?: {
+    Error: string | null;
+    CastSetting: {
       Id: string;
       AutoDiscoveryEnabled: boolean;
       DiscoveryIntervalSeconds: number;
       DefaultVolume: number;
       TranscodeIncompatible: boolean;
-      PreferredQuality?: string | null;
+      PreferredQuality: string | null;
     } | null;
   };
 };
@@ -9412,12 +9458,12 @@ export type DiscoverCastDevicesOpMutation = {
     name: string;
     address: string;
     port: number;
-    model?: string | null;
+    model: string | null;
     deviceType: string;
     isFavorite: boolean;
     isManual: boolean;
     isConnected: boolean;
-    lastSeenAt?: string | null;
+    lastSeenAt: string | null;
   }>;
 };
 
@@ -9428,17 +9474,17 @@ export type CastMediaOpMutationVariables = Exact<{
 export type CastMediaOpMutation = {
   CastMedia: {
     success: boolean;
-    error?: string | null;
-    session?: {
+    error: string | null;
+    session: {
       id: string;
-      deviceId?: string | null;
-      deviceName?: string | null;
-      mediaFileId?: string | null;
-      episodeId?: string | null;
+      deviceId: string | null;
+      deviceName: string | null;
+      mediaFileId: string | null;
+      episodeId: string | null;
       streamUrl: string;
       playerState: string;
       currentTime: number;
-      duration?: number | null;
+      duration: number | null;
       volume: number;
       isMuted: boolean;
       startedAt: string;
@@ -9447,80 +9493,80 @@ export type CastMediaOpMutation = {
 };
 
 export type CastPlayOpMutationVariables = Exact<{
-  sessionId: Scalars["String"]["input"];
+  sessionId: string;
 }>;
 
 export type CastPlayOpMutation = {
   CastPlay: {
     success: boolean;
-    error?: string | null;
-    session?: { id: string; playerState: string; currentTime: number } | null;
+    error: string | null;
+    session: { id: string; playerState: string; currentTime: number } | null;
   };
 };
 
 export type CastPauseOpMutationVariables = Exact<{
-  sessionId: Scalars["String"]["input"];
+  sessionId: string;
 }>;
 
 export type CastPauseOpMutation = {
   CastPause: {
     success: boolean;
-    error?: string | null;
-    session?: { id: string; playerState: string; currentTime: number } | null;
+    error: string | null;
+    session: { id: string; playerState: string; currentTime: number } | null;
   };
 };
 
 export type CastStopOpMutationVariables = Exact<{
-  sessionId: Scalars["String"]["input"];
+  sessionId: string;
 }>;
 
 export type CastStopOpMutation = {
-  CastStop: { success: boolean; error?: string | null };
+  CastStop: { success: boolean; error: string | null };
 };
 
 export type CastSeekOpMutationVariables = Exact<{
-  sessionId: Scalars["String"]["input"];
-  position: Scalars["Float"]["input"];
+  sessionId: string;
+  position: number;
 }>;
 
 export type CastSeekOpMutation = {
   CastSeek: {
     success: boolean;
-    error?: string | null;
-    session?: { id: string; playerState: string; currentTime: number } | null;
+    error: string | null;
+    session: { id: string; playerState: string; currentTime: number } | null;
   };
 };
 
 export type CastSetVolumeOpMutationVariables = Exact<{
-  sessionId: Scalars["String"]["input"];
-  volume: Scalars["Float"]["input"];
+  sessionId: string;
+  volume: number;
 }>;
 
 export type CastSetVolumeOpMutation = {
   CastSetVolume: {
     success: boolean;
-    error?: string | null;
-    session?: { id: string; volume: number; isMuted: boolean } | null;
+    error: string | null;
+    session: { id: string; volume: number; isMuted: boolean } | null;
   };
 };
 
 export type CastSetMutedOpMutationVariables = Exact<{
-  sessionId: Scalars["String"]["input"];
-  muted: Scalars["Boolean"]["input"];
+  sessionId: string;
+  muted: boolean;
 }>;
 
 export type CastSetMutedOpMutation = {
   CastSetMuted: {
     success: boolean;
-    error?: string | null;
-    session?: { id: string; volume: number; isMuted: boolean } | null;
+    error: string | null;
+    session: { id: string; volume: number; isMuted: boolean } | null;
   };
 };
 
 export type DashboardShowsQueryVariables = Exact<{
-  Where?: InputMaybe<ShowWhereInput>;
-  Page?: InputMaybe<PageInput>;
-  OrderBy?: InputMaybe<Array<ShowOrderByInput> | ShowOrderByInput>;
+  Where?: ShowWhereInput | null | undefined;
+  Page?: PageInput | null | undefined;
+  OrderBy?: Array<ShowOrderByInput> | ShowOrderByInput | null | undefined;
 }>;
 
 export type DashboardShowsQuery = {
@@ -9531,32 +9577,34 @@ export type DashboardShowsQuery = {
         Id: string;
         LibraryId: string;
         Name: string;
-        SortName?: string | null;
-        Year?: number | null;
-        TvmazeId?: number | null;
-        TmdbId?: number | null;
-        TvdbId?: number | null;
-        ImdbId?: string | null;
-        Overview?: string | null;
-        Network?: string | null;
-        Runtime?: number | null;
-        PosterUrl?: string | null;
-        BackdropUrl?: string | null;
-        Path?: string | null;
+        SortName: string | null;
+        Year: number | null;
+        TvmazeId: number | null;
+        TmdbId: number | null;
+        TvdbId: number | null;
+        ImdbId: string | null;
+        Overview: string | null;
+        Network: string | null;
+        Runtime: number | null;
+        PosterUrl: string | null;
+        BackdropUrl: string | null;
+        Path: string | null;
         Genres: Array<string>;
         CreatedAt: string;
       };
     }>;
-    PageInfo: { TotalCount?: number | null };
+    PageInfo: { TotalCount: number | null };
   };
 };
 
 export type DashboardScheduleCachesQueryVariables = Exact<{
-  Where?: InputMaybe<ScheduleCacheWhereInput>;
-  OrderBy?: InputMaybe<
-    Array<ScheduleCacheOrderByInput> | ScheduleCacheOrderByInput
-  >;
-  Page?: InputMaybe<PageInput>;
+  Where?: ScheduleCacheWhereInput | null | undefined;
+  OrderBy?:
+    | Array<ScheduleCacheOrderByInput>
+    | ScheduleCacheOrderByInput
+    | null
+    | undefined;
+  Page?: PageInput | null | undefined;
 }>;
 
 export type DashboardScheduleCachesQuery = {
@@ -9569,52 +9617,52 @@ export type DashboardScheduleCachesQuery = {
         EpisodeName: string;
         Season: number;
         EpisodeNumber: number;
-        EpisodeType?: string | null;
+        EpisodeType: string | null;
         AirDate: string;
-        AirTime?: string | null;
-        AirStamp?: string | null;
-        Runtime?: number | null;
-        EpisodeImageUrl?: string | null;
-        Summary?: string | null;
+        AirTime: string | null;
+        AirStamp: string | null;
+        Runtime: number | null;
+        EpisodeImageUrl: string | null;
+        Summary: string | null;
         TvmazeShowId: number;
         ShowName: string;
-        ShowNetwork?: string | null;
-        ShowPosterUrl?: string | null;
+        ShowNetwork: string | null;
+        ShowPosterUrl: string | null;
         ShowGenres: Array<string>;
         CountryCode: string;
       };
     }>;
-    PageInfo: { TotalCount?: number | null };
+    PageInfo: { TotalCount: number | null };
   };
 };
 
 export type MediaFilePropertiesQueryVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type MediaFilePropertiesQuery = {
-  MediaFile?: {
+  MediaFile: {
     Id: string;
-    LibraryId?: string | null;
+    LibraryId: string | null;
     Path: string;
-    RelativePath?: string | null;
-    OriginalName?: string | null;
+    RelativePath: string | null;
+    OriginalName: string | null;
     Size: number;
-    Container?: string | null;
-    VideoCodec?: string | null;
-    AudioCodec?: string | null;
-    Resolution?: string | null;
+    Container: string | null;
+    VideoCodec: string | null;
+    AudioCodec: string | null;
+    Resolution: string | null;
     IsHdr: boolean;
-    HdrType?: string | null;
-    Width?: number | null;
-    Height?: number | null;
-    Duration?: number | null;
-    Bitrate?: number | null;
-    AudioChannels?: string | null;
-    EpisodeId?: string | null;
-    MovieId?: string | null;
-    TrackId?: string | null;
-    ContentType?: string | null;
+    HdrType: string | null;
+    Width: number | null;
+    Height: number | null;
+    Duration: number | null;
+    Bitrate: number | null;
+    AudioChannels: string | null;
+    EpisodeId: string | null;
+    MovieId: string | null;
+    TrackId: string | null;
+    ContentType: string | null;
     AddedAt: string;
   } | null;
   VideoStreams: {
@@ -9623,17 +9671,17 @@ export type MediaFilePropertiesQuery = {
         Id: string;
         StreamIndex: number;
         Codec: string;
-        CodecLongName?: string | null;
+        CodecLongName: string | null;
         Width: number;
         Height: number;
-        AspectRatio?: string | null;
-        FrameRate?: string | null;
-        Bitrate?: number | null;
-        PixelFormat?: string | null;
-        HdrType?: string | null;
-        BitDepth?: number | null;
-        Language?: string | null;
-        Title?: string | null;
+        AspectRatio: string | null;
+        FrameRate: string | null;
+        Bitrate: number | null;
+        PixelFormat: string | null;
+        HdrType: string | null;
+        BitDepth: number | null;
+        Language: string | null;
+        Title: string | null;
         IsDefault: boolean;
       };
     }>;
@@ -9644,14 +9692,14 @@ export type MediaFilePropertiesQuery = {
         Id: string;
         StreamIndex: number;
         Codec: string;
-        CodecLongName?: string | null;
+        CodecLongName: string | null;
         Channels: number;
-        ChannelLayout?: string | null;
-        SampleRate?: number | null;
-        Bitrate?: number | null;
-        BitDepth?: number | null;
-        Language?: string | null;
-        Title?: string | null;
+        ChannelLayout: string | null;
+        SampleRate: number | null;
+        Bitrate: number | null;
+        BitDepth: number | null;
+        Language: string | null;
+        Title: string | null;
         IsDefault: boolean;
         IsCommentary: boolean;
       };
@@ -9661,16 +9709,16 @@ export type MediaFilePropertiesQuery = {
     Edges: Array<{
       Node: {
         Id: string;
-        StreamIndex?: number | null;
+        StreamIndex: number | null;
         SourceType: string;
-        Codec?: string | null;
-        CodecLongName?: string | null;
-        Language?: string | null;
-        Title?: string | null;
+        Codec: string | null;
+        CodecLongName: string | null;
+        Language: string | null;
+        Title: string | null;
         IsDefault: boolean;
         IsForced: boolean;
         IsHearingImpaired: boolean;
-        FilePath?: string | null;
+        FilePath: string | null;
       };
     }>;
   };
@@ -9681,14 +9729,14 @@ export type MediaFilePropertiesQuery = {
         ChapterIndex: number;
         StartSecs: number;
         EndSecs: number;
-        Title?: string | null;
+        Title: string | null;
       };
     }>;
   };
 };
 
 export type MediaFileByPathLookupQueryVariables = Exact<{
-  Path: Scalars["String"]["input"];
+  Path: string;
 }>;
 
 export type MediaFileByPathLookupQuery = {
@@ -9696,23 +9744,23 @@ export type MediaFileByPathLookupQuery = {
 };
 
 export type MediaFileMetadataQueryVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type MediaFileMetadataQuery = {
-  MediaFile?: { Id: string; Metadata?: string | null } | null;
+  MediaFile: { Id: string; Metadata: string | null } | null;
 };
 
 export type BrowseDirectoryQueryVariables = Exact<{
-  Input?: InputMaybe<BrowseDirectoryInput>;
+  Input?: BrowseDirectoryInput | null | undefined;
 }>;
 
 export type BrowseDirectoryQuery = {
   BrowseDirectory: {
     CurrentPath: string;
-    ParentPath?: string | null;
+    ParentPath: string | null;
     IsLibraryPath: boolean;
-    LibraryId?: string | null;
+    LibraryId: string | null;
     Entries: Array<{
       Name: string;
       Path: string;
@@ -9721,8 +9769,8 @@ export type BrowseDirectoryQuery = {
       SizeFormatted: string;
       Readable: boolean;
       Writable: boolean;
-      MimeType?: string | null;
-      ModifiedAt?: string | null;
+      MimeType: string | null;
+      ModifiedAt: string | null;
     }>;
     QuickPaths: Array<{ Name: string; Path: string }>;
   };
@@ -9737,7 +9785,7 @@ export type FilesystemRuntimeInfoQuery = {
     Platform: string;
     SupportsUncCredentials: boolean;
     SupportsSambaMount: boolean;
-    DefaultLinuxMountBase?: string | null;
+    DefaultLinuxMountBase: string | null;
   };
 };
 
@@ -9754,7 +9802,7 @@ export type LibraryPathAvailabilityQuery = {
     NeedsReconnect: boolean;
     ReconnectAttempted: boolean;
     ReconnectSucceeded: boolean;
-    Message?: string | null;
+    Message: string | null;
   }>;
 };
 
@@ -9765,33 +9813,33 @@ export type ConfigureNetworkPathMutationVariables = Exact<{
 export type ConfigureNetworkPathMutation = {
   ConfigureNetworkPath: {
     Success: boolean;
-    Error?: string | null;
+    Error: string | null;
     ResolvedPath: string;
     Connected: boolean;
     Stored: boolean;
-    Message?: string | null;
+    Message: string | null;
   };
 };
 
 export type ReconnectLibraryPathMutationVariables = Exact<{
-  Path: Scalars["String"]["input"];
+  Path: string;
 }>;
 
 export type ReconnectLibraryPathMutation = {
   ReconnectLibraryPath: {
     Success: boolean;
-    Error?: string | null;
+    Error: string | null;
     ResolvedPath: string;
     Connected: boolean;
     Stored: boolean;
-    Message?: string | null;
+    Message: string | null;
   };
 };
 
 export type LibrariesQueryVariables = Exact<{
-  Where?: InputMaybe<LibraryWhereInput>;
-  OrderBy?: InputMaybe<Array<LibraryOrderByInput> | LibraryOrderByInput>;
-  Page?: InputMaybe<PageInput>;
+  Where?: LibraryWhereInput | null | undefined;
+  OrderBy?: Array<LibraryOrderByInput> | LibraryOrderByInput | null | undefined;
+  Page?: PageInput | null | undefined;
 }>;
 
 export type LibrariesQuery = {
@@ -9804,59 +9852,61 @@ export type LibrariesQuery = {
         Name: string;
         Path: string;
         LibraryType: string;
-        Icon?: string | null;
-        Color?: string | null;
+        Icon: string | null;
+        Color: string | null;
         AutoScan: boolean;
         ScanIntervalMinutes: number;
         WatchForChanges: boolean;
         AutoOrganize: boolean;
         NamingPattern: string;
         Scanning: boolean;
-        LastScannedAt?: string | null;
+        LastScannedAt: string | null;
         CreatedAt: string;
         UpdatedAt: string;
-        Shows: { PageInfo: { TotalCount?: number | null } };
+        Shows: { PageInfo: { TotalCount: number | null } };
         ShowArtwork: {
-          Edges: Array<{ Node: { Id: string; PosterUrl?: string | null } }>;
+          Edges: Array<{ Node: { Id: string; PosterUrl: string | null } }>;
         };
-        Movies: { PageInfo: { TotalCount?: number | null } };
+        Movies: { PageInfo: { TotalCount: number | null } };
         MovieArtwork: {
-          Edges: Array<{ Node: { Id: string; PosterUrl?: string | null } }>;
+          Edges: Array<{
+            Node: { Id: string; CollectionPosterUrl: string | null };
+          }>;
         };
-        Albums: { PageInfo: { TotalCount?: number | null } };
+        Albums: { PageInfo: { TotalCount: number | null } };
         AlbumArtwork: {
-          Edges: Array<{ Node: { Id: string; CoverUrl?: string | null } }>;
+          Edges: Array<{ Node: { Id: string; CoverUrl: string | null } }>;
         };
-        Audiobooks: { PageInfo: { TotalCount?: number | null } };
+        Audiobooks: { PageInfo: { TotalCount: number | null } };
         AudiobookArtwork: {
-          Edges: Array<{ Node: { Id: string; CoverUrl?: string | null } }>;
+          Edges: Array<{ Node: { Id: string; CoverUrl: string | null } }>;
         };
       };
     }>;
-    PageInfo: { HasNextPage: boolean; TotalCount?: number | null };
+    PageInfo: { HasNextPage: boolean; TotalCount: number | null };
   };
 };
 
 export type LibraryChangedSubscriptionVariables = Exact<{
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+  Filter?: SubscriptionFilterInput | null | undefined;
 }>;
 
 export type LibraryChangedSubscription = {
   LibraryChanged: {
     Action: ChangeAction;
     Id: string;
-    Library?: {
+    Library: {
       Id: string;
       Name: string;
       Path: string;
       LibraryType: string;
-      Icon?: string | null;
-      Color?: string | null;
+      Icon: string | null;
+      Color: string | null;
       AutoScan: boolean;
       ScanIntervalMinutes: number;
       WatchForChanges: boolean;
       Scanning: boolean;
-      LastScannedAt?: string | null;
+      LastScannedAt: string | null;
       CreatedAt: string;
       UpdatedAt: string;
     } | null;
@@ -9870,36 +9920,36 @@ export type CreateLibraryMutationVariables = Exact<{
 export type CreateLibraryMutation = {
   CreateLibrary: {
     Success: boolean;
-    Error?: string | null;
-    Library?: {
+    Error: string | null;
+    Library: {
       Id: string;
       Name: string;
       Path: string;
       LibraryType: string;
-      Icon?: string | null;
-      Color?: string | null;
+      Icon: string | null;
+      Color: string | null;
     } | null;
   };
 };
 
 export type DeleteLibraryMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type DeleteLibraryMutation = {
-  DeleteLibrary: { Success: boolean; Error?: string | null };
+  DeleteLibrary: { Success: boolean; Error: string | null };
 };
 
 export type ScanLibraryMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type ScanLibraryMutation = {
-  ScanLibrary: { Success: boolean; Status: string; Message?: string | null };
+  ScanLibrary: { Success: boolean; Message: string | null };
 };
 
 export type LibraryAlbumsTabQueryVariables = Exact<{
-  LibraryId: Scalars["String"]["input"];
+  LibraryId: string;
 }>;
 
 export type LibraryAlbumsTabQuery = {
@@ -9910,28 +9960,28 @@ export type LibraryAlbumsTabQuery = {
         ArtistId: string;
         LibraryId: string;
         Name: string;
-        SortName?: string | null;
-        Year?: number | null;
-        MusicbrainzId?: string | null;
-        AlbumType?: string | null;
+        SortName: string | null;
+        Year: number | null;
+        MusicbrainzId: string | null;
+        AlbumType: string | null;
         Genres: Array<string>;
-        Label?: string | null;
-        Country?: string | null;
-        ReleaseDate?: string | null;
-        CoverUrl?: string | null;
-        TrackCount?: number | null;
-        DiscCount?: number | null;
-        TotalDurationSecs?: number | null;
+        Label: string | null;
+        Country: string | null;
+        ReleaseDate: string | null;
+        CoverUrl: string | null;
+        TrackCount: number | null;
+        DiscCount: number | null;
+        TotalDurationSecs: number | null;
         HasFiles: boolean;
-        SizeBytes?: number | null;
-        Path?: string | null;
+        SizeBytes: number | null;
+        Path: string | null;
       };
     }>;
   };
 };
 
 export type LibraryArtistsTabQueryVariables = Exact<{
-  LibraryId: Scalars["String"]["input"];
+  LibraryId: string;
 }>;
 
 export type LibraryArtistsTabQuery = {
@@ -9941,15 +9991,15 @@ export type LibraryArtistsTabQuery = {
         Id: string;
         LibraryId: string;
         Name: string;
-        SortName?: string | null;
-        MusicbrainzId?: string | null;
+        SortName: string | null;
+        MusicbrainzId: string | null;
       };
     }>;
   };
 };
 
 export type LibraryAudiobooksTabQueryVariables = Exact<{
-  LibraryId: Scalars["String"]["input"];
+  LibraryId: string;
 }>;
 
 export type LibraryAudiobooksTabQuery = {
@@ -9959,26 +10009,26 @@ export type LibraryAudiobooksTabQuery = {
         Id: string;
         LibraryId: string;
         Title: string;
-        SortTitle?: string | null;
-        Isbn?: string | null;
-        Description?: string | null;
-        Publisher?: string | null;
-        Language?: string | null;
+        SortTitle: string | null;
+        Isbn: string | null;
+        Description: string | null;
+        Publisher: string | null;
+        Language: string | null;
         Narrators: Array<string>;
-        CoverUrl?: string | null;
+        CoverUrl: string | null;
         HasFiles: boolean;
-        SizeBytes?: number | null;
-        Path?: string | null;
-        ChapterCount?: number | null;
-        TotalDurationSecs?: number | null;
-        AuthorName?: string | null;
+        SizeBytes: number | null;
+        Path: string | null;
+        ChapterCount: number | null;
+        TotalDurationSecs: number | null;
+        AuthorName: string | null;
       };
     }>;
   };
 };
 
 export type LibraryUnmatchedMediaFilesTabQueryVariables = Exact<{
-  LibraryId: Scalars["String"]["input"];
+  LibraryId: string;
 }>;
 
 export type LibraryUnmatchedMediaFilesTabQuery = {
@@ -9986,22 +10036,22 @@ export type LibraryUnmatchedMediaFilesTabQuery = {
     Edges: Array<{
       Node: {
         Id: string;
-        LibraryId?: string | null;
+        LibraryId: string | null;
         Path: string;
-        RelativePath?: string | null;
-        OriginalName?: string | null;
+        RelativePath: string | null;
+        OriginalName: string | null;
         Size: number;
-        Container?: string | null;
-        VideoCodec?: string | null;
-        AudioCodec?: string | null;
-        Resolution?: string | null;
+        Container: string | null;
+        VideoCodec: string | null;
+        AudioCodec: string | null;
+        Resolution: string | null;
         IsHdr: boolean;
-        HdrType?: string | null;
-        Width?: number | null;
-        Height?: number | null;
-        Duration?: number | null;
-        EpisodeId?: string | null;
-        ChapterId?: string | null;
+        HdrType: string | null;
+        Width: number | null;
+        Height: number | null;
+        Duration: number | null;
+        EpisodeId: string | null;
+        ChapterId: string | null;
         AddedAt: string;
       };
     }>;
@@ -10009,11 +10059,11 @@ export type LibraryUnmatchedMediaFilesTabQuery = {
 };
 
 export type LibraryDetailRouteQueryVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type LibraryDetailRouteQuery = {
-  Library?: {
+  Library: {
     Id: string;
     Name: string;
     Path: string;
@@ -10028,30 +10078,30 @@ export type LibraryDetailRouteQuery = {
 };
 
 export type UpdateLibraryRouteMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
   Input: UpdateLibraryInput;
 }>;
 
 export type UpdateLibraryRouteMutation = {
   UpdateLibrary: {
     Success: boolean;
-    Error?: string | null;
-    Library?: { Id: string } | null;
+    Error: string | null;
+    Library: { Id: string } | null;
   };
 };
 
 export type DeleteShowRouteMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type DeleteShowRouteMutation = {
-  DeleteShow: { Success: boolean; Error?: string | null };
+  DeleteShow: { Success: boolean; Error: string | null };
 };
 
 export type AppLogsQueryVariables = Exact<{
-  Where?: InputMaybe<AppLogWhereInput>;
-  OrderBy?: InputMaybe<Array<AppLogOrderByInput> | AppLogOrderByInput>;
-  Page?: InputMaybe<PageInput>;
+  Where?: AppLogWhereInput | null | undefined;
+  OrderBy?: Array<AppLogOrderByInput> | AppLogOrderByInput | null | undefined;
+  Page?: PageInput | null | undefined;
 }>;
 
 export type AppLogsQuery = {
@@ -10064,30 +10114,30 @@ export type AppLogsQuery = {
         Level: string;
         Target: string;
         Message: string;
-        Fields?: string | null;
-        SpanName?: string | null;
+        Fields: string | null;
+        SpanName: string | null;
       };
     }>;
-    PageInfo: { HasNextPage: boolean; TotalCount?: number | null };
+    PageInfo: { HasNextPage: boolean; TotalCount: number | null };
   };
 };
 
 export type AppLogChangedSubscriptionVariables = Exact<{
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+  Filter?: SubscriptionFilterInput | null | undefined;
 }>;
 
 export type AppLogChangedSubscription = {
   AppLogChanged: {
     Action: ChangeAction;
     Id: string;
-    AppLog?: {
+    AppLog: {
       Id: string;
       Timestamp: string;
       Level: string;
       Target: string;
       Message: string;
-      Fields?: string | null;
-      SpanName?: string | null;
+      Fields: string | null;
+      SpanName: string | null;
     } | null;
   };
 };
@@ -10099,13 +10149,13 @@ export type DeleteAppLogsMutationVariables = Exact<{
 export type DeleteAppLogsMutation = {
   DeleteAppLogs: {
     success: boolean;
-    error?: string | null;
+    error: string | null;
     DeletedCount: number;
   };
 };
 
 export type ManualMatchShowsByLibraryQueryVariables = Exact<{
-  LibraryId: Scalars["String"]["input"];
+  LibraryId: string;
 }>;
 
 export type ManualMatchShowsByLibraryQuery = {
@@ -10114,14 +10164,14 @@ export type ManualMatchShowsByLibraryQuery = {
       Node: {
         Id: string;
         Name: string;
-        Year?: number | null;
+        Year: number | null;
         Episodes: {
           Edges: Array<{
             Node: {
               Id: string;
               Season: number;
               Episode: number;
-              Title?: string | null;
+              Title: string | null;
             };
           }>;
         };
@@ -10131,29 +10181,29 @@ export type ManualMatchShowsByLibraryQuery = {
 };
 
 export type ManualMatchMoviesByLibraryQueryVariables = Exact<{
-  LibraryId: Scalars["String"]["input"];
+  LibraryId: string;
 }>;
 
 export type ManualMatchMoviesByLibraryQuery = {
   Movies: {
-    Edges: Array<{ Node: { Id: string; Title: string; Year?: number | null } }>;
+    Edges: Array<{ Node: { Id: string; Title: string; Year: number | null } }>;
   };
 };
 
 export type ManualMatchAlbumsByLibraryQueryVariables = Exact<{
-  LibraryId: Scalars["String"]["input"];
+  LibraryId: string;
 }>;
 
 export type ManualMatchAlbumsByLibraryQuery = {
   Albums: {
-    Edges: Array<{ Node: { Id: string; Name: string; Year?: number | null } }>;
+    Edges: Array<{ Node: { Id: string; Name: string; Year: number | null } }>;
   };
   Tracks: {
     Edges: Array<{
       Node: {
         Id: string;
         AlbumId: string;
-        ArtistName?: string | null;
+        ArtistName: string | null;
         TrackNumber: number;
         Title: string;
       };
@@ -10162,7 +10212,7 @@ export type ManualMatchAlbumsByLibraryQuery = {
 };
 
 export type ManualMatchAudiobooksByLibraryQueryVariables = Exact<{
-  LibraryId: Scalars["String"]["input"];
+  LibraryId: string;
 }>;
 
 export type ManualMatchAudiobooksByLibraryQuery = {
@@ -10171,10 +10221,10 @@ export type ManualMatchAudiobooksByLibraryQuery = {
       Node: {
         Id: string;
         Title: string;
-        AuthorName?: string | null;
+        AuthorName: string | null;
         Chapters: {
           Edges: Array<{
-            Node: { Id: string; ChapterNumber: number; Title?: string | null };
+            Node: { Id: string; ChapterNumber: number; Title: string | null };
           }>;
         };
       };
@@ -10190,19 +10240,19 @@ export type ManualMatchFileMutation = {
   MatchMediaFile: {
     Success: boolean;
     Confidence: number;
-    MatchedId?: string | null;
-    MatchedType?: string | null;
-    Reason?: string | null;
+    MatchedId: string | null;
+    MatchedType: string | null;
+    Reason: string | null;
   };
 };
 
 export type SearchAlbumsQueryVariables = Exact<{
-  Query: Scalars["String"]["input"];
-  IncludeEps?: InputMaybe<Scalars["Boolean"]["input"]>;
-  IncludeSingles?: InputMaybe<Scalars["Boolean"]["input"]>;
-  IncludeCompilations?: InputMaybe<Scalars["Boolean"]["input"]>;
-  IncludeLive?: InputMaybe<Scalars["Boolean"]["input"]>;
-  IncludeSoundtracks?: InputMaybe<Scalars["Boolean"]["input"]>;
+  Query: string;
+  IncludeEps?: boolean | null | undefined;
+  IncludeSingles?: boolean | null | undefined;
+  IncludeCompilations?: boolean | null | undefined;
+  IncludeLive?: boolean | null | undefined;
+  IncludeSoundtracks?: boolean | null | undefined;
 }>;
 
 export type SearchAlbumsQuery = {
@@ -10210,16 +10260,16 @@ export type SearchAlbumsQuery = {
     Provider: string;
     ProviderId: string;
     Title: string;
-    ArtistName?: string | null;
-    Year?: number | null;
-    AlbumType?: string | null;
-    CoverUrl?: string | null;
-    Score?: number | null;
+    ArtistName: string | null;
+    Year: number | null;
+    AlbumType: string | null;
+    CoverUrl: string | null;
+    Score: number | null;
   }>;
 };
 
 export type SearchAudiobooksQueryVariables = Exact<{
-  Query: Scalars["String"]["input"];
+  Query: string;
 }>;
 
 export type SearchAudiobooksQuery = {
@@ -10227,11 +10277,11 @@ export type SearchAudiobooksQuery = {
     Provider: string;
     ProviderId: string;
     Title: string;
-    AuthorName?: string | null;
-    Year?: number | null;
-    CoverUrl?: string | null;
-    Isbn?: string | null;
-    Description?: string | null;
+    AuthorName: string | null;
+    Year: number | null;
+    CoverUrl: string | null;
+    Isbn: string | null;
+    Description: string | null;
   }>;
 };
 
@@ -10240,7 +10290,7 @@ export type AddAlbumMutationVariables = Exact<{
 }>;
 
 export type AddAlbumMutation = {
-  AddAlbum: { Success: boolean; Error?: string | null };
+  AddAlbum: { Success: boolean; Error: string | null };
 };
 
 export type AddAudiobookMutationVariables = Exact<{
@@ -10248,7 +10298,7 @@ export type AddAudiobookMutationVariables = Exact<{
 }>;
 
 export type AddAudiobookMutation = {
-  AddAudiobook: { Success: boolean; Error?: string | null };
+  AddAudiobook: { Success: boolean; Error: string | null };
 };
 
 export type AddTorrentMutationVariables = Exact<{
@@ -10258,36 +10308,36 @@ export type AddTorrentMutationVariables = Exact<{
 export type AddTorrentMutation = {
   AddTorrent: {
     Success: boolean;
-    Error?: string | null;
-    Torrent?: { Id: number; Name: string } | null;
+    Error: string | null;
+    Torrent: { Id: number; Name: string } | null;
   };
 };
 
 export type AlbumDetailRouteQueryVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type AlbumDetailRouteQuery = {
-  Album?: {
+  Album: {
     Id: string;
     ArtistId: string;
     LibraryId: string;
     Name: string;
-    SortName?: string | null;
-    Year?: number | null;
-    MusicbrainzId?: string | null;
-    AlbumType?: string | null;
+    SortName: string | null;
+    Year: number | null;
+    MusicbrainzId: string | null;
+    AlbumType: string | null;
     Genres: Array<string>;
-    Label?: string | null;
-    Country?: string | null;
-    ReleaseDate?: string | null;
-    CoverUrl?: string | null;
-    TrackCount?: number | null;
-    DiscCount?: number | null;
-    TotalDurationSecs?: number | null;
+    Label: string | null;
+    Country: string | null;
+    ReleaseDate: string | null;
+    CoverUrl: string | null;
+    TrackCount: number | null;
+    DiscCount: number | null;
+    TotalDurationSecs: number | null;
     HasFiles: boolean;
-    SizeBytes?: number | null;
-    Path?: string | null;
+    SizeBytes: number | null;
+    Path: string | null;
   } | null;
   Tracks: {
     Edges: Array<{
@@ -10297,15 +10347,14 @@ export type AlbumDetailRouteQuery = {
         LibraryId: string;
         Title: string;
         TrackNumber: number;
-        DiscNumber?: number | null;
-        MusicbrainzId?: string | null;
-        Isrc?: string | null;
-        DurationSecs?: number | null;
+        DiscNumber: number | null;
+        MusicbrainzId: string | null;
+        Isrc: string | null;
+        DurationSecs: number | null;
         Explicit: boolean;
-        ArtistName?: string | null;
-        ArtistId?: string | null;
-        MediaFileId?: string | null;
-        Status: ContentStatus;
+        ArtistName: string | null;
+        ArtistId: string | null;
+        MediaFileId: string | null;
         Wanted: boolean;
       };
     }>;
@@ -10313,58 +10362,57 @@ export type AlbumDetailRouteQuery = {
 };
 
 export type DeleteAlbumRouteMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type DeleteAlbumRouteMutation = {
-  DeleteAlbum: { Success: boolean; Error?: string | null };
+  DeleteAlbum: { Success: boolean; Error: string | null };
 };
 
 export type AlbumDetailSetTrackWantedMutationVariables = Exact<{
-  AlbumId: Scalars["String"]["input"];
-  Wanted: Scalars["Boolean"]["input"];
+  AlbumId: string;
+  Wanted: boolean;
 }>;
 
 export type AlbumDetailSetTrackWantedMutation = {
   UpdateTracks: {
     success: boolean;
-    error?: string | null;
+    error: string | null;
     affectedCount: number;
   };
 };
 
 export type AudiobookDetailRouteQueryVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type AudiobookDetailRouteQuery = {
-  Audiobook?: {
+  Audiobook: {
     Id: string;
     LibraryId: string;
     Title: string;
-    SortTitle?: string | null;
-    Isbn?: string | null;
-    Description?: string | null;
-    Publisher?: string | null;
-    Language?: string | null;
+    SortTitle: string | null;
+    Isbn: string | null;
+    Description: string | null;
+    Publisher: string | null;
+    Language: string | null;
     Narrators: Array<string>;
-    TotalDurationSecs?: number | null;
-    CoverUrl?: string | null;
+    TotalDurationSecs: number | null;
+    CoverUrl: string | null;
     HasFiles: boolean;
-    SizeBytes?: number | null;
-    Path?: string | null;
+    SizeBytes: number | null;
+    Path: string | null;
     Chapters: {
       Edges: Array<{
         Node: {
           Id: string;
           AudiobookId: string;
           ChapterNumber: number;
-          Title?: string | null;
+          Title: string | null;
           StartTimeSecs: number;
-          EndTimeSecs?: number | null;
-          DurationSecs?: number | null;
-          MediaFileId?: string | null;
-          Status: ContentStatus;
+          EndTimeSecs: number | null;
+          DurationSecs: number | null;
+          MediaFileId: string | null;
           Wanted: boolean;
         };
       }>;
@@ -10373,29 +10421,29 @@ export type AudiobookDetailRouteQuery = {
 };
 
 export type DeleteAudiobookRouteMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type DeleteAudiobookRouteMutation = {
-  DeleteAudiobook: { Success: boolean; Error?: string | null };
+  DeleteAudiobook: { Success: boolean; Error: string | null };
 };
 
 export type AudiobookDetailSetChapterWantedMutationVariables = Exact<{
-  AudiobookId: Scalars["String"]["input"];
-  Wanted: Scalars["Boolean"]["input"];
+  AudiobookId: string;
+  Wanted: boolean;
 }>;
 
 export type AudiobookDetailSetChapterWantedMutation = {
   UpdateChapters: {
     success: boolean;
-    error?: string | null;
+    error: string | null;
     affectedCount: number;
   };
 };
 
 export type SearchMoviesQueryVariables = Exact<{
-  Query: Scalars["String"]["input"];
-  Year?: InputMaybe<Scalars["Int"]["input"]>;
+  Query: string;
+  Year?: number | null | undefined;
 }>;
 
 export type SearchMoviesQuery = {
@@ -10403,19 +10451,19 @@ export type SearchMoviesQuery = {
     Provider: string;
     ProviderId: number;
     Title: string;
-    OriginalTitle?: string | null;
-    Year?: number | null;
-    Overview?: string | null;
-    PosterUrl?: string | null;
-    BackdropUrl?: string | null;
-    ImdbId?: string | null;
-    VoteAverage?: number | null;
-    Popularity?: number | null;
+    OriginalTitle: string | null;
+    Year: number | null;
+    Overview: string | null;
+    PosterUrl: string | null;
+    BackdropUrl: string | null;
+    ImdbId: string | null;
+    VoteAverage: number | null;
+    Popularity: number | null;
   }>;
 };
 
 export type SearchMovieCollectionsQueryVariables = Exact<{
-  Query: Scalars["String"]["input"];
+  Query: string;
 }>;
 
 export type SearchMovieCollectionsQuery = {
@@ -10423,152 +10471,148 @@ export type SearchMovieCollectionsQuery = {
     Provider: string;
     CollectionId: number;
     Name: string;
-    Overview?: string | null;
-    PosterUrl?: string | null;
-    BackdropUrl?: string | null;
+    Overview: string | null;
+    PosterUrl: string | null;
+    BackdropUrl: string | null;
   }>;
 };
 
 export type AddMovieMutationVariables = Exact<{
-  LibraryId: Scalars["String"]["input"];
+  LibraryId: string;
   Input: AddMovieInput;
 }>;
 
 export type AddMovieMutation = {
   AddMovie: {
     Success: boolean;
-    Error?: string | null;
-    Movie?: {
+    Error: string | null;
+    Movie: {
       Id: string;
       LibraryId: string;
       Title: string;
-      Year?: number | null;
-      TmdbId?: number | null;
-      ImdbId?: string | null;
-      Overview?: string | null;
-      PosterUrl?: string | null;
-      BackdropUrl?: string | null;
+      Year: number | null;
+      TmdbId: number | null;
+      ImdbId: string | null;
+      Overview: string | null;
       Monitored: boolean;
-      MediaFileId?: string | null;
+      MediaFileId: string | null;
     } | null;
   };
 };
 
 export type AddMovieCollectionMutationVariables = Exact<{
-  LibraryId: Scalars["String"]["input"];
+  LibraryId: string;
   Input: AddMovieCollectionInput;
 }>;
 
 export type AddMovieCollectionMutation = {
   AddMovieCollection: {
     Success: boolean;
-    CollectionId?: number | null;
-    CollectionName?: string | null;
+    CollectionId: number | null;
+    CollectionName: string | null;
     ImportedCount: number;
     ExistingCount: number;
     WantedUpdatedCount: number;
-    Error?: string | null;
+    Error: string | null;
   };
 };
 
 export type MovieChangedSubscriptionVariables = Exact<{
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+  Filter?: SubscriptionFilterInput | null | undefined;
 }>;
 
 export type MovieChangedSubscription = {
   MovieChanged: {
     Action: ChangeAction;
     Id: string;
-    Movie?: { LibraryId: string } | null;
+    Movie: { LibraryId: string } | null;
   };
 };
 
 export type MovieDetailRouteQueryVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type MovieDetailRouteQuery = {
-  Movie?: {
+  Movie: {
     Id: string;
     LibraryId: string;
     Title: string;
-    SortTitle?: string | null;
-    OriginalTitle?: string | null;
-    Year?: number | null;
-    TmdbId?: number | null;
-    ImdbId?: string | null;
-    Status: ContentStatus;
-    Overview?: string | null;
-    Tagline?: string | null;
-    Runtime?: number | null;
+    SortTitle: string | null;
+    OriginalTitle: string | null;
+    Year: number | null;
+    TmdbId: number | null;
+    ImdbId: string | null;
+    Overview: string | null;
+    Tagline: string | null;
+    Runtime: number | null;
     Genres: Array<string>;
-    Director?: string | null;
+    Director: string | null;
     CastNames: Array<string>;
-    PosterUrl?: string | null;
-    BackdropUrl?: string | null;
     Monitored: boolean;
-    MediaFileId?: string | null;
-    CollectionId?: number | null;
-    CollectionName?: string | null;
-    CollectionPosterUrl?: string | null;
-    TmdbRating?: string | null;
-    TmdbVoteCount?: number | null;
-    Certification?: string | null;
-    ReleaseDate?: string | null;
+    MediaFileId: string | null;
+    CollectionId: number | null;
+    CollectionName: string | null;
+    CollectionPosterUrl: string | null;
+    TmdbRating: string | null;
+    TmdbVoteCount: number | null;
+    Certification: string | null;
+    ReleaseDate: string | null;
     ProductionCountries: Array<string>;
     SpokenLanguages: Array<string>;
     Wanted: boolean;
-    MediaFile?: { Id: string; Size: number; Duration?: number | null } | null;
+    PosterUrl: string | null;
+    MediaFile: { Id: string; Size: number; Duration: number | null } | null;
   } | null;
 };
 
 export type MovieDetailSetWantedMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
-  Wanted: Scalars["Boolean"]["input"];
+  Id: string;
+  Wanted: boolean;
 }>;
 
 export type MovieDetailSetWantedMutation = {
   UpdateMovie: {
     Success: boolean;
-    Error?: string | null;
-    Movie?: { Id: string; Wanted: boolean } | null;
+    Error: string | null;
+    Movie: { Id: string; Wanted: boolean } | null;
   };
 };
 
 export type RefreshMovieRouteMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type RefreshMovieRouteMutation = {
   RefreshMovie: {
     Success: boolean;
-    Error?: string | null;
-    Movie?: {
+    Error: string | null;
+    Movie: {
       Id: string;
       Title: string;
-      Overview?: string | null;
-      Tagline?: string | null;
-      PosterUrl?: string | null;
-      BackdropUrl?: string | null;
-      TmdbRating?: string | null;
-      TmdbVoteCount?: number | null;
+      Overview: string | null;
+      Tagline: string | null;
+      TmdbRating: string | null;
+      TmdbVoteCount: number | null;
     } | null;
   };
 };
 
 export type DeleteMovieModalMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type DeleteMovieModalMutation = {
-  DeleteMovie: { Success: boolean; Error?: string | null };
+  DeleteMovie: { Success: boolean; Error: string | null };
 };
 
 export type OrganizationNamingPatternsQueryVariables = Exact<{
-  OrderBy?: InputMaybe<
-    Array<NamingPatternOrderByInput> | NamingPatternOrderByInput
-  >;
-  Page?: InputMaybe<PageInput>;
+  OrderBy?:
+    | Array<NamingPatternOrderByInput>
+    | NamingPatternOrderByInput
+    | null
+    | undefined;
+  Page?: PageInput | null | undefined;
 }>;
 
 export type OrganizationNamingPatternsQuery = {
@@ -10578,7 +10622,7 @@ export type OrganizationNamingPatternsQuery = {
         Id: string;
         Name: string;
         Pattern: string;
-        Description?: string | null;
+        Description: string | null;
         LibraryType: string;
         IsDefault: boolean;
         IsSystem: boolean;
@@ -10594,12 +10638,12 @@ export type OrganizationCreateNamingPatternMutationVariables = Exact<{
 export type OrganizationCreateNamingPatternMutation = {
   CreateNamingPattern: {
     Success: boolean;
-    Error?: string | null;
-    NamingPattern?: {
+    Error: string | null;
+    NamingPattern: {
       Id: string;
       Name: string;
       Pattern: string;
-      Description?: string | null;
+      Description: string | null;
       LibraryType: string;
       IsDefault: boolean;
       IsSystem: boolean;
@@ -10608,19 +10652,19 @@ export type OrganizationCreateNamingPatternMutation = {
 };
 
 export type OrganizationUpdateNamingPatternMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
   Input: UpdateNamingPatternInput;
 }>;
 
 export type OrganizationUpdateNamingPatternMutation = {
   UpdateNamingPattern: {
     Success: boolean;
-    Error?: string | null;
-    NamingPattern?: {
+    Error: string | null;
+    NamingPattern: {
       Id: string;
       Name: string;
       Pattern: string;
-      Description?: string | null;
+      Description: string | null;
       LibraryType: string;
       IsDefault: boolean;
       IsSystem: boolean;
@@ -10629,19 +10673,21 @@ export type OrganizationUpdateNamingPatternMutation = {
 };
 
 export type OrganizationDeleteNamingPatternMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type OrganizationDeleteNamingPatternMutation = {
-  DeleteNamingPattern: { Success: boolean; Error?: string | null };
+  DeleteNamingPattern: { Success: boolean; Error: string | null };
 };
 
 export type NotificationsQueryVariables = Exact<{
-  Where?: InputMaybe<NotificationWhereInput>;
-  OrderBy?: InputMaybe<
-    Array<NotificationOrderByInput> | NotificationOrderByInput
-  >;
-  Page?: InputMaybe<PageInput>;
+  Where?: NotificationWhereInput | null | undefined;
+  OrderBy?:
+    | Array<NotificationOrderByInput>
+    | NotificationOrderByInput
+    | null
+    | undefined;
+  Page?: PageInput | null | undefined;
 }>;
 
 export type NotificationsQuery = {
@@ -10655,72 +10701,74 @@ export type NotificationsQuery = {
         Category: string;
         Title: string;
         Message: string;
-        LibraryId?: string | null;
-        TorrentId?: string | null;
-        MediaFileId?: string | null;
-        PendingMatchId?: string | null;
-        ActionType?: string | null;
-        ActionData?: string | null;
-        ReadAt?: string | null;
-        ResolvedAt?: string | null;
-        Resolution?: string | null;
+        LibraryId: string | null;
+        TorrentId: string | null;
+        MediaFileId: string | null;
+        PendingMatchId: string | null;
+        ActionType: string | null;
+        ActionData: string | null;
+        ReadAt: string | null;
+        ResolvedAt: string | null;
+        Resolution: string | null;
         CreatedAt: string;
         UpdatedAt: string;
       };
     }>;
-    PageInfo: { HasNextPage: boolean; TotalCount?: number | null };
+    PageInfo: { HasNextPage: boolean; TotalCount: number | null };
   };
 };
 
 export type NotificationChangedSubscriptionVariables = Exact<{
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+  Filter?: SubscriptionFilterInput | null | undefined;
 }>;
 
 export type NotificationChangedSubscription = {
   NotificationChanged: {
     Action: ChangeAction;
     Id: string;
-    Notification?: {
+    Notification: {
       Id: string;
-      ReadAt?: string | null;
-      ResolvedAt?: string | null;
-      Resolution?: string | null;
+      ReadAt: string | null;
+      ResolvedAt: string | null;
+      Resolution: string | null;
     } | null;
   };
 };
 
 export type UpdateNotificationMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
   Input: UpdateNotificationInput;
 }>;
 
 export type UpdateNotificationMutation = {
   UpdateNotification: {
     Success: boolean;
-    Error?: string | null;
-    Notification?: {
+    Error: string | null;
+    Notification: {
       Id: string;
-      ReadAt?: string | null;
-      ResolvedAt?: string | null;
-      Resolution?: string | null;
+      ReadAt: string | null;
+      ResolvedAt: string | null;
+      Resolution: string | null;
     } | null;
   };
 };
 
 export type DeleteNotificationMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type DeleteNotificationMutation = {
-  DeleteNotification: { Success: boolean; Error?: string | null };
+  DeleteNotification: { Success: boolean; Error: string | null };
 };
 
 export type PlaybackSessionsQueryVariables = Exact<{
-  Where?: InputMaybe<PlaybackSessionWhereInput>;
-  OrderBy?: InputMaybe<
-    Array<PlaybackSessionOrderByInput> | PlaybackSessionOrderByInput
-  >;
-  Page?: InputMaybe<PageInput>;
+  Where?: PlaybackSessionWhereInput | null | undefined;
+  OrderBy?:
+    | Array<PlaybackSessionOrderByInput>
+    | PlaybackSessionOrderByInput
+    | null
+    | undefined;
+  Page?: PageInput | null | undefined;
 }>;
 
 export type PlaybackSessionsQuery = {
@@ -10730,29 +10778,31 @@ export type PlaybackSessionsQuery = {
       Node: {
         Id: string;
         UserId: string;
-        MediaFileId?: string | null;
+        MediaFileId: string | null;
         CurrentPosition: number;
-        Duration?: number | null;
+        Duration: number | null;
         Volume: number;
         IsMuted: boolean;
         IsPlaying: boolean;
         StartedAt: string;
         LastUpdatedAt: string;
-        CompletedAt?: string | null;
+        CompletedAt: string | null;
         CreatedAt: string;
         UpdatedAt: string;
       };
     }>;
-    PageInfo: { HasNextPage: boolean; TotalCount?: number | null };
+    PageInfo: { HasNextPage: boolean; TotalCount: number | null };
   };
 };
 
 export type ShowPlaybackProgressByMediaQueryVariables = Exact<{
-  Where?: InputMaybe<PlaybackProgressWhereInput>;
-  Page?: InputMaybe<PageInput>;
-  OrderBy?: InputMaybe<
-    Array<PlaybackProgressOrderByInput> | PlaybackProgressOrderByInput
-  >;
+  Where?: PlaybackProgressWhereInput | null | undefined;
+  Page?: PageInput | null | undefined;
+  OrderBy?:
+    | Array<PlaybackProgressOrderByInput>
+    | PlaybackProgressOrderByInput
+    | null
+    | undefined;
 }>;
 
 export type ShowPlaybackProgressByMediaQuery = {
@@ -10760,9 +10810,9 @@ export type ShowPlaybackProgressByMediaQuery = {
     Edges: Array<{
       Node: {
         Id: string;
-        MediaFileId?: string | null;
+        MediaFileId: string | null;
         CurrentPosition: number;
-        Duration?: number | null;
+        Duration: number | null;
         ProgressPercent: number;
         IsWatched: boolean;
         UpdatedAt: string;
@@ -10772,11 +10822,13 @@ export type ShowPlaybackProgressByMediaQuery = {
 };
 
 export type PlaybackProgressByMediaFileContextQueryVariables = Exact<{
-  Where?: InputMaybe<PlaybackProgressWhereInput>;
-  Page?: InputMaybe<PageInput>;
-  OrderBy?: InputMaybe<
-    Array<PlaybackProgressOrderByInput> | PlaybackProgressOrderByInput
-  >;
+  Where?: PlaybackProgressWhereInput | null | undefined;
+  Page?: PageInput | null | undefined;
+  OrderBy?:
+    | Array<PlaybackProgressOrderByInput>
+    | PlaybackProgressOrderByInput
+    | null
+    | undefined;
 }>;
 
 export type PlaybackProgressByMediaFileContextQuery = {
@@ -10785,12 +10837,12 @@ export type PlaybackProgressByMediaFileContextQuery = {
       Node: {
         Id: string;
         UserId: string;
-        MediaFileId?: string | null;
+        MediaFileId: string | null;
         CurrentPosition: number;
-        Duration?: number | null;
+        Duration: number | null;
         ProgressPercent: number;
         IsWatched: boolean;
-        WatchedAt?: string | null;
+        WatchedAt: string | null;
         CreatedAt: string;
         UpdatedAt: string;
       };
@@ -10805,26 +10857,26 @@ export type CreatePlaybackSessionContextMutationVariables = Exact<{
 export type CreatePlaybackSessionContextMutation = {
   CreatePlaybackSession: {
     Success: boolean;
-    Error?: string | null;
-    PlaybackSession?: {
+    Error: string | null;
+    PlaybackSession: {
       Id: string;
       UserId: string;
-      ContentType?: string | null;
-      MediaFileId?: string | null;
-      EpisodeId?: string | null;
-      MovieId?: string | null;
-      TrackId?: string | null;
-      AudiobookId?: string | null;
-      TvShowId?: string | null;
-      AlbumId?: string | null;
+      ContentType: string | null;
+      MediaFileId: string | null;
+      EpisodeId: string | null;
+      MovieId: string | null;
+      TrackId: string | null;
+      AudiobookId: string | null;
+      TvShowId: string | null;
+      AlbumId: string | null;
       CurrentPosition: number;
-      Duration?: number | null;
+      Duration: number | null;
       Volume: number;
       IsMuted: boolean;
       IsPlaying: boolean;
       StartedAt: string;
       LastUpdatedAt: string;
-      CompletedAt?: string | null;
+      CompletedAt: string | null;
       CreatedAt: string;
       UpdatedAt: string;
     } | null;
@@ -10832,33 +10884,33 @@ export type CreatePlaybackSessionContextMutation = {
 };
 
 export type UpdatePlaybackSessionContextMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
   Input: UpdatePlaybackSessionInput;
 }>;
 
 export type UpdatePlaybackSessionContextMutation = {
   UpdatePlaybackSession: {
     Success: boolean;
-    Error?: string | null;
-    PlaybackSession?: {
+    Error: string | null;
+    PlaybackSession: {
       Id: string;
       UserId: string;
-      ContentType?: string | null;
-      MediaFileId?: string | null;
-      EpisodeId?: string | null;
-      MovieId?: string | null;
-      TrackId?: string | null;
-      AudiobookId?: string | null;
-      TvShowId?: string | null;
-      AlbumId?: string | null;
+      ContentType: string | null;
+      MediaFileId: string | null;
+      EpisodeId: string | null;
+      MovieId: string | null;
+      TrackId: string | null;
+      AudiobookId: string | null;
+      TvShowId: string | null;
+      AlbumId: string | null;
       CurrentPosition: number;
-      Duration?: number | null;
+      Duration: number | null;
       Volume: number;
       IsMuted: boolean;
       IsPlaying: boolean;
       StartedAt: string;
       LastUpdatedAt: string;
-      CompletedAt?: string | null;
+      CompletedAt: string | null;
       CreatedAt: string;
       UpdatedAt: string;
     } | null;
@@ -10872,16 +10924,16 @@ export type CreatePlaybackProgressContextMutationVariables = Exact<{
 export type CreatePlaybackProgressContextMutation = {
   CreatePlaybackProgress: {
     Success: boolean;
-    Error?: string | null;
-    PlaybackProgress?: {
+    Error: string | null;
+    PlaybackProgress: {
       Id: string;
       UserId: string;
-      MediaFileId?: string | null;
+      MediaFileId: string | null;
       CurrentPosition: number;
-      Duration?: number | null;
+      Duration: number | null;
       ProgressPercent: number;
       IsWatched: boolean;
-      WatchedAt?: string | null;
+      WatchedAt: string | null;
       CreatedAt: string;
       UpdatedAt: string;
     } | null;
@@ -10889,23 +10941,23 @@ export type CreatePlaybackProgressContextMutation = {
 };
 
 export type UpdatePlaybackProgressContextMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
   Input: UpdatePlaybackProgressInput;
 }>;
 
 export type UpdatePlaybackProgressContextMutation = {
   UpdatePlaybackProgress: {
     Success: boolean;
-    Error?: string | null;
-    PlaybackProgress?: {
+    Error: string | null;
+    PlaybackProgress: {
       Id: string;
       UserId: string;
-      MediaFileId?: string | null;
+      MediaFileId: string | null;
       CurrentPosition: number;
-      Duration?: number | null;
+      Duration: number | null;
       ProgressPercent: number;
       IsWatched: boolean;
-      WatchedAt?: string | null;
+      WatchedAt: string | null;
       CreatedAt: string;
       UpdatedAt: string;
     } | null;
@@ -10921,8 +10973,8 @@ export type LibrarySearchShowsQuery = {
         Id: string;
         LibraryId: string;
         Name: string;
-        Year?: number | null;
-        PosterUrl?: string | null;
+        Year: number | null;
+        PosterUrl: string | null;
       };
     }>;
   };
@@ -10937,16 +10989,16 @@ export type LibrarySearchMoviesQuery = {
         Id: string;
         LibraryId: string;
         Title: string;
-        Year?: number | null;
-        PosterUrl?: string | null;
-        Status: ContentStatus;
+        Year: number | null;
+        MediaFileId: string | null;
+        Wanted: boolean;
       };
     }>;
   };
 };
 
 export type SearchTvShowsQueryVariables = Exact<{
-  Query: Scalars["String"]["input"];
+  Query: string;
 }>;
 
 export type SearchTvShowsQuery = {
@@ -10954,66 +11006,66 @@ export type SearchTvShowsQuery = {
     Provider: string;
     ProviderId: number;
     Name: string;
-    Year?: number | null;
-    Status?: string | null;
-    Network?: string | null;
-    Overview?: string | null;
-    PosterUrl?: string | null;
-    TvdbId?: number | null;
-    ImdbId?: string | null;
-    Score?: number | null;
+    Year: number | null;
+    Network: string | null;
+    Overview: string | null;
+    Status: string | null;
+    PosterUrl: string | null;
+    TvdbId: number | null;
+    ImdbId: string | null;
+    Score: number | null;
   }>;
 };
 
 export type AddTvShowMutationVariables = Exact<{
-  LibraryId: Scalars["String"]["input"];
+  LibraryId: string;
   Input: AddTvShowInput;
 }>;
 
 export type AddTvShowMutation = {
   AddTvShow: {
     Success: boolean;
-    Error?: string | null;
-    Show?: { Id: string; Name: string; PosterUrl?: string | null } | null;
+    Error: string | null;
+    Show: { Id: string; Name: string } | null;
   };
 };
 
 export type ShowChangedSubscriptionVariables = Exact<{
-  Filter?: InputMaybe<SubscriptionFilterInput>;
+  Filter?: SubscriptionFilterInput | null | undefined;
 }>;
 
 export type ShowChangedSubscription = {
   ShowChanged: {
     Action: ChangeAction;
     Id: string;
-    Show?: { LibraryId: string } | null;
+    Show: { LibraryId: string } | null;
   };
 };
 
 export type ShowDetailRouteQueryVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type ShowDetailRouteQuery = {
-  Show?: {
+  Show: {
     Id: string;
     LibraryId: string;
     Name: string;
-    SortName?: string | null;
-    Year?: number | null;
-    TvmazeId?: number | null;
-    TmdbId?: number | null;
-    TvdbId?: number | null;
-    ImdbId?: string | null;
-    Overview?: string | null;
-    Network?: string | null;
-    Runtime?: number | null;
+    SortName: string | null;
+    Year: number | null;
+    TvmazeId: number | null;
+    TmdbId: number | null;
+    TvdbId: number | null;
+    ImdbId: string | null;
+    Overview: string | null;
+    Network: string | null;
+    PosterUrl: string | null;
+    BackdropUrl: string | null;
+    Runtime: number | null;
     Genres: Array<string>;
-    PosterUrl?: string | null;
-    BackdropUrl?: string | null;
     AutoDownload: boolean;
     AutoDownloadMode: AutoDownloadMode;
-    Path?: string | null;
+    Path: string | null;
     CreatedAt: string;
     UpdatedAt: string;
     UserId: string;
@@ -11024,29 +11076,28 @@ export type ShowDetailRouteQuery = {
           ShowId: string;
           Season: number;
           Episode: number;
-          AbsoluteNumber?: number | null;
-          Title?: string | null;
-          Overview?: string | null;
-          AirDate?: string | null;
-          Runtime?: number | null;
-          TvmazeId?: number | null;
-          TmdbId?: number | null;
-          TvdbId?: number | null;
-          MediaFileId?: string | null;
+          AbsoluteNumber: number | null;
+          Title: string | null;
+          Overview: string | null;
+          AirDate: string | null;
+          Runtime: number | null;
+          TvmazeId: number | null;
+          TmdbId: number | null;
+          TvdbId: number | null;
+          MediaFileId: string | null;
           Wanted: boolean;
-          Status: ContentStatus;
           CreatedAt: string;
           UpdatedAt: string;
-          MediaFile?: {
+          MediaFile: {
             Id: string;
             Size: number;
-            Duration?: number | null;
-            Resolution?: string | null;
-            VideoCodec?: string | null;
-            AudioCodec?: string | null;
-            AudioChannels?: string | null;
+            Duration: number | null;
+            Resolution: string | null;
+            VideoCodec: string | null;
+            AudioCodec: string | null;
+            AudioChannels: string | null;
             IsHdr: boolean;
-            HdrType?: string | null;
+            HdrType: string | null;
           } | null;
         };
       }>;
@@ -11055,40 +11106,34 @@ export type ShowDetailRouteQuery = {
 };
 
 export type RefreshShowRouteMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type RefreshShowRouteMutation = {
   RefreshShow: {
     Success: boolean;
-    Error?: string | null;
-    Show?: {
-      Id: string;
-      Name: string;
-      Overview?: string | null;
-      PosterUrl?: string | null;
-      BackdropUrl?: string | null;
-    } | null;
+    Error: string | null;
+    Show: { Id: string; Name: string; Overview: string | null } | null;
   };
 };
 
 export type ShowDetailSetEpisodeWantedMutationVariables = Exact<{
-  ShowId: Scalars["String"]["input"];
-  Wanted: Scalars["Boolean"]["input"];
+  ShowId: string;
+  Wanted: boolean;
 }>;
 
 export type ShowDetailSetEpisodeWantedMutation = {
   UpdateEpisodes: {
     success: boolean;
-    error?: string | null;
+    error: string | null;
     affectedCount: number;
   };
 };
 
 export type SourcesQueryVariables = Exact<{
-  Where?: InputMaybe<SourceWhereInput>;
-  OrderBy?: InputMaybe<Array<SourceOrderByInput> | SourceOrderByInput>;
-  Page?: InputMaybe<PageInput>;
+  Where?: SourceWhereInput | null | undefined;
+  OrderBy?: Array<SourceOrderByInput> | SourceOrderByInput | null | undefined;
+  Page?: PageInput | null | undefined;
 }>;
 
 export type SourcesQuery = {
@@ -11102,23 +11147,23 @@ export type SourcesQuery = {
         Enabled: boolean;
         Priority: number;
         MediaTypes: string;
-        SiteUrl?: string | null;
+        SiteUrl: string | null;
         SupportsSearch: boolean;
         SupportsTvSearch: boolean;
         SupportsMovieSearch: boolean;
         SupportsMusicSearch: boolean;
         SupportsBookSearch: boolean;
-        Settings?: string | null;
-        LastError?: string | null;
+        Settings: string | null;
+        LastError: string | null;
         ErrorCount: number;
-        LastSuccessAt?: string | null;
-        LastErrorAt?: string | null;
+        LastSuccessAt: string | null;
+        LastErrorAt: string | null;
         CreatedAt: string;
         UpdatedAt: string;
       };
     }>;
     PageInfo: {
-      TotalCount?: number | null;
+      TotalCount: number | null;
       HasNextPage: boolean;
       HasPreviousPage: boolean;
     };
@@ -11143,7 +11188,7 @@ export type AvailableSourceDefinitionsQuery = {
 };
 
 export type SourceSettingDefinitionsQueryVariables = Exact<{
-  DefinitionId: Scalars["String"]["input"];
+  DefinitionId: string;
 }>;
 
 export type SourceSettingDefinitionsQuery = {
@@ -11151,8 +11196,8 @@ export type SourceSettingDefinitionsQuery = {
     Key: string;
     Label: string;
     SettingType: string;
-    DefaultValue?: string | null;
-    Options?: Array<{ Value: string; Label: string }> | null;
+    DefaultValue: string | null;
+    Options: Array<{ Value: string; Label: string }> | null;
   }>;
 };
 
@@ -11170,28 +11215,28 @@ export type SearchSourcesQuery = {
       SourceName: string;
       ElapsedMs: number;
       FromCache: boolean;
-      Error?: string | null;
+      Error: string | null;
       Releases: Array<{
         Title: string;
         Guid: string;
-        Link?: string | null;
-        MagnetUri?: string | null;
-        InfoHash?: string | null;
-        Details?: string | null;
+        Link: string | null;
+        MagnetUri: string | null;
+        InfoHash: string | null;
+        Details: string | null;
         PublishDate: string;
         Categories: Array<number>;
-        Size?: number | null;
-        SizeFormatted?: string | null;
-        Seeders?: number | null;
-        Leechers?: number | null;
-        Peers?: number | null;
-        Grabs?: number | null;
+        Size: number | null;
+        SizeFormatted: string | null;
+        Seeders: number | null;
+        Leechers: number | null;
+        Peers: number | null;
+        Grabs: number | null;
         IsFreeleech: boolean;
-        ImdbId?: string | null;
-        Poster?: string | null;
-        Description?: string | null;
-        SourceId?: string | null;
-        SourceName?: string | null;
+        ImdbId: string | null;
+        Poster: string | null;
+        Description: string | null;
+        SourceId: string | null;
+        SourceName: string | null;
       }>;
     }>;
   };
@@ -11202,36 +11247,36 @@ export type CreateSourceMutationVariables = Exact<{
 }>;
 
 export type CreateSourceMutation = {
-  CreateSource: { Success: boolean; Error?: string | null };
+  CreateSource: { Success: boolean; Error: string | null };
 };
 
 export type UpdateSourceMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
   Input: UpdateSourceInput;
 }>;
 
 export type UpdateSourceMutation = {
-  UpdateSource: { Success: boolean; Error?: string | null };
+  UpdateSource: { Success: boolean; Error: string | null };
 };
 
 export type DeleteSourceMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type DeleteSourceMutation = {
-  DeleteSource: { Success: boolean; Error?: string | null };
+  DeleteSource: { Success: boolean; Error: string | null };
 };
 
 export type TestSourceMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type TestSourceMutation = {
   TestSource: {
     Success: boolean;
-    Error?: string | null;
-    ReleasesFound?: number | null;
-    ElapsedMs?: number | null;
+    Error: string | null;
+    ReleasesFound: number | null;
+    ElapsedMs: number | null;
   };
 };
 
@@ -11240,7 +11285,7 @@ export type UpdateSourcePrioritiesMutationVariables = Exact<{
 }>;
 
 export type UpdateSourcePrioritiesMutation = {
-  UpdateSourcePriorities: { Success: boolean; Error?: string | null };
+  UpdateSourcePriorities: { Success: boolean; Error: string | null };
 };
 
 export type ActiveDownloadCountQueryVariables = Exact<{ [key: string]: never }>;
@@ -11248,20 +11293,20 @@ export type ActiveDownloadCountQueryVariables = Exact<{ [key: string]: never }>;
 export type ActiveDownloadCountQuery = { ActiveDownloadCount: number };
 
 export type TorrentModalMediaFilesByPathsQueryVariables = Exact<{
-  Paths: Array<Scalars["String"]["input"]> | Scalars["String"]["input"];
+  Paths: Array<string> | string;
 }>;
 
 export type TorrentModalMediaFilesByPathsQuery = {
   MediaFiles: {
     Edges: Array<{
-      Node: { Id: string; Path: string; Metadata?: string | null };
+      Node: { Id: string; Path: string; Metadata: string | null };
     }>;
   };
 };
 
 export type DownloadsTorrentsQueryVariables = Exact<{
-  Where?: InputMaybe<TorrentWhereInput>;
-  Page?: InputMaybe<PageInput>;
+  Where?: TorrentWhereInput | null | undefined;
+  Page?: PageInput | null | undefined;
 }>;
 
 export type DownloadsTorrentsQuery = {
@@ -11280,13 +11325,13 @@ export type DownloadsTorrentsQuery = {
         AddedAt: string;
       };
     }>;
-    PageInfo: { TotalCount?: number | null; HasNextPage: boolean };
+    PageInfo: { TotalCount: number | null; HasNextPage: boolean };
   };
 };
 
 export type TorrentByInfoHashWithFilesQueryVariables = Exact<{
-  Where?: InputMaybe<TorrentWhereInput>;
-  Page?: InputMaybe<PageInput>;
+  Where?: TorrentWhereInput | null | undefined;
+  Page?: PageInput | null | undefined;
 }>;
 
 export type TorrentByInfoHashWithFilesQuery = {
@@ -11320,8 +11365,8 @@ export type TorrentByInfoHashWithFilesQuery = {
 };
 
 export type PendingFileMatchesBySourceQueryVariables = Exact<{
-  Where?: InputMaybe<PendingFileMatchWhereInput>;
-  Page?: InputMaybe<PageInput>;
+  Where?: PendingFileMatchWhereInput | null | undefined;
+  Page?: PageInput | null | undefined;
 }>;
 
 export type PendingFileMatchesBySourceQuery = {
@@ -11330,55 +11375,55 @@ export type PendingFileMatchesBySourceQuery = {
       Node: {
         Id: string;
         SourceType: string;
-        SourceId?: string | null;
-        SourceFileIndex?: number | null;
+        SourceId: string | null;
+        SourceFileIndex: number | null;
         SourcePath: string;
         FileSize: number;
-        EpisodeId?: string | null;
-        MovieId?: string | null;
-        TrackId?: string | null;
-        ChapterId?: string | null;
-        MatchType?: string | null;
-        MatchConfidence?: number | null;
-        ParsedResolution?: string | null;
-        ParsedCodec?: string | null;
-        ParsedSource?: string | null;
-        ParsedAudio?: string | null;
-        CopiedAt?: string | null;
-        CopyError?: string | null;
+        EpisodeId: string | null;
+        MovieId: string | null;
+        TrackId: string | null;
+        ChapterId: string | null;
+        MatchType: string | null;
+        MatchConfidence: number | null;
+        ParsedResolution: string | null;
+        ParsedCodec: string | null;
+        ParsedSource: string | null;
+        ParsedAudio: string | null;
+        CopiedAt: string | null;
+        CopyError: string | null;
       };
     }>;
   };
 };
 
 export type PauseTorrentByInfoHashMutationVariables = Exact<{
-  InfoHash: Scalars["String"]["input"];
+  InfoHash: string;
 }>;
 
 export type PauseTorrentByInfoHashMutation = {
-  PauseTorrentByInfoHash: { Success: boolean; Error?: string | null };
+  PauseTorrentByInfoHash: { Success: boolean; Error: string | null };
 };
 
 export type ResumeTorrentByInfoHashMutationVariables = Exact<{
-  InfoHash: Scalars["String"]["input"];
+  InfoHash: string;
 }>;
 
 export type ResumeTorrentByInfoHashMutation = {
-  ResumeTorrentByInfoHash: { Success: boolean; Error?: string | null };
+  ResumeTorrentByInfoHash: { Success: boolean; Error: string | null };
 };
 
 export type RemoveTorrentByInfoHashMutationVariables = Exact<{
-  InfoHash: Scalars["String"]["input"];
-  DeleteFiles?: InputMaybe<Scalars["Boolean"]["input"]>;
+  InfoHash: string;
+  DeleteFiles?: boolean | null | undefined;
 }>;
 
 export type RemoveTorrentByInfoHashMutation = {
-  RemoveTorrentByInfoHash: { Success: boolean; Error?: string | null };
+  RemoveTorrentByInfoHash: { Success: boolean; Error: string | null };
 };
 
 export type ProcessSourceMutationVariables = Exact<{
-  SourceType: Scalars["String"]["input"];
-  SourceId: Scalars["String"]["input"];
+  SourceType: string;
+  SourceId: string;
 }>;
 
 export type ProcessSourceMutation = {
@@ -11387,34 +11432,30 @@ export type ProcessSourceMutation = {
     FilesProcessed: number;
     FilesFailed: number;
     Messages: Array<string>;
-    Error?: string | null;
+    Error: string | null;
   };
 };
 
 export type RematchSourceMutationVariables = Exact<{
-  SourceType: Scalars["String"]["input"];
-  SourceId: Scalars["String"]["input"];
-  LibraryId?: InputMaybe<Scalars["String"]["input"]>;
+  SourceType: string;
+  SourceId: string;
+  LibraryId?: string | null | undefined;
 }>;
 
 export type RematchSourceMutation = {
-  RematchSource: {
-    Success: boolean;
-    MatchCount: number;
-    Error?: string | null;
-  };
+  RematchSource: { Success: boolean; MatchCount: number; Error: string | null };
 };
 
 export type LinkTorrentToLibraryMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
   Input: UpdateTorrentInput;
 }>;
 
 export type LinkTorrentToLibraryMutation = {
   UpdateTorrent: {
     Success: boolean;
-    Error?: string | null;
-    Torrent?: { Id: string; LibraryId?: string | null } | null;
+    Error: string | null;
+    Torrent: { Id: string; LibraryId: string | null } | null;
   };
 };
 
@@ -11431,29 +11472,31 @@ export type CreateUnmatchedMediaFileFromTorrentMutationVariables = Exact<{
 export type CreateUnmatchedMediaFileFromTorrentMutation = {
   CreateMediaFile: {
     Success: boolean;
-    Error?: string | null;
-    MediaFile?: { Id: string; Path: string; Metadata?: string | null } | null;
+    Error: string | null;
+    MediaFile: { Id: string; Path: string; Metadata: string | null } | null;
   };
 };
 
 export type AnalyzeMediaFileForTorrentMutationVariables = Exact<{
-  MediaFileId: Scalars["String"]["input"];
-  Path: Scalars["String"]["input"];
+  MediaFileId: string;
+  Path: string;
 }>;
 
 export type AnalyzeMediaFileForTorrentMutation = {
   AnalyzeMediaFile: {
     Success: boolean;
     Queued: boolean;
-    Message?: string | null;
+    Message: string | null;
   };
 };
 
 export type SettingsUsenetServersQueryVariables = Exact<{
-  OrderBy?: InputMaybe<
-    Array<UsenetServerOrderByInput> | UsenetServerOrderByInput
-  >;
-  Page?: InputMaybe<PageInput>;
+  OrderBy?:
+    | Array<UsenetServerOrderByInput>
+    | UsenetServerOrderByInput
+    | null
+    | undefined;
+  Page?: PageInput | null | undefined;
 }>;
 
 export type SettingsUsenetServersQuery = {
@@ -11465,13 +11508,13 @@ export type SettingsUsenetServersQuery = {
         Host: string;
         Port: number;
         UseSsl: boolean;
-        Username?: string | null;
+        Username: string | null;
         Connections: number;
         Priority: number;
         Enabled: boolean;
-        RetentionDays?: number | null;
-        LastSuccessAt?: string | null;
-        LastError?: string | null;
+        RetentionDays: number | null;
+        LastSuccessAt: string | null;
+        LastError: string | null;
         ErrorCount: number;
       };
     }>;
@@ -11479,15 +11522,15 @@ export type SettingsUsenetServersQuery = {
 };
 
 export type SettingsUpdateUsenetServerMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
   Input: UpdateUsenetServerInput;
 }>;
 
 export type SettingsUpdateUsenetServerMutation = {
   UpdateUsenetServer: {
     Success: boolean;
-    Error?: string | null;
-    UsenetServer?: { Id: string; Enabled: boolean; Priority: number } | null;
+    Error: string | null;
+    UsenetServer: { Id: string; Enabled: boolean; Priority: number } | null;
   };
 };
 
@@ -11498,31 +11541,31 @@ export type SettingsCreateUsenetServerMutationVariables = Exact<{
 export type SettingsCreateUsenetServerMutation = {
   CreateUsenetServer: {
     Success: boolean;
-    Error?: string | null;
-    UsenetServer?: {
+    Error: string | null;
+    UsenetServer: {
       Id: string;
       Name: string;
       Host: string;
       Port: number;
       UseSsl: boolean;
-      Username?: string | null;
+      Username: string | null;
       Connections: number;
       Priority: number;
       Enabled: boolean;
-      RetentionDays?: number | null;
-      LastSuccessAt?: string | null;
-      LastError?: string | null;
+      RetentionDays: number | null;
+      LastSuccessAt: string | null;
+      LastError: string | null;
       ErrorCount: number;
     } | null;
   };
 };
 
 export type SettingsDeleteUsenetServerMutationVariables = Exact<{
-  Id: Scalars["String"]["input"];
+  Id: string;
 }>;
 
 export type SettingsDeleteUsenetServerMutation = {
-  DeleteUsenetServer: { Success: boolean; Error?: string | null };
+  DeleteUsenetServer: { Success: boolean; Error: string | null };
 };
 
 export const PlaybackSyncIntervalDocument = {
@@ -11550,11 +11593,12 @@ export const PlaybackSyncIntervalDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "AppSettings" },
+            alias: { kind: "Name", value: "AppSettings" },
+            name: { kind: "Name", value: "appSettings" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -11566,7 +11610,7 @@ export const PlaybackSyncIntervalDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "Key" },
@@ -11580,18 +11624,18 @@ export const PlaybackSyncIntervalDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "1" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -11603,13 +11647,15 @@ export const PlaybackSyncIntervalDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -11654,11 +11700,12 @@ export const TorrentAppSettingsDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "AppSettings" },
+            alias: { kind: "Name", value: "AppSettings" },
+            name: { kind: "Name", value: "appSettings" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -11670,7 +11717,7 @@ export const TorrentAppSettingsDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "StringValue",
                               value: "torrent",
@@ -11685,18 +11732,18 @@ export const TorrentAppSettingsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "20" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -11708,13 +11755,15 @@ export const TorrentAppSettingsDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -11759,11 +11808,12 @@ export const MetadataAppSettingsDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "AppSettings" },
+            alias: { kind: "Name", value: "AppSettings" },
+            name: { kind: "Name", value: "appSettings" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -11775,7 +11825,7 @@ export const MetadataAppSettingsDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "StringValue",
                               value: "metadata",
@@ -11790,18 +11840,18 @@ export const MetadataAppSettingsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "50" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -11813,13 +11863,15 @@ export const MetadataAppSettingsDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -11864,11 +11916,12 @@ export const LlmAppSettingsDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "AppSettings" },
+            alias: { kind: "Name", value: "AppSettings" },
+            name: { kind: "Name", value: "appSettings" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -11880,7 +11933,7 @@ export const LlmAppSettingsDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "StringValue",
                               value: "llm",
@@ -11895,18 +11948,18 @@ export const LlmAppSettingsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "100" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -11918,13 +11971,15 @@ export const LlmAppSettingsDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -11982,11 +12037,12 @@ export const CreateAppSettingDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "CreateAppSetting" },
+            alias: { kind: "Name", value: "CreateAppSetting" },
+            name: { kind: "Name", value: "createAppSetting" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -11996,11 +12052,20 @@ export const CreateAppSettingDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "AppSetting" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "AppSetting" },
+                  name: { kind: "Name", value: "appSetting" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -12060,11 +12125,12 @@ export const UpdateAppSettingDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UpdateAppSetting" },
+            alias: { kind: "Name", value: "UpdateAppSetting" },
+            name: { kind: "Name", value: "updateAppSetting" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -12072,7 +12138,7 @@ export const UpdateAppSettingDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -12082,11 +12148,20 @@ export const UpdateAppSettingDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "AppSetting" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "AppSetting" },
+                  name: { kind: "Name", value: "appSetting" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -12202,16 +12277,30 @@ export const LoginDocument = {
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
-                      { kind: "Field", name: { kind: "Name", value: "Id" } },
-                      { kind: "Field", name: { kind: "Name", value: "Email" } },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Username" },
+                        alias: { kind: "Name", value: "Id" },
+                        name: { kind: "Name", value: "id" },
                       },
-                      { kind: "Field", name: { kind: "Name", value: "Role" } },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "DisplayName" },
+                        alias: { kind: "Name", value: "Email" },
+                        name: { kind: "Name", value: "email" },
+                      },
+                      {
+                        kind: "Field",
+                        alias: { kind: "Name", value: "Username" },
+                        name: { kind: "Name", value: "username" },
+                      },
+                      {
+                        kind: "Field",
+                        alias: { kind: "Name", value: "Role" },
+                        name: { kind: "Name", value: "role" },
+                      },
+                      {
+                        kind: "Field",
+                        alias: { kind: "Name", value: "DisplayName" },
+                        name: { kind: "Name", value: "displayName" },
                       },
                     ],
                   },
@@ -12224,19 +12313,23 @@ export const LoginDocument = {
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "AccessToken" },
+                        alias: { kind: "Name", value: "AccessToken" },
+                        name: { kind: "Name", value: "accessToken" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "RefreshToken" },
+                        alias: { kind: "Name", value: "RefreshToken" },
+                        name: { kind: "Name", value: "refreshToken" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "ExpiresIn" },
+                        alias: { kind: "Name", value: "ExpiresIn" },
+                        name: { kind: "Name", value: "expiresIn" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "TokenType" },
+                        alias: { kind: "Name", value: "TokenType" },
+                        name: { kind: "Name", value: "tokenType" },
                       },
                     ],
                   },
@@ -12299,16 +12392,30 @@ export const RegisterDocument = {
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
-                      { kind: "Field", name: { kind: "Name", value: "Id" } },
-                      { kind: "Field", name: { kind: "Name", value: "Email" } },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Username" },
+                        alias: { kind: "Name", value: "Id" },
+                        name: { kind: "Name", value: "id" },
                       },
-                      { kind: "Field", name: { kind: "Name", value: "Role" } },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "DisplayName" },
+                        alias: { kind: "Name", value: "Email" },
+                        name: { kind: "Name", value: "email" },
+                      },
+                      {
+                        kind: "Field",
+                        alias: { kind: "Name", value: "Username" },
+                        name: { kind: "Name", value: "username" },
+                      },
+                      {
+                        kind: "Field",
+                        alias: { kind: "Name", value: "Role" },
+                        name: { kind: "Name", value: "role" },
+                      },
+                      {
+                        kind: "Field",
+                        alias: { kind: "Name", value: "DisplayName" },
+                        name: { kind: "Name", value: "displayName" },
                       },
                     ],
                   },
@@ -12321,19 +12428,23 @@ export const RegisterDocument = {
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "AccessToken" },
+                        alias: { kind: "Name", value: "AccessToken" },
+                        name: { kind: "Name", value: "accessToken" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "RefreshToken" },
+                        alias: { kind: "Name", value: "RefreshToken" },
+                        name: { kind: "Name", value: "refreshToken" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "ExpiresIn" },
+                        alias: { kind: "Name", value: "ExpiresIn" },
+                        name: { kind: "Name", value: "expiresIn" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "TokenType" },
+                        alias: { kind: "Name", value: "TokenType" },
+                        name: { kind: "Name", value: "tokenType" },
                       },
                     ],
                   },
@@ -12398,19 +12509,23 @@ export const RefreshTokenDocument = {
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "AccessToken" },
+                        alias: { kind: "Name", value: "AccessToken" },
+                        name: { kind: "Name", value: "accessToken" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "RefreshToken" },
+                        alias: { kind: "Name", value: "RefreshToken" },
+                        name: { kind: "Name", value: "refreshToken" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "ExpiresIn" },
+                        alias: { kind: "Name", value: "ExpiresIn" },
+                        name: { kind: "Name", value: "expiresIn" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "TokenType" },
+                        alias: { kind: "Name", value: "TokenType" },
+                        name: { kind: "Name", value: "tokenType" },
                       },
                     ],
                   },
@@ -12528,11 +12643,12 @@ export const CastDevicesDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "CastDevices" },
+            alias: { kind: "Name", value: "CastDevices" },
+            name: { kind: "Name", value: "castDevices" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -12540,7 +12656,7 @@ export const CastDevicesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "OrderBy" },
@@ -12548,7 +12664,7 @@ export const CastDevicesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -12560,13 +12676,15 @@ export const CastDevicesDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -12611,24 +12729,28 @@ export const CastDevicesDocument = {
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Cursor" },
+                        alias: { kind: "Name", value: "Cursor" },
+                        name: { kind: "Name", value: "cursor" },
                       },
                     ],
                   },
                 },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "PageInfo" },
+                  alias: { kind: "Name", value: "PageInfo" },
+                  name: { kind: "Name", value: "pageInfo" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "HasNextPage" },
+                        alias: { kind: "Name", value: "HasNextPage" },
+                        name: { kind: "Name", value: "hasNextPage" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "TotalCount" },
+                        alias: { kind: "Name", value: "TotalCount" },
+                        name: { kind: "Name", value: "totalCount" },
                       },
                     ],
                   },
@@ -12691,11 +12813,12 @@ export const CastSessionsDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "CastSessions" },
+            alias: { kind: "Name", value: "CastSessions" },
+            name: { kind: "Name", value: "castSessions" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -12703,7 +12826,7 @@ export const CastSessionsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "OrderBy" },
@@ -12711,7 +12834,7 @@ export const CastSessionsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -12723,13 +12846,15 @@ export const CastSessionsDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -12782,24 +12907,28 @@ export const CastSessionsDocument = {
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Cursor" },
+                        alias: { kind: "Name", value: "Cursor" },
+                        name: { kind: "Name", value: "cursor" },
                       },
                     ],
                   },
                 },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "PageInfo" },
+                  alias: { kind: "Name", value: "PageInfo" },
+                  name: { kind: "Name", value: "pageInfo" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "HasNextPage" },
+                        alias: { kind: "Name", value: "HasNextPage" },
+                        name: { kind: "Name", value: "hasNextPage" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "TotalCount" },
+                        alias: { kind: "Name", value: "TotalCount" },
+                        name: { kind: "Name", value: "totalCount" },
                       },
                     ],
                   },
@@ -12862,11 +12991,12 @@ export const CastSettingsDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "CastSettings" },
+            alias: { kind: "Name", value: "CastSettings" },
+            name: { kind: "Name", value: "castSettings" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -12874,7 +13004,7 @@ export const CastSettingsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "OrderBy" },
@@ -12882,7 +13012,7 @@ export const CastSettingsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -12894,13 +13024,15 @@ export const CastSettingsDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -12942,24 +13074,28 @@ export const CastSettingsDocument = {
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Cursor" },
+                        alias: { kind: "Name", value: "Cursor" },
+                        name: { kind: "Name", value: "cursor" },
                       },
                     ],
                   },
                 },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "PageInfo" },
+                  alias: { kind: "Name", value: "PageInfo" },
+                  name: { kind: "Name", value: "pageInfo" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "HasNextPage" },
+                        alias: { kind: "Name", value: "HasNextPage" },
+                        name: { kind: "Name", value: "hasNextPage" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "TotalCount" },
+                        alias: { kind: "Name", value: "TotalCount" },
+                        name: { kind: "Name", value: "totalCount" },
                       },
                     ],
                   },
@@ -13000,11 +13136,12 @@ export const CreateCastDeviceDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "CreateCastDevice" },
+            alias: { kind: "Name", value: "CreateCastDevice" },
+            name: { kind: "Name", value: "createCastDevice" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -13014,11 +13151,20 @@ export const CreateCastDeviceDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "CastDevice" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "CastDevice" },
+                  name: { kind: "Name", value: "castDevice" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -13099,11 +13245,12 @@ export const UpdateCastDeviceDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UpdateCastDevice" },
+            alias: { kind: "Name", value: "UpdateCastDevice" },
+            name: { kind: "Name", value: "updateCastDevice" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -13111,7 +13258,7 @@ export const UpdateCastDeviceDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -13121,11 +13268,20 @@ export const UpdateCastDeviceDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "CastDevice" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "CastDevice" },
+                  name: { kind: "Name", value: "castDevice" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -13192,11 +13348,12 @@ export const DeleteCastDeviceDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "DeleteCastDevice" },
+            alias: { kind: "Name", value: "DeleteCastDevice" },
+            name: { kind: "Name", value: "deleteCastDevice" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -13206,8 +13363,16 @@ export const DeleteCastDeviceDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
               ],
             },
           },
@@ -13247,11 +13412,12 @@ export const CreateCastSettingDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "CreateCastSetting" },
+            alias: { kind: "Name", value: "CreateCastSetting" },
+            name: { kind: "Name", value: "createCastSetting" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -13261,11 +13427,20 @@ export const CreateCastSettingDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "CastSetting" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "CastSetting" },
+                  name: { kind: "Name", value: "castSetting" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -13346,11 +13521,12 @@ export const UpdateCastSettingDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UpdateCastSetting" },
+            alias: { kind: "Name", value: "UpdateCastSetting" },
+            name: { kind: "Name", value: "updateCastSetting" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -13358,7 +13534,7 @@ export const UpdateCastSettingDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -13368,11 +13544,20 @@ export const UpdateCastSettingDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "CastSetting" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "CastSetting" },
+                  name: { kind: "Name", value: "castSetting" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -14075,11 +14260,12 @@ export const DashboardShowsDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Shows" },
+            alias: { kind: "Name", value: "Shows" },
+            name: { kind: "Name", value: "shows" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -14087,7 +14273,7 @@ export const DashboardShowsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -14095,7 +14281,7 @@ export const DashboardShowsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "OrderBy" },
@@ -14107,13 +14293,15 @@ export const DashboardShowsDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -14190,20 +14378,23 @@ export const DashboardShowsDocument = {
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Cursor" },
+                        alias: { kind: "Name", value: "Cursor" },
+                        name: { kind: "Name", value: "cursor" },
                       },
                     ],
                   },
                 },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "PageInfo" },
+                  alias: { kind: "Name", value: "PageInfo" },
+                  name: { kind: "Name", value: "pageInfo" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "TotalCount" },
+                        alias: { kind: "Name", value: "TotalCount" },
+                        name: { kind: "Name", value: "totalCount" },
                       },
                     ],
                   },
@@ -14266,11 +14457,12 @@ export const DashboardScheduleCachesDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "ScheduleCaches" },
+            alias: { kind: "Name", value: "ScheduleCaches" },
+            name: { kind: "Name", value: "scheduleCaches" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -14278,7 +14470,7 @@ export const DashboardScheduleCachesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "OrderBy" },
@@ -14286,7 +14478,7 @@ export const DashboardScheduleCachesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -14298,13 +14490,15 @@ export const DashboardScheduleCachesDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -14385,20 +14579,23 @@ export const DashboardScheduleCachesDocument = {
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Cursor" },
+                        alias: { kind: "Name", value: "Cursor" },
+                        name: { kind: "Name", value: "cursor" },
                       },
                     ],
                   },
                 },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "PageInfo" },
+                  alias: { kind: "Name", value: "PageInfo" },
+                  name: { kind: "Name", value: "pageInfo" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "TotalCount" },
+                        alias: { kind: "Name", value: "TotalCount" },
+                        name: { kind: "Name", value: "totalCount" },
                       },
                     ],
                   },
@@ -14439,11 +14636,12 @@ export const MediaFilePropertiesDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "MediaFile" },
+            alias: { kind: "Name", value: "MediaFile" },
+            name: { kind: "Name", value: "mediaFile" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -14489,11 +14687,12 @@ export const MediaFilePropertiesDocument = {
           },
           {
             kind: "Field",
-            name: { kind: "Name", value: "VideoStreams" },
+            alias: { kind: "Name", value: "VideoStreams" },
+            name: { kind: "Name", value: "videoStreams" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -14505,7 +14704,7 @@ export const MediaFilePropertiesDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "Id" },
@@ -14519,7 +14718,7 @@ export const MediaFilePropertiesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "ListValue",
                   values: [
@@ -14529,7 +14728,7 @@ export const MediaFilePropertiesDocument = {
                         {
                           kind: "ObjectField",
                           name: { kind: "Name", value: "StreamIndex" },
-                          value: { kind: "EnumValue", value: "Asc" },
+                          value: { kind: "EnumValue", value: "ASC" },
                         },
                       ],
                     },
@@ -14538,18 +14737,18 @@ export const MediaFilePropertiesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "200" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -14561,13 +14760,15 @@ export const MediaFilePropertiesDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -14642,11 +14843,12 @@ export const MediaFilePropertiesDocument = {
           },
           {
             kind: "Field",
-            name: { kind: "Name", value: "AudioStreams" },
+            alias: { kind: "Name", value: "AudioStreams" },
+            name: { kind: "Name", value: "audioStreams" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -14658,7 +14860,7 @@ export const MediaFilePropertiesDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "Id" },
@@ -14672,7 +14874,7 @@ export const MediaFilePropertiesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "ListValue",
                   values: [
@@ -14682,7 +14884,7 @@ export const MediaFilePropertiesDocument = {
                         {
                           kind: "ObjectField",
                           name: { kind: "Name", value: "StreamIndex" },
-                          value: { kind: "EnumValue", value: "Asc" },
+                          value: { kind: "EnumValue", value: "ASC" },
                         },
                       ],
                     },
@@ -14691,18 +14893,18 @@ export const MediaFilePropertiesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "200" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -14714,13 +14916,15 @@ export const MediaFilePropertiesDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -14787,11 +14991,12 @@ export const MediaFilePropertiesDocument = {
           },
           {
             kind: "Field",
-            name: { kind: "Name", value: "Subtitles" },
+            alias: { kind: "Name", value: "Subtitles" },
+            name: { kind: "Name", value: "subtitles" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -14803,7 +15008,7 @@ export const MediaFilePropertiesDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "Id" },
@@ -14817,7 +15022,7 @@ export const MediaFilePropertiesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "ListValue",
                   values: [
@@ -14827,7 +15032,7 @@ export const MediaFilePropertiesDocument = {
                         {
                           kind: "ObjectField",
                           name: { kind: "Name", value: "CreatedAt" },
-                          value: { kind: "EnumValue", value: "Asc" },
+                          value: { kind: "EnumValue", value: "ASC" },
                         },
                       ],
                     },
@@ -14836,18 +15041,18 @@ export const MediaFilePropertiesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "200" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -14859,13 +15064,15 @@ export const MediaFilePropertiesDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -14927,11 +15134,12 @@ export const MediaFilePropertiesDocument = {
           },
           {
             kind: "Field",
-            name: { kind: "Name", value: "MediaChapters" },
+            alias: { kind: "Name", value: "MediaChapters" },
+            name: { kind: "Name", value: "mediaChapters" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -14943,7 +15151,7 @@ export const MediaFilePropertiesDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "Id" },
@@ -14957,7 +15165,7 @@ export const MediaFilePropertiesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "ListValue",
                   values: [
@@ -14967,7 +15175,7 @@ export const MediaFilePropertiesDocument = {
                         {
                           kind: "ObjectField",
                           name: { kind: "Name", value: "ChapterIndex" },
-                          value: { kind: "EnumValue", value: "Asc" },
+                          value: { kind: "EnumValue", value: "ASC" },
                         },
                       ],
                     },
@@ -14976,18 +15184,18 @@ export const MediaFilePropertiesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "500" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -14999,13 +15207,15 @@ export const MediaFilePropertiesDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -15071,11 +15281,12 @@ export const MediaFileByPathLookupDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "MediaFiles" },
+            alias: { kind: "Name", value: "MediaFiles" },
+            name: { kind: "Name", value: "mediaFiles" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -15087,7 +15298,7 @@ export const MediaFileByPathLookupDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "Path" },
@@ -15101,18 +15312,18 @@ export const MediaFileByPathLookupDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "1" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -15124,13 +15335,15 @@ export const MediaFileByPathLookupDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -15184,11 +15397,12 @@ export const MediaFileMetadataDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "MediaFile" },
+            alias: { kind: "Name", value: "MediaFile" },
+            name: { kind: "Name", value: "mediaFile" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -15593,11 +15807,12 @@ export const LibrariesDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Libraries" },
+            alias: { kind: "Name", value: "Libraries" },
+            name: { kind: "Name", value: "libraries" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -15605,7 +15820,7 @@ export const LibrariesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "OrderBy" },
@@ -15613,7 +15828,7 @@ export const LibrariesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -15625,13 +15840,15 @@ export const LibrariesDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -15704,21 +15921,27 @@ export const LibrariesDocument = {
                             },
                             {
                               kind: "Field",
-                              name: { kind: "Name", value: "Shows" },
+                              alias: { kind: "Name", value: "Shows" },
+                              name: { kind: "Name", value: "shows" },
                               selectionSet: {
                                 kind: "SelectionSet",
                                 selections: [
                                   {
                                     kind: "Field",
-                                    name: { kind: "Name", value: "PageInfo" },
+                                    alias: { kind: "Name", value: "PageInfo" },
+                                    name: { kind: "Name", value: "pageInfo" },
                                     selectionSet: {
                                       kind: "SelectionSet",
                                       selections: [
                                         {
                                           kind: "Field",
-                                          name: {
+                                          alias: {
                                             kind: "Name",
                                             value: "TotalCount",
+                                          },
+                                          name: {
+                                            kind: "Name",
+                                            value: "totalCount",
                                           },
                                         },
                                       ],
@@ -15730,11 +15953,11 @@ export const LibrariesDocument = {
                             {
                               kind: "Field",
                               alias: { kind: "Name", value: "ShowArtwork" },
-                              name: { kind: "Name", value: "Shows" },
+                              name: { kind: "Name", value: "shows" },
                               arguments: [
                                 {
                                   kind: "Argument",
-                                  name: { kind: "Name", value: "OrderBy" },
+                                  name: { kind: "Name", value: "orderBy" },
                                   value: {
                                     kind: "ObjectValue",
                                     fields: [
@@ -15746,7 +15969,7 @@ export const LibrariesDocument = {
                                         },
                                         value: {
                                           kind: "EnumValue",
-                                          value: "Desc",
+                                          value: "DESC",
                                         },
                                       },
                                     ],
@@ -15754,18 +15977,18 @@ export const LibrariesDocument = {
                                 },
                                 {
                                   kind: "Argument",
-                                  name: { kind: "Name", value: "Page" },
+                                  name: { kind: "Name", value: "page" },
                                   value: {
                                     kind: "ObjectValue",
                                     fields: [
                                       {
                                         kind: "ObjectField",
-                                        name: { kind: "Name", value: "Limit" },
+                                        name: { kind: "Name", value: "limit" },
                                         value: { kind: "IntValue", value: "8" },
                                       },
                                       {
                                         kind: "ObjectField",
-                                        name: { kind: "Name", value: "Offset" },
+                                        name: { kind: "Name", value: "offset" },
                                         value: { kind: "IntValue", value: "0" },
                                       },
                                     ],
@@ -15777,13 +16000,18 @@ export const LibrariesDocument = {
                                 selections: [
                                   {
                                     kind: "Field",
-                                    name: { kind: "Name", value: "Edges" },
+                                    alias: { kind: "Name", value: "Edges" },
+                                    name: { kind: "Name", value: "edges" },
                                     selectionSet: {
                                       kind: "SelectionSet",
                                       selections: [
                                         {
                                           kind: "Field",
-                                          name: { kind: "Name", value: "Node" },
+                                          alias: {
+                                            kind: "Name",
+                                            value: "Node",
+                                          },
+                                          name: { kind: "Name", value: "node" },
                                           selectionSet: {
                                             kind: "SelectionSet",
                                             selections: [
@@ -15812,21 +16040,27 @@ export const LibrariesDocument = {
                             },
                             {
                               kind: "Field",
-                              name: { kind: "Name", value: "Movies" },
+                              alias: { kind: "Name", value: "Movies" },
+                              name: { kind: "Name", value: "movies" },
                               selectionSet: {
                                 kind: "SelectionSet",
                                 selections: [
                                   {
                                     kind: "Field",
-                                    name: { kind: "Name", value: "PageInfo" },
+                                    alias: { kind: "Name", value: "PageInfo" },
+                                    name: { kind: "Name", value: "pageInfo" },
                                     selectionSet: {
                                       kind: "SelectionSet",
                                       selections: [
                                         {
                                           kind: "Field",
-                                          name: {
+                                          alias: {
                                             kind: "Name",
                                             value: "TotalCount",
+                                          },
+                                          name: {
+                                            kind: "Name",
+                                            value: "totalCount",
                                           },
                                         },
                                       ],
@@ -15838,11 +16072,11 @@ export const LibrariesDocument = {
                             {
                               kind: "Field",
                               alias: { kind: "Name", value: "MovieArtwork" },
-                              name: { kind: "Name", value: "Movies" },
+                              name: { kind: "Name", value: "movies" },
                               arguments: [
                                 {
                                   kind: "Argument",
-                                  name: { kind: "Name", value: "OrderBy" },
+                                  name: { kind: "Name", value: "orderBy" },
                                   value: {
                                     kind: "ObjectValue",
                                     fields: [
@@ -15854,7 +16088,7 @@ export const LibrariesDocument = {
                                         },
                                         value: {
                                           kind: "EnumValue",
-                                          value: "Desc",
+                                          value: "DESC",
                                         },
                                       },
                                     ],
@@ -15862,18 +16096,18 @@ export const LibrariesDocument = {
                                 },
                                 {
                                   kind: "Argument",
-                                  name: { kind: "Name", value: "Page" },
+                                  name: { kind: "Name", value: "page" },
                                   value: {
                                     kind: "ObjectValue",
                                     fields: [
                                       {
                                         kind: "ObjectField",
-                                        name: { kind: "Name", value: "Limit" },
+                                        name: { kind: "Name", value: "limit" },
                                         value: { kind: "IntValue", value: "8" },
                                       },
                                       {
                                         kind: "ObjectField",
-                                        name: { kind: "Name", value: "Offset" },
+                                        name: { kind: "Name", value: "offset" },
                                         value: { kind: "IntValue", value: "0" },
                                       },
                                     ],
@@ -15885,13 +16119,18 @@ export const LibrariesDocument = {
                                 selections: [
                                   {
                                     kind: "Field",
-                                    name: { kind: "Name", value: "Edges" },
+                                    alias: { kind: "Name", value: "Edges" },
+                                    name: { kind: "Name", value: "edges" },
                                     selectionSet: {
                                       kind: "SelectionSet",
                                       selections: [
                                         {
                                           kind: "Field",
-                                          name: { kind: "Name", value: "Node" },
+                                          alias: {
+                                            kind: "Name",
+                                            value: "Node",
+                                          },
+                                          name: { kind: "Name", value: "node" },
                                           selectionSet: {
                                             kind: "SelectionSet",
                                             selections: [
@@ -15906,7 +16145,7 @@ export const LibrariesDocument = {
                                                 kind: "Field",
                                                 name: {
                                                   kind: "Name",
-                                                  value: "PosterUrl",
+                                                  value: "CollectionPosterUrl",
                                                 },
                                               },
                                             ],
@@ -15920,21 +16159,27 @@ export const LibrariesDocument = {
                             },
                             {
                               kind: "Field",
-                              name: { kind: "Name", value: "Albums" },
+                              alias: { kind: "Name", value: "Albums" },
+                              name: { kind: "Name", value: "albums" },
                               selectionSet: {
                                 kind: "SelectionSet",
                                 selections: [
                                   {
                                     kind: "Field",
-                                    name: { kind: "Name", value: "PageInfo" },
+                                    alias: { kind: "Name", value: "PageInfo" },
+                                    name: { kind: "Name", value: "pageInfo" },
                                     selectionSet: {
                                       kind: "SelectionSet",
                                       selections: [
                                         {
                                           kind: "Field",
-                                          name: {
+                                          alias: {
                                             kind: "Name",
                                             value: "TotalCount",
+                                          },
+                                          name: {
+                                            kind: "Name",
+                                            value: "totalCount",
                                           },
                                         },
                                       ],
@@ -15946,11 +16191,11 @@ export const LibrariesDocument = {
                             {
                               kind: "Field",
                               alias: { kind: "Name", value: "AlbumArtwork" },
-                              name: { kind: "Name", value: "Albums" },
+                              name: { kind: "Name", value: "albums" },
                               arguments: [
                                 {
                                   kind: "Argument",
-                                  name: { kind: "Name", value: "OrderBy" },
+                                  name: { kind: "Name", value: "orderBy" },
                                   value: {
                                     kind: "ObjectValue",
                                     fields: [
@@ -15962,7 +16207,7 @@ export const LibrariesDocument = {
                                         },
                                         value: {
                                           kind: "EnumValue",
-                                          value: "Desc",
+                                          value: "DESC",
                                         },
                                       },
                                     ],
@@ -15970,18 +16215,18 @@ export const LibrariesDocument = {
                                 },
                                 {
                                   kind: "Argument",
-                                  name: { kind: "Name", value: "Page" },
+                                  name: { kind: "Name", value: "page" },
                                   value: {
                                     kind: "ObjectValue",
                                     fields: [
                                       {
                                         kind: "ObjectField",
-                                        name: { kind: "Name", value: "Limit" },
+                                        name: { kind: "Name", value: "limit" },
                                         value: { kind: "IntValue", value: "8" },
                                       },
                                       {
                                         kind: "ObjectField",
-                                        name: { kind: "Name", value: "Offset" },
+                                        name: { kind: "Name", value: "offset" },
                                         value: { kind: "IntValue", value: "0" },
                                       },
                                     ],
@@ -15993,13 +16238,18 @@ export const LibrariesDocument = {
                                 selections: [
                                   {
                                     kind: "Field",
-                                    name: { kind: "Name", value: "Edges" },
+                                    alias: { kind: "Name", value: "Edges" },
+                                    name: { kind: "Name", value: "edges" },
                                     selectionSet: {
                                       kind: "SelectionSet",
                                       selections: [
                                         {
                                           kind: "Field",
-                                          name: { kind: "Name", value: "Node" },
+                                          alias: {
+                                            kind: "Name",
+                                            value: "Node",
+                                          },
+                                          name: { kind: "Name", value: "node" },
                                           selectionSet: {
                                             kind: "SelectionSet",
                                             selections: [
@@ -16028,21 +16278,27 @@ export const LibrariesDocument = {
                             },
                             {
                               kind: "Field",
-                              name: { kind: "Name", value: "Audiobooks" },
+                              alias: { kind: "Name", value: "Audiobooks" },
+                              name: { kind: "Name", value: "audiobooks" },
                               selectionSet: {
                                 kind: "SelectionSet",
                                 selections: [
                                   {
                                     kind: "Field",
-                                    name: { kind: "Name", value: "PageInfo" },
+                                    alias: { kind: "Name", value: "PageInfo" },
+                                    name: { kind: "Name", value: "pageInfo" },
                                     selectionSet: {
                                       kind: "SelectionSet",
                                       selections: [
                                         {
                                           kind: "Field",
-                                          name: {
+                                          alias: {
                                             kind: "Name",
                                             value: "TotalCount",
+                                          },
+                                          name: {
+                                            kind: "Name",
+                                            value: "totalCount",
                                           },
                                         },
                                       ],
@@ -16057,11 +16313,11 @@ export const LibrariesDocument = {
                                 kind: "Name",
                                 value: "AudiobookArtwork",
                               },
-                              name: { kind: "Name", value: "Audiobooks" },
+                              name: { kind: "Name", value: "audiobooks" },
                               arguments: [
                                 {
                                   kind: "Argument",
-                                  name: { kind: "Name", value: "OrderBy" },
+                                  name: { kind: "Name", value: "orderBy" },
                                   value: {
                                     kind: "ObjectValue",
                                     fields: [
@@ -16073,7 +16329,7 @@ export const LibrariesDocument = {
                                         },
                                         value: {
                                           kind: "EnumValue",
-                                          value: "Desc",
+                                          value: "DESC",
                                         },
                                       },
                                     ],
@@ -16081,18 +16337,18 @@ export const LibrariesDocument = {
                                 },
                                 {
                                   kind: "Argument",
-                                  name: { kind: "Name", value: "Page" },
+                                  name: { kind: "Name", value: "page" },
                                   value: {
                                     kind: "ObjectValue",
                                     fields: [
                                       {
                                         kind: "ObjectField",
-                                        name: { kind: "Name", value: "Limit" },
+                                        name: { kind: "Name", value: "limit" },
                                         value: { kind: "IntValue", value: "8" },
                                       },
                                       {
                                         kind: "ObjectField",
-                                        name: { kind: "Name", value: "Offset" },
+                                        name: { kind: "Name", value: "offset" },
                                         value: { kind: "IntValue", value: "0" },
                                       },
                                     ],
@@ -16104,13 +16360,18 @@ export const LibrariesDocument = {
                                 selections: [
                                   {
                                     kind: "Field",
-                                    name: { kind: "Name", value: "Edges" },
+                                    alias: { kind: "Name", value: "Edges" },
+                                    name: { kind: "Name", value: "edges" },
                                     selectionSet: {
                                       kind: "SelectionSet",
                                       selections: [
                                         {
                                           kind: "Field",
-                                          name: { kind: "Name", value: "Node" },
+                                          alias: {
+                                            kind: "Name",
+                                            value: "Node",
+                                          },
+                                          name: { kind: "Name", value: "node" },
                                           selectionSet: {
                                             kind: "SelectionSet",
                                             selections: [
@@ -16142,24 +16403,28 @@ export const LibrariesDocument = {
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Cursor" },
+                        alias: { kind: "Name", value: "Cursor" },
+                        name: { kind: "Name", value: "cursor" },
                       },
                     ],
                   },
                 },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "PageInfo" },
+                  alias: { kind: "Name", value: "PageInfo" },
+                  name: { kind: "Name", value: "pageInfo" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "HasNextPage" },
+                        alias: { kind: "Name", value: "HasNextPage" },
+                        name: { kind: "Name", value: "hasNextPage" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "TotalCount" },
+                        alias: { kind: "Name", value: "TotalCount" },
+                        name: { kind: "Name", value: "totalCount" },
                       },
                     ],
                   },
@@ -16197,11 +16462,12 @@ export const LibraryChangedDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "LibraryChanged" },
+            alias: { kind: "Name", value: "LibraryChanged" },
+            name: { kind: "Name", value: "libraryChanged" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Filter" },
+                name: { kind: "Name", value: "filter" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Filter" },
@@ -16211,11 +16477,20 @@ export const LibraryChangedDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Action" } },
-                { kind: "Field", name: { kind: "Name", value: "Id" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Library" },
+                  alias: { kind: "Name", value: "Action" },
+                  name: { kind: "Name", value: "action" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Id" },
+                  name: { kind: "Name", value: "id" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Library" },
+                  name: { kind: "Name", value: "library" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -16298,11 +16573,12 @@ export const CreateLibraryDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "CreateLibrary" },
+            alias: { kind: "Name", value: "CreateLibrary" },
+            name: { kind: "Name", value: "createLibrary" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -16312,11 +16588,20 @@ export const CreateLibraryDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Library" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Library" },
+                  name: { kind: "Name", value: "library" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -16368,11 +16653,12 @@ export const DeleteLibraryDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "DeleteLibrary" },
+            alias: { kind: "Name", value: "DeleteLibrary" },
+            name: { kind: "Name", value: "deleteLibrary" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -16382,8 +16668,16 @@ export const DeleteLibraryDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
               ],
             },
           },
@@ -16435,7 +16729,6 @@ export const ScanLibraryDocument = {
               kind: "SelectionSet",
               selections: [
                 { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Status" } },
                 { kind: "Field", name: { kind: "Name", value: "Message" } },
               ],
             },
@@ -16473,11 +16766,12 @@ export const LibraryAlbumsTabDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Albums" },
+            alias: { kind: "Name", value: "Albums" },
+            name: { kind: "Name", value: "albums" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -16489,7 +16783,7 @@ export const LibraryAlbumsTabDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "LibraryId" },
@@ -16503,18 +16797,18 @@ export const LibraryAlbumsTabDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "5000" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -16526,13 +16820,15 @@ export const LibraryAlbumsTabDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -16660,11 +16956,12 @@ export const LibraryArtistsTabDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Artists" },
+            alias: { kind: "Name", value: "Artists" },
+            name: { kind: "Name", value: "artists" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -16676,7 +16973,7 @@ export const LibraryArtistsTabDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "LibraryId" },
@@ -16690,18 +16987,18 @@ export const LibraryArtistsTabDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "5000" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -16713,13 +17010,15 @@ export const LibraryArtistsTabDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -16788,11 +17087,12 @@ export const LibraryAudiobooksTabDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Audiobooks" },
+            alias: { kind: "Name", value: "Audiobooks" },
+            name: { kind: "Name", value: "audiobooks" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -16804,7 +17104,7 @@ export const LibraryAudiobooksTabDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "LibraryId" },
@@ -16818,18 +17118,18 @@ export const LibraryAudiobooksTabDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "5000" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -16841,13 +17141,15 @@ export const LibraryAudiobooksTabDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -16963,11 +17265,12 @@ export const LibraryUnmatchedMediaFilesTabDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "MediaFiles" },
+            alias: { kind: "Name", value: "MediaFiles" },
+            name: { kind: "Name", value: "mediaFiles" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -16979,7 +17282,7 @@ export const LibraryUnmatchedMediaFilesTabDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "LibraryId" },
@@ -16996,7 +17299,7 @@ export const LibraryUnmatchedMediaFilesTabDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "IsNull" },
+                            name: { kind: "Name", value: "isNull" },
                             value: { kind: "BooleanValue", value: true },
                           },
                         ],
@@ -17010,7 +17313,7 @@ export const LibraryUnmatchedMediaFilesTabDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "IsNull" },
+                            name: { kind: "Name", value: "isNull" },
                             value: { kind: "BooleanValue", value: true },
                           },
                         ],
@@ -17024,7 +17327,7 @@ export const LibraryUnmatchedMediaFilesTabDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "IsNull" },
+                            name: { kind: "Name", value: "isNull" },
                             value: { kind: "BooleanValue", value: true },
                           },
                         ],
@@ -17038,7 +17341,7 @@ export const LibraryUnmatchedMediaFilesTabDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "IsNull" },
+                            name: { kind: "Name", value: "isNull" },
                             value: { kind: "BooleanValue", value: true },
                           },
                         ],
@@ -17049,7 +17352,7 @@ export const LibraryUnmatchedMediaFilesTabDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "ListValue",
                   values: [
@@ -17059,7 +17362,7 @@ export const LibraryUnmatchedMediaFilesTabDocument = {
                         {
                           kind: "ObjectField",
                           name: { kind: "Name", value: "AddedAt" },
-                          value: { kind: "EnumValue", value: "Desc" },
+                          value: { kind: "EnumValue", value: "DESC" },
                         },
                       ],
                     },
@@ -17068,18 +17371,18 @@ export const LibraryUnmatchedMediaFilesTabDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "2000" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -17091,13 +17394,15 @@ export const LibraryUnmatchedMediaFilesTabDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -17215,11 +17520,12 @@ export const LibraryDetailRouteDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Library" },
+            alias: { kind: "Name", value: "Library" },
+            name: { kind: "Name", value: "library" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -17301,11 +17607,12 @@ export const UpdateLibraryRouteDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UpdateLibrary" },
+            alias: { kind: "Name", value: "UpdateLibrary" },
+            name: { kind: "Name", value: "updateLibrary" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -17313,7 +17620,7 @@ export const UpdateLibraryRouteDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -17323,11 +17630,20 @@ export const UpdateLibraryRouteDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Library" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Library" },
+                  name: { kind: "Name", value: "library" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -17371,11 +17687,12 @@ export const DeleteShowRouteDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "DeleteShow" },
+            alias: { kind: "Name", value: "DeleteShow" },
+            name: { kind: "Name", value: "deleteShow" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -17385,8 +17702,16 @@ export const DeleteShowRouteDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
               ],
             },
           },
@@ -17448,11 +17773,12 @@ export const AppLogsDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "AppLogs" },
+            alias: { kind: "Name", value: "AppLogs" },
+            name: { kind: "Name", value: "appLogs" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -17460,7 +17786,7 @@ export const AppLogsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "OrderBy" },
@@ -17468,7 +17794,7 @@ export const AppLogsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -17480,13 +17806,15 @@ export const AppLogsDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -17523,24 +17851,28 @@ export const AppLogsDocument = {
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Cursor" },
+                        alias: { kind: "Name", value: "Cursor" },
+                        name: { kind: "Name", value: "cursor" },
                       },
                     ],
                   },
                 },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "PageInfo" },
+                  alias: { kind: "Name", value: "PageInfo" },
+                  name: { kind: "Name", value: "pageInfo" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "HasNextPage" },
+                        alias: { kind: "Name", value: "HasNextPage" },
+                        name: { kind: "Name", value: "hasNextPage" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "TotalCount" },
+                        alias: { kind: "Name", value: "TotalCount" },
+                        name: { kind: "Name", value: "totalCount" },
                       },
                     ],
                   },
@@ -17578,11 +17910,12 @@ export const AppLogChangedDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "AppLogChanged" },
+            alias: { kind: "Name", value: "AppLogChanged" },
+            name: { kind: "Name", value: "appLogChanged" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Filter" },
+                name: { kind: "Name", value: "filter" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Filter" },
@@ -17592,11 +17925,20 @@ export const AppLogChangedDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Action" } },
-                { kind: "Field", name: { kind: "Name", value: "Id" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "AppLog" },
+                  alias: { kind: "Name", value: "Action" },
+                  name: { kind: "Name", value: "action" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Id" },
+                  name: { kind: "Name", value: "id" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "AppLog" },
+                  name: { kind: "Name", value: "appLog" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -17664,11 +18006,12 @@ export const DeleteAppLogsDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "DeleteAppLogs" },
+            alias: { kind: "Name", value: "DeleteAppLogs" },
+            name: { kind: "Name", value: "deleteAppLogs" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -17682,7 +18025,8 @@ export const DeleteAppLogsDocument = {
                 { kind: "Field", name: { kind: "Name", value: "error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "DeletedCount" },
+                  alias: { kind: "Name", value: "DeletedCount" },
+                  name: { kind: "Name", value: "deletedCount" },
                 },
               ],
             },
@@ -17723,11 +18067,12 @@ export const ManualMatchShowsByLibraryDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Shows" },
+            alias: { kind: "Name", value: "Shows" },
+            name: { kind: "Name", value: "shows" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -17739,7 +18084,7 @@ export const ManualMatchShowsByLibraryDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "LibraryId" },
@@ -17757,13 +18102,15 @@ export const ManualMatchShowsByLibraryDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -17781,19 +18128,25 @@ export const ManualMatchShowsByLibraryDocument = {
                             },
                             {
                               kind: "Field",
-                              name: { kind: "Name", value: "Episodes" },
+                              alias: { kind: "Name", value: "Episodes" },
+                              name: { kind: "Name", value: "episodes" },
                               selectionSet: {
                                 kind: "SelectionSet",
                                 selections: [
                                   {
                                     kind: "Field",
-                                    name: { kind: "Name", value: "Edges" },
+                                    alias: { kind: "Name", value: "Edges" },
+                                    name: { kind: "Name", value: "edges" },
                                     selectionSet: {
                                       kind: "SelectionSet",
                                       selections: [
                                         {
                                           kind: "Field",
-                                          name: { kind: "Name", value: "Node" },
+                                          alias: {
+                                            kind: "Name",
+                                            value: "Node",
+                                          },
+                                          name: { kind: "Name", value: "node" },
                                           selectionSet: {
                                             kind: "SelectionSet",
                                             selections: [
@@ -17879,11 +18232,12 @@ export const ManualMatchMoviesByLibraryDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Movies" },
+            alias: { kind: "Name", value: "Movies" },
+            name: { kind: "Name", value: "movies" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -17895,7 +18249,7 @@ export const ManualMatchMoviesByLibraryDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "LibraryId" },
@@ -17913,13 +18267,15 @@ export const ManualMatchMoviesByLibraryDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -17980,11 +18336,12 @@ export const ManualMatchAlbumsByLibraryDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Albums" },
+            alias: { kind: "Name", value: "Albums" },
+            name: { kind: "Name", value: "albums" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -17996,7 +18353,7 @@ export const ManualMatchAlbumsByLibraryDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "LibraryId" },
@@ -18010,18 +18367,18 @@ export const ManualMatchAlbumsByLibraryDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "500" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -18033,13 +18390,15 @@ export const ManualMatchAlbumsByLibraryDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -18066,11 +18425,12 @@ export const ManualMatchAlbumsByLibraryDocument = {
           },
           {
             kind: "Field",
-            name: { kind: "Name", value: "Tracks" },
+            alias: { kind: "Name", value: "Tracks" },
+            name: { kind: "Name", value: "tracks" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -18082,7 +18442,7 @@ export const ManualMatchAlbumsByLibraryDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "LibraryId" },
@@ -18096,18 +18456,18 @@ export const ManualMatchAlbumsByLibraryDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "5000" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -18119,13 +18479,15 @@ export const ManualMatchAlbumsByLibraryDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -18194,11 +18556,12 @@ export const ManualMatchAudiobooksByLibraryDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Audiobooks" },
+            alias: { kind: "Name", value: "Audiobooks" },
+            name: { kind: "Name", value: "audiobooks" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -18210,7 +18573,7 @@ export const ManualMatchAudiobooksByLibraryDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "LibraryId" },
@@ -18224,18 +18587,18 @@ export const ManualMatchAudiobooksByLibraryDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "500" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -18247,13 +18610,15 @@ export const ManualMatchAudiobooksByLibraryDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -18271,19 +18636,25 @@ export const ManualMatchAudiobooksByLibraryDocument = {
                             },
                             {
                               kind: "Field",
-                              name: { kind: "Name", value: "Chapters" },
+                              alias: { kind: "Name", value: "Chapters" },
+                              name: { kind: "Name", value: "chapters" },
                               selectionSet: {
                                 kind: "SelectionSet",
                                 selections: [
                                   {
                                     kind: "Field",
-                                    name: { kind: "Name", value: "Edges" },
+                                    alias: { kind: "Name", value: "Edges" },
+                                    name: { kind: "Name", value: "edges" },
                                     selectionSet: {
                                       kind: "SelectionSet",
                                       selections: [
                                         {
                                           kind: "Field",
-                                          name: { kind: "Name", value: "Node" },
+                                          alias: {
+                                            kind: "Name",
+                                            value: "Node",
+                                          },
+                                          name: { kind: "Name", value: "node" },
                                           selectionSet: {
                                             kind: "SelectionSet",
                                             selections: [
@@ -18786,11 +19157,12 @@ export const AlbumDetailRouteDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Album" },
+            alias: { kind: "Name", value: "Album" },
+            name: { kind: "Name", value: "album" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -18830,11 +19202,12 @@ export const AlbumDetailRouteDocument = {
           },
           {
             kind: "Field",
-            name: { kind: "Name", value: "Tracks" },
+            alias: { kind: "Name", value: "Tracks" },
+            name: { kind: "Name", value: "tracks" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -18846,7 +19219,7 @@ export const AlbumDetailRouteDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "Id" },
@@ -18860,18 +19233,18 @@ export const AlbumDetailRouteDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "5000" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -18879,7 +19252,7 @@ export const AlbumDetailRouteDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "ListValue",
                   values: [
@@ -18889,7 +19262,7 @@ export const AlbumDetailRouteDocument = {
                         {
                           kind: "ObjectField",
                           name: { kind: "Name", value: "DiscNumber" },
-                          value: { kind: "EnumValue", value: "Asc" },
+                          value: { kind: "EnumValue", value: "ASC" },
                         },
                       ],
                     },
@@ -18899,7 +19272,7 @@ export const AlbumDetailRouteDocument = {
                         {
                           kind: "ObjectField",
                           name: { kind: "Name", value: "TrackNumber" },
-                          value: { kind: "EnumValue", value: "Asc" },
+                          value: { kind: "EnumValue", value: "ASC" },
                         },
                       ],
                     },
@@ -18912,13 +19285,15 @@ export const AlbumDetailRouteDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -18976,10 +19351,6 @@ export const AlbumDetailRouteDocument = {
                             },
                             {
                               kind: "Field",
-                              name: { kind: "Name", value: "Status" },
-                            },
-                            {
-                              kind: "Field",
                               name: { kind: "Name", value: "Wanted" },
                             },
                           ],
@@ -19024,11 +19395,12 @@ export const DeleteAlbumRouteDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "DeleteAlbum" },
+            alias: { kind: "Name", value: "DeleteAlbum" },
+            name: { kind: "Name", value: "deleteAlbum" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -19038,8 +19410,16 @@ export const DeleteAlbumRouteDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
               ],
             },
           },
@@ -19093,11 +19473,12 @@ export const AlbumDetailSetTrackWantedDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UpdateTracks" },
+            alias: { kind: "Name", value: "UpdateTracks" },
+            name: { kind: "Name", value: "updateTracks" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -19109,7 +19490,7 @@ export const AlbumDetailSetTrackWantedDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "AlbumId" },
@@ -19123,7 +19504,7 @@ export const AlbumDetailSetTrackWantedDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -19184,11 +19565,12 @@ export const AudiobookDetailRouteDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Audiobook" },
+            alias: { kind: "Name", value: "Audiobook" },
+            name: { kind: "Name", value: "audiobook" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -19217,22 +19599,23 @@ export const AudiobookDetailRouteDocument = {
                 { kind: "Field", name: { kind: "Name", value: "Path" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Chapters" },
+                  alias: { kind: "Name", value: "Chapters" },
+                  name: { kind: "Name", value: "chapters" },
                   arguments: [
                     {
                       kind: "Argument",
-                      name: { kind: "Name", value: "Page" },
+                      name: { kind: "Name", value: "page" },
                       value: {
                         kind: "ObjectValue",
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Limit" },
+                            name: { kind: "Name", value: "limit" },
                             value: { kind: "IntValue", value: "5000" },
                           },
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Offset" },
+                            name: { kind: "Name", value: "offset" },
                             value: { kind: "IntValue", value: "0" },
                           },
                         ],
@@ -19244,13 +19627,15 @@ export const AudiobookDetailRouteDocument = {
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Edges" },
+                        alias: { kind: "Name", value: "Edges" },
+                        name: { kind: "Name", value: "edges" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
                             {
                               kind: "Field",
-                              name: { kind: "Name", value: "Node" },
+                              alias: { kind: "Name", value: "Node" },
+                              name: { kind: "Name", value: "node" },
                               selectionSet: {
                                 kind: "SelectionSet",
                                 selections: [
@@ -19306,10 +19691,6 @@ export const AudiobookDetailRouteDocument = {
                                   },
                                   {
                                     kind: "Field",
-                                    name: { kind: "Name", value: "Status" },
-                                  },
-                                  {
-                                    kind: "Field",
                                     name: { kind: "Name", value: "Wanted" },
                                   },
                                 ],
@@ -19357,11 +19738,12 @@ export const DeleteAudiobookRouteDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "DeleteAudiobook" },
+            alias: { kind: "Name", value: "DeleteAudiobook" },
+            name: { kind: "Name", value: "deleteAudiobook" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -19371,8 +19753,16 @@ export const DeleteAudiobookRouteDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
               ],
             },
           },
@@ -19426,11 +19816,12 @@ export const AudiobookDetailSetChapterWantedDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UpdateChapters" },
+            alias: { kind: "Name", value: "UpdateChapters" },
+            name: { kind: "Name", value: "updateChapters" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -19442,7 +19833,7 @@ export const AudiobookDetailSetChapterWantedDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "AudiobookId" },
@@ -19456,7 +19847,7 @@ export const AudiobookDetailSetChapterWantedDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -19723,14 +20114,6 @@ export const AddMovieDocument = {
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "PosterUrl" },
-                      },
-                      {
-                        kind: "Field",
-                        name: { kind: "Name", value: "BackdropUrl" },
-                      },
-                      {
-                        kind: "Field",
                         name: { kind: "Name", value: "Monitored" },
                       },
                       {
@@ -19871,11 +20254,12 @@ export const MovieChangedDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "MovieChanged" },
+            alias: { kind: "Name", value: "MovieChanged" },
+            name: { kind: "Name", value: "movieChanged" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Filter" },
+                name: { kind: "Name", value: "filter" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Filter" },
@@ -19885,11 +20269,20 @@ export const MovieChangedDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Action" } },
-                { kind: "Field", name: { kind: "Name", value: "Id" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Movie" },
+                  alias: { kind: "Name", value: "Action" },
+                  name: { kind: "Name", value: "action" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Id" },
+                  name: { kind: "Name", value: "id" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Movie" },
+                  name: { kind: "Name", value: "movie" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -19936,11 +20329,12 @@ export const MovieDetailRouteDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Movie" },
+            alias: { kind: "Name", value: "Movie" },
+            name: { kind: "Name", value: "movie" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -19961,15 +20355,12 @@ export const MovieDetailRouteDocument = {
                 { kind: "Field", name: { kind: "Name", value: "Year" } },
                 { kind: "Field", name: { kind: "Name", value: "TmdbId" } },
                 { kind: "Field", name: { kind: "Name", value: "ImdbId" } },
-                { kind: "Field", name: { kind: "Name", value: "Status" } },
                 { kind: "Field", name: { kind: "Name", value: "Overview" } },
                 { kind: "Field", name: { kind: "Name", value: "Tagline" } },
                 { kind: "Field", name: { kind: "Name", value: "Runtime" } },
                 { kind: "Field", name: { kind: "Name", value: "Genres" } },
                 { kind: "Field", name: { kind: "Name", value: "Director" } },
                 { kind: "Field", name: { kind: "Name", value: "CastNames" } },
-                { kind: "Field", name: { kind: "Name", value: "PosterUrl" } },
-                { kind: "Field", name: { kind: "Name", value: "BackdropUrl" } },
                 { kind: "Field", name: { kind: "Name", value: "Monitored" } },
                 { kind: "Field", name: { kind: "Name", value: "MediaFileId" } },
                 {
@@ -19982,6 +20373,11 @@ export const MovieDetailRouteDocument = {
                 },
                 {
                   kind: "Field",
+                  name: { kind: "Name", value: "CollectionPosterUrl" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "PosterUrl" },
                   name: { kind: "Name", value: "CollectionPosterUrl" },
                 },
                 { kind: "Field", name: { kind: "Name", value: "TmdbRating" } },
@@ -20005,7 +20401,8 @@ export const MovieDetailRouteDocument = {
                 { kind: "Field", name: { kind: "Name", value: "Wanted" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "MediaFile" },
+                  alias: { kind: "Name", value: "MediaFile" },
+                  name: { kind: "Name", value: "mediaFile" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -20068,11 +20465,12 @@ export const MovieDetailSetWantedDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UpdateMovie" },
+            alias: { kind: "Name", value: "UpdateMovie" },
+            name: { kind: "Name", value: "updateMovie" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -20080,7 +20478,7 @@ export const MovieDetailSetWantedDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -20099,11 +20497,20 @@ export const MovieDetailSetWantedDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Movie" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Movie" },
+                  name: { kind: "Name", value: "movie" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -20185,14 +20592,6 @@ export const RefreshMovieRouteDocument = {
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "PosterUrl" },
-                      },
-                      {
-                        kind: "Field",
-                        name: { kind: "Name", value: "BackdropUrl" },
-                      },
-                      {
-                        kind: "Field",
                         name: { kind: "Name", value: "TmdbRating" },
                       },
                       {
@@ -20238,11 +20637,12 @@ export const DeleteMovieModalDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "DeleteMovie" },
+            alias: { kind: "Name", value: "DeleteMovie" },
+            name: { kind: "Name", value: "deleteMovie" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -20252,8 +20652,16 @@ export const DeleteMovieModalDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
               ],
             },
           },
@@ -20304,11 +20712,12 @@ export const OrganizationNamingPatternsDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "NamingPatterns" },
+            alias: { kind: "Name", value: "NamingPatterns" },
+            name: { kind: "Name", value: "namingPatterns" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "OrderBy" },
@@ -20316,7 +20725,7 @@ export const OrganizationNamingPatternsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -20328,13 +20737,15 @@ export const OrganizationNamingPatternsDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -20411,11 +20822,12 @@ export const OrganizationCreateNamingPatternDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "CreateNamingPattern" },
+            alias: { kind: "Name", value: "CreateNamingPattern" },
+            name: { kind: "Name", value: "createNamingPattern" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -20425,11 +20837,20 @@ export const OrganizationCreateNamingPatternDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "NamingPattern" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "NamingPattern" },
+                  name: { kind: "Name", value: "namingPattern" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -20508,11 +20929,12 @@ export const OrganizationUpdateNamingPatternDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UpdateNamingPattern" },
+            alias: { kind: "Name", value: "UpdateNamingPattern" },
+            name: { kind: "Name", value: "updateNamingPattern" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -20520,7 +20942,7 @@ export const OrganizationUpdateNamingPatternDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -20530,11 +20952,20 @@ export const OrganizationUpdateNamingPatternDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "NamingPattern" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "NamingPattern" },
+                  name: { kind: "Name", value: "namingPattern" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -20599,11 +21030,12 @@ export const OrganizationDeleteNamingPatternDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "DeleteNamingPattern" },
+            alias: { kind: "Name", value: "DeleteNamingPattern" },
+            name: { kind: "Name", value: "deleteNamingPattern" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -20613,8 +21045,16 @@ export const OrganizationDeleteNamingPatternDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
               ],
             },
           },
@@ -20676,11 +21116,12 @@ export const NotificationsDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Notifications" },
+            alias: { kind: "Name", value: "Notifications" },
+            name: { kind: "Name", value: "notifications" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -20688,7 +21129,7 @@ export const NotificationsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "OrderBy" },
@@ -20696,7 +21137,7 @@ export const NotificationsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -20708,13 +21149,15 @@ export const NotificationsDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -20791,24 +21234,28 @@ export const NotificationsDocument = {
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Cursor" },
+                        alias: { kind: "Name", value: "Cursor" },
+                        name: { kind: "Name", value: "cursor" },
                       },
                     ],
                   },
                 },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "PageInfo" },
+                  alias: { kind: "Name", value: "PageInfo" },
+                  name: { kind: "Name", value: "pageInfo" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "HasNextPage" },
+                        alias: { kind: "Name", value: "HasNextPage" },
+                        name: { kind: "Name", value: "hasNextPage" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "TotalCount" },
+                        alias: { kind: "Name", value: "TotalCount" },
+                        name: { kind: "Name", value: "totalCount" },
                       },
                     ],
                   },
@@ -20846,11 +21293,12 @@ export const NotificationChangedDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "NotificationChanged" },
+            alias: { kind: "Name", value: "NotificationChanged" },
+            name: { kind: "Name", value: "notificationChanged" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Filter" },
+                name: { kind: "Name", value: "filter" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Filter" },
@@ -20860,11 +21308,20 @@ export const NotificationChangedDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Action" } },
-                { kind: "Field", name: { kind: "Name", value: "Id" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Notification" },
+                  alias: { kind: "Name", value: "Action" },
+                  name: { kind: "Name", value: "action" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Id" },
+                  name: { kind: "Name", value: "id" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Notification" },
+                  name: { kind: "Name", value: "notification" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -20934,11 +21391,12 @@ export const UpdateNotificationDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UpdateNotification" },
+            alias: { kind: "Name", value: "UpdateNotification" },
+            name: { kind: "Name", value: "updateNotification" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -20946,7 +21404,7 @@ export const UpdateNotificationDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -20956,11 +21414,20 @@ export const UpdateNotificationDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Notification" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Notification" },
+                  name: { kind: "Name", value: "notification" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -21016,11 +21483,12 @@ export const DeleteNotificationDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "DeleteNotification" },
+            alias: { kind: "Name", value: "DeleteNotification" },
+            name: { kind: "Name", value: "deleteNotification" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -21030,8 +21498,16 @@ export const DeleteNotificationDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
               ],
             },
           },
@@ -21093,11 +21569,12 @@ export const PlaybackSessionsDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "PlaybackSessions" },
+            alias: { kind: "Name", value: "PlaybackSessions" },
+            name: { kind: "Name", value: "playbackSessions" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -21105,7 +21582,7 @@ export const PlaybackSessionsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "OrderBy" },
@@ -21113,7 +21590,7 @@ export const PlaybackSessionsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -21125,13 +21602,15 @@ export const PlaybackSessionsDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -21192,24 +21671,28 @@ export const PlaybackSessionsDocument = {
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Cursor" },
+                        alias: { kind: "Name", value: "Cursor" },
+                        name: { kind: "Name", value: "cursor" },
                       },
                     ],
                   },
                 },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "PageInfo" },
+                  alias: { kind: "Name", value: "PageInfo" },
+                  name: { kind: "Name", value: "pageInfo" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "HasNextPage" },
+                        alias: { kind: "Name", value: "HasNextPage" },
+                        name: { kind: "Name", value: "hasNextPage" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "TotalCount" },
+                        alias: { kind: "Name", value: "TotalCount" },
+                        name: { kind: "Name", value: "totalCount" },
                       },
                     ],
                   },
@@ -21275,11 +21758,12 @@ export const ShowPlaybackProgressByMediaDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "PlaybackProgresses" },
+            alias: { kind: "Name", value: "PlaybackProgresses" },
+            name: { kind: "Name", value: "playbackProgresses" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -21287,7 +21771,7 @@ export const ShowPlaybackProgressByMediaDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -21295,7 +21779,7 @@ export const ShowPlaybackProgressByMediaDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "OrderBy" },
@@ -21307,13 +21791,15 @@ export const ShowPlaybackProgressByMediaDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -21412,11 +21898,12 @@ export const PlaybackProgressByMediaFileContextDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "PlaybackProgresses" },
+            alias: { kind: "Name", value: "PlaybackProgresses" },
+            name: { kind: "Name", value: "playbackProgresses" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -21424,7 +21911,7 @@ export const PlaybackProgressByMediaFileContextDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -21432,7 +21919,7 @@ export const PlaybackProgressByMediaFileContextDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "OrderBy" },
@@ -21444,13 +21931,15 @@ export const PlaybackProgressByMediaFileContextDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -21539,11 +22028,12 @@ export const CreatePlaybackSessionContextDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "CreatePlaybackSession" },
+            alias: { kind: "Name", value: "CreatePlaybackSession" },
+            name: { kind: "Name", value: "createPlaybackSession" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -21553,11 +22043,20 @@ export const CreatePlaybackSessionContextDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "PlaybackSession" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "PlaybackSession" },
+                  name: { kind: "Name", value: "playbackSession" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -21691,11 +22190,12 @@ export const UpdatePlaybackSessionContextDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UpdatePlaybackSession" },
+            alias: { kind: "Name", value: "UpdatePlaybackSession" },
+            name: { kind: "Name", value: "updatePlaybackSession" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -21703,7 +22203,7 @@ export const UpdatePlaybackSessionContextDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -21713,11 +22213,20 @@ export const UpdatePlaybackSessionContextDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "PlaybackSession" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "PlaybackSession" },
+                  name: { kind: "Name", value: "playbackSession" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -21840,11 +22349,12 @@ export const CreatePlaybackProgressContextDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "CreatePlaybackProgress" },
+            alias: { kind: "Name", value: "CreatePlaybackProgress" },
+            name: { kind: "Name", value: "createPlaybackProgress" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -21854,11 +22364,20 @@ export const CreatePlaybackProgressContextDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "PlaybackProgress" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "PlaybackProgress" },
+                  name: { kind: "Name", value: "playbackProgress" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -21952,11 +22471,12 @@ export const UpdatePlaybackProgressContextDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UpdatePlaybackProgress" },
+            alias: { kind: "Name", value: "UpdatePlaybackProgress" },
+            name: { kind: "Name", value: "updatePlaybackProgress" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -21964,7 +22484,7 @@ export const UpdatePlaybackProgressContextDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -21974,11 +22494,20 @@ export const UpdatePlaybackProgressContextDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "PlaybackProgress" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "PlaybackProgress" },
+                  name: { kind: "Name", value: "playbackProgress" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -22045,19 +22574,22 @@ export const LibrarySearchShowsDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Shows" },
+            alias: { kind: "Name", value: "Shows" },
+            name: { kind: "Name", value: "shows" },
             selectionSet: {
               kind: "SelectionSet",
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -22110,19 +22642,22 @@ export const LibrarySearchMoviesDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Movies" },
+            alias: { kind: "Name", value: "Movies" },
+            name: { kind: "Name", value: "movies" },
             selectionSet: {
               kind: "SelectionSet",
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -22144,11 +22679,11 @@ export const LibrarySearchMoviesDocument = {
                             },
                             {
                               kind: "Field",
-                              name: { kind: "Name", value: "PosterUrl" },
+                              name: { kind: "Name", value: "MediaFileId" },
                             },
                             {
                               kind: "Field",
-                              name: { kind: "Name", value: "Status" },
+                              name: { kind: "Name", value: "Wanted" },
                             },
                           ],
                         },
@@ -22213,9 +22748,9 @@ export const SearchTvShowsDocument = {
                 { kind: "Field", name: { kind: "Name", value: "ProviderId" } },
                 { kind: "Field", name: { kind: "Name", value: "Name" } },
                 { kind: "Field", name: { kind: "Name", value: "Year" } },
-                { kind: "Field", name: { kind: "Name", value: "Status" } },
                 { kind: "Field", name: { kind: "Name", value: "Network" } },
                 { kind: "Field", name: { kind: "Name", value: "Overview" } },
+                { kind: "Field", name: { kind: "Name", value: "Status" } },
                 { kind: "Field", name: { kind: "Name", value: "PosterUrl" } },
                 { kind: "Field", name: { kind: "Name", value: "TvdbId" } },
                 { kind: "Field", name: { kind: "Name", value: "ImdbId" } },
@@ -22301,10 +22836,6 @@ export const AddTvShowDocument = {
                     selections: [
                       { kind: "Field", name: { kind: "Name", value: "Id" } },
                       { kind: "Field", name: { kind: "Name", value: "Name" } },
-                      {
-                        kind: "Field",
-                        name: { kind: "Name", value: "PosterUrl" },
-                      },
                     ],
                   },
                 },
@@ -22342,11 +22873,12 @@ export const ShowChangedDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "ShowChanged" },
+            alias: { kind: "Name", value: "ShowChanged" },
+            name: { kind: "Name", value: "showChanged" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Filter" },
+                name: { kind: "Name", value: "filter" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Filter" },
@@ -22356,11 +22888,20 @@ export const ShowChangedDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Action" } },
-                { kind: "Field", name: { kind: "Name", value: "Id" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Show" },
+                  alias: { kind: "Name", value: "Action" },
+                  name: { kind: "Name", value: "action" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Id" },
+                  name: { kind: "Name", value: "id" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Show" },
+                  name: { kind: "Name", value: "show" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -22407,11 +22948,12 @@ export const ShowDetailRouteDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Show" },
+            alias: { kind: "Name", value: "Show" },
+            name: { kind: "Name", value: "show" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -22432,10 +22974,10 @@ export const ShowDetailRouteDocument = {
                 { kind: "Field", name: { kind: "Name", value: "ImdbId" } },
                 { kind: "Field", name: { kind: "Name", value: "Overview" } },
                 { kind: "Field", name: { kind: "Name", value: "Network" } },
-                { kind: "Field", name: { kind: "Name", value: "Runtime" } },
-                { kind: "Field", name: { kind: "Name", value: "Genres" } },
                 { kind: "Field", name: { kind: "Name", value: "PosterUrl" } },
                 { kind: "Field", name: { kind: "Name", value: "BackdropUrl" } },
+                { kind: "Field", name: { kind: "Name", value: "Runtime" } },
+                { kind: "Field", name: { kind: "Name", value: "Genres" } },
                 {
                   kind: "Field",
                   name: { kind: "Name", value: "AutoDownload" },
@@ -22450,17 +22992,18 @@ export const ShowDetailRouteDocument = {
                 { kind: "Field", name: { kind: "Name", value: "UserId" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Episodes" },
+                  alias: { kind: "Name", value: "Episodes" },
+                  name: { kind: "Name", value: "episodes" },
                   arguments: [
                     {
                       kind: "Argument",
-                      name: { kind: "Name", value: "Page" },
+                      name: { kind: "Name", value: "page" },
                       value: {
                         kind: "ObjectValue",
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Limit" },
+                            name: { kind: "Name", value: "limit" },
                             value: { kind: "IntValue", value: "2000" },
                           },
                         ],
@@ -22472,13 +23015,15 @@ export const ShowDetailRouteDocument = {
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Edges" },
+                        alias: { kind: "Name", value: "Edges" },
+                        name: { kind: "Name", value: "edges" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
                             {
                               kind: "Field",
-                              name: { kind: "Name", value: "Node" },
+                              alias: { kind: "Name", value: "Node" },
+                              name: { kind: "Name", value: "node" },
                               selectionSet: {
                                 kind: "SelectionSet",
                                 selections: [
@@ -22546,11 +23091,8 @@ export const ShowDetailRouteDocument = {
                                   },
                                   {
                                     kind: "Field",
-                                    name: { kind: "Name", value: "Status" },
-                                  },
-                                  {
-                                    kind: "Field",
-                                    name: { kind: "Name", value: "MediaFile" },
+                                    alias: { kind: "Name", value: "MediaFile" },
+                                    name: { kind: "Name", value: "mediaFile" },
                                     selectionSet: {
                                       kind: "SelectionSet",
                                       selections: [
@@ -22694,14 +23236,6 @@ export const RefreshShowRouteDocument = {
                         kind: "Field",
                         name: { kind: "Name", value: "Overview" },
                       },
-                      {
-                        kind: "Field",
-                        name: { kind: "Name", value: "PosterUrl" },
-                      },
-                      {
-                        kind: "Field",
-                        name: { kind: "Name", value: "BackdropUrl" },
-                      },
                     ],
                   },
                 },
@@ -22759,11 +23293,12 @@ export const ShowDetailSetEpisodeWantedDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UpdateEpisodes" },
+            alias: { kind: "Name", value: "UpdateEpisodes" },
+            name: { kind: "Name", value: "updateEpisodes" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -22775,7 +23310,7 @@ export const ShowDetailSetEpisodeWantedDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "Eq" },
+                            name: { kind: "Name", value: "eq" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "ShowId" },
@@ -22789,7 +23324,7 @@ export const ShowDetailSetEpisodeWantedDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -22875,11 +23410,12 @@ export const SourcesDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Sources" },
+            alias: { kind: "Name", value: "Sources" },
+            name: { kind: "Name", value: "sources" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -22887,7 +23423,7 @@ export const SourcesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "OrderBy" },
@@ -22895,7 +23431,7 @@ export const SourcesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -22907,13 +23443,15 @@ export const SourcesDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -23014,21 +23552,25 @@ export const SourcesDocument = {
                 },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "PageInfo" },
+                  alias: { kind: "Name", value: "PageInfo" },
+                  name: { kind: "Name", value: "pageInfo" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "TotalCount" },
+                        alias: { kind: "Name", value: "TotalCount" },
+                        name: { kind: "Name", value: "totalCount" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "HasNextPage" },
+                        alias: { kind: "Name", value: "HasNextPage" },
+                        name: { kind: "Name", value: "hasNextPage" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "HasPreviousPage" },
+                        alias: { kind: "Name", value: "HasPreviousPage" },
+                        name: { kind: "Name", value: "hasPreviousPage" },
                       },
                     ],
                   },
@@ -23355,11 +23897,12 @@ export const CreateSourceDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "CreateSource" },
+            alias: { kind: "Name", value: "CreateSource" },
+            name: { kind: "Name", value: "createSource" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -23369,8 +23912,16 @@ export const CreateSourceDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
               ],
             },
           },
@@ -23421,11 +23972,12 @@ export const UpdateSourceDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UpdateSource" },
+            alias: { kind: "Name", value: "UpdateSource" },
+            name: { kind: "Name", value: "updateSource" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -23433,7 +23985,7 @@ export const UpdateSourceDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -23443,8 +23995,16 @@ export const UpdateSourceDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
               ],
             },
           },
@@ -23481,11 +24041,12 @@ export const DeleteSourceDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "DeleteSource" },
+            alias: { kind: "Name", value: "DeleteSource" },
+            name: { kind: "Name", value: "deleteSource" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -23495,8 +24056,16 @@ export const DeleteSourceDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
               ],
             },
           },
@@ -23673,11 +24242,12 @@ export const TorrentModalMediaFilesByPathsDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "MediaFiles" },
+            alias: { kind: "Name", value: "MediaFiles" },
+            name: { kind: "Name", value: "mediaFiles" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
@@ -23689,7 +24259,7 @@ export const TorrentModalMediaFilesByPathsDocument = {
                         fields: [
                           {
                             kind: "ObjectField",
-                            name: { kind: "Name", value: "In" },
+                            name: { kind: "Name", value: "inList" },
                             value: {
                               kind: "Variable",
                               name: { kind: "Name", value: "Paths" },
@@ -23703,18 +24273,18 @@ export const TorrentModalMediaFilesByPathsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "ObjectValue",
                   fields: [
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Limit" },
+                      name: { kind: "Name", value: "limit" },
                       value: { kind: "IntValue", value: "1000" },
                     },
                     {
                       kind: "ObjectField",
-                      name: { kind: "Name", value: "Offset" },
+                      name: { kind: "Name", value: "offset" },
                       value: { kind: "IntValue", value: "0" },
                     },
                   ],
@@ -23726,13 +24296,15 @@ export const TorrentModalMediaFilesByPathsDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -23798,11 +24370,12 @@ export const DownloadsTorrentsDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Torrents" },
+            alias: { kind: "Name", value: "Torrents" },
+            name: { kind: "Name", value: "torrents" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -23810,7 +24383,7 @@ export const DownloadsTorrentsDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -23822,13 +24395,15 @@ export const DownloadsTorrentsDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -23880,17 +24455,20 @@ export const DownloadsTorrentsDocument = {
                 },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "PageInfo" },
+                  alias: { kind: "Name", value: "PageInfo" },
+                  name: { kind: "Name", value: "pageInfo" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "TotalCount" },
+                        alias: { kind: "Name", value: "TotalCount" },
+                        name: { kind: "Name", value: "totalCount" },
                       },
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "HasNextPage" },
+                        alias: { kind: "Name", value: "HasNextPage" },
+                        name: { kind: "Name", value: "hasNextPage" },
                       },
                     ],
                   },
@@ -23939,11 +24517,12 @@ export const TorrentByInfoHashWithFilesDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "Torrents" },
+            alias: { kind: "Name", value: "Torrents" },
+            name: { kind: "Name", value: "torrents" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -23951,7 +24530,7 @@ export const TorrentByInfoHashWithFilesDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -23963,13 +24542,15 @@ export const TorrentByInfoHashWithFilesDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -24015,17 +24596,18 @@ export const TorrentByInfoHashWithFilesDocument = {
                             },
                             {
                               kind: "Field",
-                              name: { kind: "Name", value: "Files" },
+                              alias: { kind: "Name", value: "Files" },
+                              name: { kind: "Name", value: "files" },
                               arguments: [
                                 {
                                   kind: "Argument",
-                                  name: { kind: "Name", value: "Page" },
+                                  name: { kind: "Name", value: "page" },
                                   value: {
                                     kind: "ObjectValue",
                                     fields: [
                                       {
                                         kind: "ObjectField",
-                                        name: { kind: "Name", value: "Limit" },
+                                        name: { kind: "Name", value: "limit" },
                                         value: {
                                           kind: "IntValue",
                                           value: "500",
@@ -24040,13 +24622,18 @@ export const TorrentByInfoHashWithFilesDocument = {
                                 selections: [
                                   {
                                     kind: "Field",
-                                    name: { kind: "Name", value: "Edges" },
+                                    alias: { kind: "Name", value: "Edges" },
+                                    name: { kind: "Name", value: "edges" },
                                     selectionSet: {
                                       kind: "SelectionSet",
                                       selections: [
                                         {
                                           kind: "Field",
-                                          name: { kind: "Name", value: "Node" },
+                                          alias: {
+                                            kind: "Name",
+                                            value: "Node",
+                                          },
+                                          name: { kind: "Name", value: "node" },
                                           selectionSet: {
                                             kind: "SelectionSet",
                                             selections: [
@@ -24144,11 +24731,12 @@ export const PendingFileMatchesBySourceDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "PendingFileMatches" },
+            alias: { kind: "Name", value: "PendingFileMatches" },
+            name: { kind: "Name", value: "pendingFileMatches" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Where" },
+                name: { kind: "Name", value: "where" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Where" },
@@ -24156,7 +24744,7 @@ export const PendingFileMatchesBySourceDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -24168,13 +24756,15 @@ export const PendingFileMatchesBySourceDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -24664,11 +25254,12 @@ export const LinkTorrentToLibraryDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UpdateTorrent" },
+            alias: { kind: "Name", value: "UpdateTorrent" },
+            name: { kind: "Name", value: "updateTorrent" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -24676,7 +25267,7 @@ export const LinkTorrentToLibraryDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -24686,11 +25277,20 @@ export const LinkTorrentToLibraryDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Torrent" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Torrent" },
+                  name: { kind: "Name", value: "torrent" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -24774,11 +25374,12 @@ export const CreateUnmatchedMediaFileFromTorrentDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "CreateMediaFile" },
+            alias: { kind: "Name", value: "CreateMediaFile" },
+            name: { kind: "Name", value: "createMediaFile" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -24788,11 +25389,20 @@ export const CreateUnmatchedMediaFileFromTorrentDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "MediaFile" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "MediaFile" },
+                  name: { kind: "Name", value: "mediaFile" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -24930,11 +25540,12 @@ export const SettingsUsenetServersDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UsenetServers" },
+            alias: { kind: "Name", value: "UsenetServers" },
+            name: { kind: "Name", value: "usenetServers" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "OrderBy" },
+                name: { kind: "Name", value: "orderBy" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "OrderBy" },
@@ -24942,7 +25553,7 @@ export const SettingsUsenetServersDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Page" },
+                name: { kind: "Name", value: "page" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Page" },
@@ -24954,13 +25565,15 @@ export const SettingsUsenetServersDocument = {
               selections: [
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "Edges" },
+                  alias: { kind: "Name", value: "Edges" },
+                  name: { kind: "Name", value: "edges" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
                       {
                         kind: "Field",
-                        name: { kind: "Name", value: "Node" },
+                        alias: { kind: "Name", value: "Node" },
+                        name: { kind: "Name", value: "node" },
                         selectionSet: {
                           kind: "SelectionSet",
                           selections: [
@@ -25072,11 +25685,12 @@ export const SettingsUpdateUsenetServerDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "UpdateUsenetServer" },
+            alias: { kind: "Name", value: "UpdateUsenetServer" },
+            name: { kind: "Name", value: "updateUsenetServer" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -25084,7 +25698,7 @@ export const SettingsUpdateUsenetServerDocument = {
               },
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -25094,11 +25708,20 @@ export const SettingsUpdateUsenetServerDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "UsenetServer" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "UsenetServer" },
+                  name: { kind: "Name", value: "usenetServer" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -25153,11 +25776,12 @@ export const SettingsCreateUsenetServerDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "CreateUsenetServer" },
+            alias: { kind: "Name", value: "CreateUsenetServer" },
+            name: { kind: "Name", value: "createUsenetServer" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Input" },
+                name: { kind: "Name", value: "input" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Input" },
@@ -25167,11 +25791,20 @@ export const SettingsCreateUsenetServerDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
                 {
                   kind: "Field",
-                  name: { kind: "Name", value: "UsenetServer" },
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "UsenetServer" },
+                  name: { kind: "Name", value: "usenetServer" },
                   selectionSet: {
                     kind: "SelectionSet",
                     selections: [
@@ -25254,11 +25887,12 @@ export const SettingsDeleteUsenetServerDocument = {
         selections: [
           {
             kind: "Field",
-            name: { kind: "Name", value: "DeleteUsenetServer" },
+            alias: { kind: "Name", value: "DeleteUsenetServer" },
+            name: { kind: "Name", value: "deleteUsenetServer" },
             arguments: [
               {
                 kind: "Argument",
-                name: { kind: "Name", value: "Id" },
+                name: { kind: "Name", value: "id" },
                 value: {
                   kind: "Variable",
                   name: { kind: "Name", value: "Id" },
@@ -25268,8 +25902,16 @@ export const SettingsDeleteUsenetServerDocument = {
             selectionSet: {
               kind: "SelectionSet",
               selections: [
-                { kind: "Field", name: { kind: "Name", value: "Success" } },
-                { kind: "Field", name: { kind: "Name", value: "Error" } },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Success" },
+                  name: { kind: "Name", value: "success" },
+                },
+                {
+                  kind: "Field",
+                  alias: { kind: "Name", value: "Error" },
+                  name: { kind: "Name", value: "error" },
+                },
               ],
             },
           },

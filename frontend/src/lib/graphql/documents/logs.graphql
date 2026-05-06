@@ -1,10 +1,11 @@
-# Logs: AppLogs query and AppLogChanged subscription
-# Used by codegen for TypedDocumentNode and types
-
-query AppLogs($Where: AppLogWhereInput, $OrderBy: [AppLogOrderByInput!], $Page: PageInput) {
-  AppLogs(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
-    Edges {
-      Node {
+query AppLogs(
+  $Where: AppLogWhereInput
+  $OrderBy: [AppLogOrderByInput!]
+  $Page: PageInput
+) {
+  AppLogs: appLogs(where: $Where, orderBy: $OrderBy, page: $Page) {
+    Edges: edges {
+      Node: node {
         Id
         Timestamp
         Level
@@ -13,20 +14,20 @@ query AppLogs($Where: AppLogWhereInput, $OrderBy: [AppLogOrderByInput!], $Page: 
         Fields
         SpanName
       }
-      Cursor
+      Cursor: cursor
     }
-    PageInfo {
-      HasNextPage
-      TotalCount
+    PageInfo: pageInfo {
+      HasNextPage: hasNextPage
+      TotalCount: totalCount
     }
   }
 }
 
 subscription AppLogChanged($Filter: SubscriptionFilterInput) {
-  AppLogChanged(Filter: $Filter) {
-    Action
-    Id
-    AppLog {
+  AppLogChanged: appLogChanged(filter: $Filter) {
+    Action: action
+    Id: id
+    AppLog: appLog {
       Id
       Timestamp
       Level
@@ -39,9 +40,9 @@ subscription AppLogChanged($Filter: SubscriptionFilterInput) {
 }
 
 mutation DeleteAppLogs($Where: AppLogWhereInput!) {
-  DeleteAppLogs(Where: $Where) {
+  DeleteAppLogs: deleteAppLogs(where: $Where) {
     success
     error
-    DeletedCount
+    DeletedCount: deletedCount
   }
 }

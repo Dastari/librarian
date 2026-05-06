@@ -1,5 +1,5 @@
 query LibraryDetailRoute($Id: String!) {
-  Library(Id: $Id) {
+  Library: library(id: $Id) {
     Id
     Name
     Path
@@ -14,18 +14,18 @@ query LibraryDetailRoute($Id: String!) {
 }
 
 mutation UpdateLibraryRoute($Id: String!, $Input: UpdateLibraryInput!) {
-  UpdateLibrary(Id: $Id, Input: $Input) {
-    Success
-    Error
-    Library {
+  UpdateLibrary: updateLibrary(id: $Id, input: $Input) {
+    Success: success
+    Error: error
+    Library: library {
       Id
     }
   }
 }
 
 mutation DeleteShowRoute($Id: String!) {
-  DeleteShow(Id: $Id) {
-    Success
-    Error
+  DeleteShow: deleteShow(id: $Id) {
+    Success: success
+    Error: error
   }
 }

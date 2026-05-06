@@ -184,12 +184,12 @@ function LibrariesPage() {
         if (!event) return;
 
         switch (event.Action) {
-          case ChangeAction.Created:
-          case ChangeAction.Updated:
+          case ChangeAction.CREATED:
+          case ChangeAction.UPDATED:
             // Refetch to get updated counts
             refetch();
             break;
-          case ChangeAction.Deleted:
+          case ChangeAction.DELETED:
             // Apollo will automatically update the cache
             refetch();
             break;
@@ -213,7 +213,7 @@ function LibrariesPage() {
     {
       variables: {
         Filter: {
-          Actions: [ChangeAction.Created, ChangeAction.Updated, ChangeAction.Deleted],
+          actions: [ChangeAction.CREATED, ChangeAction.UPDATED, ChangeAction.DELETED],
         },
       },
       onData: ({ data }) => {
@@ -229,7 +229,7 @@ function LibrariesPage() {
     {
       variables: {
         Filter: {
-          Actions: [ChangeAction.Created, ChangeAction.Updated, ChangeAction.Deleted],
+          actions: [ChangeAction.CREATED, ChangeAction.UPDATED, ChangeAction.DELETED],
         },
       },
       onData: ({ data }) => {

@@ -1,7 +1,10 @@
 query PlaybackSyncInterval($Key: String!) {
-  AppSettings(Where: { Key: { Eq: $Key } }, Page: { Limit: 1, Offset: 0 }) {
-    Edges {
-      Node {
+  AppSettings: appSettings(
+    where: { Key: { eq: $Key } }
+    page: { limit: 1, offset: 0 }
+  ) {
+    Edges: edges {
+      Node: node {
         Id
         Key
         Value
@@ -11,12 +14,12 @@ query PlaybackSyncInterval($Key: String!) {
 }
 
 query TorrentAppSettings {
-  AppSettings(
-    Where: { Category: { Eq: "torrent" } }
-    Page: { Limit: 20, Offset: 0 }
+  AppSettings: appSettings(
+    where: { Category: { eq: "torrent" } }
+    page: { limit: 20, offset: 0 }
   ) {
-    Edges {
-      Node {
+    Edges: edges {
+      Node: node {
         Id
         Key
         Value
@@ -26,12 +29,12 @@ query TorrentAppSettings {
 }
 
 query MetadataAppSettings {
-  AppSettings(
-    Where: { Category: { Eq: "metadata" } }
-    Page: { Limit: 50, Offset: 0 }
+  AppSettings: appSettings(
+    where: { Category: { eq: "metadata" } }
+    page: { limit: 50, offset: 0 }
   ) {
-    Edges {
-      Node {
+    Edges: edges {
+      Node: node {
         Id
         Key
         Value
@@ -41,12 +44,12 @@ query MetadataAppSettings {
 }
 
 query LlmAppSettings {
-  AppSettings(
-    Where: { Category: { Eq: "llm" } }
-    Page: { Limit: 100, Offset: 0 }
+  AppSettings: appSettings(
+    where: { Category: { eq: "llm" } }
+    page: { limit: 100, offset: 0 }
   ) {
-    Edges {
-      Node {
+    Edges: edges {
+      Node: node {
         Id
         Key
         Value
@@ -56,10 +59,10 @@ query LlmAppSettings {
 }
 
 mutation CreateAppSetting($Input: CreateAppSettingInput!) {
-  CreateAppSetting(Input: $Input) {
-    Success
-    Error
-    AppSetting {
+  CreateAppSetting: createAppSetting(input: $Input) {
+    Success: success
+    Error: error
+    AppSetting: appSetting {
       Id
       Key
       Value
@@ -68,10 +71,10 @@ mutation CreateAppSetting($Input: CreateAppSettingInput!) {
 }
 
 mutation UpdateAppSetting($Id: String!, $Input: UpdateAppSettingInput!) {
-  UpdateAppSetting(Id: $Id, Input: $Input) {
-    Success
-    Error
-    AppSetting {
+  UpdateAppSetting: updateAppSetting(id: $Id, input: $Input) {
+    Success: success
+    Error: error
+    AppSetting: appSetting {
       Id
       Key
       Value

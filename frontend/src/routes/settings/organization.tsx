@@ -363,8 +363,8 @@ function OrganizationSettingsPage() {
           query: OrganizationNamingPatternsDocument,
           fetchPolicy: "network-only",
           variables: {
-            OrderBy: [{ Name: "Asc" }],
-            Page: { Limit: 200, Offset: 0 },
+            OrderBy: [{ Name: "ASC" }],
+            Page: { limit: 200, offset: 0 },
           },
         });
 

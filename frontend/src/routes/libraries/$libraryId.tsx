@@ -176,7 +176,7 @@ function LibraryDetailLayout() {
     ShowChangedSubscriptionVariables
   >(ShowChangedDocument, {
     skip: !library,
-    variables: { Filter: { Actions: ["Created", "Updated", "Deleted"] } },
+    variables: { Filter: { actions: ["CREATED", "UPDATED", "DELETED"] } },
   });
 
   // Determine active tab from URL
@@ -307,7 +307,7 @@ function LibraryDetailLayout() {
       }
 
       addToast({
-        title: "Deleted",
+        title: "DELETED",
         description: `"${showToDelete.name}" removed from library`,
         color: "success",
       });

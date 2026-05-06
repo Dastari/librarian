@@ -1,10 +1,10 @@
 query LibraryAlbumsTab($LibraryId: String!) {
-  Albums(
-    Where: { LibraryId: { Eq: $LibraryId } }
-    Page: { Limit: 5000, Offset: 0 }
+  Albums: albums(
+    where: { LibraryId: { eq: $LibraryId } }
+    page: { limit: 5000, offset: 0 }
   ) {
-    Edges {
-      Node {
+    Edges: edges {
+      Node: node {
         Id
         ArtistId
         LibraryId
@@ -30,12 +30,12 @@ query LibraryAlbumsTab($LibraryId: String!) {
 }
 
 query LibraryArtistsTab($LibraryId: String!) {
-  Artists(
-    Where: { LibraryId: { Eq: $LibraryId } }
-    Page: { Limit: 5000, Offset: 0 }
+  Artists: artists(
+    where: { LibraryId: { eq: $LibraryId } }
+    page: { limit: 5000, offset: 0 }
   ) {
-    Edges {
-      Node {
+    Edges: edges {
+      Node: node {
         Id
         LibraryId
         Name
@@ -47,12 +47,12 @@ query LibraryArtistsTab($LibraryId: String!) {
 }
 
 query LibraryAudiobooksTab($LibraryId: String!) {
-  Audiobooks(
-    Where: { LibraryId: { Eq: $LibraryId } }
-    Page: { Limit: 5000, Offset: 0 }
+  Audiobooks: audiobooks(
+    where: { LibraryId: { eq: $LibraryId } }
+    page: { limit: 5000, offset: 0 }
   ) {
-    Edges {
-      Node {
+    Edges: edges {
+      Node: node {
         Id
         LibraryId
         Title
@@ -75,19 +75,19 @@ query LibraryAudiobooksTab($LibraryId: String!) {
 }
 
 query LibraryUnmatchedMediaFilesTab($LibraryId: String!) {
-  MediaFiles(
-    Where: {
-      LibraryId: { Eq: $LibraryId }
-      EpisodeId: { IsNull: true }
-      MovieId: { IsNull: true }
-      TrackId: { IsNull: true }
-      ChapterId: { IsNull: true }
+  MediaFiles: mediaFiles(
+    where: {
+      LibraryId: { eq: $LibraryId }
+      EpisodeId: { isNull: true }
+      MovieId: { isNull: true }
+      TrackId: { isNull: true }
+      ChapterId: { isNull: true }
     }
-    OrderBy: [{ AddedAt: Desc }]
-    Page: { Limit: 2000, Offset: 0 }
+    orderBy: [{ AddedAt: DESC }]
+    page: { limit: 2000, offset: 0 }
   ) {
-    Edges {
-      Node {
+    Edges: edges {
+      Node: node {
         Id
         LibraryId
         Path

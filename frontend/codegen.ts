@@ -22,7 +22,7 @@ const config: CodegenConfig = {
       config: {
         documentNodeImport: "@apollo/client#TypedDocumentNode",
         namingConvention: {
-          typeNames: "pascal-case#pascalCase",
+          typeNames: "keep",
           enumValues: "keep",
         },
         skipTypename: true,
@@ -42,7 +42,7 @@ const config: CodegenConfig = {
       plugins: ["typescript", "typescript-operations"],
       config: {
         namingConvention: {
-          typeNames: "pascal-case#pascalCase",
+          typeNames: "keep",
           enumValues: "keep",
         },
         onlyOperationTypes: false,

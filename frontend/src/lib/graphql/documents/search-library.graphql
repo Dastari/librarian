@@ -1,7 +1,7 @@
 query LibrarySearchShows {
-  Shows {
-    Edges {
-      Node {
+  Shows: shows {
+    Edges: edges {
+      Node: node {
         Id
         LibraryId
         Name
@@ -13,15 +13,15 @@ query LibrarySearchShows {
 }
 
 query LibrarySearchMovies {
-  Movies {
-    Edges {
-      Node {
+  Movies: movies {
+    Edges: edges {
+      Node: node {
         Id
         LibraryId
         Title
         Year
-        PosterUrl
-        Status
+        MediaFileId
+        Wanted
       }
     }
   }

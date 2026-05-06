@@ -1,6 +1,3 @@
-# Filesystem: directory browsing (FolderBrowserInput, LibraryFileBrowserTab, etc.)
-# PascalCase to match backend schema
-
 query BrowseDirectory($Input: BrowseDirectoryInput) {
   BrowseDirectory(Input: $Input) {
     CurrentPath

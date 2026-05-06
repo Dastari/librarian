@@ -275,11 +275,11 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         query: PlaybackProgressByMediaFileContextDocument,
         variables: {
           Where: {
-            UserId: { Eq: userId },
-            MediaFileId: { Eq: mediaFileId },
+            UserId: { eq: userId },
+            MediaFileId: { eq: mediaFileId },
           },
-          Page: { Limit: 1, Offset: 0 },
-          OrderBy: [{ UpdatedAt: "Desc" }],
+          Page: { limit: 1, offset: 0 },
+          OrderBy: [{ UpdatedAt: "DESC" }],
         },
         fetchPolicy: "network-only",
       });
@@ -403,9 +403,9 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
       const result = await apolloClient.query({
         query: PlaybackSessionsDocument,
         variables: {
-          Where: { UserId: { Eq: userId } },
-          OrderBy: [{ LastUpdatedAt: "Desc" }],
-          Page: { Limit: 1, Offset: 0 },
+          Where: { UserId: { eq: userId } },
+          OrderBy: [{ LastUpdatedAt: "DESC" }],
+          Page: { limit: 1, offset: 0 },
         },
         fetchPolicy: "network-only",
       });
@@ -422,19 +422,11 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         ) {
           try {
             const toTrackStatus = (
-              status: string,
+              mediaFileId: string | null | undefined,
+              wanted: boolean,
             ): import("../lib/graphql").TrackStatus => {
-              const normalized = status.toLowerCase();
-              if (
-                normalized === "available" ||
-                normalized === "playing" ||
-                normalized === "paused"
-              )
-                return "downloaded";
-              if (normalized === "downloaded") return "downloaded";
-              if (normalized === "downloading") return "downloading";
-              if (normalized === "wanted") return "wanted";
-              return "missing";
+              if (mediaFileId) return "downloaded";
+              return wanted ? "wanted" : "missing";
             };
 
             const albumResult = await apolloClient.query({
@@ -485,7 +477,10 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
                     artistId: edge.Node.ArtistId ?? null,
                     mediaFileId: edge.Node.MediaFileId ?? null,
                     hasFile: Boolean(edge.Node.MediaFileId),
-                    status: toTrackStatus(edge.Node.Status),
+                    status: toTrackStatus(
+                      edge.Node.MediaFileId,
+                      edge.Node.Wanted,
+                    ),
                     downloadProgress: null,
                   },
                   hasFile: Boolean(edge.Node.MediaFileId),
@@ -538,18 +533,11 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
         } else if (session.contentType === "AUDIOBOOK" && session.audiobookId) {
           try {
             const toChapterStatus = (
-              status: string,
+              mediaFileId: string | null | undefined,
+              wanted: boolean,
             ): import("../lib/graphql").ChapterStatus => {
-              const normalized = status.toLowerCase();
-              if (
-                normalized === "available" ||
-                normalized === "playing" ||
-                normalized === "paused"
-              )
-                return "downloaded";
-              if (normalized === "downloading") return "downloading";
-              if (normalized === "wanted") return "wanted";
-              return "missing";
+              if (mediaFileId) return "downloaded";
+              return wanted ? "wanted" : "missing";
             };
             const audiobookResult = await apolloClient.query({
               query: AudiobookDetailRouteDocument,
@@ -595,7 +583,10 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
                       : 0,
                   durationSecs: edge.Node.DurationSecs ?? null,
                   mediaFileId: edge.Node.MediaFileId ?? null,
-                  status: toChapterStatus(edge.Node.Status),
+                  status: toChapterStatus(
+                    edge.Node.MediaFileId,
+                    edge.Node.Wanted,
+                  ),
                   downloadProgress: null,
                 }),
               );
@@ -927,8 +918,8 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
             contentType: "MOVIE",
             title: movie.Title,
             subtitle: movie.Year != null ? `${movie.Year}` : undefined,
-            posterUrl: movie.PosterUrl ?? undefined,
-            backdropUrl: movie.BackdropUrl ?? undefined,
+            posterUrl: movie.CollectionPosterUrl ?? undefined,
+            backdropUrl: undefined,
           }
         : undefined;
 

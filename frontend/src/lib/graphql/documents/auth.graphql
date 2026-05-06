@@ -1,6 +1,3 @@
-# Auth operations: login, register, logout, refresh, NeedsSetup, Me
-# Used by codegen to generate TypedDocumentNode and types
-
 query NeedsSetup {
   NeedsSetup
 }
@@ -20,17 +17,17 @@ mutation Login($input: LoginInput!) {
     Success
     Error
     User {
-      Id
-      Email
-      Username
-      Role
-      DisplayName
+      Id: id
+      Email: email
+      Username: username
+      Role: role
+      DisplayName: displayName
     }
     Tokens {
-      AccessToken
-      RefreshToken
-      ExpiresIn
-      TokenType
+      AccessToken: accessToken
+      RefreshToken: refreshToken
+      ExpiresIn: expiresIn
+      TokenType: tokenType
     }
   }
 }
@@ -40,17 +37,17 @@ mutation Register($input: RegisterUserInput!) {
     Success
     Error
     User {
-      Id
-      Email
-      Username
-      Role
-      DisplayName
+      Id: id
+      Email: email
+      Username: username
+      Role: role
+      DisplayName: displayName
     }
     Tokens {
-      AccessToken
-      RefreshToken
-      ExpiresIn
-      TokenType
+      AccessToken: accessToken
+      RefreshToken: refreshToken
+      ExpiresIn: expiresIn
+      TokenType: tokenType
     }
   }
 }
@@ -60,10 +57,10 @@ mutation RefreshToken($input: RefreshTokenInput!) {
     Success
     Error
     Tokens {
-      AccessToken
-      RefreshToken
-      ExpiresIn
-      TokenType
+      AccessToken: accessToken
+      RefreshToken: refreshToken
+      ExpiresIn: expiresIn
+      TokenType: tokenType
     }
   }
 }

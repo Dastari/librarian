@@ -19,7 +19,7 @@ import {
   NotificationChangedDocument,
   UpdateNotificationDocument,
   DeleteNotificationDocument,
-  SortDirection,
+  OrderDirection,
   type NotificationsQuery,
   type UpdateNotificationMutation,
   type UpdateNotificationMutationVariables,
@@ -75,7 +75,8 @@ interface NotificationItem {
   createdAt: string;
 }
 
-type NotificationNode = NotificationsQuery["Notifications"]["Edges"][number]["Node"];
+type NotificationNode =
+  NotificationsQuery["Notifications"]["Edges"][number]["Node"];
 
 function nodeToNotification(node: NotificationNode): NotificationItem {
   let actionData: Record<string, unknown> | null = null;
@@ -106,12 +107,12 @@ function nodeToNotification(node: NotificationNode): NotificationItem {
   };
 }
 
-const UNREAD_WHERE = { ReadAt: { IsNull: true } } as const;
+const UNREAD_WHERE = { ReadAt: { isNull: true } } as const;
 const ACTION_REQUIRED_WHERE = {
-  NotificationType: { Eq: "ACTION_REQUIRED" },
-  ResolvedAt: { IsNull: true },
+  NotificationType: { eq: "ACTION_REQUIRED" },
+  ResolvedAt: { isNull: true },
 } as const;
-const ORDER_BY_RECENT = [{ CreatedAt: SortDirection.Desc }];
+const ORDER_BY_RECENT = [{ CreatedAt: OrderDirection.DESC }];
 const NOTIFICATIONS_PAGE_SIZE = 50;
 const BATCH_PAGE_SIZE = 100;
 
@@ -207,7 +208,7 @@ function NotificationsPage() {
     variables: {
       Where: notificationsFilter,
       OrderBy: ORDER_BY_RECENT,
-      Page: { Limit: NOTIFICATIONS_PAGE_SIZE, Offset: 0 },
+      Page: { limit: NOTIFICATIONS_PAGE_SIZE, offset: 0 },
     },
     fetchPolicy: "cache-and-network",
   });
@@ -248,7 +249,9 @@ function NotificationsPage() {
     void notificationsQuery.refetch();
   }, [notificationsQuery]);
 
-  const fetchAllUnreadNotificationIds = useCallback(async (): Promise<string[]> => {
+  const fetchAllUnreadNotificationIds = useCallback(async (): Promise<
+    string[]
+  > => {
     const ids: string[] = [];
     let offset = 0;
 
@@ -258,7 +261,7 @@ function NotificationsPage() {
         variables: {
           Where: UNREAD_WHERE,
           OrderBy: ORDER_BY_RECENT,
-          Page: { Limit: BATCH_PAGE_SIZE, Offset: offset },
+          Page: { limit: BATCH_PAGE_SIZE, offset: offset },
         },
         fetchPolicy: "network-only",
       });
@@ -290,7 +293,9 @@ function NotificationsPage() {
       });
 
       if (!result.data?.UpdateNotification.Success) {
-        throw new Error(result.data?.UpdateNotification.Error ?? "Mutation failed");
+        throw new Error(
+          result.data?.UpdateNotification.Error ?? "Mutation failed",
+        );
       }
 
       fetchNotifications();
@@ -317,7 +322,9 @@ function NotificationsPage() {
           variables: { Id: id, Input: { ReadAt: now } },
         });
         if (!result.data?.UpdateNotification.Success) {
-          throw new Error(result.data?.UpdateNotification.Error ?? "Mutation failed");
+          throw new Error(
+            result.data?.UpdateNotification.Error ?? "Mutation failed",
+          );
         }
       }
 
@@ -354,7 +361,9 @@ function NotificationsPage() {
       });
 
       if (!result.data?.UpdateNotification.Success) {
-        throw new Error(result.data?.UpdateNotification.Error ?? "Mutation failed");
+        throw new Error(
+          result.data?.UpdateNotification.Error ?? "Mutation failed",
+        );
       }
 
       fetchNotifications();
@@ -379,7 +388,9 @@ function NotificationsPage() {
     try {
       const result = await deleteNotification({ variables: { Id: id } });
       if (!result.data?.DeleteNotification.Success) {
-        throw new Error(result.data?.DeleteNotification.Error ?? "Mutation failed");
+        throw new Error(
+          result.data?.DeleteNotification.Error ?? "Mutation failed",
+        );
       }
       fetchNotifications();
 
@@ -422,7 +433,7 @@ function NotificationsPage() {
 
     addToast({
       title: "Deleted",
-      description: `Deleted ${deletedCount} notification${deletedCount !== 1 ? 's' : ''}`,
+      description: `Deleted ${deletedCount} notification${deletedCount !== 1 ? "s" : ""}`,
       color: "success",
     });
   };
@@ -452,8 +463,13 @@ function NotificationsPage() {
       key: "select",
       label: (
         <Checkbox
-          isSelected={selectedIds.size === notifications.length && notifications.length > 0}
-          isIndeterminate={selectedIds.size > 0 && selectedIds.size < notifications.length}
+          isSelected={
+            selectedIds.size === notifications.length &&
+            notifications.length > 0
+          }
+          isIndeterminate={
+            selectedIds.size > 0 && selectedIds.size < notifications.length
+          }
           onValueChange={handleSelectAll}
           aria-label="Select all"
         />
@@ -567,14 +583,16 @@ function NotificationsPage() {
     {
       key: "markRead",
       label: "Mark as Read",
-      onAction: (notification: NotificationItem) => handleMarkRead(notification.id),
+      onAction: (notification: NotificationItem) =>
+        handleMarkRead(notification.id),
       isDisabled: (notification: NotificationItem) => !!notification.readAt,
     },
     {
       key: "delete",
       label: "Delete",
       color: "danger",
-      onAction: (notification: NotificationItem) => handleDelete(notification.id),
+      onAction: (notification: NotificationItem) =>
+        handleDelete(notification.id),
     },
   ];
 

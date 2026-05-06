@@ -1,5 +1,3 @@
-# Movies: search and add
-
 query SearchMovies($Query: String!, $Year: Int) {
   SearchMovies(Query: $Query, Year: $Year) {
     Provider
@@ -38,8 +36,6 @@ mutation AddMovie($LibraryId: String!, $Input: AddMovieInput!) {
       TmdbId
       ImdbId
       Overview
-      PosterUrl
-      BackdropUrl
       Monitored
       MediaFileId
     }
@@ -47,7 +43,10 @@ mutation AddMovie($LibraryId: String!, $Input: AddMovieInput!) {
   }
 }
 
-mutation AddMovieCollection($LibraryId: String!, $Input: AddMovieCollectionInput!) {
+mutation AddMovieCollection(
+  $LibraryId: String!
+  $Input: AddMovieCollectionInput!
+) {
   AddMovieCollection(LibraryId: $LibraryId, Input: $Input) {
     Success
     CollectionId
@@ -60,17 +59,17 @@ mutation AddMovieCollection($LibraryId: String!, $Input: AddMovieCollectionInput
 }
 
 subscription MovieChanged($Filter: SubscriptionFilterInput) {
-  MovieChanged(Filter: $Filter) {
-    Action
-    Id
-    Movie {
+  MovieChanged: movieChanged(filter: $Filter) {
+    Action: action
+    Id: id
+    Movie: movie {
       LibraryId
     }
   }
 }
 
 query MovieDetailRoute($Id: String!) {
-  Movie(Id: $Id) {
+  Movie: movie(id: $Id) {
     Id
     LibraryId
     Title
@@ -79,20 +78,18 @@ query MovieDetailRoute($Id: String!) {
     Year
     TmdbId
     ImdbId
-    Status
     Overview
     Tagline
     Runtime
     Genres
     Director
     CastNames
-    PosterUrl
-    BackdropUrl
     Monitored
     MediaFileId
     CollectionId
     CollectionName
     CollectionPosterUrl
+    PosterUrl: CollectionPosterUrl
     TmdbRating
     TmdbVoteCount
     Certification
@@ -100,7 +97,7 @@ query MovieDetailRoute($Id: String!) {
     ProductionCountries
     SpokenLanguages
     Wanted
-    MediaFile {
+    MediaFile: mediaFile {
       Id
       Size
       Duration
@@ -109,10 +106,10 @@ query MovieDetailRoute($Id: String!) {
 }
 
 mutation MovieDetailSetWanted($Id: String!, $Wanted: Boolean!) {
-  UpdateMovie(Id: $Id, Input: { Wanted: $Wanted }) {
-    Success
-    Error
-    Movie {
+  UpdateMovie: updateMovie(id: $Id, input: { Wanted: $Wanted }) {
+    Success: success
+    Error: error
+    Movie: movie {
       Id
       Wanted
     }
@@ -128,8 +125,6 @@ mutation RefreshMovieRoute($Id: String!) {
       Title
       Overview
       Tagline
-      PosterUrl
-      BackdropUrl
       TmdbRating
       TmdbVoteCount
     }
@@ -137,8 +132,8 @@ mutation RefreshMovieRoute($Id: String!) {
 }
 
 mutation DeleteMovieModal($Id: String!) {
-  DeleteMovie(Id: $Id) {
-    Success
-    Error
+  DeleteMovie: deleteMovie(id: $Id) {
+    Success: success
+    Error: error
   }
 }

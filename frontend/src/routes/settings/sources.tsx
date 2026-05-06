@@ -30,7 +30,10 @@ import {
   IconAlertTriangle,
 } from "@tabler/icons-react";
 import { DataTable } from "../../components/data-table/DataTable";
-import type { DataTableColumn, RowAction } from "../../components/data-table/types";
+import type {
+  DataTableColumn,
+  RowAction,
+} from "../../components/data-table/types";
 
 import {
   SourcesDocument,
@@ -125,7 +128,7 @@ function SourcesSettingsPage() {
   const { data, loading, previousData, refetch } = useQuery<SourcesQuery>(
     SourcesDocument,
     {
-      variables: { OrderBy: [{ Priority: "Asc" }] },
+      variables: { OrderBy: [{ Priority: "ASC" }] },
       fetchPolicy: "cache-and-network",
     },
   );
@@ -297,7 +300,9 @@ function SourcesSettingsPage() {
         render: ({ source }) => (
           <div className="flex flex-col">
             <span className="font-medium">{source.Name}</span>
-            <span className="text-xs text-default-400">{source.DefinitionId}</span>
+            <span className="text-xs text-default-400">
+              {source.DefinitionId}
+            </span>
           </div>
         ),
       },
@@ -327,7 +332,11 @@ function SourcesSettingsPage() {
           <div className="flex items-center gap-2">
             <StatusChip source={source} />
             {testResult?.id === source.Id ? (
-              <Chip size="sm" variant="flat" color={testResult.success ? "success" : "danger"}>
+              <Chip
+                size="sm"
+                variant="flat"
+                color={testResult.success ? "success" : "danger"}
+              >
                 {testResult.message}
               </Chip>
             ) : null}
@@ -615,7 +624,7 @@ function AddSourceModal({
           SupportsMovieSearch: true,
           SupportsMusicSearch: true,
           SupportsBookSearch: true,
-          Credentials:
+          credentials:
             Object.keys(credMap).length > 0 ? JSON.stringify(credMap) : "",
           Settings:
             Object.keys(settingsMap).length > 0
@@ -1177,7 +1186,7 @@ function SearchSourcesModal({
           variables: {
             Input: {
               Magnet: isMagnet ? magnetUri : undefined,
-              Url: !isMagnet ? (magnetUri || torrentUrl) : undefined,
+              Url: !isMagnet ? magnetUri || torrentUrl : undefined,
             },
           },
         });
@@ -1358,9 +1367,7 @@ function SearchSourcesModal({
               data={searchResults}
               isLoading={searching}
               columns={columns}
-              getRowKey={(release) =>
-                getReleaseKey(release)
-              }
+              getRowKey={(release) => getReleaseKey(release)}
               defaultSortColumn="Seeders"
               defaultSortDirection="desc"
               searchPlaceholder="Filter results..."

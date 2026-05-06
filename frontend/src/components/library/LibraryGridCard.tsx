@@ -65,7 +65,7 @@ export function LibraryGridCard({
   const recentArtworkUrls = useMemo(() => {
     if (library.LibraryType === "MOVIES") {
       return (library.MovieArtwork?.Edges ?? [])
-        .map((edge) => edge.Node.PosterUrl)
+        .map((edge) => edge.Node.CollectionPosterUrl)
         .filter((url): url is string => Boolean(url));
     }
 

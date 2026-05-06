@@ -1,5 +1,5 @@
 query AlbumDetailRoute($Id: String!) {
-  Album(Id: $Id) {
+  Album: album(id: $Id) {
     Id
     ArtistId
     LibraryId
@@ -20,13 +20,13 @@ query AlbumDetailRoute($Id: String!) {
     SizeBytes
     Path
   }
-  Tracks(
-    Where: { AlbumId: { Eq: $Id } }
-    Page: { Limit: 5000, Offset: 0 }
-    OrderBy: [{ DiscNumber: Asc }, { TrackNumber: Asc }]
+  Tracks: tracks(
+    where: { AlbumId: { eq: $Id } }
+    page: { limit: 5000, offset: 0 }
+    orderBy: [{ DiscNumber: ASC }, { TrackNumber: ASC }]
   ) {
-    Edges {
-      Node {
+    Edges: edges {
+      Node: node {
         Id
         AlbumId
         LibraryId
@@ -40,7 +40,6 @@ query AlbumDetailRoute($Id: String!) {
         ArtistName
         ArtistId
         MediaFileId
-        Status
         Wanted
       }
     }
@@ -48,14 +47,17 @@ query AlbumDetailRoute($Id: String!) {
 }
 
 mutation DeleteAlbumRoute($Id: String!) {
-  DeleteAlbum(Id: $Id) {
-    Success
-    Error
+  DeleteAlbum: deleteAlbum(id: $Id) {
+    Success: success
+    Error: error
   }
 }
 
 mutation AlbumDetailSetTrackWanted($AlbumId: String!, $Wanted: Boolean!) {
-  UpdateTracks(Where: { AlbumId: { Eq: $AlbumId } }, Input: { Wanted: $Wanted }) {
+  UpdateTracks: updateTracks(
+    where: { AlbumId: { eq: $AlbumId } }
+    input: { Wanted: $Wanted }
+  ) {
     success
     error
     affectedCount
@@ -63,7 +65,7 @@ mutation AlbumDetailSetTrackWanted($AlbumId: String!, $Wanted: Boolean!) {
 }
 
 query AudiobookDetailRoute($Id: String!) {
-  Audiobook(Id: $Id) {
+  Audiobook: audiobook(id: $Id) {
     Id
     LibraryId
     Title
@@ -78,9 +80,9 @@ query AudiobookDetailRoute($Id: String!) {
     HasFiles
     SizeBytes
     Path
-    Chapters(Page: { Limit: 5000, Offset: 0 }) {
-      Edges {
-        Node {
+    Chapters: chapters(page: { limit: 5000, offset: 0 }) {
+      Edges: edges {
+        Node: node {
           Id
           AudiobookId
           ChapterNumber
@@ -89,7 +91,6 @@ query AudiobookDetailRoute($Id: String!) {
           EndTimeSecs
           DurationSecs
           MediaFileId
-          Status
           Wanted
         }
       }
@@ -98,16 +99,19 @@ query AudiobookDetailRoute($Id: String!) {
 }
 
 mutation DeleteAudiobookRoute($Id: String!) {
-  DeleteAudiobook(Id: $Id) {
-    Success
-    Error
+  DeleteAudiobook: deleteAudiobook(id: $Id) {
+    Success: success
+    Error: error
   }
 }
 
-mutation AudiobookDetailSetChapterWanted($AudiobookId: String!, $Wanted: Boolean!) {
-  UpdateChapters(
-    Where: { AudiobookId: { Eq: $AudiobookId } }
-    Input: { Wanted: $Wanted }
+mutation AudiobookDetailSetChapterWanted(
+  $AudiobookId: String!
+  $Wanted: Boolean!
+) {
+  UpdateChapters: updateChapters(
+    where: { AudiobookId: { eq: $AudiobookId } }
+    input: { Wanted: $Wanted }
   ) {
     success
     error

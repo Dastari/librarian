@@ -57,10 +57,10 @@ export function MovieCard({
 
         {/* Background artwork with gradient overlay */}
         <div className="absolute inset-0 w-full h-full">
-          {movie.PosterUrl ? (
+          {movie.CollectionPosterUrl ? (
             <>
               <Image
-                src={movie.PosterUrl}
+                src={movie.CollectionPosterUrl}
                 alt={movie.Title}
                 loading="lazy"
                 classNames={{

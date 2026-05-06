@@ -1,14 +1,11 @@
-# Notifications: unread count, list, subscription, update and delete
-# Used by codegen for TypedDocumentNode and types
-
 query Notifications(
   $Where: NotificationWhereInput
   $OrderBy: [NotificationOrderByInput!]
   $Page: PageInput
 ) {
-  Notifications(Where: $Where, OrderBy: $OrderBy, Page: $Page) {
-    Edges {
-      Node {
+  Notifications: notifications(where: $Where, orderBy: $OrderBy, page: $Page) {
+    Edges: edges {
+      Node: node {
         Id
         UserId
         NotificationType
@@ -27,20 +24,20 @@ query Notifications(
         CreatedAt
         UpdatedAt
       }
-      Cursor
+      Cursor: cursor
     }
-    PageInfo {
-      HasNextPage
-      TotalCount
+    PageInfo: pageInfo {
+      HasNextPage: hasNextPage
+      TotalCount: totalCount
     }
   }
 }
 
 subscription NotificationChanged($Filter: SubscriptionFilterInput) {
-  NotificationChanged(Filter: $Filter) {
-    Action
-    Id
-    Notification {
+  NotificationChanged: notificationChanged(filter: $Filter) {
+    Action: action
+    Id: id
+    Notification: notification {
       Id
       ReadAt
       ResolvedAt
@@ -50,10 +47,10 @@ subscription NotificationChanged($Filter: SubscriptionFilterInput) {
 }
 
 mutation UpdateNotification($Id: String!, $Input: UpdateNotificationInput!) {
-  UpdateNotification(Id: $Id, Input: $Input) {
-    Success
-    Error
-    Notification {
+  UpdateNotification: updateNotification(id: $Id, input: $Input) {
+    Success: success
+    Error: error
+    Notification: notification {
       Id
       ReadAt
       ResolvedAt
@@ -63,8 +60,8 @@ mutation UpdateNotification($Id: String!, $Input: UpdateNotificationInput!) {
 }
 
 mutation DeleteNotification($Id: String!) {
-  DeleteNotification(Id: $Id) {
-    Success
-    Error
+  DeleteNotification: deleteNotification(id: $Id) {
+    Success: success
+    Error: error
   }
 }

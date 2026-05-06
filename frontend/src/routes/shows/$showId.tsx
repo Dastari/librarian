@@ -529,11 +529,11 @@ function ShowDetailPage() {
     {
       variables: {
         Where: {
-          UserId: { Eq: userId },
-          MediaFileId: { In: episodeMediaFileIds },
+          UserId: { eq: userId },
+          MediaFileId: { inList: episodeMediaFileIds },
         },
-        Page: { Limit: 5000, Offset: 0 },
-        OrderBy: [{ UpdatedAt: "Desc" }],
+        Page: { limit: 5000, offset: 0 },
+        OrderBy: [{ UpdatedAt: "DESC" }],
       },
       skip: !userId || episodeMediaFileIds.length === 0,
       fetchPolicy: "cache-and-network",
@@ -547,6 +547,7 @@ function ShowDetailPage() {
     const map = new Map<string, PlaybackProgressNode>();
     for (const edge of progressEdges) {
       const node = edge.Node;
+      if (!node) continue;
       if (!node.MediaFileId) continue;
       if (!map.has(node.MediaFileId)) {
         map.set(node.MediaFileId, node);

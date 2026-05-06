@@ -133,8 +133,12 @@ function LibrarySearchPage() {
             type: "movie",
             title: movie.Title,
             year: movie.Year ?? undefined,
-            posterUrl: movie.PosterUrl ?? undefined,
-            status: movie.Status ?? undefined,
+            posterUrl: undefined,
+            status: movie.MediaFileId
+              ? "downloaded"
+              : movie.Wanted
+                ? "wanted"
+                : undefined,
             libraryId: movie.LibraryId,
           });
         }

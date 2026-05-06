@@ -373,7 +373,10 @@ impl LibraryScanService {
     }
 
     async fn ensure_ffprobe_missing_notification(&self) -> Result<()> {
-        let bootstrap_auth_user = self.system_auth_user(None).await?;
+        let Some(bootstrap_auth_user) = self.try_system_auth_user(None).await? else {
+            warn!("ffprobe is unavailable and no users exist to notify");
+            return Ok(());
+        };
         let users_data = self
             .execute_graphql(
                 &bootstrap_auth_user,
@@ -600,13 +603,16 @@ impl LibraryScanService {
         Ok(None)
     }
 
-    async fn system_auth_user(&self, fallback_user_id: Option<&str>) -> Result<AuthUser> {
+    async fn try_system_auth_user(
+        &self,
+        fallback_user_id: Option<&str>,
+    ) -> Result<Option<AuthUser>> {
         if let Some(user_id) = fallback_user_id {
-            return Ok(AuthUser {
+            return Ok(Some(AuthUser {
                 user_id: user_id.to_string(),
                 email: None,
                 role: Some("admin".to_string()),
-            });
+            }));
         }
 
         let bootstrap_auth = AuthUser {
@@ -635,11 +641,11 @@ impl LibraryScanService {
                 .and_then(|node| node.get("Id"))
                 .and_then(|v| v.as_str())
             {
-                return Ok(AuthUser {
+                return Ok(Some(AuthUser {
                     user_id: user_id.to_string(),
                     email: None,
                     role: Some("admin".to_string()),
-                });
+                }));
             }
         }
 
@@ -655,14 +661,19 @@ impl LibraryScanService {
             .await?
             .into_iter()
             .min_by(|a, b| a.created_at.cmp(&b.created_at))
-            .map(|user| user.id)
-            .ok_or_else(|| anyhow::anyhow!("No user exists to run library scan operations"))?;
+            .map(|user| user.id);
 
-        Ok(AuthUser {
+        Ok(user_id.map(|user_id| AuthUser {
             user_id,
             email: None,
             role: Some("admin".to_string()),
-        })
+        }))
+    }
+
+    async fn system_auth_user(&self, fallback_user_id: Option<&str>) -> Result<AuthUser> {
+        self.try_system_auth_user(fallback_user_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("No user exists to run library scan operations"))
     }
 
     async fn get_library(&self, library_id: &str) -> Result<LibraryRow> {
@@ -807,7 +818,10 @@ impl LibraryScanService {
     }
 
     async fn get_due_autoscan_libraries(&self) -> Result<Vec<String>> {
-        let auth_user = self.system_auth_user(None).await?;
+        let Some(auth_user) = self.try_system_auth_user(None).await? else {
+            debug!("Skipping autoscan schedule evaluation because no users exist yet");
+            return Ok(Vec::new());
+        };
         let data = self
             .execute_graphql(
                 &auth_user,
@@ -881,7 +895,10 @@ impl LibraryScanService {
     }
 
     async fn clear_stale_library_scanning_state_on_startup(&self) -> Result<()> {
-        let auth_user = self.system_auth_user(None).await?;
+        let Some(auth_user) = self.try_system_auth_user(None).await? else {
+            info!("Skipping startup scan-state reconciliation because no users exist yet");
+            return Ok(());
+        };
         let mut offset = 0usize;
         let limit = 500usize;
         let mut libraries_reset = 0usize;
@@ -6955,10 +6972,11 @@ fn apply_audiobook_naming_pattern(
 
 #[cfg(test)]
 mod tests {
-    use super::{LibraryScanService, MatchWantedPolicy};
+    use super::{LibraryScanService, LibraryScanServiceConfig, MatchWantedPolicy};
     use regex::Regex;
     use std::fs;
     use std::path::PathBuf;
+    use std::time::Duration;
 
     #[test]
     fn parse_movie_hint_extracts_title_and_year() {
@@ -6990,6 +7008,32 @@ mod tests {
             LibraryScanService::normalize_library_type("AUDIOBOOKS"),
             "audiobooks"
         );
+    }
+
+    #[tokio::test]
+    async fn library_scan_service_starts_on_fresh_database_without_users() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let database_path = temp_dir.path().join("librarian.db");
+        let database_url = format!("sqlite://{}", database_path.display());
+
+        let services = crate::services::ServicesManager::builder()
+            .add_service(crate::services::DatabaseServiceConfig {
+                database_url,
+                connect_timeout: Duration::from_secs(5),
+            })
+            .add_service(crate::services::AuthConfig::default())
+            .add_service(crate::services::GraphqlServiceConfig { server_port: 0 })
+            .add_service(LibraryScanServiceConfig {
+                autoscan_poll_interval: Duration::from_secs(3600),
+                analyze_workers: 1,
+            })
+            .start()
+            .await?;
+
+        assert!(services.get_library_scan().await.is_some());
+        services.stop_all().await?;
+
+        Ok(())
     }
 
     #[test]

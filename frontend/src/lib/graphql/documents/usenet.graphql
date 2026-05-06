@@ -2,9 +2,9 @@ query SettingsUsenetServers(
   $OrderBy: [UsenetServerOrderByInput!]
   $Page: PageInput
 ) {
-  UsenetServers(OrderBy: $OrderBy, Page: $Page) {
-    Edges {
-      Node {
+  UsenetServers: usenetServers(orderBy: $OrderBy, page: $Page) {
+    Edges: edges {
+      Node: node {
         Id
         Name
         Host
@@ -27,10 +27,10 @@ mutation SettingsUpdateUsenetServer(
   $Id: String!
   $Input: UpdateUsenetServerInput!
 ) {
-  UpdateUsenetServer(Id: $Id, Input: $Input) {
-    Success
-    Error
-    UsenetServer {
+  UpdateUsenetServer: updateUsenetServer(id: $Id, input: $Input) {
+    Success: success
+    Error: error
+    UsenetServer: usenetServer {
       Id
       Enabled
       Priority
@@ -39,10 +39,10 @@ mutation SettingsUpdateUsenetServer(
 }
 
 mutation SettingsCreateUsenetServer($Input: CreateUsenetServerInput!) {
-  CreateUsenetServer(Input: $Input) {
-    Success
-    Error
-    UsenetServer {
+  CreateUsenetServer: createUsenetServer(input: $Input) {
+    Success: success
+    Error: error
+    UsenetServer: usenetServer {
       Id
       Name
       Host
@@ -61,8 +61,8 @@ mutation SettingsCreateUsenetServer($Input: CreateUsenetServerInput!) {
 }
 
 mutation SettingsDeleteUsenetServer($Id: String!) {
-  DeleteUsenetServer(Id: $Id) {
-    Success
-    Error
+  DeleteUsenetServer: deleteUsenetServer(id: $Id) {
+    Success: success
+    Error: error
   }
 }
