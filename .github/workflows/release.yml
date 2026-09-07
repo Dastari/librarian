@@ -78,9 +78,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
-
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
 
@@ -98,7 +95,7 @@ jobs:
       - name: Package Linux artifacts
         id: package
         run: |
-          VERSION=$(rg -n '^version\\s*=\\s*"' backend/Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\\1/')
+          VERSION=$(grep -E '^version[[:space:]]*=' backend/Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           mkdir -p dist/linux
           cp backend/target/release/librarian dist/linux/librarian
@@ -153,7 +150,7 @@ jobs:
       - name: Package portable Windows server
         shell: powershell
         run: |
-          $version = (Select-String -Path backend/Cargo.toml -Pattern '^version\\s*=\\s*"' | Select-Object -First 1).Line
+          $version = (Select-String -Path backend/Cargo.toml -Pattern '^version\s*=\s*"' | Select-Object -First 1).Line
           $version = $version -replace '.*"([^"]+)".*','$1'
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           $dist = Join-Path $PWD "dist"
@@ -181,7 +178,7 @@ jobs:
 
       - name: Verify version matches tag
         run: |
-          VERSION=$(rg -n '^version\\s*=\\s*"' backend/Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\\1/')
+          VERSION=$(grep -E '^version[[:space:]]*=' backend/Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
           TAG="${GITHUB_REF_NAME#v}"
           if [ "$VERSION" != "$TAG" ]; then
             echo "Cargo version ($VERSION) does not match tag ($GITHUB_REF_NAME)"
