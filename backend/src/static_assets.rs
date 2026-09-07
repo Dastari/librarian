@@ -7,7 +7,7 @@ use mime_guess::MimeGuess;
 use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
-#[folder = "../frontend/dist"]
+#[folder = "../web/dist"]
 struct FrontendAssets;
 
 fn content_type_for(path: &str) -> HeaderValue {

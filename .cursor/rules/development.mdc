@@ -3,7 +3,7 @@ description: Development workflow and best practices
 globs:
   - "backend/**/*"
   - "macros/**/*"
-  - "frontend/**/*"
+  - "web/**/*"
   - "Makefile"
 alwaysApply: true
 ---
@@ -15,7 +15,7 @@ alwaysApply: true
 ```
 librarian/
 ├── backend/           # Rust backend (Axum + async-graphql)
-├── frontend/          # React frontend (TanStack Router + HeroUI)
+├── web/               # React frontend (Vite + TanStack Router + HeroUI)
 ├── macros/            # Rust macros for graphql
 ├── docs/              # Documentation
 ├── Makefile           # Common commands
@@ -35,7 +35,7 @@ cargo clippy           # Lint code
 
 ### Frontend
 ```bash
-cd frontend
+cd web
 pnpm build             # Production build
 pnpm test              # Run tests
 pnpm exec tsc --noEmit # Type check

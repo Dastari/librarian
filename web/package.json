@@ -1,7 +1,7 @@
 {
   "name": "librarian-web",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "packageManager": "pnpm@11.25.0",
   "engines": {
@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "pnpm run codegen && tsc --noEmit && vite build",
+    "build": "pnpm run codegen && pnpm run icons && tsc --noEmit && vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "test": "vitest run",
@@ -17,7 +17,8 @@
     "codegen:watch": "graphql-codegen --config codegen.ts --watch",
     "schema:pull": "node scripts/pull-schema.mjs",
     "icons": "node scripts/generate-icons.mjs",
-    "film-graph": "node scripts/generate-film-graph.mjs"
+    "film-graph": "node scripts/generate-film-graph.mjs",
+    "audit:ci": "pnpm audit --audit-level=high"
   },
   "dependencies": {
     "@apollo/client": "^4.2.12",

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${ROOT_DIR}/dist"
 BACKEND_DIR="${ROOT_DIR}/backend"
-FRONTEND_DIR="${ROOT_DIR}/frontend"
+FRONTEND_DIR="${ROOT_DIR}/web"
 WINDOWS_WIX_WXS="${ROOT_DIR}/installer/windows/librarian.wxs"
 WINDOWS_INNO_ISS="${ROOT_DIR}/installer/windows/librarian.iss"
 

@@ -225,8 +225,8 @@ types reserved for future protocols are schema vocabulary, not a claim that thos
 | Sources manager | `backend/src/services/sources/manager.rs` |
 | Credential encryption | `backend/src/services/sources/encryption.rs` |
 | Source definitions | `backend/src/services/sources/definitions/` |
-| Frontend types/queries | `frontend/src/lib/graphql/sources.ts` |
-| Frontend settings page | `frontend/src/routes/settings/sources.tsx` |
+| Web documents | `web/src/graphql/documents/sources.graphql` |
+| Web settings page | `web/src/features/settings/SourcesSettings.tsx` |
 
 ---
 
@@ -444,7 +444,7 @@ The intended final frontend architecture includes:
   - Resolver fields and payload keys should use camelCase where defined by schema.
   - Remove/replace legacy PascalCase resolver fields as backend migration completes.
 - Prefer nested GraphQL relations over frontend post-processing transforms when the schema can provide needed relational data directly.
-- New hooks in `frontend/src/hooks` must be justified:
+- New hooks in `web/src` must be justified:
   - Do not add wrapper hooks that only proxy Apollo hooks without adding clear reusable behavior.
   - Periodically decommission obsolete hooks after route migrations.
 

@@ -1,7 +1,0 @@
-query ContentStatuses($inputs: [ContentStatusRequestInput!]!) {
-  contentStatuses(inputs: $inputs) {
-    contentType
-    id
-    status
-  }
-}

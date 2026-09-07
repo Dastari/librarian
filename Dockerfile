@@ -1,6 +1,6 @@
 # Librarian - Unified Build
 # 
-# This Dockerfile builds both frontend and backend into a single image.
+# This Dockerfile builds the web frontend and the backend into a single image.
 # The result is a self-contained application with:
 # - Rust backend serving GraphQL API
 # - Frontend SPA served from /static
@@ -14,25 +14,21 @@
 # ============================================================================
 FROM node:24-alpine AS frontend-builder
 
-WORKDIR /frontend
+WORKDIR /web
 
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@11.25.0 --activate
 
 # Copy package files
-COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
 
 # Copy source code
-COPY frontend/ ./
+COPY web/ ./
 
-# Build arguments for environment variables
-# These are baked into the build - use empty string for relative URLs
-ARG VITE_API_URL=""
-
-# Build the application
+# Codegen, icons, type-check and bundle (the app always talks to its own origin)
 RUN pnpm run build
 
 # ============================================================================
@@ -78,16 +74,13 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     ffmpeg \
     curl \
-    unrar-free \
-    unzip \
-    p7zip-full \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the backend binary
 COPY --from=backend-builder /app/target/release/librarian /app/librarian
 
 # Copy frontend static files
-COPY --from=frontend-builder /frontend/dist /app/static
+COPY --from=frontend-builder /web/dist /app/static
 
 # Create data directories
 RUN mkdir -p /data/media /data/downloads /data/cache /data/session

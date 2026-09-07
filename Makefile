@@ -1,9 +1,9 @@
 # Librarian Makefile
 # Common commands for development and deployment
 
-.PHONY: help dev dev-backend dev-frontend \
+.PHONY: help dev dev-backend dev-web live-web build-web lint-web test-web \
         build docker-up docker-down docker-logs clean test lint distro \
-        security security-backend security-frontend \
+        security security-backend security-web \
         build-backend-debug build-backend-release build-windows-debug build-windows-release \
         windows-installer \
         windows-package-only \
@@ -16,10 +16,9 @@ help:
 	@echo "Development:"
 	@echo "  make dev            - Start all development services"
 	@echo "  make dev-backend    - Start Rust backend in dev mode"
-	@echo "  make dev-frontend   - Start frontend in dev mode"
-	@echo "  make dev-web        - Start the new web frontend (web/) on :3000"
+	@echo "  make dev-web        - Start the web frontend (web/) on :3000"
 	@echo "  make live-web       - (Re)start the live web frontend on :3000 in the background (web/live.sh)"
-	@echo "  make build-web      - Build the new web frontend"
+	@echo "  make build-web      - Build the web frontend bundle (web/dist)"
 	@echo ""
 	@echo "Database:"
 	@echo "  make db-migrate     - Run all pending migrations"
@@ -60,13 +59,10 @@ help:
 
 dev:
 	@echo "Starting development services..."
-	@make -j2 dev-backend dev-frontend
+	@make -j2 dev-backend dev-web
 
 dev-backend:
 	cd backend && cargo watch -x run
-
-dev-frontend:
-	cd frontend && pnpm run dev
 
 dev-web:
 	cd web && pnpm run dev
@@ -157,7 +153,8 @@ prod-pull:
 # Build
 # =============================================================================
 
-build: build-backend-release build-frontend
+# The release binary embeds web/dist, so the web bundle must exist before cargo runs.
+build: build-web build-backend-release
 
 build-backend: build-backend-release
 
@@ -167,8 +164,6 @@ build-backend-debug:
 build-backend-release:
 	cd backend && cargo build --locked --release --features embed-frontend
 
-build-frontend:
-	cd frontend && pnpm install && pnpm run build
 
 # =============================================================================
 # Windows (from WSL)
@@ -180,7 +175,7 @@ WIN_BACKEND_DIR := $(subst \,\\,$(WIN_BACKEND_DIR_RAW))
 build-windows-debug:
 	powershell.exe -NoProfile -Command "Set-Location '$(WIN_BACKEND_DIR)'; [Environment]::SetEnvironmentVariable('CARGO_INCREMENTAL','0','Process'); cargo build --locked --target x86_64-pc-windows-msvc"
 
-build-windows-release: build-frontend
+build-windows-release: build-web
 	powershell.exe -NoProfile -Command "Set-Location '$(WIN_BACKEND_DIR)'; [Environment]::SetEnvironmentVariable('CARGO_INCREMENTAL','0','Process'); cargo build --locked --release --features embed-frontend --target x86_64-pc-windows-msvc"
 
 # =============================================================================
@@ -200,36 +195,32 @@ windows-package-only:
 # Testing
 # =============================================================================
 
-test: test-backend test-frontend
+test: test-backend test-web
 
 test-backend:
 	cd backend && cargo test --locked
 
-test-frontend:
-	cd frontend && pnpm test
 
 # =============================================================================
 # Linting
 # =============================================================================
 
-lint: lint-backend lint-frontend
+lint: lint-backend lint-web
 
 lint-backend:
 	cd backend && cargo clippy --locked --all-targets -- -D warnings
 	cd backend && cargo fmt --check
 
-lint-frontend:
-	cd frontend && pnpm run lint
 
-security: security-backend security-frontend
+security: security-backend security-web
 
 security-backend:
 	cd backend && cargo audit
 	cd backend && cargo deny check
 	cd backend && cargo machete
 
-security-frontend:
-	cd frontend && pnpm run audit:ci
+security-web:
+	cd web && pnpm run audit:ci
 
 # =============================================================================
 # Clean
@@ -237,4 +228,4 @@ security-frontend:
 
 clean:
 	cd backend && cargo clean
-	cd frontend && rm -rf node_modules .output dist pnpm-lock.yaml
+	cd web && rm -rf node_modules dist dev-dist

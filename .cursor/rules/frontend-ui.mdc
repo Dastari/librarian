@@ -1,8 +1,8 @@
 ---
 description: Frontend UI patterns and component usage
 globs:
-  - "frontend/src/**/*.tsx"
-  - "frontend/src/**/*.ts"
+  - "web/src/**/*.tsx"
+  - "web/src/**/*.ts"
 alwaysApply: true
 ---
 
@@ -106,7 +106,7 @@ If switching to individual packages for smaller bundle size, use the HeroUI CLI:
 
 ```bash
 # Add a specific component
-cd frontend
+cd web
 npx heroui add modal
 npx heroui add button
 npx heroui add input
@@ -388,8 +388,8 @@ function MyRoutePage() {
 ```
 
 ### GraphQL Operations
-- Define all GraphQL operations in `frontend/src/lib/graphql/`
-- Use generated GraphQL types from `frontend/src/lib/graphql/generated`
+- Define GraphQL operations in `web/src/graphql/documents/`; entity fragments/CRUD are generated
+- Use generated GraphQL types from `web/src/graphql/generated`
 - Keep operations organized by feature
 
 ```ts

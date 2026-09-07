@@ -2,7 +2,7 @@
 description: Quick reference for do's and don'ts
 globs:
   - "backend/**/*"
-  - "frontend/**/*"
+  - "web/**/*"
 alwaysApply: true
 ---
 
@@ -21,7 +21,7 @@ alwaysApply: true
 - ✅ Use `@tabler/icons-react` for all icons (not emojis or custom SVGs)
 - ✅ Use TanStack Router for routing
 - ✅ Use Apollo Client for GraphQL (queries, mutations, subscriptions)
-- ✅ Define GraphQL operations in `frontend/src/lib/graphql/`
+- ✅ Define GraphQL operations in `web/src/graphql/documents/` (entity fragments are generated)
 - ✅ Use Tailwind CSS for custom styling
 - ✅ Use generated codegen types instead of re-creating types.
 
@@ -109,16 +109,10 @@ alwaysApply: true
 | Indexer Manager | `backend/src/indexer/manager.rs` |
 | IPTorrents Indexer | `backend/src/indexer/definitions/iptorrents.rs` |
 | Indexer DB Repository | `backend/src/db/indexers.rs` |
-| Frontend GraphQL | `frontend/src/lib/graphql/` |
-| Frontend Routes | `frontend/src/routes/` |
-| Download Page | `frontend/src/routes/downloads.tsx` |
-| Search Modal | `frontend/src/components/SearchModal.tsx` |
-| Add to Library Modal | `frontend/src/components/search/AddToLibraryModal.tsx` |
-| Link to Library Modal | `frontend/src/components/downloads/LinkToLibraryModal.tsx` |
-| Library Detail Page | `frontend/src/routes/libraries/$libraryId.tsx` |
-| Library Settings Form | `frontend/src/components/library/LibrarySettingsForm.tsx` |
-| Quality Settings Card | `frontend/src/components/settings/QualitySettingsCard.tsx` |
-| Indexers Settings Page | `frontend/src/routes/settings/indexers.tsx` |
+| Web GraphQL documents | `web/src/graphql/documents/` |
+| Web routes | `web/src/routes/` |
+| Web features | `web/src/features/` |
+| Web UI kit | `web/src/components/ui/` |
 
 ## Naming Conventions
 

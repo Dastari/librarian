@@ -5,8 +5,10 @@
 data
 backend/data
 backend/target
-frontend/dist
-frontend/node_modules
+web/dist
+web/dev-dist
+web/node_modules
+web/screenshots
 macros/target
 node_modules
 target

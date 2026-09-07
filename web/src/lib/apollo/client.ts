@@ -44,7 +44,8 @@ const retryLink = new RetryLink({
   },
 });
 
-const sessionLink = new ErrorLink(({ error, operation, forward }) => {
+/** Exported for tests: retries an operation once after a successful session renewal. */
+export const sessionLink = new ErrorLink(({ error, operation, forward }) => {
   if (!isUnauthorizedError(error) || AUTH_OPERATIONS.has(operation.operationName ?? "")) return;
   if (operation.getContext().sessionRetried) return;
   operation.setContext({ sessionRetried: true });

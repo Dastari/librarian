@@ -33,8 +33,11 @@ yarn-debug.log*
 yarn-error.log*
 
 # Build outputs
-frontend/.vscode/
-frontend/dist/
+web/dist/
+web/dev-dist/
+web/screenshots/
+web/playwright-report/
+web/test-results/
 
 
 # Data directories (for local dev)
