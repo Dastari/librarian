@@ -618,10 +618,7 @@ pub fn available_space_bytes(path: &Path) -> Option<u64> {
     {
         let mut probe = path.to_path_buf();
         while !probe.exists() {
-            match probe.parent() {
-                Some(parent) => probe = parent.to_path_buf(),
-                None => return None,
-            }
+            probe = probe.parent()?.to_path_buf();
         }
         let c_path = std::ffi::CString::new(probe.as_os_str().as_encoded_bytes()).ok()?;
         // SAFETY: `c_path` is a valid NUL-terminated string and `stat` is a
