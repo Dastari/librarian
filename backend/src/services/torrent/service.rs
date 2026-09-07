@@ -2080,6 +2080,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(&nested).unwrap().count(), 0);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn an_unwritable_directory_is_reported_not_silently_replaced() {
         use std::os::unix::fs::PermissionsExt;
