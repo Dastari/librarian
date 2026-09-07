@@ -228,11 +228,18 @@ async fn seeds_and_downloads_over_loopback_then_payload_deletion_spares_the_hard
     assert!(seed_file.is_file());
 }
 
+#[cfg(unix)]
 fn link_count(path: &Path) -> u64 {
     use std::os::unix::fs::MetadataExt;
     std::fs::metadata(path)
         .unwrap_or_else(|e| panic!("stat {}: {e}", path.display()))
         .nlink()
+}
+
+/// Windows has no cheap hard-link count on `Metadata`; the test only needs the file to exist.
+#[cfg(not(unix))]
+fn link_count(path: &Path) -> u64 {
+    u64::from(path.is_file())
 }
 
 fn response_kind(response: &AddTorrentResponse) -> &'static str {
